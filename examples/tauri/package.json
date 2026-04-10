@@ -1,5 +1,5 @@
 {
-  "name": "tauri",
+  "name": "iroh-http-tauri-example",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@momics/iroh-http-tauri": "file:../../packages/iroh-http-tauri",
+    "@momics/iroh-http-shared": "file:../../packages/iroh-http-shared"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

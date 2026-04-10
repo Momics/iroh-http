@@ -1,3 +1,4 @@
+import path from "path";
 import { defineConfig } from "vite";
 
 // @ts-expect-error process is a nodejs global
@@ -5,6 +6,18 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  resolve: {
+    alias: {
+      "@momics/iroh-http-tauri": path.resolve(
+        __dirname,
+        "../../packages/iroh-http-tauri/guest-js/index.ts"
+      ),
+      "@momics/iroh-http-shared": path.resolve(
+        __dirname,
+        "../../packages/iroh-http-shared/src/index.ts"
+      ),
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
