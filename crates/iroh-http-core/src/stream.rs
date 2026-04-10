@@ -277,6 +277,17 @@ pub(crate) fn insert_trailer_receiver(rx: TrailerRx) -> u32 {
     trailer_rx_slab().lock().unwrap().insert(TimestampedEntry::new(rx)) as u32
 }
 
+/// Remove (drop) a trailer sender from the slab without sending.
+///
+/// This causes the corresponding receiver to resolve with `Err`,
+/// which `pump_body_to_stream` handles via `unwrap_or_default()`.
+pub(crate) fn remove_trailer_sender(handle: u32) {
+    let mut slab = trailer_tx_slab().lock().unwrap();
+    if slab.contains(handle as usize) {
+        slab.remove(handle as usize);
+    }
+}
+
 /// Deliver trailers from the JS side to the waiting Rust pump task.
 pub fn send_trailers(handle: u32, trailers: Vec<(String, String)>) -> Result<(), String> {
     let tx = {
@@ -371,5 +382,220 @@ fn sweep_trailer_rx_slab(ttl: Duration) {
     if !expired.is_empty() {
         for key in &expired { s.remove(*key); }
         eprintln!("[iroh-http] swept {} expired trailer_rx entries (ttl={ttl:?})", expired.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Body channel basics ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn body_channel_send_recv() {
+        let (writer, reader) = make_body_channel();
+        writer.send_chunk(Bytes::from("hello")).await.unwrap();
+        drop(writer); // signal EOF
+        let chunk = reader.next_chunk().await;
+        assert_eq!(chunk, Some(Bytes::from("hello")));
+        let eof = reader.next_chunk().await;
+        assert!(eof.is_none());
+    }
+
+    #[tokio::test]
+    async fn body_channel_multiple_chunks() {
+        let (writer, reader) = make_body_channel();
+        writer.send_chunk(Bytes::from("a")).await.unwrap();
+        writer.send_chunk(Bytes::from("b")).await.unwrap();
+        writer.send_chunk(Bytes::from("c")).await.unwrap();
+        drop(writer);
+
+        let mut collected = Vec::new();
+        while let Some(chunk) = reader.next_chunk().await {
+            collected.push(chunk);
+        }
+        assert_eq!(collected, vec![
+            Bytes::from("a"), Bytes::from("b"), Bytes::from("c"),
+        ]);
+    }
+
+    #[tokio::test]
+    async fn body_channel_reader_dropped_returns_error() {
+        let (writer, reader) = make_body_channel();
+        drop(reader);
+        let result = writer.send_chunk(Bytes::from("data")).await;
+        assert!(result.is_err());
+    }
+
+    // ── Slab handle operations ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn insert_reader_and_next_chunk() {
+        let (writer, reader) = make_body_channel();
+        let handle = insert_reader(reader);
+
+        writer.send_chunk(Bytes::from("slab-data")).await.unwrap();
+        drop(writer);
+
+        let chunk = next_chunk(handle).await.unwrap();
+        assert_eq!(chunk, Some(Bytes::from("slab-data")));
+
+        // EOF cleans up the slab entry
+        let eof = next_chunk(handle).await.unwrap();
+        assert!(eof.is_none());
+    }
+
+    #[tokio::test]
+    async fn next_chunk_invalid_handle() {
+        let result = next_chunk(999999).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid reader handle"));
+    }
+
+    #[tokio::test]
+    async fn send_chunk_via_slab_handle() {
+        let (writer, reader) = make_body_channel();
+        let handle = insert_writer(writer);
+
+        send_chunk(handle, Bytes::from("via-slab")).await.unwrap();
+        finish_body(handle).unwrap();
+
+        let chunk = reader.next_chunk().await;
+        assert_eq!(chunk, Some(Bytes::from("via-slab")));
+        let eof = reader.next_chunk().await;
+        assert!(eof.is_none());
+    }
+
+    #[tokio::test]
+    async fn send_chunk_invalid_handle() {
+        let result = send_chunk(999999, Bytes::from("nope")).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid writer handle"));
+    }
+
+    #[test]
+    fn finish_body_invalid_handle() {
+        let result = finish_body(999999);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid writer handle"));
+    }
+
+    #[test]
+    fn finish_body_signals_eof() {
+        let (writer, _reader) = make_body_channel();
+        let handle = insert_writer(writer);
+        finish_body(handle).unwrap();
+        // Double finish should fail
+        let result = finish_body(handle);
+        assert!(result.is_err());
+    }
+
+    // ── alloc_body_writer / pending reader ──────────────────────────────
+
+    #[test]
+    fn alloc_body_writer_and_claim() {
+        let (handle, reader) = alloc_body_writer();
+        store_pending_reader(handle, reader);
+        let claimed = claim_pending_reader(handle);
+        assert!(claimed.is_some());
+        // Second claim returns None
+        let again = claim_pending_reader(handle);
+        assert!(again.is_none());
+    }
+
+    // ── cancel_reader ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn cancel_reader_drops_from_slab() {
+        let (_writer, reader) = make_body_channel();
+        let handle = insert_reader(reader);
+        cancel_reader(handle);
+        // Subsequent next_chunk should fail (handle invalid)
+        let result = next_chunk(handle).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cancel_reader_nonexistent_is_noop() {
+        // Should not panic
+        cancel_reader(999999);
+    }
+
+    // ── Trailer operations ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn trailers_send_and_receive() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
+        let tx_handle = insert_trailer_sender(tx);
+        let rx_handle = insert_trailer_receiver(rx);
+
+        send_trailers(tx_handle, vec![
+            ("x-checksum".into(), "abc".into()),
+        ]).unwrap();
+
+        let result = next_trailer(rx_handle).await.unwrap();
+        let trailers = result.unwrap();
+        assert_eq!(trailers.len(), 1);
+        assert_eq!(trailers[0], ("x-checksum".into(), "abc".into()));
+    }
+
+    #[test]
+    fn send_trailers_invalid_handle() {
+        let result = send_trailers(999999, vec![]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid trailer sender handle"));
+    }
+
+    #[tokio::test]
+    async fn next_trailer_invalid_handle() {
+        let result = next_trailer(999999).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid trailer receiver handle"));
+    }
+
+    #[tokio::test]
+    async fn next_trailer_sender_dropped_returns_none() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
+        let rx_handle = insert_trailer_receiver(rx);
+        drop(tx); // sender dropped without sending
+        let result = next_trailer(rx_handle).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn send_trailers_empty_vec() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
+        let tx_handle = insert_trailer_sender(tx);
+        let rx_handle = insert_trailer_receiver(rx);
+
+        send_trailers(tx_handle, vec![]).unwrap();
+        let result = next_trailer(rx_handle).await.unwrap();
+        let trailers = result.unwrap();
+        assert!(trailers.is_empty());
+    }
+
+    // ── configure_backpressure ──────────────────────────────────────────
+
+    #[test]
+    fn configure_backpressure_updates_atomics() {
+        configure_backpressure(64, 128 * 1024, 60_000);
+        assert_eq!(
+            CHANNEL_CAPACITY.load(std::sync::atomic::Ordering::Relaxed),
+            64
+        );
+        assert_eq!(
+            MAX_CHUNK_SIZE.load(std::sync::atomic::Ordering::Relaxed),
+            128 * 1024
+        );
+        assert_eq!(
+            DRAIN_TIMEOUT_MS.load(std::sync::atomic::Ordering::Relaxed),
+            60_000
+        );
+        // Reset to defaults to avoid affecting other tests
+        configure_backpressure(
+            DEFAULT_CHANNEL_CAPACITY,
+            DEFAULT_MAX_CHUNK_SIZE,
+            DEFAULT_DRAIN_TIMEOUT_MS,
+        );
     }
 }

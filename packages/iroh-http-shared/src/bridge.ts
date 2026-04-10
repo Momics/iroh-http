@@ -120,15 +120,38 @@ export interface LifecycleOptions {
   maxRetries?: number;
 }
 
+/**
+ * Relay server configuration.
+ *
+ * Relays are QUIC-over-HTTPS servers that keep peers reachable behind NATs/firewalls.
+ *
+ *   `"default"`       — n0's public production relays (recommended).
+ *   `"disabled"`      — No relay, no DNS discovery. Direct addresses only.
+ *   `"https://…"`     — A single custom relay URL.
+ *   `["https://…", …]` — Multiple custom relay URLs.
+ */
+export type RelayMode =
+  | "default"
+  | "disabled"
+  | string
+  | string[];
+
 /** Options accepted by `createNode`. */
 export interface NodeOptions {
   /** 32-byte Ed25519 secret key or `SecretKey` object.  Omit to generate a new identity. */
   key?: SecretKey | Uint8Array;
   /** Idle connection timeout in milliseconds. */
   idleTimeout?: number;
-  /** Custom relay server URLs. */
-  relays?: string[];
-  /** DNS discovery server URL. */
+  /**
+   * Relay server configuration. Default: `"default"`.
+   *
+   * Set to `"disabled"` for fully offline/direct-only mode (also disables DNS
+   * discovery). Pass a URL string or array for custom relay servers.
+   *
+   * @see {@link RelayMode}
+   */
+  relayMode?: RelayMode;
+  /** DNS discovery server URL override.  Uses n0 DNS defaults when unset. */
   dnsDiscovery?: string;
   /** Capacity (in chunks) of each body channel.  Default: 32. */
   channelCapacity?: number;
@@ -144,6 +167,26 @@ export interface NodeOptions {
   handleTtl?: number;
   /** Mobile/background lifecycle options. */
   lifecycle?: LifecycleOptions;
+}
+
+/**
+ * Extended `RequestInit` for iroh-http fetch.
+ *
+ * Adds iroh-specific options alongside the standard web fetch init.
+ * Unknown properties are ignored by the web standard, so this is
+ * forward-compatible with plain `RequestInit`.
+ */
+export interface IrohFetchInit extends RequestInit {
+  /**
+   * Direct socket addresses to try when connecting to this peer.
+   *
+   * When set, the client will attempt to connect directly to these addresses
+   * instead of relying solely on DNS/relay discovery.  Useful for tests or
+   * when the peer's address is already known out-of-band.
+   *
+   * Each entry must be an `"ip:port"` string, e.g. `"127.0.0.1:12345"`.
+   */
+  directAddrs?: string[];
 }
 
 /** The object returned by `createNode`. */
@@ -164,11 +207,14 @@ export interface IrohNode {
   /**
    * Send an HTTP request to a remote node.
    * Signature mirrors `globalThis.fetch` with `peer` prepended.
+   *
+   * Pass `directAddrs` in init to provide known socket addresses for the peer
+   * (useful in tests or when addresses are already known out-of-band).
    */
   fetch(
     peer: PublicKey | string,
     input: string | URL,
-    init?: RequestInit
+    init?: IrohFetchInit
   ): Promise<Response>;
   /**
    * Start listening for incoming HTTP requests.
@@ -225,7 +271,8 @@ export type RawFetchFn = (
   method: string,
   headers: [string, string][],
   reqBodyHandle: number | null,
-  fetchToken: number
+  fetchToken: number,
+  directAddrs: string[] | null
 ) => Promise<FfiResponse>;
 
 /** Allocate a body writer handle (may be sync or async). */

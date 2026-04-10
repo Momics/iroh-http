@@ -171,7 +171,7 @@ impl IrohNode {
     ///
     /// `peer_id` is the base32-encoded public key of the target node.
     /// Returns an `IrohResponse` coroutine.
-    #[pyo3(signature = (peer_id, url, method="GET", headers=None, body=None))]
+    #[pyo3(signature = (peer_id, url, method="GET", headers=None, body=None, direct_addrs=None))]
     fn fetch<'py>(
         &self,
         py: Python<'py>,
@@ -180,6 +180,7 @@ impl IrohNode {
         method: &str,
         headers: Option<Vec<(String, String)>>,
         body: Option<Vec<u8>>,
+        direct_addrs: Option<Vec<String>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let ep      = self.ep.clone();
         let method  = method.to_owned();
@@ -199,7 +200,12 @@ impl IrohNode {
         };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let res = iroh_http_core::fetch(&ep, &peer_id, &url, &method, &headers, body_reader, None)
+            let addrs: Option<Vec<std::net::SocketAddr>> = direct_addrs.map(|v| {
+                v.iter()
+                    .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
+                    .collect()
+            });
+            let res = iroh_http_core::fetch(&ep, &peer_id, &url, &method, &headers, body_reader, None, addrs.as_deref())
                 .await
                 .map_err(py_err)?;
             Ok(IrohResponse {
@@ -348,13 +354,14 @@ fn send_500(req_handle: u32, res_body_handle: u32) {
 ///   relays       — list of custom relay server URL strings.
 ///   dns_discovery — custom DNS discovery server URL.
 #[pyfunction]
-#[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None))]
+#[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false))]
 fn create_node<'py>(
     py: Python<'py>,
     key: Option<Vec<u8>>,
     idle_timeout: Option<u64>,
     relays: Option<Vec<String>>,
     dns_discovery: Option<String>,
+    disable_networking: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let opts = NodeOptions {
@@ -367,6 +374,7 @@ fn create_node<'py>(
             max_chunk_size_bytes:   None,
             max_consecutive_errors: None,
             discovery:              None,
+            disable_networking,
             drain_timeout_ms:       None,
             handle_ttl_ms:          None,
         };

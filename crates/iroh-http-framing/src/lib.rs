@@ -363,6 +363,8 @@ mod tests {
     use super::*;
     extern crate std;
 
+    // ── Request head ────────────────────────────────────────────────────
+
     #[test]
     fn round_trip_request() {
         let headers = [("host", "peer1"), ("content-length", "0")];
@@ -372,6 +374,67 @@ mod tests {
         assert_eq!(path, "/hello");
         assert!(hdrs.iter().any(|(k, _)| k == "host"));
     }
+
+    #[test]
+    fn request_with_chunked_adds_te_header() {
+        let bytes = serialize_request_head("POST", "/upload", &[], true);
+        let (_, _, hdrs, _) = parse_request_head(&bytes).unwrap();
+        assert!(hdrs.iter().any(|(k, v)|
+            k.eq_ignore_ascii_case("Transfer-Encoding") && v == "chunked"
+        ));
+    }
+
+    #[test]
+    fn request_chunked_skipped_when_content_length_present() {
+        let headers = [("content-length", "42")];
+        let bytes = serialize_request_head("POST", "/up", &headers, true);
+        let (_, _, hdrs, _) = parse_request_head(&bytes).unwrap();
+        assert!(!hdrs.iter().any(|(k, _)| k.eq_ignore_ascii_case("Transfer-Encoding")));
+    }
+
+    #[test]
+    fn parse_request_head_incomplete() {
+        let partial = b"GET /hello HTTP/1.1\r\nhost: x\r\n"; // no final \r\n
+        match parse_request_head(partial) {
+            Err(FramingError::Incomplete) => {}
+            other => panic!("expected Incomplete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_request_head_garbage() {
+        let garbage = b"NOT A VALID HTTP REQUEST\r\n\r\n";
+        match parse_request_head(garbage) {
+            Err(FramingError::Parse(_)) => {}
+            other => panic!("expected Parse error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn strip_iroh_node_id_header() {
+        let headers = [("iroh-node-id", "fakevalue"), ("host", "peer1")];
+        let bytes = serialize_request_head("GET", "/", &headers, false);
+        let (_, _, hdrs, _) = parse_request_head(&bytes).unwrap();
+        assert!(!hdrs.iter().any(|(k, _)| k.eq_ignore_ascii_case("iroh-node-id")));
+    }
+
+    #[test]
+    fn request_preserves_all_standard_headers() {
+        let headers = [
+            ("host", "peer1"),
+            ("authorization", "Bearer tok"),
+            ("x-custom", "val"),
+        ];
+        let bytes = serialize_request_head("DELETE", "/resource/42", &headers, false);
+        let (method, path, hdrs, consumed) = parse_request_head(&bytes).unwrap();
+        assert_eq!(method, "DELETE");
+        assert_eq!(path, "/resource/42");
+        assert_eq!(consumed, bytes.len());
+        assert!(hdrs.iter().any(|(k, v)| k == "authorization" && v == "Bearer tok"));
+        assert!(hdrs.iter().any(|(k, v)| k == "x-custom" && v == "val"));
+    }
+
+    // ── Response head ───────────────────────────────────────────────────
 
     #[test]
     fn round_trip_response() {
@@ -386,6 +449,47 @@ mod tests {
     }
 
     #[test]
+    fn response_chunked_skipped_when_content_length_present() {
+        let headers = [("content-length", "100")];
+        let bytes = serialize_response_head(200, "OK", &headers, true);
+        let (_, _, hdrs, _) = parse_response_head(&bytes).unwrap();
+        assert!(!hdrs.iter().any(|(k, _)| k.eq_ignore_ascii_case("Transfer-Encoding")));
+    }
+
+    #[test]
+    fn parse_response_head_incomplete() {
+        let partial = b"HTTP/1.1 200 OK\r\ncontent-type: text\r\n";
+        match parse_response_head(partial) {
+            Err(FramingError::Incomplete) => {}
+            other => panic!("expected Incomplete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_head_garbage() {
+        let garbage = b"GARBAGE RESPONSE\r\n\r\n";
+        match parse_response_head(garbage) {
+            Err(FramingError::Parse(_)) => {}
+            other => panic!("expected Parse error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn response_with_various_status_codes() {
+        for (status, expected_reason) in &[
+            (201, "Created"), (204, "No Content"), (404, "Not Found"),
+            (500, "Internal Server Error"),
+        ] {
+            let bytes = serialize_response_head(*status, expected_reason, &[], false);
+            let (s, r, _, _) = parse_response_head(&bytes).unwrap();
+            assert_eq!(s, *status);
+            assert_eq!(r, *expected_reason);
+        }
+    }
+
+    // ── Chunked encoding ────────────────────────────────────────────────
+
+    #[test]
     fn chunk_round_trip() {
         let data = b"hello world";
         let encoded = encode_chunk(data);
@@ -395,10 +499,109 @@ mod tests {
     }
 
     #[test]
-    fn strip_iroh_node_id_header() {
-        let headers = [("iroh-node-id", "fakevalue"), ("host", "peer1")];
-        let bytes = serialize_request_head("GET", "/", &headers, false);
-        let (_, _, hdrs, _) = parse_request_head(&bytes).unwrap();
-        assert!(!hdrs.iter().any(|(k, _)| k.eq_ignore_ascii_case("iroh-node-id")));
+    fn chunk_empty_data() {
+        let encoded = encode_chunk(b"");
+        let (size, _) = parse_chunk_header(&encoded).unwrap();
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn parse_chunk_header_incomplete() {
+        assert!(parse_chunk_header(b"b").is_none());
+        assert!(parse_chunk_header(b"").is_none());
+    }
+
+    #[test]
+    fn parse_chunk_header_with_extension() {
+        // Chunk extensions after ';' should be ignored
+        let data = b"a;ext=foo\r\nhello12345\r\n";
+        let (size, header_len) = parse_chunk_header(data).unwrap();
+        assert_eq!(size, 10);
+        assert_eq!(&data[header_len..header_len + size], b"hello12345");
+    }
+
+    #[test]
+    fn terminal_chunk_values() {
+        assert_eq!(terminal_chunk(), b"0\r\n\r\n");
+        assert_eq!(terminal_chunk_start(), b"0\r\n");
+    }
+
+    // ── Trailers ────────────────────────────────────────────────────────
+
+    #[test]
+    fn trailers_round_trip() {
+        let trailers = [("x-checksum", "abc123"), ("x-hash", "def456")];
+        let bytes = serialize_trailers(&trailers);
+        let (parsed, consumed) = parse_trailers(&bytes).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], ("x-checksum".into(), "abc123".into()));
+        assert_eq!(parsed[1], ("x-hash".into(), "def456".into()));
+    }
+
+    #[test]
+    fn trailers_empty() {
+        let bytes = serialize_trailers(&[]);
+        assert_eq!(bytes, b"\r\n");
+        let (parsed, consumed) = parse_trailers(&bytes).unwrap();
+        assert_eq!(consumed, 2);
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_trailers_incomplete() {
+        let partial = b"x-checksum: abc123\r\n"; // no trailing \r\n
+        match parse_trailers(partial) {
+            Err(FramingError::Incomplete) => {}
+            other => panic!("expected Incomplete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_trailers_no_colon() {
+        let bad = b"no-colon-here\r\n\r\n";
+        match parse_trailers(bad) {
+            Err(FramingError::Parse(_)) => {}
+            other => panic!("expected Parse error, got {other:?}"),
+        }
+    }
+
+    // ── reason_phrase ───────────────────────────────────────────────────
+
+    #[test]
+    fn reason_phrase_known_codes() {
+        assert_eq!(reason_phrase(200), "OK");
+        assert_eq!(reason_phrase(404), "Not Found");
+        assert_eq!(reason_phrase(500), "Internal Server Error");
+        assert_eq!(reason_phrase(101), "Switching Protocols");
+    }
+
+    #[test]
+    fn reason_phrase_unknown_code() {
+        assert_eq!(reason_phrase(999), "Unknown");
+        assert_eq!(reason_phrase(0), "Unknown");
+    }
+
+    // ── consumed bytes correctness ──────────────────────────────────────
+
+    #[test]
+    fn request_head_consumed_is_exact() {
+        let headers = [("host", "peer1")];
+        let head = serialize_request_head("GET", "/", &headers, false);
+        let extra = b"BODY DATA HERE";
+        let mut combined = head.clone();
+        combined.extend_from_slice(extra);
+        let (_, _, _, consumed) = parse_request_head(&combined).unwrap();
+        assert_eq!(consumed, head.len());
+    }
+
+    #[test]
+    fn response_head_consumed_is_exact() {
+        let head = serialize_response_head(200, "OK", &[], false);
+        let extra = b"RESPONSE BODY";
+        let mut combined = head.clone();
+        combined.extend_from_slice(extra);
+        let (_, _, _, consumed) = parse_response_head(&combined).unwrap();
+        assert_eq!(consumed, head.len());
     }
 }

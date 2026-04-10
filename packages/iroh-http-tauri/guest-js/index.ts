@@ -105,7 +105,8 @@ const rawFetch: RawFetchFn = async (
   method,
   headers,
   reqBodyHandle,
-  fetchToken
+  fetchToken,
+  directAddrs
 ) => {
   const res = await invoke<{
     status: number;
@@ -122,6 +123,7 @@ const rawFetch: RawFetchFn = async (
       headers,
       reqBodyHandle: reqBodyHandle ?? null,
       fetchToken,
+      directAddrs: directAddrs ?? null,
     },
   });
   return {
@@ -247,6 +249,17 @@ function installLifecycleListener(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/** Normalise `relayMode` into flat fields for the Rust adapter. */
+function normaliseRelayMode(mode?: import("iroh-http-shared").RelayMode): {
+  relays: string[] | null;
+  disableNetworking: boolean;
+} {
+  if (mode === "disabled") return { relays: [], disableNetworking: true };
+  if (mode === "default" || mode === undefined) return { relays: null, disableNetworking: false };
+  if (Array.isArray(mode)) return { relays: mode, disableNetworking: false };
+  return { relays: [mode], disableNetworking: false };
+}
+
 /**
  * Create an Iroh node for peer-to-peer HTTP inside a Tauri application.
  */
@@ -254,6 +267,8 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   const keyBytes: string | null = options?.key
     ? encodeBase64(options.key instanceof Uint8Array ? options.key : (options.key as SecretKey).toBytes())
     : null;
+
+  const { relays, disableNetworking } = normaliseRelayMode(options?.relayMode);
 
   const info = await invoke<{
     endpointHandle: number;
@@ -264,7 +279,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
       ? {
           key: keyBytes,
           idleTimeout: options.idleTimeout ?? null,
-          relays: options.relays ?? null,
+          relays,
           dnsDiscovery: options.dnsDiscovery ?? null,
           channelCapacity: options.channelCapacity ?? null,
           maxChunkSizeBytes: options.maxChunkSizeBytes ?? null,
@@ -274,6 +289,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           discoveryAdvertise: options.discovery?.advertise ?? null,
           drainTimeout: options.drainTimeout ?? null,
           handleTtl: options.handleTtl ?? null,
+          disableNetworking,
         }
       : null,
   }).catch((e: unknown) => { throw classifyBindError(e); });

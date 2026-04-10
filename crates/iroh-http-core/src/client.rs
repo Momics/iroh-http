@@ -66,6 +66,7 @@ pub async fn fetch(
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
     fetch_token: Option<u32>,
+    direct_addrs: Option<&[std::net::SocketAddr]>,
 ) -> Result<FfiResponse, String> {
     // Retrieve the cancellation Notify for this token, if any.
     let cancel_notify = fetch_token.and_then(|id| {
@@ -73,7 +74,12 @@ pub async fn fetch(
     });
 
     let node_id = parse_node_id(remote_node_id)?;
-    let addr = iroh::EndpointAddr::new(node_id);
+    let mut addr = iroh::EndpointAddr::new(node_id);
+    if let Some(addrs) = direct_addrs {
+        for a in addrs {
+            addr = addr.with_ip_addr(*a);
+        }
+    }
 
     let conn = endpoint
         .raw()
@@ -243,12 +249,10 @@ async fn pump_stream_to_body(
     let chunked_mode = is_chunked;
 
     loop {
-        // Try to get more data when needed.
-        match recv.read_chunk(READ_BUF).await {
-            Err(_) | Ok(None) => break,
-            Ok(Some(chunk)) => buf.extend_from_slice(&chunk.bytes),
-        }
-
+        // Parse available data in the buffer BEFORE reading more from the
+        // stream.  This is critical when `already_consumed` (leftover bytes
+        // from response head parsing) already contains body data — without
+        // this, the pump would block on `read_chunk` and miss the data.
         if chunked_mode {
             loop {
                 match iroh_http_framing::parse_chunk_header(&buf) {
@@ -284,9 +288,16 @@ async fn pump_stream_to_body(
                 }
             }
         }
+
+        // Read more data from the stream.
+        match recv.read_chunk(READ_BUF).await {
+            Err(_) | Ok(None) => break,
+            Ok(Some(chunk)) => buf.extend_from_slice(&chunk.bytes),
+        }
     }
 
-    // Flush any remaining raw bytes.
+    // Flush any remaining raw bytes (non-chunked only; chunked streams
+    // terminate via the zero-chunk parsed above).
     if !buf.is_empty() && !chunked_mode {
         let data = Bytes::copy_from_slice(&buf);
         let _ = writer.send_chunk(data).await;

@@ -30,6 +30,16 @@ use slab::Slab;
 #[cfg(feature = "discovery")]
 use std::collections::HashMap;
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn parse_direct_addrs(addrs: &Option<Vec<String>>) -> Option<Vec<std::net::SocketAddr>> {
+    addrs.as_ref().map(|v| {
+        v.iter()
+            .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
+            .collect()
+    })
+}
+
 // ── Endpoint slab ─────────────────────────────────────────────────────────────
 
 fn endpoint_slab() -> &'static Mutex<Slab<IrohEndpoint>> {
@@ -77,6 +87,7 @@ pub struct JsNodeOptions {
     pub discovery: Option<JsDiscoveryOptions>,
     pub drain_timeout: Option<f64>,
     pub handle_ttl: Option<f64>,
+    pub disable_networking: Option<bool>,
 }
 
 #[napi(object)]
@@ -110,6 +121,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         max_chunk_size_bytes: o.max_chunk_size_bytes.map(|v| v as usize),
         max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
         discovery: discovery_js.clone(),
+        disable_networking: o.disable_networking.unwrap_or(false),
         drain_timeout_ms: o.drain_timeout.map(|v| v as u64),
         handle_ttl_ms: o.handle_ttl.map(|v| v as u64),
     }).unwrap_or_default();
@@ -291,6 +303,7 @@ pub async fn raw_fetch(
     headers: Vec<Vec<String>>,
     req_body_handle: Option<u32>,
     fetch_token: u32,
+    direct_addrs: Option<Vec<String>>,
 ) -> napi::Result<JsFfiResponse> {
     let ep = get_endpoint(endpoint_handle)?;
 
@@ -307,7 +320,8 @@ pub async fn raw_fetch(
 
     let req_body_reader = req_body_handle.and_then(claim_pending_reader);
 
-    let res = iroh_http_core::fetch(&ep, &node_id, &url, &method, &pairs, req_body_reader, Some(fetch_token))
+    let addrs = parse_direct_addrs(&direct_addrs);
+    let res = iroh_http_core::fetch(&ep, &node_id, &url, &method, &pairs, req_body_reader, Some(fetch_token), addrs.as_deref())
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
 

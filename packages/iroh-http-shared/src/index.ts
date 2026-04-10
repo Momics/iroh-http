@@ -7,7 +7,8 @@
 
 export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
               NodeOptions, IrohNode, EndpointInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn,
-              FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn } from "./bridge.js";
+              FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn,
+              RelayMode, IrohFetchInit } from "./bridge.js";
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
 export { makeFetch, makeConnect } from "./fetch.js";
 export { makeServe } from "./serve.js";

@@ -83,7 +83,8 @@ const rawFetch: RawFetchFn = async (
   method,
   headers,
   reqBodyHandle,
-  fetchToken
+  fetchToken,
+  directAddrs
 ) => {
   const res = await napiRawFetch(
     endpointHandle,
@@ -92,7 +93,8 @@ const rawFetch: RawFetchFn = async (
     method,
     headers as string[][],
     reqBodyHandle ?? null,
-    fetchToken
+    fetchToken,
+    directAddrs ?? null
   );
   return {
     status: res.status,
@@ -148,6 +150,17 @@ const rawConnect: RawConnectFn = async (
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/** Normalise `relayMode` into flat fields for the Rust adapter. */
+function normaliseRelayMode(mode?: import("@momics/iroh-http-shared").RelayMode): {
+  relays: string[] | undefined;
+  disableNetworking: boolean;
+} {
+  if (mode === "disabled") return { relays: [], disableNetworking: true };
+  if (mode === "default" || mode === undefined) return { relays: undefined, disableNetworking: false };
+  if (Array.isArray(mode)) return { relays: mode, disableNetworking: false };
+  return { relays: [mode], disableNetworking: false };
+}
+
 /**
  * Create an Iroh node for peer-to-peer HTTP.
  *
@@ -158,12 +171,14 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     ? (options.key instanceof Uint8Array ? options.key : (options.key as SecretKey).toBytes())
     : undefined;
 
+  const { relays, disableNetworking } = normaliseRelayMode(options?.relayMode);
+
   const info = await createEndpoint(
     options
       ? {
           key: keyBytes,
           idleTimeout: options.idleTimeout,
-          relays: options.relays,
+          relays,
           dnsDiscovery: options.dnsDiscovery,
           channelCapacity: options.channelCapacity,
           maxChunkSizeBytes: options.maxChunkSizeBytes,
@@ -177,6 +192,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
             : undefined,
           drainTimeout: options.drainTimeout,
           handleTtl: options.handleTtl,
+          disableNetworking,
         }
       : undefined
   ).catch((e: unknown) => { throw classifyBindError(e); });
