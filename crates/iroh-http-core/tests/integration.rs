@@ -812,3 +812,225 @@ async fn pool_different_peers_get_separate_connections() {
     // Both succeeded with separate connections to different peers.
     assert_ne!(id1, id2);
 }
+
+// -- Security hardening (patch 14) --------------------------------------------
+
+/// Helper: create a pair where the server has custom NodeOptions.
+async fn make_pair_custom_server(server_opts: NodeOptions) -> (IrohEndpoint, IrohEndpoint) {
+    let server = IrohEndpoint::bind(server_opts).await.unwrap();
+    let client = IrohEndpoint::bind(NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    }).await.unwrap();
+    (server, client)
+}
+
+/// A server with a small max_header_size should reject oversized request heads.
+#[tokio::test]
+async fn header_bomb_rejected() {
+    let (server_ep, client_ep) = make_pair_custom_server(NodeOptions {
+        disable_networking: true,
+        max_header_size: Some(256), // very small
+        ..Default::default()
+    }).await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            respond(payload.req_handle, 200, vec![
+                ("content-length".into(), "0".into()),
+            ]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Build headers that exceed 256 bytes when QPACK-encoded.
+    let big_value = "X".repeat(300);
+    let headers = vec![("x-big".to_string(), big_value)];
+
+    let result = fetch(
+        &client_ep, &server_id, "/bomb", "GET", &headers, None, None, Some(&addrs),
+    ).await;
+
+    // The server should reject the oversized head and the client will see an error.
+    assert!(result.is_err(), "expected error for oversized header, got: {:?}", result);
+}
+
+/// The client should also reject oversized response heads.
+#[tokio::test]
+async fn response_header_bomb_rejected() {
+    let server_ep = IrohEndpoint::bind(NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    }).await.unwrap();
+    // Client has a tiny max_header_size.
+    let client_ep = IrohEndpoint::bind(NodeOptions {
+        disable_networking: true,
+        max_header_size: Some(128),
+        ..Default::default()
+    }).await.unwrap();
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            let big_value = "Y".repeat(200);
+            respond(payload.req_handle, 200, vec![
+                ("x-huge".into(), big_value),
+            ]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // The client has max_header_size=128, so the server's big response header should be rejected.
+    let result = fetch(
+        &client_ep, &server_id, "/big-response", "GET", &[], None, None, Some(&addrs),
+    ).await;
+
+    assert!(result.is_err(), "expected error for oversized response header, got: {:?}", result);
+}
+
+/// Normal traffic should work with default settings.
+#[tokio::test]
+async fn default_limits_allow_normal_traffic() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            respond(payload.req_handle, 200, vec![
+                ("content-length".into(), "5".into()),
+            ]).unwrap();
+
+            let handle = payload.res_body_handle;
+            tokio::spawn(async move {
+                stream::send_chunk(handle, Bytes::from_static(b"hello")).await.unwrap();
+                stream::finish_body(handle).unwrap();
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Should work fine with default 64KB header limit.
+    let res = fetch(
+        &client_ep, &server_id, "/normal", "GET", &[], None, None, Some(&addrs),
+    ).await.unwrap();
+    assert_eq!(res.status, 200);
+
+    let chunk = next_chunk(res.body_handle).await.unwrap();
+    assert_eq!(chunk.unwrap().as_ref(), b"hello");
+
+    let eof = next_chunk(res.body_handle).await.unwrap();
+    assert!(eof.is_none());
+}
+
+/// Body size limit should reset the stream when exceeded.
+#[tokio::test]
+async fn body_limit_exceeded_resets_stream() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions {
+            max_request_body_bytes: Some(64), // very small
+            ..Default::default()
+        },
+        move |payload: RequestPayload| {
+            // Try to read body — it should get cut off.
+            let body_h = payload.req_body_handle;
+            let res_h = payload.res_body_handle;
+            let req_h = payload.req_handle;
+            tokio::spawn(async move {
+                let mut total = 0usize;
+                while let Ok(Some(chunk)) = next_chunk(body_h).await {
+                    total += chunk.len();
+                }
+                // Respond with how many bytes we got.
+                let body = format!("{total}");
+                respond(req_h, 200, vec![
+                    ("content-type".into(), "text/plain".into()),
+                ]).unwrap();
+                stream::send_chunk(res_h, Bytes::from(body)).await.unwrap();
+                stream::finish_body(res_h).unwrap();
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Send a 256-byte body, which exceeds the 64-byte limit.
+    let (writer, reader) = iroh_http_core::stream::make_body_channel();
+    let send_task = tokio::spawn(async move {
+        let chunk = Bytes::from(vec![0x41u8; 256]);
+        let _ = writer.send_chunk(chunk).await;
+        drop(writer);
+    });
+
+    let result = fetch(
+        &client_ep, &server_id, "/upload", "POST",
+        &[], Some(reader), None, Some(&addrs),
+    ).await;
+
+    send_task.await.unwrap();
+
+    // The request might succeed with a partial body or fail entirely;
+    // either way the server should not have received all 256 bytes.
+    if let Ok(res) = result {
+        if let Ok(Some(chunk)) = next_chunk(res.body_handle).await {
+            let received: usize = std::str::from_utf8(&chunk).unwrap_or("0").parse().unwrap_or(0);
+            assert!(received <= 64, "server received {received} bytes, should be <= 64");
+        }
+    }
+    // If the fetch errored entirely, that's also acceptable — the stream was reset.
+}
+
+/// Per-peer connection limit should be configurable via ServeOptions.
+#[tokio::test]
+async fn per_peer_connection_limit_config() {
+    // Just verify that the config fields compile and can be set.
+    let opts = ServeOptions {
+        max_connections_per_peer: Some(2),
+        request_timeout_secs: Some(30),
+        max_request_body_bytes: Some(1024 * 1024),
+        ..Default::default()
+    };
+    assert_eq!(opts.max_connections_per_peer, Some(2));
+    assert_eq!(opts.request_timeout_secs, Some(30));
+    assert_eq!(opts.max_request_body_bytes, Some(1024 * 1024));
+}
+
+/// Verify that max_header_size is configurable via NodeOptions and defaults to 64KB.
+#[tokio::test]
+async fn max_header_size_default_is_64kb() {
+    let ep = IrohEndpoint::bind(NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    }).await.unwrap();
+    assert_eq!(ep.max_header_size(), 64 * 1024);
+}
+
+/// Verify custom max_header_size is respected.
+#[tokio::test]
+async fn max_header_size_custom() {
+    let ep = IrohEndpoint::bind(NodeOptions {
+        disable_networking: true,
+        max_header_size: Some(1024),
+        ..Default::default()
+    }).await.unwrap();
+    assert_eq!(ep.max_header_size(), 1024);
+}

@@ -96,6 +96,7 @@ pub async fn fetch(
 
     let conn = pooled.conn.clone();
     let codec = pooled.codec.clone();
+    let max_header_size = endpoint.max_header_size();
 
     let result = do_request(
         conn,
@@ -104,6 +105,7 @@ pub async fn fetch(
         headers,
         req_body_reader,
         codec,
+        max_header_size,
     );
 
     let out = if let Some(notify) = cancel_notify {
@@ -130,6 +132,7 @@ async fn do_request(
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
     codec: std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
+    max_header_size: usize,
 ) -> Result<FfiResponse, String> {
     let (mut send, mut recv) = conn
         .open_bi()
@@ -180,7 +183,7 @@ async fn do_request(
 
     // Read and parse the response head.
     let (status, resp_headers, consumed) =
-        read_head_qpack(&mut recv, &codec).await?;
+        read_head_qpack(&mut recv, &codec, max_header_size).await?;
 
     let resp_is_chunked = resp_headers.iter().any(|(k, v)| {
         k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().contains("chunked")
@@ -339,9 +342,13 @@ async fn pump_stream_to_body(
 ///
 /// Wire format: `[2-byte big-endian length][QPACK block]`.
 /// Returns `(status, headers, leftover_bytes)`.
+///
+/// The buffer is bounded to `max_header_size` bytes.  If the peer sends a
+/// head larger than this, the read is rejected with an error.
 async fn read_head_qpack(
     recv: &mut iroh::endpoint::RecvStream,
     codec: &std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
+    max_header_size: usize,
 ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
     let mut buf: Vec<u8> = Vec::new();
 
@@ -353,6 +360,10 @@ async fn read_head_qpack(
         {
             None => return Err("stream closed before complete head".into()),
             Some(chunk) => buf.extend_from_slice(&chunk.bytes),
+        }
+
+        if buf.len() > max_header_size {
+            return Err(format!("response head too large ({} bytes, limit {max_header_size})", buf.len()));
         }
 
         let mut guard = codec.lock().await;
@@ -459,7 +470,8 @@ pub async fn raw_connect(
         .map_err(|e| format!("write connect head: {e}"))?;
 
     // Await the 101 Switching Protocols response.
-    let (status, _headers, _leftover) = read_head_qpack(&mut recv, &pooled.codec).await?;
+    let max_header_size = endpoint.max_header_size();
+    let (status, _headers, _leftover) = read_head_qpack(&mut recv, &pooled.codec, max_header_size).await?;
     if status != 101 {
         return Err(format!("server rejected duplex connection: expected 101, got {status}"));
     }

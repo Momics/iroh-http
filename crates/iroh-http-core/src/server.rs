@@ -28,6 +28,8 @@ use iroh_http_framing::{parse_trailers, FramingError};
 
 const READ_BUF: usize = 16 * 1024;
 const DEFAULT_CONCURRENCY: usize = 64;
+const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 60;
+const DEFAULT_MAX_CONNECTIONS_PER_PEER: usize = 8;
 
 /// Options controlling the serve loop.
 #[derive(Debug, Clone, Default)]
@@ -37,6 +39,14 @@ pub struct ServeOptions {
     /// Number of consecutive accept errors before the loop gives up.
     /// `None` uses the default (5).
     pub max_consecutive_errors: Option<usize>,
+    /// Per-request timeout in seconds.  `None` disables the timeout.
+    /// Default: 60.
+    pub request_timeout_secs: Option<u64>,
+    /// Maximum number of connections from a single peer.  Default: 8.
+    pub max_connections_per_peer: Option<usize>,
+    /// Maximum request body size in bytes.  `None` means unlimited.
+    /// When exceeded, the stream is reset.  Default: None.
+    pub max_request_body_bytes: Option<usize>,
 }
 
 // ── Pending response head registry ───────────────────────────────────────────
@@ -86,8 +96,21 @@ where
 {
     let max = options.max_concurrency.unwrap_or(DEFAULT_CONCURRENCY);
     let max_errors = options.max_consecutive_errors.unwrap_or(5);
+    let request_timeout = options
+        .request_timeout_secs
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(std::time::Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS));
+    let max_conns_per_peer = options
+        .max_connections_per_peer
+        .unwrap_or(DEFAULT_MAX_CONNECTIONS_PER_PEER);
+    let max_header_size = endpoint.max_header_size();
+    let max_request_body_bytes = options.max_request_body_bytes;
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max));
     let on_request = std::sync::Arc::new(on_request);
+
+    // Per-peer active connection counts.
+    let peer_counts: std::sync::Arc<Mutex<HashMap<iroh::PublicKey, usize>>> =
+        std::sync::Arc::new(Mutex::new(HashMap::new()));
 
     tokio::spawn(async move {
         let ep = endpoint.raw().clone();
@@ -119,12 +142,43 @@ where
                 }
             };
 
+            // Per-peer connection limit.
+            let remote_id = conn.remote_id();
+            {
+                let mut counts = peer_counts.lock().unwrap();
+                let count = counts.entry(remote_id).or_insert(0);
+                if *count >= max_conns_per_peer {
+                    tracing::warn!("iroh-http: peer {} exceeded connection limit ({max_conns_per_peer})", crate::base32_encode(remote_id.as_bytes()));
+                    conn.close(0u32.into(), b"too many connections");
+                    continue;
+                }
+                *count += 1;
+            }
+
             let sem = semaphore.clone();
             let on_req = on_request.clone();
             let ep_id = endpoint.node_id().to_string();
+            let pc = peer_counts.clone();
 
             tokio::spawn(async move {
-                handle_connection(conn, sem, on_req, ep_id).await;
+                handle_connection(
+                    conn,
+                    sem,
+                    on_req,
+                    ep_id,
+                    request_timeout,
+                    max_header_size,
+                    max_request_body_bytes,
+                )
+                .await;
+                // Decrement peer count.
+                let mut counts = pc.lock().unwrap();
+                if let Some(c) = counts.get_mut(&remote_id) {
+                    *c = c.saturating_sub(1);
+                    if *c == 0 {
+                        counts.remove(&remote_id);
+                    }
+                }
             });
         }
     })
@@ -135,6 +189,9 @@ async fn handle_connection<F>(
     semaphore: std::sync::Arc<tokio::sync::Semaphore>,
     on_request: std::sync::Arc<F>,
     own_node_id: String,
+    request_timeout: std::time::Duration,
+    max_header_size: usize,
+    max_request_body_bytes: Option<usize>,
 ) where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
@@ -162,17 +219,27 @@ async fn handle_connection<F>(
 
         tokio::spawn(async move {
             let _permit = permit; // held for duration of request
-            let result = handle_stream(
+            let fut = handle_stream(
                 send,
                 recv,
                 on_req,
                 remote,
                 own,
                 codec_clone,
-            )
-            .await;
-            if let Err(e) = result {
-                tracing::warn!("iroh-http: stream error: {e}");
+                max_header_size,
+                max_request_body_bytes,
+            );
+            if request_timeout.is_zero() {
+                // Timeout disabled.
+                if let Err(e) = fut.await {
+                    tracing::warn!("iroh-http: stream error: {e}");
+                }
+            } else {
+                match tokio::time::timeout(request_timeout, fut).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => tracing::warn!("iroh-http: stream error: {e}"),
+                    Err(_) => tracing::warn!("iroh-http: request timed out"),
+                }
             }
         });
     }
@@ -185,13 +252,15 @@ async fn handle_stream<F>(
     remote_node_id: String,
     own_node_id: String,
     codec: std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
+    max_header_size: usize,
+    max_request_body_bytes: Option<usize>,
 ) -> Result<(), String>
 where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
     // 1. Read and parse request head.
     let (method, path, req_headers, leftover) =
-        read_request_head_qpack(&mut recv, &codec).await?;
+        read_request_head_qpack(&mut recv, &codec, max_header_size).await?;
 
     // 2. Detect duplex upgrade.
     let is_bidi = req_headers.iter().any(|(k, v)| {
@@ -232,7 +301,7 @@ where
         tokio::spawn(pump_recv_raw_to_body(recv, req_writer, leftover));
     } else {
         let rq_tx = opt_req_trailer_tx.expect("non-duplex req_trailer_tx");
-        tokio::spawn(pump_recv_to_body(recv, req_writer, leftover, rq_tx));
+        tokio::spawn(pump_recv_to_body(recv, req_writer, leftover, rq_tx, max_request_body_bytes));
     }
 
     // 9. Notify JS.
@@ -329,9 +398,13 @@ fn allocate_req_handle(sender: oneshot::Sender<ResponseHead>) -> u32 {
 ///
 /// Wire format: `[2-byte big-endian length][QPACK block]`.
 /// Returns `(method, path, headers, leftover_bytes)`.
+///
+/// The buffer is bounded to `max_header_size` bytes.  If the peer sends a
+/// head larger than this, the stream is rejected with an error.
 async fn read_request_head_qpack(
     recv: &mut iroh::endpoint::RecvStream,
     codec: &std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
+    max_header_size: usize,
 ) -> Result<(String, String, Vec<(String, String)>, Vec<u8>), String> {
     let mut buf: Vec<u8> = Vec::new();
 
@@ -343,6 +416,10 @@ async fn read_request_head_qpack(
         {
             None => return Err("stream closed before complete request head".into()),
             Some(chunk) => buf.extend_from_slice(&chunk.bytes),
+        }
+
+        if buf.len() > max_header_size {
+            return Err(format!("request head too large ({} bytes, limit {max_header_size})", buf.len()));
         }
 
         let mut guard = codec.lock().await;
@@ -360,13 +437,16 @@ async fn read_request_head_qpack(
 /// Pump a `RecvStream` into a `BodyWriter` channel, handling chunked encoding.
 /// `already_read` is bytes already consumed during head parsing.
 /// Trailer bytes after the terminal chunk are parsed and delivered via `trailer_tx`.
+/// When `max_body_bytes` is `Some(n)`, the stream is abandoned after `n` bytes.
 async fn pump_recv_to_body(
     mut recv: iroh::endpoint::RecvStream,
     writer: BodyWriter,
     already_read: Vec<u8>,
     trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
+    max_body_bytes: Option<usize>,
 ) {
     let mut buf = already_read;
+    let mut total_body_bytes: usize = 0;
 
     loop {
         // Drain chunked data from buffer first.
@@ -384,6 +464,14 @@ async fn pump_recv_to_body(
                     let trailer_end = data_end + 2;
                     if buf.len() < trailer_end {
                         break;
+                    }
+                    total_body_bytes += size;
+                    if let Some(limit) = max_body_bytes {
+                        if total_body_bytes > limit {
+                            tracing::warn!("iroh-http: request body exceeded {limit} bytes, resetting stream");
+                            let _ = recv.stop(0u32.into());
+                            return;
+                        }
                     }
                     let data = Bytes::copy_from_slice(&buf[header_len..data_end]);
                     if writer.send_chunk(data).await.is_err() {
