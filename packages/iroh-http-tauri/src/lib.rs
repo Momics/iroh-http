@@ -11,6 +11,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .invoke_handler(tauri::generate_handler![
             commands::create_endpoint,
             commands::close_endpoint,
+            commands::ping,
             commands::next_chunk,
             commands::send_chunk,
             commands::finish_body,

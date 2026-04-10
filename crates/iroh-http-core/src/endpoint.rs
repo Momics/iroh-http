@@ -8,6 +8,17 @@ use iroh::endpoint::{IdleTimeout, QuicTransportConfig};
 
 use crate::{ALPN, ALPN_DUPLEX, ALPN_TRAILERS, ALPN_FULL};
 
+/// Configuration for mDNS local network discovery.
+#[derive(Debug, Default, Clone)]
+pub struct DiscoveryConfig {
+    /// Enable mDNS local discovery.  Default: false.
+    pub mdns: bool,
+    /// Application-specific mDNS service name.  Required when `mdns` is true.
+    pub service_name: Option<String>,
+    /// Whether to advertise this node.  Default: true.
+    pub advertise: bool,
+}
+
 /// Configuration passed to [`IrohEndpoint::bind`].
 #[derive(Debug, Default, Clone)]
 pub struct NodeOptions {
@@ -32,6 +43,14 @@ pub struct NodeOptions {
     pub max_chunk_size_bytes: Option<usize>,
     /// Number of consecutive accept errors before the serve loop gives up.  Default: 5.
     pub max_consecutive_errors: Option<usize>,
+    /// Local peer discovery configuration.
+    pub discovery: Option<DiscoveryConfig>,
+    /// Milliseconds to wait for a slow body reader before dropping the connection.
+    /// Default: 30 000 (30 s).
+    pub drain_timeout_ms: Option<u64>,
+    /// TTL in milliseconds for slab handle entries.  Expired entries are swept
+    /// every 60 s.  `0` disables sweeping.  Default: 300 000 (5 min).
+    pub handle_ttl_ms: Option<u64>,
 }
 
 /// A shared Iroh endpoint.
@@ -110,7 +129,11 @@ impl IrohEndpoint {
         crate::stream::configure_backpressure(
             opts.channel_capacity.unwrap_or(crate::stream::DEFAULT_CHANNEL_CAPACITY),
             opts.max_chunk_size_bytes.unwrap_or(crate::stream::DEFAULT_MAX_CHUNK_SIZE),
+            opts.drain_timeout_ms.unwrap_or(crate::stream::DEFAULT_DRAIN_TIMEOUT_MS),
         );
+
+        // Start slab TTL sweep if configured.
+        crate::stream::start_slab_sweep(opts.handle_ttl_ms.unwrap_or(crate::stream::DEFAULT_SLAB_TTL_MS));
 
         let node_id_str = crate::base32_encode(ep.id().as_bytes());
 
@@ -143,7 +166,7 @@ impl IrohEndpoint {
         self.inner.ep.close().await;
     }
 
-    pub(crate) fn raw(&self) -> &Endpoint {
+    pub fn raw(&self) -> &Endpoint {
         &self.inner.ep
     }
 }

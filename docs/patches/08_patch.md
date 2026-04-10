@@ -1,5 +1,5 @@
 ---
-status: pending
+status: integrated
 ---
 
 # iroh-http — Patch 08: Structured Rust Errors

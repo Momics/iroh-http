@@ -38,6 +38,7 @@ import {
   type FfiResponseHead,
   type FfiDuplexStream,
   type NodeOptions,
+  type LifecycleOptions,
   type IrohNode,
   type RawFetchFn,
   type RawServeFn,
@@ -178,7 +179,6 @@ const rawServe: RawServeFn = (
       });
     } catch (err) {
       console.error("[iroh-http-tauri] handler error:", err);
-      // Send 500 so Rust can close the stream.
       await invoke(`${PLUGIN}|respond_to_request`, {
         args: { reqHandle: raw.reqHandle, status: 500, headers: [] },
       }).catch(() => {/* ignore */});
@@ -190,7 +190,6 @@ const rawServe: RawServeFn = (
   );
 };
 
-/** Allocate a body writer channel handle via the Tauri command. */
 const allocBodyWriter: AllocBodyWriterFn = (): Promise<number> => {
   return invoke<number>(`${PLUGIN}|alloc_body_writer`);
 };
@@ -212,6 +211,39 @@ const rawConnect: RawConnectFn = async (
     writeHandle: res.writeHandle,
   } satisfies FfiDuplexStream;
 };
+
+// ── Mobile lifecycle listener ─────────────────────────────────────────────────
+
+function installLifecycleListener(
+  endpointHandle: number,
+  options: LifecycleOptions,
+  onDead: () => void,
+): (() => void) | undefined {
+  if (typeof document === "undefined") return;
+  const isMobile = /android|iphone|ipad/i.test(navigator.userAgent);
+  if (!isMobile && !options.autoReconnect) return;
+
+  let retries = 0;
+  const maxRetries = options.maxRetries ?? 3;
+  const handler = async () => {
+    if (document.visibilityState !== "visible") return;
+    retries = 0;
+    while (retries < maxRetries) {
+      try {
+        await invoke(`${PLUGIN}|ping`, { endpointHandle });
+        return;
+      } catch {
+        retries++;
+        if (retries < maxRetries) {
+          await new Promise<void>(r => setTimeout(r, 100 * 2 ** retries));
+        }
+      }
+    }
+    onDead();
+  };
+  document.addEventListener("visibilitychange", handler);
+  return () => document.removeEventListener("visibilitychange", handler);
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -237,11 +269,16 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           channelCapacity: options.channelCapacity ?? null,
           maxChunkSizeBytes: options.maxChunkSizeBytes ?? null,
           maxConsecutiveErrors: options.maxConsecutiveErrors ?? null,
+          discoveryMdns: options.discovery?.mdns ?? null,
+          discoveryServiceName: options.discovery?.serviceName ?? null,
+          discoveryAdvertise: options.discovery?.advertise ?? null,
+          drainTimeout: options.drainTimeout ?? null,
+          handleTtl: options.handleTtl ?? null,
         }
       : null,
   }).catch((e: unknown) => { throw classifyBindError(e); });
 
-  return buildNode(
+  const node = buildNode(
     bridge,
     {
       endpointHandle: info.endpointHandle,
@@ -254,6 +291,32 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     allocBodyWriter,
     (handle) => invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: handle })
   );
+
+  // Install lifecycle listener for mobile/reconnect support.
+  if (options?.lifecycle) {
+    installLifecycleListener(
+      info.endpointHandle,
+      options.lifecycle,
+      () => {
+        // Resolve the closed promise to signal the node is dead.
+        node.close().catch(() => {/* already closed */});
+      },
+    );
+  }
+
+  return node;
 }
 
 export type { NodeOptions, IrohNode };
+ *
+ * Implements the `Bridge` interface using Tauri `invoke()` calls and wires
+ * it into iroh-http-shared to export the standard `createNode` API.
+ *
+ * ```ts
+ * import { createNode } from 'iroh-http-tauri';
+ *
+ * const node = await createNode({ key: savedKey });
+ * node.serve({}, req => new Response('hello'));
+ * const res = await node.fetch(peerId, '/api');
+ * ```
+ */

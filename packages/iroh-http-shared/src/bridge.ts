@@ -102,6 +102,24 @@ export interface RequestPayload extends FfiRequest {
 
 // ── Platform function types ───────────────────────────────────────────────────
 
+/** Options for mDNS local network discovery. */
+export interface DiscoveryOptions {
+  /** Enable mDNS local network discovery.  Default: false. */
+  mdns?: boolean;
+  /** Application-specific service name.  Required when `mdns` is true. */
+  serviceName?: string;
+  /** Advertise this node on the local network.  Default: true. */
+  advertise?: boolean;
+}
+
+/** Options for mobile/background lifecycle management. */
+export interface LifecycleOptions {
+  /** Automatically reconnect if the endpoint goes dead.  Default: false. */
+  autoReconnect?: boolean;
+  /** Maximum reconnect attempts before marking the node dead.  Default: 3. */
+  maxRetries?: number;
+}
+
 /** Options accepted by `createNode`. */
 export interface NodeOptions {
   /** 32-byte Ed25519 secret key or `SecretKey` object.  Omit to generate a new identity. */
@@ -118,6 +136,14 @@ export interface NodeOptions {
   maxChunkSizeBytes?: number;
   /** Number of consecutive accept errors before the serve loop gives up.  Default: 5. */
   maxConsecutiveErrors?: number;
+  /** Local peer discovery configuration. */
+  discovery?: DiscoveryOptions;
+  /** Milliseconds to wait for a slow body reader before dropping.  Default: 30 000. */
+  drainTimeout?: number;
+  /** TTL in milliseconds for slab handle entries.  `0` disables sweeping.  Default: 300 000. */
+  handleTtl?: number;
+  /** Mobile/background lifecycle options. */
+  lifecycle?: LifecycleOptions;
 }
 
 /** The object returned by `createNode`. */
@@ -160,6 +186,12 @@ export interface IrohNode {
    * the other to finish.  Mirrors `WebTransportSession.createBidirectionalStream()`.
    */
   createBidirectionalStream(peer: PublicKey | string, path: string, init?: RequestInit): Promise<BidirectionalStream>;
+  /**
+   * Subscribe to local network peer discovery events.
+   * Only available when the node was created with `discovery.mdns: true`.
+   * Returns a cleanup function that removes the listener.
+   */
+  onPeerDiscovered?(callback: (nodeId: string) => void): () => void;
   /**
    * Resolves when the node has been closed (either via `close()` or due to
    * a fatal error).  Mirrors `WebTransportSession.closed`.

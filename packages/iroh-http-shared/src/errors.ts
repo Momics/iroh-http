@@ -60,6 +60,31 @@ export class IrohProtocolError extends IrohError {
   }
 }
 
+/** The operation was aborted via AbortSignal. */
+export class IrohAbortError extends DOMException {
+  constructor(message = "The operation was aborted") {
+    super(message, "AbortError");
+  }
+}
+
+/** Invalid argument passed by the caller. */
+export class IrohArgumentError extends IrohError {
+  constructor(message: string, code = "INVALID_ARGUMENT") {
+    super(message, code);
+    this.name = "IrohArgumentError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/** Slab handle is invalid or expired. */
+export class IrohHandleError extends IrohStreamError {
+  constructor(message: string, code = "INVALID_HANDLE") {
+    super(message, code);
+    this.name = "IrohHandleError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 // ── Classification ────────────────────────────────────────────────────────────
 
 /**
@@ -137,12 +162,14 @@ function classifyByCode(code: string, msg: string): IrohError {
     case "UPGRADE_REJECTED": return new IrohProtocolError(msg, code);
     case "PARSE_FAILURE":    return new IrohProtocolError(msg, code);
     case "TOO_MANY_HEADERS": return new IrohProtocolError(msg, code);
-    case "INVALID_HANDLE":   return new IrohStreamError(msg, code);
+    case "INVALID_HANDLE":   return new IrohHandleError(msg, code);
     case "WRITER_DROPPED":   return new IrohStreamError(msg, code);
     case "READER_DROPPED":   return new IrohStreamError(msg, code);
     case "STREAM_RESET":     return new IrohStreamError(msg, code);
     case "INVALID_KEY":      return new IrohBindError(msg, code);
     case "ENDPOINT_FAILURE": return new IrohBindError(msg, code);
+    case "ABORTED":          return new IrohAbortError(msg);
+    case "INVALID_ARGUMENT": return new IrohArgumentError(msg);
     default:                 return new IrohError(msg, code);
   }
 }

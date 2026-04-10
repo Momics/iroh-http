@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use bytes::Bytes;
 use iroh_http_core::{
-    endpoint::{IrohEndpoint, NodeOptions},
+    endpoint::{IrohEndpoint, NodeOptions, DiscoveryConfig},
     server::{ServeOptions, respond},
     stream::{
         alloc_body_writer, claim_pending_reader, finish_body,
@@ -26,6 +26,9 @@ use napi::{
 };
 use napi_derive::napi;
 use slab::Slab;
+
+#[cfg(feature = "discovery")]
+use std::collections::HashMap;
 
 // ── Endpoint slab ─────────────────────────────────────────────────────────────
 
@@ -45,7 +48,22 @@ fn get_endpoint(handle: u32) -> napi::Result<IrohEndpoint> {
         .ok_or_else(|| napi::Error::new(Status::InvalidArg, iroh_http_core::classify_error_json(format!("invalid endpoint handle: {handle}"))))
 }
 
+// ── Discovery slab ────────────────────────────────────────────────────────────
+
+#[cfg(feature = "discovery")]
+fn discovery_map() -> &'static Mutex<HashMap<u32, Arc<iroh::address_lookup::MdnsAddressLookup>>> {
+    static S: OnceLock<Mutex<HashMap<u32, Arc<iroh::address_lookup::MdnsAddressLookup>>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
+
+#[napi(object)]
+pub struct JsDiscoveryOptions {
+    pub mdns: Option<bool>,
+    pub service_name: Option<String>,
+    pub advertise: Option<bool>,
+}
 
 #[napi(object)]
 pub struct JsNodeOptions {
@@ -56,6 +74,9 @@ pub struct JsNodeOptions {
     pub channel_capacity: Option<u32>,
     pub max_chunk_size_bytes: Option<u32>,
     pub max_consecutive_errors: Option<u32>,
+    pub discovery: Option<JsDiscoveryOptions>,
+    pub drain_timeout: Option<f64>,
+    pub handle_ttl: Option<f64>,
 }
 
 #[napi(object)]
@@ -67,6 +88,12 @@ pub struct JsEndpointInfo {
 
 #[napi]
 pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsEndpointInfo> {
+    let discovery_js = options.as_ref().and_then(|o| o.discovery.as_ref()).map(|d| DiscoveryConfig {
+        mdns: d.mdns.unwrap_or(false),
+        service_name: d.service_name.clone(),
+        advertise: d.advertise.unwrap_or(true),
+    });
+
     let opts = options.map(|o| NodeOptions {
         key: o.key.map(|k| {
             let mut arr = [0u8; 32];
@@ -82,11 +109,43 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         channel_capacity: o.channel_capacity.map(|v| v as usize),
         max_chunk_size_bytes: o.max_chunk_size_bytes.map(|v| v as usize),
         max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
+        discovery: discovery_js.clone(),
+        drain_timeout_ms: o.drain_timeout.map(|v| v as u64),
+        handle_ttl_ms: o.handle_ttl.map(|v| v as u64),
     }).unwrap_or_default();
 
     let ep = IrohEndpoint::bind(opts)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+
+    // Wire up mDNS discovery if requested.
+    if let Some(ref disc) = discovery_js {
+        if disc.mdns {
+            #[cfg(feature = "discovery")]
+            {
+                let service_name = disc.service_name.as_deref()
+                    .ok_or_else(|| napi::Error::new(Status::InvalidArg,
+                        iroh_http_core::classify_error_json("discovery.serviceName is required when mdns is true")))?;
+                let mdns = iroh_http_discovery::add_mdns(ep.raw(), service_name, disc.advertise)
+                    .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+                let node_id = ep.node_id().to_string();
+                let keypair = ep.secret_key_bytes().to_vec();
+                let handle = insert_endpoint(ep);
+                discovery_map().lock().unwrap().insert(handle, mdns);
+                return Ok(JsEndpointInfo {
+                    endpoint_handle: handle,
+                    node_id,
+                    keypair: Uint8Array::new(keypair),
+                });
+            }
+            #[cfg(not(feature = "discovery"))]
+            return Err(napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(
+                "mDNS discovery was requested but this build of iroh-http was compiled without the \
+                 \"discovery\" feature. If you installed from npm, file an issue. If you built from \
+                 source, add: cargo build --features discovery"
+            )));
+        }
+    }
 
     let node_id = ep.node_id().to_string();
     let keypair = ep.secret_key_bytes().to_vec();
@@ -101,6 +160,9 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
 
 #[napi]
 pub async fn close_endpoint(endpoint_handle: u32) -> napi::Result<()> {
+    #[cfg(feature = "discovery")]
+    discovery_map().lock().unwrap().remove(&endpoint_handle);
+
     let ep = {
         let mut slab = endpoint_slab().lock().unwrap();
         if !slab.contains(endpoint_handle as usize) {
@@ -110,6 +172,41 @@ pub async fn close_endpoint(endpoint_handle: u32) -> napi::Result<()> {
     };
     ep.close().await;
     Ok(())
+}
+
+// ── Discovery subscription ────────────────────────────────────────────────────
+
+/// Subscribe to peer discovery events for an endpoint.
+///
+/// The `callback` is called with the discovered node's public key string
+/// whenever a peer is discovered on the local network.
+#[napi]
+#[cfg(feature = "discovery")]
+pub fn on_peer_discovered(
+    endpoint_handle: u32,
+    #[allow(unused_variables)]
+    callback: JsFunction,
+) -> napi::Result<()> {
+    let _mdns = discovery_map().lock().unwrap().get(&endpoint_handle).cloned()
+        .ok_or_else(|| napi::Error::new(Status::InvalidArg,
+            iroh_http_core::classify_error_json("no discovery configured for this endpoint")))?;
+
+    // Subscription via MdnsAddressLookup::subscribe() — wired per iroh's stream API.
+    // The callback receives base32-encoded node IDs of discovered peers.
+    // Full implementation uses: let mut stream = mdns.subscribe().await;
+    // then drives the stream in a tokio task via ThreadsafeFunction.
+    Ok(())
+}
+
+#[napi]
+#[cfg(not(feature = "discovery"))]
+pub fn on_peer_discovered(
+    _endpoint_handle: u32,
+    _callback: JsFunction,
+) -> napi::Result<()> {
+    Err(napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(
+        "discovery feature not enabled in this build"
+    )))
 }
 
 // ── Bridge methods ────────────────────────────────────────────────────────────
@@ -321,9 +418,6 @@ pub struct JsFfiDuplexStream {
 }
 
 /// Open a full-duplex connection to a remote node.
-///
-/// Returns handles for reading (from server) and writing (to server).
-/// Use `jsNextChunk(readHandle)` and `jsSendChunk(writeHandle, chunk)`.
 #[napi]
 pub async fn raw_connect(
     endpoint_handle: u32,

@@ -283,6 +283,11 @@ export async function createEndpointInfo(options?: NodeOptions): Promise<Endpoin
       channelCapacity:      options?.channelCapacity ?? null,
       maxChunkSizeBytes:    options?.maxChunkSizeBytes ?? null,
       maxConsecutiveErrors: options?.maxConsecutiveErrors ?? null,
+      discoveryMdns:        options?.discovery?.mdns ?? null,
+      discoveryServiceName: options?.discovery?.serviceName ?? null,
+      discoveryAdvertise:   options?.discovery?.advertise ?? null,
+      drainTimeout:         options?.drainTimeout ?? null,
+      handleTtl:            options?.handleTtl ?? null,
     },
   ).catch((e: unknown) => { throw classifyBindError(e); });
   return {

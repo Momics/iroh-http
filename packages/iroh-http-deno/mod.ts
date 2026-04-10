@@ -2,7 +2,7 @@
  * iroh-http-deno — public API.
  *
  * ```ts
- * import { createNode } from "./mod.ts";
+ * import { createNode } from "@momics/iroh-http-deno";
  *
  * const node = await createNode({ key: savedKey });
  * node.serve({}, req => new Response("hello"));
@@ -10,7 +10,7 @@
  * ```
  */
 
-import { buildNode, type NodeOptions, type IrohNode } from "iroh-http-shared";
+import { buildNode, type NodeOptions, type IrohNode } from "@momics/iroh-http-shared";
 import {
   bridge,
   rawFetch,
@@ -19,7 +19,7 @@ import {
   allocBodyWriter,
   createEndpointInfo,
   closeEndpoint,
-} from "./adapter.ts";
+} from "./src/adapter.ts";
 
 /**
  * Create an Iroh node for peer-to-peer HTTP.

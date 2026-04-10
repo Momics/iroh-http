@@ -3,6 +3,7 @@ name = "iroh-http-discovery"
 version = "0.1.0"
 edition = "2021"
 description = "Optional mDNS peer discovery for iroh-http (desktop platforms)"
+license = "MIT OR Apache-2.0"
 
 [features]
 default = ["mdns"]

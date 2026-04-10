@@ -3,7 +3,7 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use bytes::Bytes;
 use iroh_http_core::{
-    endpoint::NodeOptions,
+    endpoint::{DiscoveryConfig, NodeOptions},
     server::{ServeOptions, respond},
     RequestPayload,
 };
@@ -24,6 +24,11 @@ pub struct CreateEndpointArgs {
     pub channel_capacity: Option<usize>,
     pub max_chunk_size_bytes: Option<usize>,
     pub max_consecutive_errors: Option<usize>,
+    pub discovery_mdns: Option<bool>,
+    pub discovery_service_name: Option<String>,
+    pub discovery_advertise: Option<bool>,
+    pub drain_timeout: Option<u64>,
+    pub handle_ttl: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -38,22 +43,55 @@ pub struct EndpointInfoPayload {
 pub async fn create_endpoint(
     args: Option<CreateEndpointArgs>,
 ) -> Result<EndpointInfoPayload, String> {
+    let discovery = args.as_ref().and_then(|a| {
+        if a.discovery_mdns.unwrap_or(false) {
+            Some(DiscoveryConfig {
+                mdns: true,
+                service_name: a.discovery_service_name.clone(),
+                advertise: a.discovery_advertise.unwrap_or(true),
+            })
+        } else {
+            None
+        }
+    });
+
     let opts = args
         .map(|a| NodeOptions {
             key: a.key.and_then(|k| B64.decode(k).ok()?.try_into().ok()),
             idle_timeout_ms: a.idle_timeout,
             relays: a.relays.unwrap_or_default(),
             dns_discovery: a.dns_discovery,
-            capabilities: Vec::new(), // advertise all by default
+            capabilities: Vec::new(),
             channel_capacity: a.channel_capacity,
             max_chunk_size_bytes: a.max_chunk_size_bytes,
             max_consecutive_errors: a.max_consecutive_errors,
+            discovery: discovery.clone(),
+            drain_timeout_ms: a.drain_timeout,
+            handle_ttl_ms: a.handle_ttl,
         })
         .unwrap_or_default();
 
     let ep = iroh_http_core::endpoint::IrohEndpoint::bind(opts)
         .await
         .map_err(|e| iroh_http_core::classify_error_json(e))?;
+
+    // Wire up mDNS discovery if configured.
+    #[cfg(feature = "discovery")]
+    if let Some(ref disc) = discovery {
+        if disc.mdns {
+            let service_name = disc.service_name.as_deref()
+                .ok_or_else(|| iroh_http_core::classify_error_json(
+                    "discovery.serviceName is required when mdns is true"))?;
+            iroh_http_discovery::add_mdns(ep.raw(), service_name, disc.advertise)
+                .map_err(|e| iroh_http_core::classify_error_json(e))?;
+        }
+    }
+    #[cfg(not(feature = "discovery"))]
+    if discovery.as_ref().map_or(false, |d| d.mdns) {
+        return Err(iroh_http_core::classify_error_json(
+            "mDNS discovery was requested but this build was compiled without the \"discovery\" feature"
+        ));
+    }
 
     let node_id = ep.node_id().to_string();
     let keypair = ep.secret_key_bytes().to_vec();
@@ -72,6 +110,18 @@ pub async fn close_endpoint(endpoint_handle: u32) -> Result<(), String> {
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     ep.close().await;
     Ok(())
+}
+
+// ── Ping (mobile lifecycle) ───────────────────────────────────────────────────
+
+/// Trivial liveness probe — returns `true` when the endpoint exists.
+#[command]
+pub async fn ping(endpoint_handle: u32) -> Result<bool, String> {
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("endpoint not found: {endpoint_handle}")))?;
+    // If the endpoint exists, it's alive.
+    let _ = ep.raw().id();
+    Ok(true)
 }
 
 // ── Bridge methods ────────────────────────────────────────────────────────────
@@ -201,11 +251,6 @@ pub struct ServeEventPayload {
     pub remote_node_id: String,
 }
 
-/// Start the serve accept loop.
-///
-/// Incoming requests are pushed through `channel` as `ServeEventPayload`
-/// objects.  JS processes each request and calls `respond_to_request` to
-/// send the response head back.
 #[command]
 pub async fn serve(
     endpoint_handle: u32,
@@ -255,7 +300,6 @@ pub struct RespondArgs {
     pub headers: Vec<Vec<String>>,
 }
 
-/// Send the response head for a pending request.
 #[command]
 pub fn respond_to_request(args: RespondArgs) -> Result<(), String> {
     let headers: Vec<(String, String)> = args
@@ -303,3 +347,4 @@ pub async fn raw_connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload,
         write_handle: duplex.write_handle,
     })
 }
+
