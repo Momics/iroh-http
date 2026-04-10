@@ -21,7 +21,7 @@ use crate::{
     client::pump_body_to_stream,
     stream::{
         insert_reader, insert_writer, make_body_channel, BodyWriter,
-        insert_trailer_sender, insert_trailer_receiver,
+        insert_trailer_sender, insert_trailer_receiver, remove_trailer_sender,
     }, IrohEndpoint, RequestPayload,
 };
 use iroh_http_framing::{parse_request_head, reason_phrase, serialize_response_head, FramingError,
@@ -267,8 +267,20 @@ where
         // Duplex: raw bytes, no chunked encoding, no trailers.
         pump_body_raw_to_stream(res_reader, &mut send).await?;
     } else {
-        let rs_rx = opt_res_trailer_rx.expect("non-duplex res_trailer_rx");
-        pump_body_to_stream(res_reader, &mut send, res_chunked, Some(rs_rx)).await?;
+        let has_trailer_header = response_head
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("trailer"));
+        let trailer_rx_for_pump = if has_trailer_header {
+            opt_res_trailer_rx
+        } else {
+            // Handler did not declare trailers — drop the receiver and
+            // clean up the sender from the slab so it doesn't leak.
+            drop(opt_res_trailer_rx);
+            remove_trailer_sender(res_trailers_handle);
+            None
+        };
+        pump_body_to_stream(res_reader, &mut send, res_chunked, trailer_rx_for_pump).await?;
     }
 
     send.finish().map_err(|e| format!("finish stream: {e}"))?;

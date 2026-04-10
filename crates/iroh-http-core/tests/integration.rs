@@ -1,0 +1,686 @@
+//! Integration tests for iroh-http-core.
+//!
+//! Each test creates two Iroh endpoints (in-process) and exercises the full
+//! fetch/serve stack over real QUIC connections.  No FFI, no JavaScript — pure
+//! Rust end-to-end.
+
+use bytes::Bytes;
+use iroh_http_core::{
+    IrohEndpoint, NodeOptions, fetch, serve,
+    next_chunk, next_trailer, send_trailers,
+    alloc_fetch_token, cancel_in_flight,
+    server::ServeOptions,
+    RequestPayload,
+};
+use iroh_http_core::server::respond;
+use iroh_http_core::stream;
+
+/// Create a pair of locally-connected endpoints (relay disabled).
+async fn make_pair() -> (IrohEndpoint, IrohEndpoint) {
+    let opts = || NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    };
+    let server = IrohEndpoint::bind(opts()).await.unwrap();
+    let client = IrohEndpoint::bind(opts()).await.unwrap();
+    (server, client)
+}
+
+fn node_id(ep: &IrohEndpoint) -> String {
+    ep.node_id().to_string()
+}
+
+/// Get the server's direct socket addresses so the client can connect.
+fn server_addrs(ep: &IrohEndpoint) -> Vec<std::net::SocketAddr> {
+    ep.raw().addr().ip_addrs().cloned().collect()
+}
+
+// -- Basic fetch/serve --------------------------------------------------------
+
+#[tokio::test]
+async fn basic_get_200() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            respond(payload.req_handle, 200, vec![
+                ("content-length".into(), "0".into()),
+            ]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let res = fetch(&client_ep, &server_id, "/hello", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    assert_eq!(res.status, 200);
+    assert!(res.url.starts_with("httpi://"));
+    assert!(res.url.contains("/hello"));
+
+    let chunk = next_chunk(res.body_handle).await.unwrap();
+    assert!(chunk.is_none());
+}
+
+#[tokio::test]
+async fn get_with_body() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            let path = payload.url.split("://").nth(1)
+                .and_then(|s| s.find('/').map(|i| &s[i..]))
+                .unwrap_or("/")
+                .to_string();
+            let body_bytes = Bytes::from(path.as_bytes().to_vec());
+
+            respond(payload.req_handle, 200, vec![
+                ("content-type".into(), "text/plain".into()),
+            ]).unwrap();
+
+            let handle = payload.res_body_handle;
+            tokio::spawn(async move {
+                stream::send_chunk(handle, body_bytes).await.unwrap();
+                stream::finish_body(handle).unwrap();
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let res = fetch(&client_ep, &server_id, "/echo/test", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    assert_eq!(res.status, 200);
+
+    let mut body = Vec::new();
+    while let Some(chunk) = next_chunk(res.body_handle).await.unwrap() {
+        body.extend_from_slice(&chunk);
+    }
+    assert_eq!(String::from_utf8(body).unwrap(), "/echo/test");
+}
+
+// -- Request body (POST) -----------------------------------------------------
+
+#[tokio::test]
+async fn post_with_request_body() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            assert_eq!(payload.method, "POST");
+
+            let req_body_handle = payload.req_body_handle;
+            let res_body_handle = payload.res_body_handle;
+            let req_handle = payload.req_handle;
+
+            tokio::spawn(async move {
+                let mut body = Vec::new();
+                while let Some(chunk) = next_chunk(req_body_handle).await.unwrap() {
+                    body.extend_from_slice(&chunk);
+                }
+
+                let response_body = format!("received {} bytes", body.len());
+                respond(req_handle, 200, vec![]).unwrap();
+                stream::send_chunk(res_body_handle, Bytes::from(response_body.into_bytes())).await.unwrap();
+                stream::finish_body(res_body_handle).unwrap();
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let (writer_handle, body_reader) = stream::alloc_body_writer();
+    let body_data = b"hello, world!".to_vec();
+    let body_len = body_data.len();
+
+    tokio::spawn(async move {
+        stream::send_chunk(writer_handle, Bytes::from(body_data)).await.unwrap();
+        stream::finish_body(writer_handle).unwrap();
+    });
+
+    let res = fetch(
+        &client_ep, &server_id, "/upload", "POST",
+        &[("content-type".to_string(), "text/plain".to_string())],
+        Some(body_reader),
+        None,
+        Some(&addrs),
+    ).await.unwrap();
+
+    assert_eq!(res.status, 200);
+
+    let mut body = Vec::new();
+    while let Some(chunk) = next_chunk(res.body_handle).await.unwrap() {
+        body.extend_from_slice(&chunk);
+    }
+    assert_eq!(String::from_utf8(body).unwrap(), format!("received {body_len} bytes"));
+}
+
+// -- Response headers ---------------------------------------------------------
+
+#[tokio::test]
+async fn custom_response_headers() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            respond(payload.req_handle, 201, vec![
+                ("x-custom".into(), "test-value".into()),
+                ("content-length".into(), "0".into()),
+            ]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let res = fetch(&client_ep, &server_id, "/api", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    assert_eq!(res.status, 201);
+    assert!(res.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("x-custom") && v == "test-value"));
+}
+
+// -- Request headers + method -------------------------------------------------
+
+#[tokio::test]
+async fn request_headers_and_method() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            assert_eq!(payload.method, "DELETE");
+            let has_auth = payload.headers.iter().any(|(k, v)|
+                k.eq_ignore_ascii_case("authorization") && v == "Bearer token123"
+            );
+            assert!(has_auth, "authorization header missing");
+
+            respond(payload.req_handle, 204, vec![]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let res = fetch(
+        &client_ep, &server_id, "/resource/42", "DELETE",
+        &[("authorization".to_string(), "Bearer token123".to_string())],
+        None, None,
+        Some(&addrs),
+    ).await.unwrap();
+    assert_eq!(res.status, 204);
+}
+
+// -- URL scheme ---------------------------------------------------------------
+
+#[tokio::test]
+async fn url_uses_httpi_scheme() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    let captured_url = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured = captured_url.clone();
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            *captured.lock().unwrap() = payload.url.clone();
+            respond(payload.req_handle, 200, vec![]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let res = fetch(&client_ep, &server_id, "/test/path", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+
+    assert!(res.url.starts_with("httpi://"), "res.url = {}", res.url);
+    assert!(res.url.ends_with("/test/path"), "res.url = {}", res.url);
+
+    let server_url = captured_url.lock().unwrap().clone();
+    assert!(server_url.starts_with("httpi://"), "server url = {}", server_url);
+    assert!(server_url.ends_with("/test/path"), "server url = {}", server_url);
+}
+
+// -- Remote node ID -----------------------------------------------------------
+
+#[tokio::test]
+async fn remote_node_id_is_populated() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let client_id = node_id(&client_ep);
+    let addrs = server_addrs(&server_ep);
+
+    let captured_remote = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured = captured_remote.clone();
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            *captured.lock().unwrap() = payload.remote_node_id.clone();
+            respond(payload.req_handle, 200, vec![]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let _res = fetch(&client_ep, &server_id, "/", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+
+    let remote = captured_remote.lock().unwrap().clone();
+    assert_eq!(remote, client_id, "Server should see the client's node ID");
+}
+
+// -- Multiple requests --------------------------------------------------------
+
+#[tokio::test]
+async fn multiple_sequential_requests() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    let counter = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let counter_clone = counter.clone();
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            let n = counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let body = format!("request #{n}");
+            respond(payload.req_handle, 200, vec![]).unwrap();
+            let h = payload.res_body_handle;
+            tokio::spawn(async move {
+                stream::send_chunk(h, Bytes::from(body.into_bytes())).await.unwrap();
+                stream::finish_body(h).unwrap();
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    for i in 0..3u32 {
+        let res = fetch(&client_ep, &server_id, &format!("/req/{i}"), "GET", &[], None, None, Some(&addrs)).await.unwrap();
+        assert_eq!(res.status, 200);
+
+        let mut body = Vec::new();
+        while let Some(chunk) = next_chunk(res.body_handle).await.unwrap() {
+            body.extend_from_slice(&chunk);
+        }
+        assert_eq!(String::from_utf8(body).unwrap(), format!("request #{i}"));
+    }
+}
+
+// -- Trailers -----------------------------------------------------------------
+
+#[tokio::test]
+async fn response_trailers() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            respond(payload.req_handle, 200, vec![
+                ("trailer".into(), "x-checksum".into()),
+            ]).unwrap();
+
+            let body_h = payload.res_body_handle;
+            let trailer_h = payload.res_trailers_handle;
+            tokio::spawn(async move {
+                stream::send_chunk(body_h, Bytes::from("data")).await.unwrap();
+                stream::finish_body(body_h).unwrap();
+                send_trailers(trailer_h, vec![
+                    ("x-checksum".into(), "abc123".into()),
+                ]).unwrap();
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let res = fetch(&client_ep, &server_id, "/with-trailers", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    assert_eq!(res.status, 200);
+
+    while let Some(_chunk) = next_chunk(res.body_handle).await.unwrap() {}
+
+    let trailers = next_trailer(res.trailers_handle).await.unwrap();
+    let trailers = trailers.expect("expected trailers");
+    assert!(trailers.iter().any(|(k, v)|
+        k.eq_ignore_ascii_case("x-checksum") && v == "abc123"
+    ), "trailers: {:?}", trailers);
+}
+
+// -- Empty body POST ----------------------------------------------------------
+
+#[tokio::test]
+async fn post_empty_body() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            assert_eq!(payload.method, "POST");
+            let req_body_handle = payload.req_body_handle;
+            let res_body_handle = payload.res_body_handle;
+            let req_handle = payload.req_handle;
+
+            tokio::spawn(async move {
+                // Read request body — should be empty
+                let chunk = next_chunk(req_body_handle).await.unwrap();
+                assert!(chunk.is_none(), "expected empty body");
+
+                respond(req_handle, 204, vec![]).unwrap();
+                stream::finish_body(res_body_handle).unwrap();
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Create body writer but immediately finish without sending data
+    let (writer_handle, body_reader) = stream::alloc_body_writer();
+    stream::finish_body(writer_handle).unwrap();
+
+    let res = fetch(
+        &client_ep, &server_id, "/empty", "POST",
+        &[("content-length".to_string(), "0".to_string())],
+        Some(body_reader),
+        None,
+        Some(&addrs),
+    ).await.unwrap();
+    assert_eq!(res.status, 204);
+}
+
+// -- Concurrent requests ------------------------------------------------------
+
+#[tokio::test]
+async fn concurrent_requests() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            respond(payload.req_handle, 200, vec![
+                ("content-length".into(), "0".into()),
+            ]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Fire 5 requests concurrently
+    let mut handles = Vec::new();
+    for i in 0..5u32 {
+        let ep = client_ep.clone();
+        let id = server_id.clone();
+        let a = addrs.clone();
+        handles.push(tokio::spawn(async move {
+            let res = fetch(&ep, &id, &format!("/concurrent/{i}"), "GET", &[], None, None, Some(&a)).await.unwrap();
+            assert_eq!(res.status, 200);
+            i
+        }));
+    }
+
+    let mut results = Vec::new();
+    for h in handles {
+        results.push(h.await.unwrap());
+    }
+    results.sort();
+    assert_eq!(results, vec![0, 1, 2, 3, 4]);
+}
+
+// -- Fetch cancellation -------------------------------------------------------
+
+#[tokio::test]
+async fn fetch_cancelled_via_token() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    // Server: accept connection but delay response indefinitely
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            let req_handle = payload.req_handle;
+            let body_handle = payload.res_body_handle;
+            tokio::spawn(async move {
+                // Wait a long time before responding
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                let _ = respond(req_handle, 200, vec![]);
+                let _ = stream::finish_body(body_handle);
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let token = alloc_fetch_token();
+
+    // Cancel after 100ms
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        cancel_in_flight(token);
+    });
+
+    let result = fetch(
+        &client_ep, &server_id, "/slow", "GET", &[], None, Some(token), Some(&addrs),
+    ).await;
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), "aborted");
+}
+
+// -- Endpoint basics ----------------------------------------------------------
+
+#[tokio::test]
+async fn endpoint_node_id_is_stable() {
+    let opts = NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    };
+    let ep = IrohEndpoint::bind(opts).await.unwrap();
+    let id1 = ep.node_id().to_string();
+    let id2 = ep.node_id().to_string();
+    assert_eq!(id1, id2);
+    assert!(!id1.is_empty());
+}
+
+#[tokio::test]
+async fn endpoint_deterministic_key() {
+    let key = [42u8; 32];
+    let opts1 = NodeOptions {
+        key: Some(key),
+        disable_networking: true,
+        ..Default::default()
+    };
+    let opts2 = NodeOptions {
+        key: Some(key),
+        disable_networking: true,
+        ..Default::default()
+    };
+    let ep1 = IrohEndpoint::bind(opts1).await.unwrap();
+    let ep2 = IrohEndpoint::bind(opts2).await.unwrap();
+    assert_eq!(ep1.node_id(), ep2.node_id());
+}
+
+#[tokio::test]
+async fn endpoint_secret_key_round_trip() {
+    let opts = NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    };
+    let ep = IrohEndpoint::bind(opts).await.unwrap();
+    let key_bytes = ep.secret_key_bytes();
+
+    // Rebinding with the same key should produce the same node ID
+    let opts2 = NodeOptions {
+        key: Some(key_bytes),
+        disable_networking: true,
+        ..Default::default()
+    };
+    let ep2 = IrohEndpoint::bind(opts2).await.unwrap();
+    assert_eq!(ep.node_id(), ep2.node_id());
+}
+
+#[tokio::test]
+async fn endpoint_bound_sockets_non_empty() {
+    let opts = NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    };
+    let ep = IrohEndpoint::bind(opts).await.unwrap();
+    let sockets = ep.bound_sockets();
+    assert!(!sockets.is_empty(), "bound_sockets should not be empty");
+}
+
+#[tokio::test]
+async fn endpoint_close() {
+    let opts = NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    };
+    let ep = IrohEndpoint::bind(opts).await.unwrap();
+    ep.close().await;
+    // After close, connecting should fail
+}
+
+#[tokio::test]
+async fn endpoint_max_consecutive_errors_default() {
+    let opts = NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    };
+    let ep = IrohEndpoint::bind(opts).await.unwrap();
+    assert_eq!(ep.max_consecutive_errors(), 5);
+}
+
+#[tokio::test]
+async fn endpoint_max_consecutive_errors_custom() {
+    let opts = NodeOptions {
+        disable_networking: true,
+        max_consecutive_errors: Some(10),
+        ..Default::default()
+    };
+    let ep = IrohEndpoint::bind(opts).await.unwrap();
+    assert_eq!(ep.max_consecutive_errors(), 10);
+}
+
+// -- URL with query params and fragments --------------------------------------
+
+#[tokio::test]
+async fn url_with_query_params() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    let captured_url = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured = captured_url.clone();
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            *captured.lock().unwrap() = payload.url.clone();
+            respond(payload.req_handle, 200, vec![
+                ("content-length".into(), "0".into()),
+            ]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let res = fetch(&client_ep, &server_id, "/search?q=test&page=1", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    assert_eq!(res.status, 200);
+
+    let server_url = captured_url.lock().unwrap().clone();
+    assert!(server_url.contains("/search?q=test&page=1"),
+        "server url should contain query params: {}", server_url);
+    assert!(res.url.contains("/search?q=test&page=1"),
+        "response url should contain query params: {}", res.url);
+}
+
+// -- respond() error path -----------------------------------------------------
+
+#[tokio::test]
+async fn respond_invalid_handle() {
+    let result = respond(999999, 200, vec![]);
+    assert!(result.is_err());
+}
+
+// -- No trailing trailer header -----------------------------------------------
+
+#[tokio::test]
+async fn response_without_trailer_header_still_works() {
+    // Tests the server fix: when handler doesn't set Trailer: header,
+    // the server should NOT wait for trailers and complete normally.
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            // No Trailer: header declared
+            respond(payload.req_handle, 200, vec![]).unwrap();
+            let h = payload.res_body_handle;
+            tokio::spawn(async move {
+                stream::send_chunk(h, Bytes::from("works")).await.unwrap();
+                stream::finish_body(h).unwrap();
+                // Deliberately NOT calling send_trailers
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let res = fetch(&client_ep, &server_id, "/no-trailers", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    assert_eq!(res.status, 200);
+
+    let mut body = Vec::new();
+    while let Some(chunk) = next_chunk(res.body_handle).await.unwrap() {
+        body.extend_from_slice(&chunk);
+    }
+    assert_eq!(String::from_utf8(body).unwrap(), "works");
+}
+
+// -- Fetch with bad node ID ---------------------------------------------------
+
+#[tokio::test]
+async fn fetch_bad_node_id_returns_error() {
+    let opts = NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    };
+    let client = IrohEndpoint::bind(opts).await.unwrap();
+    let result = fetch(&client, "!!!invalid!!!", "/", "GET", &[], None, None, None).await;
+    assert!(result.is_err());
+}

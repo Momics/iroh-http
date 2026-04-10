@@ -23,6 +23,16 @@ use iroh_http_discovery;
 
 use crate::serve_registry;
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn parse_direct_addrs(addrs: &Option<Vec<String>>) -> Option<Vec<std::net::SocketAddr>> {
+    addrs.as_ref().map(|v| {
+        v.iter()
+            .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
+            .collect()
+    })
+}
+
 // ── Endpoint slab (replicates the napi / tauri pattern) ──────────────────────
 
 use slab::Slab;
@@ -111,6 +121,7 @@ struct CreateEndpointPayload {
     discovery_advertise: Option<bool>,
     drain_timeout: Option<u64>,
     handle_ttl: Option<u64>,
+    disable_networking: Option<bool>,
 }
 
 async fn create_endpoint(p: Value) -> Value {
@@ -139,6 +150,7 @@ async fn create_endpoint(p: Value) -> Value {
         max_chunk_size_bytes: args.max_chunk_size_bytes,
         max_consecutive_errors: args.max_consecutive_errors,
         discovery: discovery.clone(),
+        disable_networking: args.disable_networking.unwrap_or(false),
         drain_timeout_ms: args.drain_timeout,
         handle_ttl_ms: args.handle_ttl,
     };
@@ -303,6 +315,7 @@ struct RawFetchPayload {
     headers: Vec<Vec<String>>,
     req_body_handle: Option<u32>,
     fetch_token: Option<u32>,
+    direct_addrs: Option<Vec<String>>,
 }
 
 async fn raw_fetch(p: Value) -> Value {
@@ -320,7 +333,8 @@ async fn raw_fetch(p: Value) -> Value {
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
     let reader = args.req_body_handle.and_then(claim_pending_reader);
-    match iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, reader, args.fetch_token).await {
+    let addrs = parse_direct_addrs(&args.direct_addrs);
+    match iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, reader, args.fetch_token, addrs.as_deref()).await {
         Err(e) => err(e),
         Ok(res) => {
             let headers: Vec<Vec<String>> = res.headers.into_iter().map(|(k, v)| vec![k, v]).collect();

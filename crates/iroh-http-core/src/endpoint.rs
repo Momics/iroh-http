@@ -45,6 +45,9 @@ pub struct NodeOptions {
     pub max_consecutive_errors: Option<usize>,
     /// Local peer discovery configuration.
     pub discovery: Option<DiscoveryConfig>,
+    /// Disable relay servers and DNS discovery entirely.
+    /// Useful for in-process tests where endpoints connect via direct addresses.
+    pub disable_networking: bool,
     /// Milliseconds to wait for a slow body reader before dropping the connection.
     /// Default: 30 000 (30 s).
     pub drain_timeout_ms: Option<u64>,
@@ -73,7 +76,9 @@ pub(crate) struct EndpointInner {
 impl IrohEndpoint {
     /// Bind an Iroh endpoint with the supplied options.
     pub async fn bind(opts: NodeOptions) -> Result<Self, String> {
-        let relay_mode = if opts.relays.is_empty() {
+        let relay_mode = if opts.disable_networking {
+            RelayMode::Disabled
+        } else if opts.relays.is_empty() {
             RelayMode::Default
         } else {
             let urls = opts
@@ -106,9 +111,13 @@ impl IrohEndpoint {
         };
 
         let mut builder = Endpoint::empty_builder(relay_mode)
-            .address_lookup(PkarrPublisher::n0_dns())
-            .address_lookup(DnsAddressLookup::n0_dns())
             .alpns(alpns);
+
+        if !opts.disable_networking {
+            builder = builder
+                .address_lookup(PkarrPublisher::n0_dns())
+                .address_lookup(DnsAddressLookup::n0_dns());
+        }
 
         if let Some(key_bytes) = opts.key {
             builder = builder.secret_key(SecretKey::from_bytes(&key_bytes));
@@ -168,5 +177,10 @@ impl IrohEndpoint {
 
     pub fn raw(&self) -> &Endpoint {
         &self.inner.ep
+    }
+
+    /// Returns the local socket addresses this endpoint is bound to.
+    pub fn bound_sockets(&self) -> Vec<std::net::SocketAddr> {
+        self.inner.ep.bound_sockets()
     }
 }

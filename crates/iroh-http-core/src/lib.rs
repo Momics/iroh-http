@@ -193,3 +193,137 @@ pub(crate) fn parse_node_id(s: &str) -> Result<iroh::PublicKey, String> {
         .map_err(|_| "node-id must be 32 bytes".to_string())?;
     iroh::PublicKey::from_bytes(&arr).map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── classify_error_json ─────────────────────────────────────────────
+
+    #[test]
+    fn classify_timeout() {
+        let json = classify_error_json("connect timed out after 30s");
+        assert!(json.contains("\"code\":\"TIMEOUT\""));
+        assert!(json.contains("timed out"));
+    }
+
+    #[test]
+    fn classify_dns_failure() {
+        let json = classify_error_json("dns resolution failed for node.example.com");
+        assert!(json.contains("\"code\":\"DNS_FAILURE\""));
+    }
+
+    #[test]
+    fn classify_alpn_mismatch() {
+        let json = classify_error_json("peer does not support required alpn protocol");
+        assert!(json.contains("\"code\":\"ALPN_MISMATCH\""));
+    }
+
+    #[test]
+    fn classify_upgrade_rejected() {
+        let json = classify_error_json("upgrade rejected: non-101 response");
+        assert!(json.contains("\"code\":\"UPGRADE_REJECTED\""));
+    }
+
+    #[test]
+    fn classify_parse_failure() {
+        let json = classify_error_json("parse response head: invalid status line");
+        assert!(json.contains("\"code\":\"PARSE_FAILURE\""));
+    }
+
+    #[test]
+    fn classify_invalid_handle() {
+        let json = classify_error_json("invalid writer handle: 42");
+        assert!(json.contains("\"code\":\"INVALID_HANDLE\""));
+    }
+
+    #[test]
+    fn classify_writer_dropped() {
+        let json = classify_error_json("body writer dropped before completion");
+        assert!(json.contains("\"code\":\"WRITER_DROPPED\""));
+    }
+
+    #[test]
+    fn classify_reader_dropped() {
+        let json = classify_error_json("body reader dropped");
+        assert!(json.contains("\"code\":\"READER_DROPPED\""));
+    }
+
+    #[test]
+    fn classify_connection_refused() {
+        let json = classify_error_json("connection refused by peer");
+        assert!(json.contains("\"code\":\"REFUSED\""));
+    }
+
+    #[test]
+    fn classify_stream_reset() {
+        let json = classify_error_json("stream reset by remote");
+        assert!(json.contains("\"code\":\"STREAM_RESET\""));
+    }
+
+    #[test]
+    fn classify_invalid_key() {
+        let json = classify_error_json("invalid key bytes: wrong length");
+        assert!(json.contains("\"code\":\"INVALID_KEY\""));
+    }
+
+    #[test]
+    fn classify_endpoint_failure() {
+        let json = classify_error_json("failed to bind endpoint");
+        assert!(json.contains("\"code\":\"ENDPOINT_FAILURE\""));
+    }
+
+    #[test]
+    fn classify_unknown() {
+        let json = classify_error_json("something completely unexpected happened");
+        assert!(json.contains("\"code\":\"UNKNOWN\""));
+    }
+
+    #[test]
+    fn classify_escapes_special_chars() {
+        let json = classify_error_json("message with \"quotes\" and\nnewlines");
+        assert!(json.contains(r#"\"quotes\""#));
+        assert!(json.contains(r"\n"));
+        // Verify it's valid-ish JSON
+        assert!(json.starts_with('{'));
+        assert!(json.ends_with('}'));
+    }
+
+    // ── base32 encode / decode ──────────────────────────────────────────
+
+    #[test]
+    fn base32_round_trip() {
+        let original: Vec<u8> = (0..32).collect();
+        let encoded = base32_encode(&original);
+        let decoded = base32_decode(&encoded).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn base32_empty() {
+        let encoded = base32_encode(&[]);
+        assert_eq!(encoded, "");
+        let decoded = base32_decode("").unwrap();
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn base32_decode_invalid_char() {
+        let result = base32_decode("!!!invalid!!!");
+        assert!(result.is_err());
+    }
+
+    // ── parse_node_id ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_node_id_invalid_base32() {
+        let result = parse_node_id("!!!not-base32!!!");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_node_id_wrong_length() {
+        let result = parse_node_id("aa"); // too short
+        assert!(result.is_err());
+    }
+}

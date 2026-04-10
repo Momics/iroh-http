@@ -10,7 +10,7 @@
  * ```
  */
 
-import type { Bridge, RawFetchFn, AllocBodyWriterFn, RawConnectFn, BidirectionalStream } from "./bridge.js";
+import type { Bridge, RawFetchFn, AllocBodyWriterFn, RawConnectFn, BidirectionalStream, IrohFetchInit } from "./bridge.js";
 import { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
 import type { PublicKey } from "./keys.js";
 import { resolveNodeId } from "./keys.js";
@@ -19,7 +19,7 @@ import { classifyError } from "./errors.js";
 export type FetchFn = (
   peer: PublicKey | string,
   input: string | URL,
-  init?: RequestInit
+  init?: IrohFetchInit
 ) => Promise<Response>;
 
 /**
@@ -37,12 +37,13 @@ export function makeFetch(
   return async (
     peer: PublicKey | string,
     input: string | URL,
-    init?: RequestInit
+    init?: IrohFetchInit
   ): Promise<Response> => {
     const nodeId = resolveNodeId(peer);
     const url = typeof input === "string" ? input : input.toString();
     const method = init?.method ?? "GET";
     const signal = init?.signal ?? null;
+    const directAddrs = init?.directAddrs ?? null;
 
     // Reject immediately if already aborted.
     if (signal?.aborted) {
@@ -91,10 +92,10 @@ export function makeFetch(
     try {
       rawRes = abortPromise
         ? await Promise.race([
-            rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken),
+            rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken, directAddrs),
             abortPromise,
           ])
-        : await rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken);
+        : await rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken, directAddrs);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       throw classifyError(err);

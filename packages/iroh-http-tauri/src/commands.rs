@@ -12,6 +12,16 @@ use tauri::{command, ipc::Channel};
 
 use crate::state;
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn parse_direct_addrs(addrs: &Option<Vec<String>>) -> Option<Vec<std::net::SocketAddr>> {
+    addrs.as_ref().map(|v| {
+        v.iter()
+            .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
+            .collect()
+    })
+}
+
 // ── Endpoint ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +39,7 @@ pub struct CreateEndpointArgs {
     pub discovery_advertise: Option<bool>,
     pub drain_timeout: Option<u64>,
     pub handle_ttl: Option<u64>,
+    pub disable_networking: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -66,6 +77,7 @@ pub async fn create_endpoint(
             max_chunk_size_bytes: a.max_chunk_size_bytes,
             max_consecutive_errors: a.max_consecutive_errors,
             discovery: discovery.clone(),
+            disable_networking: a.disable_networking.unwrap_or(false),
             drain_timeout_ms: a.drain_timeout,
             handle_ttl_ms: a.handle_ttl,
         })
@@ -190,6 +202,7 @@ pub struct RawFetchArgs {
     pub headers: Vec<Vec<String>>,
     pub req_body_handle: Option<u32>,
     pub fetch_token: Option<u32>,
+    pub direct_addrs: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -215,7 +228,8 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
 
     let req_body_reader = args.req_body_handle.and_then(iroh_http_core::stream::claim_pending_reader);
 
-    let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.fetch_token)
+    let addrs = parse_direct_addrs(&args.direct_addrs);
+    let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.fetch_token, addrs.as_deref())
         .await.map_err(iroh_http_core::classify_error_json)?;
 
     let resp_headers: Vec<Vec<String>> = res
