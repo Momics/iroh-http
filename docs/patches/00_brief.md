@@ -331,17 +331,17 @@ node.serve({}, async (req) => {
 
 ### URL scheme
 
-URLs use the `http+iroh://` scheme with the node's public key as the host:
+URLs use the `httpi://` scheme with the node's public key as the host:
 
 ```
-http+iroh://b5ea...f3c2/api/data?q=hello
+httpi://b5ea...f3c2/api/data?q=hello
 ```
 
-- On the **server side**, incoming requests arrive with `http+iroh://<own-public-key>/path` as `req.url`. Routing by pathname works naturally with `new URL(req.url).pathname`.
-- On the **client side**, after a `fetch`, the response URL reflects the remote peer: `http+iroh://<remote-public-key>/path`.
+- On the **server side**, incoming requests arrive with `httpi://<own-public-key>/path` as `req.url`. Routing by pathname works naturally with `new URL(req.url).pathname`.
+- On the **client side**, after a `fetch`, the response URL reflects the remote peer: `httpi://<remote-public-key>/path`.
 - If a user supplies a plain `http://` or `https://` URL to `fetch`, the library can forward it over standard TCP as a fallback — enabling seamless backwards compatibility with the regular web.
 
-The header name (`iroh-node-id`) and URL scheme (`http+iroh://`) may be refined before v1 ships.
+The header name (`iroh-node-id`) and URL scheme (`httpi://`) may be refined before v1 ships.
 
 -----
 
@@ -398,7 +398,7 @@ FfiResponse { status, headers } + resBodyHandle
     |  FFI boundary
     v
 iroh-http-shared: construct web Response with ReadableStream body
-    |  set response URL to http+iroh://<peerId>/path
+    |  set response URL to httpi://<peerId>/path
     v
 User code: await res.json() / res.body.pipeTo(...)
 ```
@@ -526,7 +526,7 @@ The `Discovery` trait is defined by Iroh. All implementations satisfy the same i
 | Shared JS layer                                          | All stream construction and web-standard object reconstruction lives in `iroh-http-shared`. Each bridge implements exactly three methods.                       |
 | Separate `iroh-http-framing` crate                       | Keeps the wire format reusable for embedded targets and future language bindings without pulling in Tokio or Iroh.                                              |
 | Pluggable discovery via trait                            | Local discovery varies by platform. Injecting it via Iroh's `Discovery` trait keeps `iroh-http-core` platform-agnostic.                                         |
-| `http+iroh://` URL scheme                                | Preserves HTTP semantics in the scheme name. Plain `http://` URLs can fall back to standard TCP for backwards compatibility.                                    |
+| `httpi://` URL scheme                                    | Preserves HTTP semantics in the scheme name. Plain `http://` URLs can fall back to standard TCP for backwards compatibility.                                    |
 
 -----
 

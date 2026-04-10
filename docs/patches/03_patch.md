@@ -68,7 +68,7 @@ async def main():
         # node2 = await create_node(key=node.keypair)
 
         # ── fetch ──────────────────────────────────────────────────────────
-        resp = await node.fetch(peer_id, "http+iroh://peer/api")
+        resp = await node.fetch(peer_id, "httpi://peer/api")
         body: bytes = await resp.bytes()
         text: str   = await resp.text()
         data: Any   = await resp.json()

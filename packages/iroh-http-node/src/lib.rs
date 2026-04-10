@@ -326,12 +326,32 @@ pub async fn raw_fetch(
     })
 }
 
-// ── rawServe ──────────────────────────────────────────────────────────────────
+// ── rawServe / rawRespond ──────────────────────────────────────────────────────
 
-#[napi(object)]
-pub struct JsResponseHead {
-    pub status: u32,
-    pub headers: Vec<Vec<String>>,
+/// Call once per request from the JS handler to send the response head.
+///
+/// This is the Node.js equivalent of Tauri's `respond_to_request` command.
+/// The handler callback in `rawServe` is fire-and-forget (napi-rs does not
+/// support awaiting Promise return values from ThreadsafeFunction callbacks),
+/// so JS must call `rawRespond` explicitly after computing the response head.
+#[napi]
+pub fn raw_respond(
+    req_handle: u32,
+    status: u32,
+    headers: Vec<Vec<String>>,
+) -> napi::Result<()> {
+    let header_pairs: Vec<(String, String)> = headers
+        .into_iter()
+        .filter_map(|p| {
+            if p.len() == 2 {
+                Some((p[0].clone(), p[1].clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    respond(req_handle, status as u16, header_pairs)
+        .map_err(|e| napi::Error::new(Status::GenericFailure, e))
 }
 
 #[napi]
@@ -342,6 +362,8 @@ pub fn raw_serve(
     let ep = get_endpoint(endpoint_handle)?;
 
     type CallArgs = RequestPayload;
+    // Use ErrorStrategy::Fatal but do NOT rely on the return value — the JS
+    // handler is async and calls `rawRespond` explicitly when ready.
     let tsfn: ThreadsafeFunction<CallArgs, ErrorStrategy::Fatal> = handler
         .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<CallArgs>| {
             let env = ctx.env;
@@ -377,37 +399,14 @@ pub fn raw_serve(
         ServeOptions { max_consecutive_errors: Some(ep.max_consecutive_errors()), ..Default::default() },
         move |payload: RequestPayload| {
             let tsfn = Arc::clone(&tsfn);
-            let req_handle = payload.req_handle;
-            tokio::spawn(async move {
-                let result: napi::Result<JsResponseHead> = tsfn.call_async(payload).await;
-                match result {
-                    Ok(head) => {
-                        let headers: Vec<(String, String)> = head
-                            .headers
-                            .into_iter()
-                            .filter_map(|p| {
-                                if p.len() == 2 {
-                                    Some((p[0].clone(), p[1].clone()))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        if let Err(e) = respond(req_handle, head.status as u16, headers) {
-                            tracing::warn!("iroh-http-node: respond error: {e}");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("iroh-http-node: handler error: {e}");
-                        let _ = respond(req_handle, 500, vec![]);
-                    }
-                }
-            });
+            // Fire-and-forget: JS calls rawRespond explicitly.
+            tsfn.call(payload, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
         },
     );
 
     Ok(())
 }
+
 
 // ── rawConnect ────────────────────────────────────────────────────────────────
 
