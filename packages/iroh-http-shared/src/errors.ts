@@ -61,9 +61,11 @@ export class IrohProtocolError extends IrohError {
 }
 
 /** The operation was aborted via AbortSignal. */
-export class IrohAbortError extends DOMException {
+export class IrohAbortError extends IrohError {
   constructor(message = "The operation was aborted") {
-    super(message, "AbortError");
+    super(message, "ABORTED");
+    this.name = "AbortError";
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 

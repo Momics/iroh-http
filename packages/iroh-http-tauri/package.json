@@ -23,7 +23,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@momics/iroh-http-shared": "workspace:*"
+    "@momics/iroh-http-shared": "*"
   },
   "files": ["dist", "guest-js"],
   "publishConfig": { "access": "public" },
