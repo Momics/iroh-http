@@ -109,6 +109,7 @@ print(res.text())
 ## Features
 
 - **Web-standard `fetch`/`serve` API** — uses standard `Request`/`Response` objects; works with existing routing and middleware libraries
+- **`httpi://` URL scheme** — clean, parseable URLs with the peer's public key as the host (see [Protocol docs](docs/protocol.md))
 - **Bidirectional streaming** — full-duplex streams via `createBidirectionalStream`
 - **Response trailers** — HTTP/1.1 chunked trailers for streaming metadata
 - **AbortSignal** — cancel in-flight requests
