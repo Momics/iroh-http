@@ -153,6 +153,7 @@ async fn create_endpoint(p: Value) -> Value {
         disable_networking: args.disable_networking.unwrap_or(false),
         drain_timeout_ms: args.drain_timeout,
         handle_ttl_ms: args.handle_ttl,
+        max_pooled_connections: None,
     };
     match IrohEndpoint::bind(opts).await {
         Err(e) => err(e),

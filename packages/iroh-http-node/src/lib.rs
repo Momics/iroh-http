@@ -124,6 +124,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         disable_networking: o.disable_networking.unwrap_or(false),
         drain_timeout_ms: o.drain_timeout.map(|v| v as u64),
         handle_ttl_ms: o.handle_ttl.map(|v| v as u64),
+        max_pooled_connections: None,
     }).unwrap_or_default();
 
     let ep = IrohEndpoint::bind(opts)

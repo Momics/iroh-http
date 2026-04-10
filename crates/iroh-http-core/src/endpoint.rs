@@ -7,6 +7,7 @@ use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
 use iroh::endpoint::{IdleTimeout, QuicTransportConfig};
 
 use crate::{ALPN, ALPN_DUPLEX, ALPN_TRAILERS, ALPN_FULL};
+use crate::pool::ConnectionPool;
 
 /// Configuration for mDNS local network discovery.
 #[derive(Debug, Default, Clone)]
@@ -54,6 +55,9 @@ pub struct NodeOptions {
     /// TTL in milliseconds for slab handle entries.  Expired entries are swept
     /// every 60 s.  `0` disables sweeping.  Default: 300 000 (5 min).
     pub handle_ttl_ms: Option<u64>,
+    /// Maximum number of idle connections to keep in the pool.
+    /// `None` means no limit (rely on Iroh's idle timeout for cleanup).
+    pub max_pooled_connections: Option<usize>,
 }
 
 /// A shared Iroh endpoint.
@@ -71,6 +75,8 @@ pub(crate) struct EndpointInner {
     pub node_id_str: String,
     /// Configured consecutive error limit for the serve accept loop.
     pub max_consecutive_errors: usize,
+    /// Connection pool for reusing QUIC connections across fetch/connect calls.
+    pub pool: ConnectionPool,
 }
 
 impl IrohEndpoint {
@@ -151,6 +157,7 @@ impl IrohEndpoint {
                 ep,
                 node_id_str,
                 max_consecutive_errors: opts.max_consecutive_errors.unwrap_or(5),
+                pool: ConnectionPool::new(opts.max_pooled_connections),
             }),
         })
     }
@@ -177,6 +184,11 @@ impl IrohEndpoint {
 
     pub fn raw(&self) -> &Endpoint {
         &self.inner.ep
+    }
+
+    /// Access the connection pool.
+    pub(crate) fn pool(&self) -> &ConnectionPool {
+        &self.inner.pool
     }
 
     /// Returns the local socket addresses this endpoint is bound to.
