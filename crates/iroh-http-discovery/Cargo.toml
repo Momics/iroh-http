@@ -1,0 +1,12 @@
+[package]
+name = "iroh-http-discovery"
+version = "0.1.0"
+edition = "2021"
+description = "Optional mDNS peer discovery for iroh-http (desktop platforms)"
+
+[features]
+default = ["mdns"]
+mdns = ["iroh/address-lookup-mdns"]
+
+[dependencies]
+iroh = { workspace = true }

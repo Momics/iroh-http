@@ -1,0 +1,16 @@
+"$schema" = "../schemas/schema.json"
+
+[[permission]]
+identifier = "default"
+description = "Default permissions for iroh-http plugin"
+permissions = [
+  "allow-create-endpoint",
+  "allow-close-endpoint",
+  "allow-next-chunk",
+  "allow-send-chunk",
+  "allow-finish-body",
+  "allow-alloc-body-writer",
+  "allow-raw-fetch",
+  "allow-serve",
+  "allow-respond-to-request",
+]

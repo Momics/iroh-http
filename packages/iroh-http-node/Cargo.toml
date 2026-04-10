@@ -1,0 +1,18 @@
+[package]
+name = "iroh-http-node"
+version = "0.1.0"
+edition = "2021"
+description = "Node.js native addon for iroh-http (napi-rs)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+iroh-http-core = { path = "../../crates/iroh-http-core" }
+napi = { version = "2", features = ["async", "napi9"] }
+napi-derive = "2"
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+bytes = { workspace = true }
+
+[build-dependencies]
+napi-build = "1"

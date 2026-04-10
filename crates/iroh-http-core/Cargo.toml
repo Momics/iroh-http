@@ -1,0 +1,13 @@
+[package]
+name = "iroh-http-core"
+version = "0.1.0"
+edition = "2021"
+description = "Iroh QUIC endpoint, HTTP framing, fetch/serve with FFI-friendly types"
+
+[dependencies]
+iroh-http-framing = { path = "../iroh-http-framing" }
+iroh = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+slab = { workspace = true }
+tracing = "0.1"
