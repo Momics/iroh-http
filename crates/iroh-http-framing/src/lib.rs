@@ -51,7 +51,7 @@ pub fn serialize_request_head(
     push_str(&mut buf, method);
     buf.push(b' ');
     push_str(&mut buf, path);
-    push_str(&mut buf, " Iroh-HTTP/1\r\n");
+    push_str(&mut buf, " HTTP/1.1\r\n");
     let has_content_len = headers
         .iter()
         .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
@@ -113,7 +113,7 @@ pub fn serialize_response_head(
     chunked: bool,
 ) -> Vec<u8> {
     let mut buf = Vec::new();
-    push_str(&mut buf, "Iroh-HTTP/1 ");
+    push_str(&mut buf, "HTTP/1.1 ");
     push_u16(&mut buf, status);
     buf.push(b' ');
     push_str(&mut buf, reason);

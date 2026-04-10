@@ -223,11 +223,18 @@ where
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
+    // Only use chunked encoding when the response does NOT carry a Content-Length.
+    // If Content-Length is set, send the raw body bytes as-is so the framing
+    // matches what the client expects from the headers.
+    let res_chunked = !response_head
+        .headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
     let head_bytes = serialize_response_head(
         response_head.status,
         reason_phrase(response_head.status),
         &pairs,
-        !is_bidi, // chunked only in non-duplex mode
+        res_chunked && !is_bidi, // chunked only when no Content-Length and not duplex
     );
     send.write_all(&head_bytes)
         .await
@@ -239,7 +246,7 @@ where
         pump_body_raw_to_stream(res_reader, &mut send).await?;
     } else {
         let rs_rx = opt_res_trailer_rx.expect("non-duplex res_trailer_rx");
-        pump_body_to_stream(res_reader, &mut send, true, Some(rs_rx)).await?;
+        pump_body_to_stream(res_reader, &mut send, res_chunked, Some(rs_rx)).await?;
     }
 
     send.finish().map_err(|e| format!("finish stream: {e}"))?;

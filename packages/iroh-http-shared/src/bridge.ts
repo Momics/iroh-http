@@ -19,8 +19,16 @@ export interface Bridge {
 
   // ── §3 AbortSignal cancellation ────────────────────────────────────────────
   /** Drop a body reader from the Rust slab, cancelling an in-flight fetch. */
-  cancelRequest(handle: number): Promise<void>;
-
+  cancelRequest(handle: number): Promise<void>;  /**
+   * Allocate an in-flight cancellation token in the Rust fetch map.
+   * Call this before `rawFetch` and wire abort → `cancelFetch(token)`.
+   */
+  allocFetchToken(): Promise<number>;
+  /**
+   * Signal the Rust fetch task to abort.  Safe to call after the fetch has
+   * already completed.  Fire-and-forget (do not await).
+   */
+  cancelFetch(token: number): void;
   // ── §4 Trailer headers ──────────────────────────────────────────────────────
   /**
    * Await and retrieve trailers produced after the body is consumed.
@@ -176,7 +184,8 @@ export type RawFetchFn = (
   url: string,
   method: string,
   headers: [string, string][],
-  reqBodyHandle: number | null
+  reqBodyHandle: number | null,
+  fetchToken: number
 ) => Promise<FfiResponse>;
 
 /** Allocate a body writer handle (may be sync or async). */

@@ -6,7 +6,13 @@ fn main() {
         "send_chunk",
         "finish_body",
         "alloc_body_writer",
+        "alloc_fetch_token",
+        "cancel_in_flight",
+        "cancel_request",
+        "next_trailer",
+        "send_trailers",
         "raw_fetch",
+        "raw_connect",
         "serve",
         "respond_to_request",
     ])

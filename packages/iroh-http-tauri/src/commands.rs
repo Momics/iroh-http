@@ -116,6 +116,16 @@ pub fn alloc_body_writer() -> u32 {
     state::js_alloc_body_writer()
 }
 
+#[command]
+pub fn alloc_fetch_token() -> u32 {
+    iroh_http_core::alloc_fetch_token()
+}
+
+#[command]
+pub fn cancel_in_flight(token: u32) {
+    iroh_http_core::cancel_in_flight(token);
+}
+
 // ── rawFetch ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -127,6 +137,7 @@ pub struct RawFetchArgs {
     pub method: String,
     pub headers: Vec<Vec<String>>,
     pub req_body_handle: Option<u32>,
+    pub fetch_token: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -152,7 +163,7 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
 
     let req_body_reader = args.req_body_handle.and_then(state::claim_pending_reader);
 
-    let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader)
+    let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.fetch_token)
         .await?;
 
     let resp_headers: Vec<Vec<String>> = res

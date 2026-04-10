@@ -18,6 +18,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::next_trailer,
             commands::send_trailers,
             commands::alloc_body_writer,
+            commands::alloc_fetch_token,
+            commands::cancel_in_flight,
             commands::raw_fetch,
             commands::serve,
             commands::respond_to_request,

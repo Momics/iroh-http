@@ -8,6 +8,13 @@ This document specifies `iroh-http-discovery`: cross-platform local peer
 discovery for iroh-http nodes. Discovery is a **completely separate, optional
 package** — nothing in `iroh-http-core` or any platform adapter changes.
 
+> **Prior art:** `.old_references/iroh-tauri` contains a working
+> implementation of mDNS discovery for desktop, iOS, and Android inside an
+> earlier Tauri plugin. The mobile approach there — a Rust `mobile_mdns.rs`
+> bridge calling into a Swift plugin (`IrohPlugin.swift`) on iOS and a Kotlin
+> plugin (`IrohPlugin.kt`) on Android via Tauri's `PluginHandle::run_mobile_plugin()`
+> — is the pattern this patch follows exactly.
+
 ---
 
 ## Background — why a separate package?
@@ -38,31 +45,28 @@ The separation is deliberate for three reasons:
 
 ## Rust crate — `iroh-http-discovery`
 
+This crate handles **desktop only**. Mobile discovery lives in the Tauri
+plugin package (see below) because iOS and Android require native Swift/Kotlin
+code that cannot be expressed as Rust Cargo dependencies.
+
 ### Layout
 
 ```
 crates/iroh-http-discovery/
 ├── Cargo.toml
 └── src/
-    ├── lib.rs          # public API, re-exports, cfg routing
-    ├── desktop.rs      # mDNS via iroh/address-lookup-mdns (macOS, Linux, Windows)
-    ├── ios.rs          # NWBrowser via objc2 (cfg target_os = "ios")
-    └── android.rs      # NsdManager via jni crate (cfg target_os = "android")
+    └── lib.rs      # mDNS via iroh/address-lookup-mdns (macOS, Linux, Windows)
 ```
+
+This is identical to the current `lib.rs` draft — no restructuring required.
 
 ### Features
 
 ```toml
 [features]
 default = ["mdns"]
-mdns    = ["iroh/address-lookup-mdns"]   # desktop
-ios     = ["objc2", "objc2-foundation"]  # enabled automatically on iOS targets
-android = ["jni"]                        # enabled automatically on Android targets
+mdns    = ["iroh/address-lookup-mdns"]
 ```
-
-`ios` and `android` are activated automatically through Cargo's
-`[target.'cfg(target_os = "ios")'.dependencies]` / `android` blocks, so
-callers never need to set them explicitly.
 
 ### Public API
 
@@ -96,40 +100,12 @@ pub fn subscribe(
 `DiscoveryHandle` implements `Drop` to tear down the underlying service
 cleanly. It is `Send + Sync`.
 
-### Platform implementations
+### Platform implementation
 
-#### Desktop (`desktop.rs`)
+#### Desktop
 
 Wraps `iroh::address_lookup::MdnsAddressLookup` exactly as the current
-`lib.rs` draft does, but moved into its own file. No functional change.
-
-#### iOS (`ios.rs`)
-
-Uses `NWBrowser` from Apple's Network.framework via `objc2` + `objc2-foundation`:
-
-- Creates an `NWBrowser` for `_iroh-http._udp` services on the local network.
-- Creates an `NWListener` if `advertise = true` to publish a Bonjour record
-  containing the node's `PublicKey` as a TXT attribute.
-- On peer found, extracts the node ID from the TXT record and calls
-  `ep.address_lookup().add(...)`.
-- Requires the `NSLocalNetworkUsageDescription` and
-  `NSBonjourServices` entries in `Info.plist` — the calling app must supply
-  these; the library documents the requirement.
-
-#### Android (`android.rs`)
-
-Uses `NsdManager` via the `jni` crate:
-
-- Calls `NsdManager.discoverServices("_iroh-http._udp", ...)` to find peers.
-- Calls `NsdManager.registerService(...)` with a service record containing
-  the node ID in a TXT-record attribute if `advertise = true`.
-- On peer found, extracts the node ID and calls `ep.address_lookup().add(...)`.
-- Requires `CHANGE_WIFI_MULTICAST_STATE` and `INTERNET` permissions in
-  `AndroidManifest.xml` — the calling app must supply these.
-- **JVM handle:** the Android module requires a `jni::JavaVM` reference.
-  `start_discovery` on Android takes an additional `vm: &Arc<JavaVM>`
-  argument. Tauri mobile provides this via its application context; callers
-  on bare Android obtain it from `ndk_context`.
+`lib.rs` draft does. No change required.
 
 ---
 
@@ -227,20 +203,91 @@ combined cdylib via Cargo workspace.
 
 ### `iroh-http-discovery-tauri`
 
+This package follows the same structure as `.old_references/iroh-tauri`,
+which already solved this problem. The key insight is that iOS and Android
+cannot use Rust `jni` or `objc2` crates directly — raw UDP multicast is
+restricted on both platforms. Instead, the native OS APIs are called from
+Swift (iOS) and Kotlin (Android) plugins, and a Rust bridge
+(`mobile_mdns.rs`) talks to them via Tauri's `PluginHandle::run_mobile_plugin()`.
+
 ```
 packages/iroh-http-discovery-tauri/
-├── Cargo.toml          # Tauri plugin crate, deps on iroh-http-discovery
-├── package.json        # peerDependencies: { "@iroh-http/tauri": "*" }
-└── src/
-    ├── lib.rs          # #[tauri::command] start_discovery / stop_discovery
-    ├── state.rs        # DiscoveryState — Arc-wrapped handle stored in Tauri state
-    └── commands.rs     # command implementations
+├── Cargo.toml               # staticlib + cdylib + rlib, peerDep on iroh-http-tauri
+├── build.rs                 # tauri-plugin build
+├── package.json             # peerDependencies: { "@iroh-http/tauri": "*" }
+├── src/
+│   ├── lib.rs               # plugin init, #[cfg(desktop)] / #[cfg(mobile)] routing
+│   ├── commands.rs          # #[tauri::command] start_discovery / stop_discovery
+│   ├── mobile_mdns.rs       # Rust bridge → PluginHandle::run_mobile_plugin()
+│   └── state.rs             # DiscoveryState in Tauri managed state
+├── ios/
+│   └── Sources/
+│       └── IrohDiscoveryPlugin.swift   # NWListener (advertise) + NWBrowser (browse)
+└── android/
+    └── src/main/java/com/iroh/http/discovery/
+        └── IrohDiscoveryPlugin.kt      # NsdManager (advertise + browse)
 ```
 
-On iOS, `commands.rs` calls `iroh_http_discovery::ios::start_discovery`.
-On Android, it passes the `JavaVM` from `tauri::AppHandle` context.
-On desktop, it calls the mDNS path. The `#[cfg]` routing is inside the Rust
-crate, invisible to the Tauri command layer.
+#### Desktop path (`#[cfg(desktop)]`)
+
+`commands.rs` calls `iroh_http_discovery::start_discovery` directly — the
+existing desktop mDNS crate. Identical to how the old reference wired
+discovery for desktop.
+
+#### Mobile path (`#[cfg(mobile)]`)
+
+`mobile_mdns.rs` exposes a `MobileMdns<R>` struct (generic over Tauri
+`Runtime`) that wraps a `PluginHandle<R>`. It implements six operations
+matching the reference implementation exactly:
+
+```rust
+impl<R: Runtime> MobileMdns<R> {
+    pub fn advertise_start(&self, node_id: &str, relay_url: Option<&str>, service_name: &str) -> Result<u64, String>;
+    pub fn advertise_stop(&self, advertise_id: u64) -> Result<(), String>;
+    pub fn browse_start(&self, service_name: &str) -> Result<u64, String>;
+    pub fn browse_poll(&self, browse_id: u64) -> Result<Vec<NativeMdnsEvent>, String>;
+    pub fn browse_stop(&self, browse_id: u64) -> Result<(), String>;
+}
+```
+
+Each call serialises a JSON payload and calls
+`self.0.run_mobile_plugin("mdns_<op>", payload)`, routing to the native
+layer. Events are **poll-based** — the native layer buffers discovered peers
+in a `pendingEvents` queue and drains it on each `browse_poll` call. A
+background Tokio task polls on a timer interval and feeds results into the
+`DiscoveryHandle` subscriber.
+
+#### iOS — `IrohDiscoveryPlugin.swift`
+
+Based directly on `.old_references/iroh-tauri/ios/Sources/IrohPlugin.swift`:
+
+- **Advertise:** `NWListener` with a UDP service. TXT record carries `pk`
+  (base32 node ID) and optionally `relay` (relay URL). Service type:
+  `_<serviceName>._udp`. Uses an OS-assigned port (avoids `EADDRINUSE` on
+  hot-reload). Handles `kDNSServiceErr_DefunctConnection` by cancelling and
+  removing the session so re-advertising always succeeds.
+- **Browse:** `NWBrowser` for `_<serviceName>._udp` on `.local`. On each
+  result, extracts `pk` from the TXT record, deduplicates by `fullName`, and
+  appends a `{type: "found", nodeId, addrs}` event to `pendingEvents`.
+- **Plist requirements** (app must supply):
+  - `NSLocalNetworkUsageDescription`
+  - `NSBonjourServices` → `_<serviceName>._udp`
+
+#### Android — `IrohDiscoveryPlugin.kt`
+
+Based directly on `.old_references/iroh-tauri/android/src/main/java/com/momics/iroh/IrohPlugin.kt`:
+
+- **Advertise:** `NsdManager.registerService()` with a `NsdServiceInfo` that
+  sets `setAttribute("pk", nodeId)` and optionally `setAttribute("relay", ...)`.
+- **Browse:** `NsdManager.discoverServices()`. On each result,
+  `NsdManager.resolveService()` is called to obtain the TXT attributes. The
+  `pk` attribute is extracted and a `found` event is appended to
+  `pendingEvents`.
+- **Manifest requirements** (app must supply):
+  - `CHANGE_WIFI_MULTICAST_STATE`
+  - `INTERNET`
+- Tauri provides the `Activity` context automatically — no `jni::JavaVM`
+  handle is needed in Rust.
 
 ---
 

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use iroh_http_core::{
     server::{respond, ServeOptions},
-    stream::{finish_body, next_chunk, send_chunk},
+    stream::{finish_body, next_chunk, send_chunk, make_body_channel},
     IrohEndpoint, NodeOptions,
 };
 use pyo3::{
@@ -184,10 +184,22 @@ impl IrohNode {
         let ep      = self.ep.clone();
         let method  = method.to_owned();
         let headers = headers.unwrap_or_default();
-        let _body   = body; // body writing via body writer not yet wired for Python—future extension
+
+        // Wire up the optional body through a channel so the core fetch can
+        // stream it concurrently with reading the response head.
+        let body_reader = if let Some(body_bytes) = body {
+            let (writer, reader) = make_body_channel();
+            tokio::spawn(async move {
+                let _ = writer.send_chunk(Bytes::from(body_bytes)).await;
+                // BodyWriter drops here, signalling EOF to the reader.
+            });
+            Some(reader)
+        } else {
+            None
+        };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let res = iroh_http_core::fetch(&ep, &peer_id, &url, &method, &headers, None)
+            let res = iroh_http_core::fetch(&ep, &peer_id, &url, &method, &headers, body_reader, None)
                 .await
                 .map_err(py_err)?;
             Ok(IrohResponse {

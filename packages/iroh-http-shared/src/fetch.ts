@@ -60,7 +60,24 @@ export function makeFetch(
       bodyPipePromise = pipeToWriter(bridge, bodyStream, reqBodyHandle);
     }
 
-    // Build an abort promise so we can race it against rawFetch (§3).
+    // Allocate a Rust-side cancellation token so that AbortSignal can cancel
+    // the transport even before the response head arrives (§3 enhanced).
+    const fetchToken = await bridge.allocFetchToken();
+
+    // Wire AbortSignal → cancelFetch as early as possible (fire-and-forget).
+    // This fires even if the signal is already aborted.
+    let cancelAbortListener: (() => void) | null = null;
+    if (signal) {
+      if (signal.aborted) {
+        bridge.cancelFetch(fetchToken);
+        throw new DOMException("The operation was aborted", "AbortError");
+      }
+      cancelAbortListener = () => bridge.cancelFetch(fetchToken);
+      signal.addEventListener("abort", cancelAbortListener, { once: true });
+    }
+
+    // Build an abort promise for the JS-side race (still needed so the Promise
+    // rejects immediately while the Rust cancel propagates in the background).
     let onAbort: (() => void) | null = null;
     const abortPromise = signal
       ? new Promise<never>((_, reject) => {
@@ -74,15 +91,20 @@ export function makeFetch(
     try {
       rawRes = abortPromise
         ? await Promise.race([
-            rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle),
+            rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken),
             abortPromise,
           ])
-        : await rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle);
+        : await rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       throw classifyError(err);
     } finally {
       if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+      // Remove the transport-cancel listener once the response head is received.
+      if (signal && cancelAbortListener) {
+        signal.removeEventListener("abort", cancelAbortListener);
+        cancelAbortListener = null;
+      }
     }
 
     if (bodyPipePromise) {

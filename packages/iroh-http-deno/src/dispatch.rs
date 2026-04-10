@@ -73,6 +73,8 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "createEndpoint" => create_endpoint(p).await,
         "closeEndpoint" => close_endpoint(p).await,
         "allocBodyWriter" => alloc_body_writer_dispatch(),
+        "allocFetchToken" => alloc_fetch_token_dispatch(),
+        "cancelInFlight" => cancel_in_flight_dispatch(p),
         "nextChunk" => next_chunk_dispatch(p).await,
         "sendChunk" => send_chunk_dispatch(p).await,
         "finishBody" => finish_body_dispatch(p),
@@ -143,6 +145,19 @@ fn alloc_body_writer_dispatch() -> Value {
     let (handle, reader) = alloc_body_writer();
     store_pending_reader(handle, reader);
     ok(json!({ "handle": handle }))
+}
+
+fn alloc_fetch_token_dispatch() -> Value {
+    ok(json!({ "token": iroh_http_core::alloc_fetch_token() }))
+}
+
+fn cancel_in_flight_dispatch(p: Value) -> Value {
+    let token = match p["token"].as_u64() {
+        Some(t) => t as u32,
+        None => return err("missing token"),
+    };
+    iroh_http_core::cancel_in_flight(token);
+    ok(json!({}))
 }
 
 // ── Streaming bridge ──────────────────────────────────────────────────────────
@@ -236,6 +251,7 @@ struct RawFetchPayload {
     method: String,
     headers: Vec<Vec<String>>,
     req_body_handle: Option<u32>,
+    fetch_token: Option<u32>,
 }
 
 async fn raw_fetch(p: Value) -> Value {
@@ -253,7 +269,7 @@ async fn raw_fetch(p: Value) -> Value {
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
     let reader = args.req_body_handle.and_then(claim_pending_reader);
-    match iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, reader).await {
+    match iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, reader, args.fetch_token).await {
         Err(e) => err(e),
         Ok(res) => {
             let headers: Vec<Vec<String>> = res.headers.into_iter().map(|(k, v)| vec![k, v]).collect();
