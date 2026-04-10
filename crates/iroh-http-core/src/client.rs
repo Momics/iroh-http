@@ -14,7 +14,7 @@ use crate::{
     FfiResponse, FfiDuplexStream, IrohEndpoint, ALPN, ALPN_DUPLEX,
 };
 use iroh_http_framing::{
-    parse_response_head, serialize_request_head, encode_chunk, terminal_chunk,
+    encode_chunk, terminal_chunk,
     terminal_chunk_start, serialize_trailers, parse_trailers, FramingError,
 };
 
@@ -83,7 +83,8 @@ pub async fn fetch(
 
     let ep_raw = endpoint.raw().clone();
     let addr_clone = addr.clone();
-    let conn = endpoint
+
+    let pooled = endpoint
         .pool()
         .get_or_connect(node_id, ALPN, || async move {
             ep_raw
@@ -93,7 +94,17 @@ pub async fn fetch(
         })
         .await?;
 
-    let result = do_request(conn, url, method, headers, req_body_reader);
+    let conn = pooled.conn.clone();
+    let codec = pooled.codec.clone();
+
+    let result = do_request(
+        conn,
+        url,
+        method,
+        headers,
+        req_body_reader,
+        codec,
+    );
 
     let out = if let Some(notify) = cancel_notify {
         tokio::select! {
@@ -118,6 +129,7 @@ async fn do_request(
     method: &str,
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
+    codec: std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
 ) -> Result<FfiResponse, String> {
     let (mut send, mut recv) = conn
         .open_bi()
@@ -136,7 +148,19 @@ async fn do_request(
         .iter()
         .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
     let req_chunked = has_body && !has_content_len;
-    let head_bytes = serialize_request_head(method, &path, &pairs, req_chunked);
+
+    // Encode request head via QPACK.
+    // When chunked encoding is needed, inject Transfer-Encoding: chunked
+    // into the QPACK-encoded headers so the server decodes correctly.
+    let mut qpack_pairs = pairs.clone();
+    if req_chunked {
+        qpack_pairs.push(("transfer-encoding", "chunked"));
+    }
+    let head_bytes = {
+        let mut guard = codec.lock().await;
+        guard.encode_request(method, &path, &qpack_pairs)
+            .map_err(|e| format!("qpack encode: {e}"))?
+    };
 
     send.write_all(&head_bytes)
         .await
@@ -155,7 +179,12 @@ async fn do_request(
     }
 
     // Read and parse the response head.
-    let (status, _reason, resp_headers, consumed) = read_head(&mut recv).await?;
+    let (status, resp_headers, consumed) =
+        read_head_qpack(&mut recv, &codec).await?;
+
+    let resp_is_chunked = resp_headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().contains("chunked")
+    });
 
     // Spawn a task to pump the response body into a channel.
     let (res_writer, res_reader) = make_body_channel();
@@ -163,12 +192,7 @@ async fn do_request(
     let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
     let trailer_handle = crate::stream::insert_trailer_receiver(trailer_rx);
 
-    // Derive chunked mode from response headers (authoritative), not from a heuristic.
-    let is_chunked = resp_headers.iter().any(|(k, v)| {
-        k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().contains("chunked")
-    });
-
-    tokio::spawn(pump_stream_to_body(recv, res_writer, consumed, trailer_tx, is_chunked));
+    tokio::spawn(pump_stream_to_body(recv, res_writer, consumed, trailer_tx, resp_is_chunked));
 
     let body_handle = insert_reader(res_reader);
 
@@ -311,12 +335,14 @@ async fn pump_stream_to_body(
     // writer drops here → channel closes → reader returns None.
 }
 
-/// Accumulate bytes from `recv` until a full HTTP/1.1 head is found
-/// (i.e. `\r\n\r\n`), then parse it.
-/// Returns (status, reason, headers, leftover_bytes_after_head).
-async fn read_head(
+/// Read a QPACK-encoded response head from a stream.
+///
+/// Wire format: `[2-byte big-endian length][QPACK block]`.
+/// Returns `(status, headers, leftover_bytes)`.
+async fn read_head_qpack(
     recv: &mut iroh::endpoint::RecvStream,
-) -> Result<(u16, String, Vec<(String, String)>, Vec<u8>), String> {
+    codec: &std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
+) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
     let mut buf: Vec<u8> = Vec::new();
 
     loop {
@@ -329,12 +355,14 @@ async fn read_head(
             Some(chunk) => buf.extend_from_slice(&chunk.bytes),
         }
 
-        match parse_response_head(&buf) {            Ok((status, reason, headers, consumed)) => {
+        let mut guard = codec.lock().await;
+        match guard.decode_response(&buf) {
+            Ok((status, headers, consumed)) => {
                 let leftover = buf[consumed..].to_vec();
-                return Ok((status, reason, headers, leftover));
+                return Ok((status, headers, leftover));
             }
-            Err(FramingError::Incomplete) => continue,
-            Err(FramingError::Parse(e)) => return Err(format!("parse response head: {e}")),
+            Err(crate::qpack_bridge::DecodeError::Incomplete) => continue,
+            Err(e) => return Err(format!("parse response head: {e}")),
         }
     }
 }
@@ -397,7 +425,7 @@ pub async fn raw_connect(
     // Connect using the duplex ALPN — the peer must advertise it.
     let ep_raw = endpoint.raw().clone();
     let addr_clone = addr.clone();
-    let conn = endpoint
+    let pooled = endpoint
         .pool()
         .get_or_connect(node_id, ALPN_DUPLEX, || async move {
             ep_raw
@@ -407,7 +435,7 @@ pub async fn raw_connect(
         })
         .await?;
 
-    let (mut send, mut recv) = conn
+    let (mut send, mut recv) = pooled.conn
         .open_bi()
         .await
         .map_err(|e| format!("open_bi: {e}"))?;
@@ -419,14 +447,19 @@ pub async fn raw_connect(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
     all_headers.extend_from_slice(&extra);
-    let head_bytes = serialize_request_head("CONNECT", path, &all_headers, false);
+
+    let head_bytes = {
+        let mut guard = pooled.codec.lock().await;
+        guard.encode_request("CONNECT", path, &all_headers)
+            .map_err(|e| format!("qpack encode: {e}"))?
+    };
 
     send.write_all(&head_bytes)
         .await
         .map_err(|e| format!("write connect head: {e}"))?;
 
     // Await the 101 Switching Protocols response.
-    let (status, _, _, _leftover) = read_head(&mut recv).await?;
+    let (status, _headers, _leftover) = read_head_qpack(&mut recv, &pooled.codec).await?;
     if status != 101 {
         return Err(format!("server rejected duplex connection: expected 101, got {status}"));
     }

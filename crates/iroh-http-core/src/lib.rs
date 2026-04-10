@@ -6,6 +6,7 @@
 pub mod client;
 pub mod endpoint;
 pub(crate) mod pool;
+pub(crate) mod qpack_bridge;
 pub mod server;
 pub mod stream;
 
