@@ -44,13 +44,16 @@ export async function pipeToWriter(
 ): Promise<void> {
   const reader = stream.getReader();
   try {
+    let pending: Promise<void> | null = null;
     while (true) {
       const { value, done } = await reader.read();
+      if (pending) await pending;
       if (done) break;
       if (value && value.byteLength > 0) {
-        await bridge.sendChunk(handle, value);
+        pending = bridge.sendChunk(handle, value);
       }
     }
+    if (pending) await pending;
   } finally {
     reader.releaseLock();
     await bridge.finishBody(handle);

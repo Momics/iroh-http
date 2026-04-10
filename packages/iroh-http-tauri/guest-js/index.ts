@@ -18,9 +18,11 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 // ── Base64 helpers ────────────────────────────────────────────────────────────
 
 function encodeBase64(u8: Uint8Array): string {
-  let bin = "";
-  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
-  return btoa(bin);
+  const CHUNK = 0x8000; // 32 KB — safe for String.fromCharCode spread
+  const parts: string[] = [];
+  for (let i = 0; i < u8.length; i += CHUNK)
+    parts.push(String.fromCharCode(...u8.subarray(i, i + CHUNK)));
+  return btoa(parts.join(""));
 }
 
 function decodeBase64(s: string): Uint8Array {
@@ -217,8 +219,8 @@ const rawConnect: RawConnectFn = async (
  * Create an Iroh node for peer-to-peer HTTP inside a Tauri application.
  */
 export async function createNode(options?: NodeOptions): Promise<IrohNode> {
-  const keyBytes: number[] | null = options?.key
-    ? Array.from(options.key instanceof Uint8Array ? options.key : (options.key as SecretKey).toBytes())
+  const keyBytes: string | null = options?.key
+    ? encodeBase64(options.key instanceof Uint8Array ? options.key : (options.key as SecretKey).toBytes())
     : null;
 
   const info = await invoke<{

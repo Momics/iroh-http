@@ -17,7 +17,7 @@ use crate::state;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateEndpointArgs {
-    pub key: Option<Vec<u8>>,
+    pub key: Option<String>,
     pub idle_timeout: Option<u64>,
     pub relays: Option<Vec<String>>,
     pub dns_discovery: Option<String>,
@@ -40,7 +40,7 @@ pub async fn create_endpoint(
 ) -> Result<EndpointInfoPayload, String> {
     let opts = args
         .map(|a| NodeOptions {
-            key: a.key.and_then(|k| k.try_into().ok()),
+            key: a.key.and_then(|k| B64.decode(k).ok()?.try_into().ok()),
             idle_timeout_ms: a.idle_timeout,
             relays: a.relays.unwrap_or_default(),
             dns_discovery: a.dns_discovery,

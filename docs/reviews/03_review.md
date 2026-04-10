@@ -1,5 +1,5 @@
 ---
-status: open
+status: closed
 ---
 
 # Performance Review: IPC & Streaming Patterns
