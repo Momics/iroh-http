@@ -1,5 +1,5 @@
 ---
-status: draft
+status: integrated
 ---
 
 # iroh-http — Code Review (Patch 01 Follow-up)

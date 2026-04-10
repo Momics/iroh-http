@@ -24,6 +24,8 @@ import {
   jsCancelRequest,
   jsNextTrailer,
   jsSendTrailers,
+  jsAllocFetchToken,
+  jsCancelInFlight,
   rawFetch as napiRawFetch,
   rawServe as napiRawServe,
   rawConnect as napiRawConnect,
@@ -59,6 +61,8 @@ const bridge: Bridge = {
     jsCancelRequest(handle);
     return Promise.resolve();
   },
+  allocFetchToken: () => Promise.resolve(jsAllocFetchToken()),
+  cancelFetch: (token: number) => { jsCancelInFlight(token); },
   nextTrailer: async (handle: number) => {
     const rows = await jsNextTrailer(handle);
     return rows ? (rows as string[][]).map((p) => [p[0], p[1]] as [string, string]) : null;
@@ -77,7 +81,8 @@ const rawFetch: RawFetchFn = async (
   url,
   method,
   headers,
-  reqBodyHandle
+  reqBodyHandle,
+  fetchToken
 ) => {
   const res = await napiRawFetch(
     endpointHandle,
@@ -85,7 +90,8 @@ const rawFetch: RawFetchFn = async (
     url,
     method,
     headers as string[][],
-    reqBodyHandle ?? null
+    reqBodyHandle ?? null,
+    fetchToken
   );
   return {
     status: res.status,

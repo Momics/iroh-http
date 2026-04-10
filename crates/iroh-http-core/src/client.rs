@@ -1,5 +1,9 @@
 //! Outgoing HTTP request — `fetch()` implementation.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use bytes::Bytes;
 use iroh::endpoint::Connection;
 
@@ -16,10 +20,44 @@ use iroh_http_framing::{
 
 const READ_BUF: usize = 16 * 1024;
 
+// ── In-flight fetch cancellation ──────────────────────────────────────────────
+
+static NEXT_FETCH_TOKEN: AtomicU32 = AtomicU32::new(1);
+
+fn in_flight_map() -> &'static Mutex<HashMap<u32, Arc<tokio::sync::Notify>>> {
+    static MAP: OnceLock<Mutex<HashMap<u32, Arc<tokio::sync::Notify>>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Allocate a cancellation token for an upcoming `fetch` call.
+///
+/// Call this before `rawFetch`, wire `AbortSignal → cancel_in_flight(token)`,
+/// and pass `token` to the platform's `rawFetch`/`fetch` binding.  The token
+/// is automatically removed from the map when the fetch completes.
+pub fn alloc_fetch_token() -> u32 {
+    let id = NEXT_FETCH_TOKEN.fetch_add(1, Ordering::Relaxed);
+    let notify = Arc::new(tokio::sync::Notify::new());
+    in_flight_map().lock().unwrap().insert(id, notify);
+    id
+}
+
+/// Signal an in-flight fetch to abort.  Safe to call after the fetch has
+/// already completed — it is a no-op in that case.
+pub fn cancel_in_flight(token_id: u32) {
+    if let Some(notify) = in_flight_map().lock().unwrap().get(&token_id) {
+        notify.notify_one();
+    }
+}
+
 /// Send an HTTP/1.1 request to a remote node and return the response.
 ///
 /// `req_body_reader` — optional body channel that the caller will pump
 /// from the JS side via `sendChunk`/`finishBody`.  `None` for bodyless methods.
+///
+/// `fetch_token` — optional cancellation token previously allocated with
+/// `alloc_fetch_token()`.  When `cancel_in_flight(token)` is called from
+/// another thread/task while this future is running, the fetch is dropped
+/// and the underlying QUIC streams are reset.
 pub async fn fetch(
     endpoint: &IrohEndpoint,
     remote_node_id: &str,
@@ -27,7 +65,13 @@ pub async fn fetch(
     method: &str,
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
+    fetch_token: Option<u32>,
 ) -> Result<FfiResponse, String> {
+    // Retrieve the cancellation Notify for this token, if any.
+    let cancel_notify = fetch_token.and_then(|id| {
+        in_flight_map().lock().unwrap().get(&id).cloned()
+    });
+
     let node_id = parse_node_id(remote_node_id)?;
     let addr = iroh::EndpointAddr::new(node_id);
 
@@ -37,7 +81,23 @@ pub async fn fetch(
         .await
         .map_err(|e| format!("connect: {e}"))?;
 
-    do_request(conn, url, method, headers, req_body_reader).await
+    let result = do_request(conn, url, method, headers, req_body_reader);
+
+    let out = if let Some(notify) = cancel_notify {
+        tokio::select! {
+            _ = notify.notified() => Err("aborted".to_string()),
+            r = result => r,
+        }
+    } else {
+        result.await
+    };
+
+    // Clean up the token regardless of outcome.
+    if let Some(id) = fetch_token {
+        in_flight_map().lock().unwrap().remove(&id);
+    }
+
+    out
 }
 
 async fn do_request(
@@ -58,7 +118,13 @@ async fn do_request(
 
     // Build header list for serialisation (convert owned pairs to borrowed refs).
     let pairs: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let head_bytes = serialize_request_head(method, &path, &pairs, has_body);
+    // Use chunked encoding only when the caller did not supply a Content-Length.
+    // When Content-Length is present, send raw bytes so the framing matches.
+    let has_content_len = pairs
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
+    let req_chunked = has_body && !has_content_len;
+    let head_bytes = serialize_request_head(method, &path, &pairs, req_chunked);
 
     send.write_all(&head_bytes)
         .await
@@ -69,7 +135,7 @@ async fn do_request(
     // error response before the request body is fully consumed).
     if let Some(reader) = req_body_reader {
         tokio::spawn(async move {
-            let _ = pump_body_to_stream(reader, &mut send, true, None).await;
+            let _ = pump_body_to_stream(reader, &mut send, req_chunked, None).await;
             let _ = send.finish();
         });
     } else {

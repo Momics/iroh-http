@@ -103,6 +103,14 @@ export const bridge: Bridge = {
   async cancelRequest(handle: number): Promise<void> {
     await call<Record<never, never>>("cancelRequest", { handle });
   },
+  async allocFetchToken(): Promise<number> {
+    const res = await call<{ token: number }>("allocFetchToken", {});
+    return res.token;
+  },
+  cancelFetch(token: number): void {
+    // Fire-and-forget — do not await.
+    void call<Record<never, never>>("cancelInFlight", { token });
+  },
   async nextTrailer(handle: number): Promise<[string, string][] | null> {
     const res = await call<{ trailers: [string, string][] | null }>("nextTrailer", { handle });
     return res.trailers;
@@ -121,6 +129,7 @@ export const rawFetch: RawFetchFn = async (
   method: string,
   headers: [string, string][],
   reqBodyHandle: number | null,
+  fetchToken: number,
 ) => {
   const res = await call<{
     status: number;
@@ -135,6 +144,7 @@ export const rawFetch: RawFetchFn = async (
     method,
     headers,
     reqBodyHandle: reqBodyHandle ?? null,
+    fetchToken,
   });
   return {
     status:         res.status,

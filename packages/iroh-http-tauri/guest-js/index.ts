@@ -57,6 +57,14 @@ const bridge: Bridge = {
     return invoke(`${PLUGIN}|cancel_request`, { handle });
   },
 
+  allocFetchToken(): Promise<number> {
+    return invoke<number>(`${PLUGIN}|alloc_fetch_token`);
+  },
+
+  cancelFetch(token: number): void {
+    void invoke(`${PLUGIN}|cancel_in_flight`, { token });
+  },
+
   async nextTrailer(handle: number): Promise<[string, string][] | null> {
     const rows = await invoke<string[][] | null>(`${PLUGIN}|next_trailer`, { handle });
     return rows ? (rows as [string, string][]) : null;
@@ -78,7 +86,8 @@ const rawFetch: RawFetchFn = async (
   url,
   method,
   headers,
-  reqBodyHandle
+  reqBodyHandle,
+  fetchToken
 ) => {
   const res = await invoke<{
     status: number;
@@ -94,6 +103,7 @@ const rawFetch: RawFetchFn = async (
       method,
       headers,
       reqBodyHandle: reqBodyHandle ?? null,
+      fetchToken,
     },
   });
   return {

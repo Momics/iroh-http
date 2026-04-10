@@ -13,7 +13,7 @@ pub use stream::{
     alloc_body_writer, next_chunk, send_chunk, finish_body, cancel_reader,
     next_trailer, send_trailers, BodyReader,
 };
-pub use client::{fetch, raw_connect};
+pub use client::{fetch, raw_connect, alloc_fetch_token, cancel_in_flight};
 pub use server::serve;
 
 /// Flat request struct that crosses the FFI boundary.

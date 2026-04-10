@@ -158,6 +158,16 @@ pub fn js_alloc_body_writer() -> u32 {
     handle
 }
 
+#[napi]
+pub fn js_alloc_fetch_token() -> u32 {
+    iroh_http_core::alloc_fetch_token()
+}
+
+#[napi]
+pub fn js_cancel_in_flight(token: u32) {
+    iroh_http_core::cancel_in_flight(token);
+}
+
 // ── rawFetch ──────────────────────────────────────────────────────────────────
 
 #[napi(object)]
@@ -177,6 +187,7 @@ pub async fn raw_fetch(
     method: String,
     headers: Vec<Vec<String>>,
     req_body_handle: Option<u32>,
+    fetch_token: u32,
 ) -> napi::Result<JsFfiResponse> {
     let ep = get_endpoint(endpoint_handle)?;
 
@@ -193,7 +204,7 @@ pub async fn raw_fetch(
 
     let req_body_reader = req_body_handle.and_then(claim_pending_reader);
 
-    let res = iroh_http_core::fetch(&ep, &node_id, &url, &method, &pairs, req_body_reader)
+    let res = iroh_http_core::fetch(&ep, &node_id, &url, &method, &pairs, req_body_reader, Some(fetch_token))
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, e))?;
 
