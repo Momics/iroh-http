@@ -2,6 +2,45 @@
 
 Peer-to-peer HTTP — fetch and serve between devices using [Iroh](https://iroh.computer) QUIC transport. No servers, no DNS, no TLS certificates. Nodes are addressed by public key.
 
+## How is this different from regular HTTP?
+
+Regular HTTP needs infrastructure: a server with a public IP, DNS records, TLS certificates. A client connects to a server — never the other way around.
+
+iroh-http replaces all of that with a **public key**. Every device gets a permanent cryptographic identity. Two devices that know each other's public key can connect directly — peer-to-peer, through NATs, without a server in between.
+
+| | Regular HTTP | iroh-http |
+|---|---|---|
+| **Addressing** | Domain name → IP address (DNS) | Public key (Ed25519) |
+| **Identity** | TLS certificate from a CA | Keypair you generate locally |
+| **Connection** | Client → server only | Any node → any node |
+| **NAT traversal** | Not possible | Built-in (Iroh relay + hole-punching) |
+| **Discovery** | DNS | Relay, DNS, or local mDNS |
+| **Encryption** | TLS (certificate-based) | QUIC (key-based, always on) |
+
+### Why `createNode()`?
+
+In regular HTTP, `fetch()` is a global — the browser or runtime manages the network socket for you. In iroh-http, each node has its own cryptographic identity and QUIC endpoint (like a personal mini-server), so you create one explicitly:
+
+```ts
+const node = await createNode();         // generates a new keypair
+console.log(node.publicKey.toString());  // this is your "address"
+```
+
+The node can both **send and receive** — `fetch()` and `serve()` share the same identity and the same UDP socket. You can persist the keypair to keep the same address across restarts:
+
+```ts
+const node = await createNode({ key: savedKey }); // same public key every time
+```
+
+### Web-standard API
+
+The `fetch()` and `serve()` APIs use standard `Request` and `Response` objects. If you know how to write a `fetch()` call or a request handler, you already know how to use iroh-http. Libraries that work with standard `Request`/`Response` (routing, middleware, body parsers) should work unchanged.
+
+### What doesn't work
+
+- **Browsers** — iroh-http requires raw UDP sockets, which browsers don't expose. A browser-compatible path via WebTransport is a future goal.
+- **Existing HTTP servers/CDNs** — you can't `fetch("https://google.com")` through iroh-http. It's a separate network addressed by public key, not domain names.
+
 ## How it works
 
 ```
@@ -11,7 +50,9 @@ Peer-to-peer HTTP — fetch and serve between devices using [Iroh](https://iroh.
   fetch("/api")                 serve(handler)
 ```
 
-Nodes find each other via Iroh's relay network or local mDNS discovery. Every connection is end-to-end authenticated using Ed25519 public keys.
+Nodes find each other via [Iroh's](https://iroh.computer) relay network or local mDNS discovery. Every connection is end-to-end authenticated using Ed25519 public keys.
+
+> **Built on [Iroh](https://iroh.computer)** — a networking library for connecting devices directly. Iroh handles NAT traversal, relay fallback, and encrypted QUIC transport so iroh-http can focus on the HTTP layer. See the [Iroh documentation](https://iroh.computer/docs) to learn more.
 
 ## Quick start
 
@@ -60,11 +101,14 @@ import iroh_http
 
 node = iroh_http.create_node()
 print("Node ID:", node.node_id())
+
+res = node.fetch(remote_peer_id, "/hello")
+print(res.text())
 ```
 
 ## Features
 
-- **Web-standard `fetch`/`serve` API** — drop-in for browser `fetch`
+- **Web-standard `fetch`/`serve` API** — uses standard `Request`/`Response` objects; works with existing routing and middleware libraries
 - **Bidirectional streaming** — full-duplex streams via `createBidirectionalStream`
 - **Response trailers** — HTTP/1.1 chunked trailers for streaming metadata
 - **AbortSignal** — cancel in-flight requests
@@ -85,6 +129,8 @@ iroh-http-deno (FFI)        — Deno native library
 iroh-http-py (PyO3)         — Python bindings
 ```
 
+See the [docs/](docs/) folder for architecture details and the [examples/](examples/) folder for runnable demos.
+
 ## Development
 
 ```sh
@@ -101,6 +147,10 @@ npm run typecheck
 # Tauri plugin (standalone workspace)
 cd packages/iroh-http-tauri && cargo check
 ```
+
+## Acknowledgements
+
+iroh-http is built on top of [Iroh](https://iroh.computer) by [n0, inc.](https://n0.computer) Iroh provides the QUIC transport, NAT traversal, relay infrastructure, and peer identity that make serverless peer-to-peer HTTP possible.
 
 ## License
 
