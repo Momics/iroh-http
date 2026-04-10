@@ -1,0 +1,18 @@
+[package]
+name = "iroh-http-py"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for iroh-http (PyO3 + maturin)"
+
+[lib]
+name = "iroh_http_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+iroh-http-core = { path = "../../crates/iroh-http-core" }
+pyo3            = { version = "0.22", features = ["extension-module", "abi3-py39"] }
+pyo3-async-runtimes = { version = "0.22", features = ["tokio-runtime"] }
+tokio           = { version = "1", features = ["rt-multi-thread", "sync"] }
+serde_json      = "1"
+bytes           = "1"
+tracing         = "0.1"

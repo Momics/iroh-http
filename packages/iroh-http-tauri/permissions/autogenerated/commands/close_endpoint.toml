@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-close-endpoint"
+description = "Enables the close_endpoint command without any pre-configured scope."
+commands.allow = ["close_endpoint"]
+
+[[permission]]
+identifier = "deny-close-endpoint"
+description = "Denies the close_endpoint command without any pre-configured scope."
+commands.deny = ["close_endpoint"]

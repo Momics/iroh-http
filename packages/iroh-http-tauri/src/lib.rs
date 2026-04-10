@@ -14,10 +14,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::next_chunk,
             commands::send_chunk,
             commands::finish_body,
+            commands::cancel_request,
+            commands::next_trailer,
+            commands::send_trailers,
             commands::alloc_body_writer,
             commands::raw_fetch,
             commands::serve,
             commands::respond_to_request,
+            commands::raw_connect,
         ])
         .build()
 }

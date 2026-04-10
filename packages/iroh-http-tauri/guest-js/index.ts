@@ -19,10 +19,12 @@ import {
   type Bridge,
   type FfiResponse,
   type FfiResponseHead,
+  type FfiDuplexStream,
   type NodeOptions,
   type IrohNode,
   type RawFetchFn,
   type RawServeFn,
+  type RawConnectFn,
   type AllocBodyWriterFn,
   type RequestPayload,
 } from "iroh-http-shared";
@@ -48,6 +50,22 @@ const bridge: Bridge = {
   finishBody(handle: number): Promise<void> {
     return invoke(`${PLUGIN}|finish_body`, { handle });
   },
+
+  cancelRequest(handle: number): Promise<void> {
+    return invoke(`${PLUGIN}|cancel_request`, { handle });
+  },
+
+  async nextTrailer(handle: number): Promise<[string, string][] | null> {
+    const rows = await invoke<string[][] | null>(`${PLUGIN}|next_trailer`, { handle });
+    return rows ? (rows as [string, string][]) : null;
+  },
+
+  sendTrailers(handle: number, trailers: [string, string][]): Promise<void> {
+    return invoke(`${PLUGIN}|send_trailers`, {
+      handle,
+      trailers,
+    });
+  },
 };
 
 // ── Platform functions ────────────────────────────────────────────────────────
@@ -65,6 +83,7 @@ const rawFetch: RawFetchFn = async (
     headers: string[][];
     bodyHandle: number;
     url: string;
+    trailersHandle: number;
   }>(`${PLUGIN}|raw_fetch`, {
     args: {
       endpointHandle,
@@ -80,6 +99,7 @@ const rawFetch: RawFetchFn = async (
     headers: res.headers as [string, string][],
     bodyHandle: res.bodyHandle,
     url: res.url,
+    trailersHandle: res.trailersHandle,
   } satisfies FfiResponse;
 };
 
@@ -88,6 +108,9 @@ interface TauriRequestPayload {
   reqHandle: number;
   reqBodyHandle: number;
   resBodyHandle: number;
+  reqTrailersHandle: number;
+  resTrailersHandle: number;
+  isBidi: boolean;
   method: string;
   url: string;
   headers: string[][];
@@ -106,6 +129,9 @@ const rawServe: RawServeFn = (
       reqHandle: raw.reqHandle,
       reqBodyHandle: raw.reqBodyHandle,
       resBodyHandle: raw.resBodyHandle,
+      reqTrailersHandle: raw.reqTrailersHandle,
+      resTrailersHandle: raw.resTrailersHandle,
+      isBidi: raw.isBidi,
       method: raw.method,
       url: raw.url,
       headers: raw.headers as [string, string][],
@@ -140,6 +166,24 @@ const allocBodyWriter: AllocBodyWriterFn = (): Promise<number> => {
   return invoke<number>(`${PLUGIN}|alloc_body_writer`);
 };
 
+const rawConnect: RawConnectFn = async (
+  endpointHandle,
+  nodeId,
+  path,
+  headers
+) => {
+  const res = await invoke<{ readHandle: number; writeHandle: number }>(
+    `${PLUGIN}|raw_connect`,
+    {
+      args: { endpointHandle, nodeId, path, headers },
+    }
+  );
+  return {
+    readHandle: res.readHandle,
+    writeHandle: res.writeHandle,
+  } satisfies FfiDuplexStream;
+};
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -161,7 +205,6 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
       : null,
   });
 
-  // Wrap the async alloc_body_writer in a way makeFetch can use.
   return buildNode(
     bridge,
     {
@@ -171,6 +214,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     },
     rawFetch,
     rawServe,
+    rawConnect,
     allocBodyWriter,
     (handle) => invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: handle })
   );

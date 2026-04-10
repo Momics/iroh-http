@@ -5,6 +5,8 @@ members = [
     "crates/iroh-http-core",
     "crates/iroh-http-discovery",
     "packages/iroh-http-node",
+    "packages/iroh-http-deno",
+    "packages/iroh-http-py",
 ]
 
 [workspace.dependencies]
