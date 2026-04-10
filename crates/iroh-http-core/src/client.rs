@@ -64,13 +64,17 @@ async fn do_request(
         .await
         .map_err(|e| format!("write head: {e}"))?;
 
-    // Pump request body (chunked) in a separate task so we can concurrently
-    // read the response head.
+    // Spawn request body pump as a background task so we can concurrently
+    // read the response head (avoids deadlock when the server sends an early
+    // error response before the request body is fully consumed).
     if let Some(reader) = req_body_reader {
-        pump_body_to_stream(reader, &mut send, true, None).await?;
+        tokio::spawn(async move {
+            let _ = pump_body_to_stream(reader, &mut send, true, None).await;
+            let _ = send.finish();
+        });
+    } else {
+        send.finish().map_err(|e| format!("finish send: {e}"))?;
     }
-
-    send.finish().map_err(|e| format!("finish send: {e}"))?;
 
     // Read and parse the response head.
     let (status, _reason, resp_headers, consumed) = read_head(&mut recv).await?;
@@ -80,7 +84,13 @@ async fn do_request(
     // Set up a trailer channel — the pump task will send trailers when found.
     let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
     let trailer_handle = crate::stream::insert_trailer_receiver(trailer_rx);
-    tokio::spawn(pump_stream_to_body(recv, res_writer, consumed, trailer_tx));
+
+    // Derive chunked mode from response headers (authoritative), not from a heuristic.
+    let is_chunked = resp_headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().contains("chunked")
+    });
+
+    tokio::spawn(pump_stream_to_body(recv, res_writer, consumed, trailer_tx, is_chunked));
 
     let body_handle = insert_reader(res_reader);
 
@@ -161,32 +171,17 @@ async fn pump_stream_to_body(
     writer: BodyWriter,
     already_consumed: Vec<u8>,
     trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
+    is_chunked: bool,
 ) {
     let mut buf = already_consumed;
-
-    // Determine if chunked by inspecting what we read during head parsing.
-    // The actual `Transfer-Encoding: chunked` check is done inside the response-
-    // head parse.  For simplicity we always use chunked framing on sends and
-    // decode it here.  If no chunk header is found we treat bytes as raw body.
-    let mut chunked_mode = false; // set below when we have enough data
+    let chunked_mode = is_chunked;
 
     loop {
         // Try to get more data when needed.
-        match recv
-            .read_chunk(READ_BUF)
-            .await
-        {
+        match recv.read_chunk(READ_BUF).await {
             Err(_) | Ok(None) => break,
             Ok(Some(chunk)) => buf.extend_from_slice(&chunk.bytes),
         }
-
-        // We only determine chunked mode once per stream.
-        if !chunked_mode && buf.starts_with(b"0\r\n") {
-            // Empty chunked body.
-            break;
-        }
-        // If the first byte(s) look like hex + \r\n we assume chunked.
-        chunked_mode = looks_like_chunk_header(&buf);
 
         if chunked_mode {
             loop {
@@ -231,18 +226,6 @@ async fn pump_stream_to_body(
         let _ = writer.send_chunk(data).await;
     }
     // writer drops here → channel closes → reader returns None.
-}
-
-fn looks_like_chunk_header(buf: &[u8]) -> bool {
-    for &b in buf.iter().take(10) {
-        if b == b'\r' {
-            return true;
-        }
-        if !(b.is_ascii_hexdigit()) {
-            return false;
-        }
-    }
-    false
 }
 
 /// Accumulate bytes from `recv` until a full HTTP/1.1 head is found

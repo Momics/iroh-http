@@ -43,7 +43,9 @@ export function makeServe(
     rawServe(endpointHandle, options, async (payload: RequestPayload): Promise<FfiResponseHead> => {
       // Build a web-standard Request.
       const hasBody = METHODS_WITH_BODY.has(payload.method.toUpperCase());
-      const reqBody = hasBody
+      // §1.7: In duplex mode the handler reads the body via req.acceptWebTransport().readable,
+      // so do NOT create a second ReadableStream from the same handle here.
+      const reqBody = (hasBody && !payload.isBidi)
         ? makeReadable(bridge, payload.reqBodyHandle)
         : null;
 
