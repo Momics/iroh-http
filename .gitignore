@@ -39,4 +39,4 @@ Thumbs.db
 *.swo
 
 # Local folders
-.old_references
+.local
