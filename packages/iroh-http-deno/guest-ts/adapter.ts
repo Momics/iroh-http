@@ -17,7 +17,9 @@ import type {
   RawConnectFn,
   AllocBodyWriterFn,
   RequestPayload,
+  NodeOptions,
 } from "iroh-http-shared";
+import { classifyError, classifyBindError } from "iroh-http-shared";
 
 // ── Platform library resolution ───────────────────────────────────────────────
 
@@ -80,7 +82,7 @@ async function call<T>(method: string, payload: unknown): Promise<T> {
     | { err: string };
 
   if ("err" in result) {
-    throw new Error(`[iroh-http-deno] ${method}: ${result.err}`);
+    throw classifyError(result.err);
   }
   return result.ok;
 }
@@ -214,21 +216,20 @@ export const allocBodyWriter: AllocBodyWriterFn = () =>
 
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 
-export async function createEndpointInfo(options?: {
-  key?: Uint8Array;
-  idleTimeout?: number;
-  relays?: string[];
-  dnsDiscovery?: string;
-}): Promise<EndpointInfo> {
+export async function createEndpointInfo(options?: NodeOptions): Promise<EndpointInfo> {
+  const keyBytes: number[] | null = options?.key
+    ? Array.from(options.key instanceof Uint8Array ? options.key : options.key.toBytes())
+    : null;
+
   const res = await call<{ endpointHandle: number; nodeId: string; keypair: number[] }>(
     "createEndpoint",
     {
-      key:          options?.key ? Array.from(options.key) : null,
+      key:          keyBytes,
       idleTimeout:  options?.idleTimeout ?? null,
       relays:       options?.relays ?? null,
       dnsDiscovery: options?.dnsDiscovery ?? null,
     },
-  );
+  ).catch((e: unknown) => { throw classifyBindError(e); });
   return {
     endpointHandle: res.endpointHandle,
     nodeId:         res.nodeId,
