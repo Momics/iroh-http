@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-next-trailer"
+description = "Enables the next_trailer command without any pre-configured scope."
+commands.allow = ["next_trailer"]
+
+[[permission]]
+identifier = "deny-next-trailer"
+description = "Denies the next_trailer command without any pre-configured scope."
+commands.deny = ["next_trailer"]

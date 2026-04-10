@@ -159,6 +159,9 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           idleTimeout: options.idleTimeout ?? null,
           relays: options.relays ?? null,
           dnsDiscovery: options.dnsDiscovery ?? null,
+          channelCapacity: options.channelCapacity ?? null,
+          maxChunkSizeBytes: options.maxChunkSizeBytes ?? null,
+          maxConsecutiveErrors: options.maxConsecutiveErrors ?? null,
         }
       : null
   ).catch((e: unknown) => { throw classifyBindError(e); });

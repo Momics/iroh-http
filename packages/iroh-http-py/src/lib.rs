@@ -358,11 +358,14 @@ fn create_node<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let opts = NodeOptions {
-            key:              key.and_then(|k| k.try_into().ok()),
-            idle_timeout_ms:  idle_timeout,
-            relays:           relays.unwrap_or_default(),
+            key:                    key.and_then(|k| k.try_into().ok()),
+            idle_timeout_ms:        idle_timeout,
+            relays:                 relays.unwrap_or_default(),
             dns_discovery,
-            capabilities:     Vec::new(),
+            capabilities:           Vec::new(),
+            channel_capacity:       None,
+            max_chunk_size_bytes:   None,
+            max_consecutive_errors: None,
         };
         let ep = IrohEndpoint::bind(opts).await.map_err(py_err)?;
         Ok(IrohNode { ep })

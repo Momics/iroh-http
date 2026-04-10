@@ -14,6 +14,21 @@
  */
 
 import { invoke, Channel } from "@tauri-apps/api/core";
+
+// ── Base64 helpers ────────────────────────────────────────────────────────────
+
+function encodeBase64(u8: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+  return btoa(bin);
+}
+
+function decodeBase64(s: string): Uint8Array {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 import {
   buildNode,
   type Bridge,
@@ -37,15 +52,15 @@ const PLUGIN = "plugin:iroh-http";
 
 const bridge: Bridge = {
   nextChunk(handle: number): Promise<Uint8Array | null> {
-    return invoke<number[] | null>(`${PLUGIN}|next_chunk`, { handle }).then(
-      (bytes) => (bytes ? new Uint8Array(bytes) : null)
+    return invoke<string | null>(`${PLUGIN}|next_chunk`, { handle }).then(
+      (b64) => (b64 ? decodeBase64(b64) : null)
     );
   },
 
   sendChunk(handle: number, chunk: Uint8Array): Promise<void> {
     return invoke(`${PLUGIN}|send_chunk`, {
       handle,
-      chunk: Array.from(chunk),
+      chunk: encodeBase64(chunk),
     });
   },
 
@@ -217,6 +232,9 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           idleTimeout: options.idleTimeout ?? null,
           relays: options.relays ?? null,
           dnsDiscovery: options.dnsDiscovery ?? null,
+          channelCapacity: options.channelCapacity ?? null,
+          maxChunkSizeBytes: options.maxChunkSizeBytes ?? null,
+          maxConsecutiveErrors: options.maxConsecutiveErrors ?? null,
         }
       : null,
   }).catch((e: unknown) => { throw classifyBindError(e); });

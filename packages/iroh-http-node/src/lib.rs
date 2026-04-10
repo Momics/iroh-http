@@ -42,7 +42,7 @@ fn get_endpoint(handle: u32) -> napi::Result<IrohEndpoint> {
     let slab = endpoint_slab().lock().unwrap();
     slab.get(handle as usize)
         .cloned()
-        .ok_or_else(|| napi::Error::new(Status::InvalidArg, format!("invalid endpoint handle: {handle}")))
+        .ok_or_else(|| napi::Error::new(Status::InvalidArg, iroh_http_core::classify_error_json(format!("invalid endpoint handle: {handle}"))))
 }
 
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
@@ -53,6 +53,9 @@ pub struct JsNodeOptions {
     pub idle_timeout: Option<f64>,
     pub relays: Option<Vec<String>>,
     pub dns_discovery: Option<String>,
+    pub channel_capacity: Option<u32>,
+    pub max_chunk_size_bytes: Option<u32>,
+    pub max_consecutive_errors: Option<u32>,
 }
 
 #[napi(object)]
@@ -75,12 +78,15 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         idle_timeout_ms: o.idle_timeout.map(|t| t as u64),
         relays: o.relays.unwrap_or_default(),
         dns_discovery: o.dns_discovery,
-        capabilities: Vec::new(), // advertise all by default
+        capabilities: Vec::new(),
+        channel_capacity: o.channel_capacity.map(|v| v as usize),
+        max_chunk_size_bytes: o.max_chunk_size_bytes.map(|v| v as usize),
+        max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
     }).unwrap_or_default();
 
     let ep = IrohEndpoint::bind(opts)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, e))?;
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
 
     let node_id = ep.node_id().to_string();
     let keypair = ep.secret_key_bytes().to_vec();
@@ -98,7 +104,7 @@ pub async fn close_endpoint(endpoint_handle: u32) -> napi::Result<()> {
     let ep = {
         let mut slab = endpoint_slab().lock().unwrap();
         if !slab.contains(endpoint_handle as usize) {
-            return Err(napi::Error::new(Status::InvalidArg, "invalid endpoint handle"));
+            return Err(napi::Error::new(Status::InvalidArg, iroh_http_core::classify_error_json("invalid endpoint handle")));
         }
         slab.remove(endpoint_handle as usize)
     };
@@ -112,7 +118,7 @@ pub async fn close_endpoint(endpoint_handle: u32) -> napi::Result<()> {
 pub async fn js_next_chunk(handle: u32) -> napi::Result<Option<Uint8Array>> {
     let chunk = next_chunk(handle)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, e))?;
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
     Ok(chunk.map(|b| Uint8Array::new(b.to_vec())))
 }
 
@@ -121,12 +127,12 @@ pub async fn js_send_chunk(handle: u32, chunk: Uint8Array) -> napi::Result<()> {
     let bytes = Bytes::copy_from_slice(chunk.as_ref());
     send_chunk(handle, bytes)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, e))
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
 }
 
 #[napi]
 pub fn js_finish_body(handle: u32) -> napi::Result<()> {
-    finish_body(handle).map_err(|e| napi::Error::new(Status::GenericFailure, e))
+    finish_body(handle).map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
 }
 
 #[napi]
@@ -138,7 +144,7 @@ pub fn js_cancel_request(handle: u32) {
 pub async fn js_next_trailer(handle: u32) -> napi::Result<Option<Vec<Vec<String>>>> {
     let trailers = next_trailer(handle)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, e))?;
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
     Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
 }
 
@@ -148,7 +154,7 @@ pub fn js_send_trailers(handle: u32, trailers: Vec<Vec<String>>) -> napi::Result
         .into_iter()
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
-    send_trailers(handle, pairs).map_err(|e| napi::Error::new(Status::GenericFailure, e))
+    send_trailers(handle, pairs).map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
 }
 
 #[napi]
@@ -206,7 +212,7 @@ pub async fn raw_fetch(
 
     let res = iroh_http_core::fetch(&ep, &node_id, &url, &method, &pairs, req_body_reader, Some(fetch_token))
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, e))?;
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
 
     let resp_headers: Vec<Vec<String>> = res
         .headers
@@ -270,8 +276,8 @@ pub fn raw_serve(
     let tsfn = Arc::new(tsfn);
 
     iroh_http_core::serve(
-        ep,
-        ServeOptions::default(),
+        ep.clone(),
+        ServeOptions { max_consecutive_errors: Some(ep.max_consecutive_errors()), ..Default::default() },
         move |payload: RequestPayload| {
             let tsfn = Arc::clone(&tsfn);
             let req_handle = payload.req_handle;
@@ -334,7 +340,7 @@ pub async fn raw_connect(
 
     let duplex = iroh_http_core::raw_connect(&ep, &node_id, &path, &pairs)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, e))?;
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
 
     Ok(JsFfiDuplexStream {
         read_handle: duplex.read_handle,

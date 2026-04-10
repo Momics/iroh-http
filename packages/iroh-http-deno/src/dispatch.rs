@@ -3,6 +3,7 @@
 //!
 //! Every method listed in the patch spec is handled here.
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
@@ -56,7 +57,7 @@ fn ok(v: impl Serialize) -> Value {
 }
 
 fn err(s: impl std::fmt::Display) -> Value {
-    json!({ "err": s.to_string() })
+    json!({ "err": iroh_http_core::classify_error_json(s) })
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
@@ -99,6 +100,9 @@ struct CreateEndpointPayload {
     idle_timeout: Option<u64>,
     relays: Option<Vec<String>>,
     dns_discovery: Option<String>,
+    channel_capacity: Option<usize>,
+    max_chunk_size_bytes: Option<usize>,
+    max_consecutive_errors: Option<usize>,
 }
 
 async fn create_endpoint(p: Value) -> Value {
@@ -112,6 +116,9 @@ async fn create_endpoint(p: Value) -> Value {
         relays: args.relays.unwrap_or_default(),
         dns_discovery: args.dns_discovery,
         capabilities: Vec::new(),
+        channel_capacity: args.channel_capacity,
+        max_chunk_size_bytes: args.max_chunk_size_bytes,
+        max_consecutive_errors: args.max_consecutive_errors,
     };
     match IrohEndpoint::bind(opts).await {
         Err(e) => err(e),
@@ -170,7 +177,7 @@ async fn next_chunk_dispatch(p: Value) -> Value {
     match next_chunk(handle).await {
         Err(e) => err(e),
         Ok(None) => ok(json!({ "chunk": null })),
-        Ok(Some(b)) => ok(json!({ "chunk": b.to_vec() })),
+        Ok(Some(b)) => ok(json!({ "chunk": B64.encode(&b[..]) })),
     }
 }
 
@@ -179,11 +186,15 @@ async fn send_chunk_dispatch(p: Value) -> Value {
         Some(h) => h as u32,
         None => return err("missing handle"),
     };
-    let bytes: Vec<u8> = match serde_json::from_value(p["chunk"].clone()) {
+    let b64: String = match serde_json::from_value(p["chunk"].clone()) {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    match send_chunk(handle, Bytes::from(bytes)).await {
+    let bytes = match B64.decode(&b64) {
+        Ok(b) => Bytes::from(b),
+        Err(e) => return err(format!("base64 decode: {e}")),
+    };
+    match send_chunk(handle, bytes).await {
         Ok(()) => ok(json!({})),
         Err(e) => err(e),
     }
@@ -330,8 +341,8 @@ async fn serve_start(p: Value) -> Value {
     let queue = serve_registry::register(handle);
 
     iroh_http_core::serve(
-        ep,
-        ServeOptions::default(),
+        ep.clone(),
+        ServeOptions { max_consecutive_errors: Some(ep.max_consecutive_errors()), ..Default::default() },
         move |payload: RequestPayload| {
             let q = std::sync::Arc::clone(&queue);
             let headers: Vec<Vec<String>> = payload
@@ -353,7 +364,13 @@ async fn serve_start(p: Value) -> Value {
             });
             let tx = q.tx.clone();
             tokio::spawn(async move {
-                let _ = tx.send(event).await;
+                // try_send: if queue is full, reject with a 503 immediately
+                // rather than stalling the accept loop or growing memory unboundedly.
+                if tx.try_send(event).is_err() {
+                    tracing::warn!("iroh-http-deno: serve queue full — dropping request with 503");
+                    let _ = respond(payload.req_handle, 503,
+                        vec![("content-length".to_string(), "0".to_string())]);
+                }
             });
         },
     );
