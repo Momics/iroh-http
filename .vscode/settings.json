@@ -1,7 +1,0 @@
-{
-  "deno.enable": true,
-  "deno.disablePaths": [
-    "./packages"
-  ],
-  "deno.enablePaths": ["./packages/iroh-http-deno"]
-}
