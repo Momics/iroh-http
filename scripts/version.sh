@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: ./scripts/version.sh 0.2.0
+#
+# Bumps the version across ALL package manifests:
+#   - 7 Cargo.toml  (crates + packages, excluding examples)
+#   - 3 package.json (node, tauri, shared)
+#   - 1 pyproject.toml
+#   - 1 deno.jsonc
+#   - 1 jsr.jsonc
+#
+# Also updates inter-crate dependency versions and the Deno import map.
+# Does NOT touch lockfiles or examples — those follow naturally.
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <new-version>"
+  echo "  e.g. $0 0.2.0"
+  exit 1
+fi
+
+NEW="$1"
+
+# Validate semver-ish format
+if ! [[ "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+  echo "Error: '$NEW' doesn't look like a valid version (expected X.Y.Z or X.Y.Z-pre)"
+  exit 1
+fi
+
+# Detect current version from the source of truth (iroh-http-core)
+OLD=$(grep '^version = ' "$ROOT/crates/iroh-http-core/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
+echo "Bumping $OLD → $NEW"
+
+# ── Cargo.toml files ──────────────────────────────────────────────────────────
+CARGO_FILES=(
+  crates/iroh-http-framing/Cargo.toml
+  crates/iroh-http-core/Cargo.toml
+  crates/iroh-http-discovery/Cargo.toml
+  packages/iroh-http-node/Cargo.toml
+  packages/iroh-http-deno/Cargo.toml
+  packages/iroh-http-py/Cargo.toml
+  packages/iroh-http-tauri/Cargo.toml
+)
+
+for f in "${CARGO_FILES[@]}"; do
+  filepath="$ROOT/$f"
+  if [[ ! -f "$filepath" ]]; then
+    echo "  SKIP (not found): $f"
+    continue
+  fi
+  # Replace the package version line
+  sed -i '' "s/^version = \"$OLD\"/version = \"$NEW\"/" "$filepath"
+  # Replace internal dependency versions (e.g. iroh-http-framing = { path = "...", version = "0.1.0" })
+  sed -i '' "s/\(iroh-http-[a-z]*.*version = \"\)$OLD\"/\1$NEW\"/" "$filepath"
+  echo "  ✓ $f"
+done
+
+# ── package.json files ────────────────────────────────────────────────────────
+JSON_FILES=(
+  packages/iroh-http-shared/package.json
+  packages/iroh-http-node/package.json
+  packages/iroh-http-tauri/package.json
+)
+
+for f in "${JSON_FILES[@]}"; do
+  filepath="$ROOT/$f"
+  if [[ ! -f "$filepath" ]]; then
+    echo "  SKIP (not found): $f"
+    continue
+  fi
+  # Only replace the top-level "version" field (line must start with  "version")
+  sed -i '' "s/\"version\": \"$OLD\"/\"version\": \"$NEW\"/" "$filepath"
+  echo "  ✓ $f"
+done
+
+# ── pyproject.toml ────────────────────────────────────────────────────────────
+PYPROJECT="$ROOT/packages/iroh-http-py/pyproject.toml"
+if [[ -f "$PYPROJECT" ]]; then
+  sed -i '' "s/^version *= *\"$OLD\"/version         = \"$NEW\"/" "$PYPROJECT"
+  echo "  ✓ packages/iroh-http-py/pyproject.toml"
+fi
+
+# ── deno.jsonc ────────────────────────────────────────────────────────────────
+DENO_JSON="$ROOT/packages/iroh-http-deno/deno.jsonc"
+if [[ -f "$DENO_JSON" ]]; then
+  sed -i '' "s/\"version\": \"$OLD\"/\"version\": \"$NEW\"/" "$DENO_JSON"
+  # Update the shared import version range (^0.1 → ^0.2, etc.)
+  MAJOR_MINOR=$(echo "$NEW" | sed 's/\([0-9]*\.[0-9]*\).*/\1/')
+  sed -i '' "s|@momics/iroh-http-shared@\^[0-9.]*|@momics/iroh-http-shared@^$MAJOR_MINOR|" "$DENO_JSON"
+  echo "  ✓ packages/iroh-http-deno/deno.jsonc"
+fi
+
+# ── jsr.jsonc ─────────────────────────────────────────────────────────────────
+JSR_JSON="$ROOT/packages/iroh-http-shared/jsr.jsonc"
+if [[ -f "$JSR_JSON" ]]; then
+  sed -i '' "s/\"version\": \"$OLD\"/\"version\": \"$NEW\"/" "$JSR_JSON"
+  echo "  ✓ packages/iroh-http-shared/jsr.jsonc"
+fi
+
+echo ""
+echo "Done. Verify with:  git diff --stat"
+echo "Then commit:        git add -u && git commit -m 'chore: bump version to $NEW'"
