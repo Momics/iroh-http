@@ -12,6 +12,9 @@ dist/
 *.node
 packages/iroh-http-node/index.js
 packages/iroh-http-node/index.d.ts
+packages/iroh-http-node/lib.js
+packages/iroh-http-node/lib.d.ts
+packages/iroh-http-node/*.map
 
 # Deno compiled libraries
 packages/iroh-http-deno/lib/*.dylib

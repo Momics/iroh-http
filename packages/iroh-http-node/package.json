@@ -2,8 +2,8 @@
   "name": "@momics/iroh-http-node",
   "version": "0.1.0",
   "description": "Node.js native addon for iroh-http (napi-rs)",
-  "main": "./index.js",
-  "types": "./index.d.ts",
+  "main": "./lib.js",
+  "types": "./lib.d.ts",
   "napi": {
     "binaryName": "iroh-http-node",
     "targets": [
@@ -21,12 +21,19 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "^2",
+    "@types/node": "^25.6.0",
     "typescript": "^5"
   },
   "dependencies": {
-    "@momics/iroh-http-shared": "workspace:*"
+    "@momics/iroh-http-shared": "*"
   },
-  "files": ["*.js", "*.d.ts", "*.node"],
-  "publishConfig": { "access": "public" },
+  "files": [
+    "*.js",
+    "*.d.ts",
+    "*.node"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT OR Apache-2.0"
 }
