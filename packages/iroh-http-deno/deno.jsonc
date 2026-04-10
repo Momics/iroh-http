@@ -8,7 +8,8 @@
     "build:all":   "deno run --allow-run --allow-env --allow-read --allow-write scripts/build-all.mts"
   },
   "imports": {
-    "@std/path": "jsr:@std/path@^1",
-    "@std/fs":   "jsr:@std/fs@^1"
+    "@std/path":       "jsr:@std/path@^1",
+    "@std/fs":         "jsr:@std/fs@^1",
+    "iroh-http-shared": "../iroh-http-shared/src/index.ts"
   }
 }

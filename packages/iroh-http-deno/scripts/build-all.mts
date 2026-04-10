@@ -11,8 +11,8 @@
  *   brew install zig mingw-w64
  */
 
-import { resolve, dirname, fromFileUrl } from "jsr:@std/path";
-import { ensureDir } from "jsr:@std/fs";
+import { resolve, dirname, fromFileUrl } from "@std/path";
+import { ensureDir } from "@std/fs";
 
 const ROOT    = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 const LIB_DIR = resolve(ROOT, "lib");
