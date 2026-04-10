@@ -82,12 +82,13 @@ async fn do_request(
 
     // Build response URL: set the URL to the remote peer's address.
     let remote_str = base32_encode(conn.remote_id().as_bytes());
-    let _response_url = format!("http+iroh://{remote_str}{path}");
+    let response_url = format!("http+iroh://{remote_str}{path}");
 
     Ok(FfiResponse {
         status,
         headers: resp_headers,
         body_handle,
+        url: response_url,
     })
 }
 

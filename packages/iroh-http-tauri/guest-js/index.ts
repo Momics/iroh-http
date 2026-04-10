@@ -64,6 +64,7 @@ const rawFetch: RawFetchFn = async (
     status: number;
     headers: string[][];
     bodyHandle: number;
+    url: string;
   }>(`${PLUGIN}|raw_fetch`, {
     args: {
       endpointHandle,
@@ -78,6 +79,7 @@ const rawFetch: RawFetchFn = async (
     status: res.status,
     headers: res.headers as [string, string][],
     bodyHandle: res.bodyHandle,
+    url: res.url,
   } satisfies FfiResponse;
 };
 

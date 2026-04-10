@@ -114,6 +114,7 @@ pub struct FfiResponsePayload {
     pub status: u16,
     pub headers: Vec<Vec<String>>,
     pub body_handle: u32,
+    pub url: String,
 }
 
 #[command]
@@ -142,6 +143,7 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
         status: res.status,
         headers: resp_headers,
         body_handle: res.body_handle,
+        url: res.url,
     })
 }
 

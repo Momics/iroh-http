@@ -33,6 +33,8 @@ pub struct FfiResponse {
     pub headers: Vec<(String, String)>,
     /// Handle to a [`BodyReader`] containing the response body.
     pub body_handle: u32,
+    /// Full `http+iroh://` URL of the responding peer, e.g. `http+iroh://<node-id>/path`.
+    pub url: String,
 }
 
 /// Options passed to the JS serve callback per incoming request.

@@ -141,6 +141,7 @@ pub struct JsFfiResponse {
     pub status: u32,
     pub headers: Vec<Vec<String>>,
     pub body_handle: u32,
+    pub url: String,
 }
 
 #[napi]
@@ -181,6 +182,7 @@ pub async fn raw_fetch(
         status: res.status as u32,
         headers: resp_headers,
         body_handle: res.body_handle,
+        url: res.url,
     })
 }
 
@@ -213,12 +215,12 @@ pub fn raw_serve(
             obj.set("url", env.create_string(&p.url)?)?;
             obj.set("remoteNodeId", env.create_string(&p.remote_node_id)?)?;
 
-            let headers_arr = env.create_array(p.headers.len() as u32)?;
+            let mut headers_arr = env.create_array(p.headers.len() as u32)?;
             for (i, (k, v)) in p.headers.iter().enumerate() {
-                let pair = env.create_array(2)?;
-                pair.set_element(0, env.create_string(k)?)?;
-                pair.set_element(1, env.create_string(v)?)?;
-                headers_arr.set_element(i as u32, pair)?;
+                let mut pair = env.create_array(2)?;
+                pair.set(0, env.create_string(k)?)?;
+                pair.set(1, env.create_string(v)?)?;
+                headers_arr.set(i as u32, pair)?;
             }
             obj.set("headers", headers_arr)?;
 

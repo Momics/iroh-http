@@ -75,10 +75,14 @@ export function bodyInitToStream(
   if (body instanceof Blob) {
     return body.stream() as ReadableStream<Uint8Array>;
   }
-  if (body instanceof FormData || body instanceof URLSearchParams) {
-    const text =
-      body instanceof URLSearchParams ? body.toString() : ""; // FormData needs boundary — not supported
-    return singleChunkStream(new TextEncoder().encode(text));
+  if (body instanceof FormData) {
+    throw new TypeError(
+      "FormData request bodies are not supported by iroh-http (v1). " +
+      "Serialise the form data manually and pass a string or Uint8Array body instead."
+    );
+  }
+  if (body instanceof URLSearchParams) {
+    return singleChunkStream(new TextEncoder().encode(body.toString()));
   }
   return null;
 }
