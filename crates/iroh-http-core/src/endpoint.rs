@@ -58,6 +58,9 @@ pub struct NodeOptions {
     /// Maximum number of idle connections to keep in the pool.
     /// `None` means no limit (rely on Iroh's idle timeout for cleanup).
     pub max_pooled_connections: Option<usize>,
+    /// Maximum byte size of a QPACK-encoded request or response head.
+    /// Peers sending heads larger than this are rejected.  Default: 65536 (64 KB).
+    pub max_header_size: Option<usize>,
 }
 
 /// A shared Iroh endpoint.
@@ -77,6 +80,8 @@ pub(crate) struct EndpointInner {
     pub max_consecutive_errors: usize,
     /// Connection pool for reusing QUIC connections across fetch/connect calls.
     pub pool: ConnectionPool,
+    /// Maximum byte size of a QPACK-encoded head (request or response).
+    pub max_header_size: usize,
 }
 
 impl IrohEndpoint {
@@ -158,6 +163,7 @@ impl IrohEndpoint {
                 node_id_str,
                 max_consecutive_errors: opts.max_consecutive_errors.unwrap_or(5),
                 pool: ConnectionPool::new(opts.max_pooled_connections),
+                max_header_size: opts.max_header_size.unwrap_or(64 * 1024),
             }),
         })
     }
@@ -184,6 +190,11 @@ impl IrohEndpoint {
 
     pub fn raw(&self) -> &Endpoint {
         &self.inner.ep
+    }
+
+    /// Maximum byte size of a QPACK-encoded head.
+    pub fn max_header_size(&self) -> usize {
+        self.inner.max_header_size
     }
 
     /// Access the connection pool.
