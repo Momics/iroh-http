@@ -1,6 +1,10 @@
 # @momics/iroh-http-node
 
-Node.js native addon for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer HTTP over QUIC.
+Node.js native addon for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer HTTP over [Iroh](https://iroh.computer) QUIC transport.
+
+## How is this different from regular HTTP?
+
+iroh-http replaces DNS and TLS with public keys. Each node has a cryptographic identity — you `fetch()` and `serve()` using standard `Request`/`Response` objects, but connections go directly between devices over QUIC, with no server in between. You create a node because each one has its own identity and UDP socket. See the [root README](https://github.com/momics/iroh-http#how-is-this-different-from-regular-http) for a full comparison.
 
 ## Install
 
