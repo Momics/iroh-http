@@ -1,3 +1,7 @@
+---
+status: integrated
+---
+
 # iroh-http — Code Review (Patch 00)
 
 Line-by-line review of the critical packages and crates. Each finding is

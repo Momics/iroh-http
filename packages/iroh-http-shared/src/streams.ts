@@ -13,18 +13,20 @@ import type { Bridge } from "./bridge.js";
  * Pulls from the bridge via `nextChunk` on each `pull` request.
  * The stream closes automatically when `nextChunk` returns `null`.
  */
-export function makeReadable(bridge: Bridge, handle: number): ReadableStream<Uint8Array> {
+export function makeReadable(bridge: Bridge, handle: number, onClose?: () => void): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       const chunk = await bridge.nextChunk(handle);
       if (chunk === null) {
         controller.close();
+        onClose?.();
       } else {
         controller.enqueue(chunk);
       }
     },
     cancel() {
-      // Nothing to do — the Rust side will clean up when the writer drops.
+      bridge.cancelRequest(handle);
+      onClose?.();
     },
   });
 }

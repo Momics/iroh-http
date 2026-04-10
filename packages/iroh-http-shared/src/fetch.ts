@@ -42,7 +42,7 @@ export function makeFetch(
 
     // Reject immediately if already aborted.
     if (signal?.aborted) {
-      throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+      throw new DOMException("The operation was aborted", "AbortError");
     }
 
     const headers: [string, string][] = normaliseHeaders(init?.headers);
@@ -61,11 +61,7 @@ export function makeFetch(
     const abortPromise = signal
       ? new Promise<never>((_, reject) => {
           onAbort = () =>
-            reject(
-              Object.assign(new Error("The operation was aborted"), {
-                name: "AbortError",
-              })
-            );
+            reject(new DOMException("The operation was aborted", "AbortError"));
           signal.addEventListener("abort", onAbort);
         })
       : null;
@@ -88,8 +84,22 @@ export function makeFetch(
       );
     }
 
+    // Wire AbortSignal to cancel the body reader (§3).
+    // Keep a reference to the listener so we can remove it when the body closes (§1.2).
+    let cancelOnAbort: (() => void) | null = null;
+    if (signal) {
+      cancelOnAbort = () => bridge.cancelRequest(rawRes.bodyHandle);
+      signal.addEventListener("abort", cancelOnAbort);
+    }
+
     // Wrap response body in a ReadableStream.
-    const resBody = makeReadable(bridge, rawRes.bodyHandle);
+    // When the stream closes (EOF or cancel), remove the abort listener to avoid a leak.
+    const resBody = makeReadable(bridge, rawRes.bodyHandle, () => {
+      if (signal && cancelOnAbort) {
+        signal.removeEventListener("abort", cancelOnAbort!);
+        cancelOnAbort = null;
+      }
+    });
 
     const response = new Response(resBody, {
       status: rawRes.status,
@@ -104,23 +114,21 @@ export function makeFetch(
       configurable: true,
     });
 
-    // Populate res.trailers as a lazy Promise<Headers> (§4).
+    // Populate res.trailers as a cached lazy Promise<Headers> (§4).
+    // Caching is required because the Rust slab entry is consumed on first access.
     const trailersHandle = rawRes.trailersHandle;
+    let cachedTrailers: Promise<Headers> | null = null;
     Object.defineProperty(response, "trailers", {
-      get: () =>
-        bridge.nextTrailer(trailersHandle).then(
-          (pairs) => (pairs ? new Headers(pairs) : new Headers())
-        ),
+      get: () => {
+        if (!cachedTrailers) {
+          cachedTrailers = bridge
+            .nextTrailer(trailersHandle)
+            .then((pairs) => (pairs ? new Headers(pairs) : new Headers()));
+        }
+        return cachedTrailers;
+      },
       configurable: true,
     });
-
-    // Wire post-response AbortSignal to cancel the body reader (§3).
-    if (signal) {
-      const bodyHandle = rawRes.bodyHandle;
-      signal.addEventListener("abort", () => {
-        bridge.cancelRequest(bodyHandle);
-      });
-    }
 
     return response;
   };
