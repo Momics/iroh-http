@@ -16,6 +16,61 @@ pub use stream::{
 pub use client::{fetch, raw_connect, alloc_fetch_token, cancel_in_flight};
 pub use server::serve;
 
+// ── Structured error serialization ───────────────────────────────────────────
+
+/// Classify a Rust error message and return a JSON string
+/// `{"code":"CODE","message":"..."}` suitable for FFI error channels.
+///
+/// Adapters should use this instead of `.to_string()` so that JS can
+/// dispatch by stable error codes rather than fragile regex matching.
+pub fn classify_error_json(e: impl std::fmt::Display) -> String {
+    let msg = e.to_string();
+    let code = classify_error_code(&msg);
+    // Minimal JSON string escaping — only sequences that are structurally
+    // significant inside a JSON string value.
+    let escaped = msg
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
+    format!("{{\"code\":\"{code}\",\"message\":\"{escaped}\"}}")
+}
+
+fn classify_error_code(msg: &str) -> &'static str {
+    let m = &msg.to_lowercase();
+    if m.contains("timed out") || m.contains("timeout") || m.contains("deadline") {
+        "TIMEOUT"
+    } else if m.contains("dns") || m.contains("resolv") {
+        "DNS_FAILURE"
+    } else if m.contains("alpn") {
+        "ALPN_MISMATCH"
+    } else if (m.contains("upgrade") && m.contains("reject")) || m.contains("non-101") {
+        "UPGRADE_REJECTED"
+    } else if m.contains("parse") && (m.contains("response head") || m.contains("request head")) {
+        "PARSE_FAILURE"
+    } else if m.contains("too many headers") {
+        "TOO_MANY_HEADERS"
+    } else if (m.contains("invalid") || m.contains("unknown")) && m.contains("handle") {
+        "INVALID_HANDLE"
+    } else if m.contains("writer dropped") {
+        "WRITER_DROPPED"
+    } else if m.contains("reader dropped") {
+        "READER_DROPPED"
+    } else if m.contains("stream reset") {
+        "STREAM_RESET"
+    } else if m.contains("connection") && (m.contains("refused") || m.contains("reset") || m.contains("closed")) {
+        "REFUSED"
+    } else if m.contains("connect") {
+        "REFUSED"
+    } else if (m.contains("invalid") && m.contains("key")) || m.contains("key bytes") || m.contains("wrong length") {
+        "INVALID_KEY"
+    } else if m.contains("bind") || m.contains("endpoint") {
+        "ENDPOINT_FAILURE"
+    } else {
+        "UNKNOWN"
+    }
+}
+
 /// Flat request struct that crosses the FFI boundary.
 #[derive(Debug, Clone)]
 pub struct FfiRequest {

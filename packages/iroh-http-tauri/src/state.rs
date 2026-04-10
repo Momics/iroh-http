@@ -1,14 +1,10 @@
 //! Global state managed by the Tauri plugin.
 
-use std::{
-    collections::HashMap,
-    sync::{Mutex, OnceLock},
-};
+use std::sync::{Mutex, OnceLock};
 
 use iroh_http_core::{
     endpoint::IrohEndpoint,
-    server::respond,
-    stream::{BodyReader, BodyWriter, alloc_body_writer, store_pending_reader, claim_pending_reader},
+    stream::{alloc_body_writer, store_pending_reader},
 };
 use slab::Slab;
 
@@ -37,8 +33,7 @@ pub fn remove_endpoint(handle: u32) -> Option<IrohEndpoint> {
 }
 
 // Re-export stream helpers so commands.rs has a single import path.
-pub use iroh_http_core::stream::{finish_body, next_chunk, send_chunk};
-pub use iroh_http_core::server::respond as respond_request;
+// (Currently unused — commands.rs uses iroh_http_core::stream directly.)
 
 /// Allocate a writer handle and stash the paired reader so rawFetch can claim it.
 pub fn js_alloc_body_writer() -> u32 {
@@ -46,5 +41,3 @@ pub fn js_alloc_body_writer() -> u32 {
     store_pending_reader(handle, reader);
     handle
 }
-
-pub use iroh_http_core::stream::claim_pending_reader;

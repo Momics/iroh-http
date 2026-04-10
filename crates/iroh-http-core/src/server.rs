@@ -35,6 +35,9 @@ const DEFAULT_CONCURRENCY: usize = 64;
 pub struct ServeOptions {
     /// Maximum number of concurrent in-flight requests.  `None` uses the default.
     pub max_concurrency: Option<usize>,
+    /// Number of consecutive accept errors before the loop gives up.
+    /// `None` uses the default (5).
+    pub max_consecutive_errors: Option<usize>,
 }
 
 // ── Pending response head registry ───────────────────────────────────────────
@@ -83,17 +86,36 @@ where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
     let max = options.max_concurrency.unwrap_or(DEFAULT_CONCURRENCY);
+    let max_errors = options.max_consecutive_errors.unwrap_or(5);
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max));
     let on_request = std::sync::Arc::new(on_request);
 
     tokio::spawn(async move {
         let ep = endpoint.raw().clone();
+        let mut consecutive_errors: usize = 0;
 
-        while let Some(incoming) = ep.accept().await {
+        loop {
+            let incoming = match ep.accept().await {
+                Some(i) => i,
+                None => break, // endpoint closed
+            };
+
             let conn = match incoming.await {
-                Ok(c) => c,
+                Ok(c) => {
+                    consecutive_errors = 0;
+                    c
+                }
                 Err(e) => {
-                    tracing::warn!("iroh-http: accept error: {e}");
+                    consecutive_errors += 1;
+                    tracing::warn!(
+                        "iroh-http: accept error ({consecutive_errors}/{max_errors}): {e}"
+                    );
+                    if consecutive_errors >= max_errors {
+                        tracing::error!(
+                            "iroh-http: too many consecutive accept errors — shutting down serve loop"
+                        );
+                        break;
+                    }
                     continue;
                 }
             };

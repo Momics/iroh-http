@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-send-trailers"
+description = "Enables the send_trailers command without any pre-configured scope."
+commands.allow = ["send_trailers"]
+
+[[permission]]
+identifier = "deny-send-trailers"
+description = "Denies the send_trailers command without any pre-configured scope."
+commands.deny = ["send_trailers"]

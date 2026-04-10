@@ -36,6 +36,84 @@ Denies the alloc_body_writer command without any pre-configured scope.
 <tr>
 <td>
 
+`iroh-http:allow-alloc-fetch-token`
+
+</td>
+<td>
+
+Enables the alloc_fetch_token command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-alloc-fetch-token`
+
+</td>
+<td>
+
+Denies the alloc_fetch_token command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:allow-cancel-in-flight`
+
+</td>
+<td>
+
+Enables the cancel_in_flight command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-cancel-in-flight`
+
+</td>
+<td>
+
+Denies the cancel_in_flight command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:allow-cancel-request`
+
+</td>
+<td>
+
+Enables the cancel_request command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-cancel-request`
+
+</td>
+<td>
+
+Denies the cancel_request command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `iroh-http:allow-close-endpoint`
 
 </td>
@@ -140,6 +218,58 @@ Denies the next_chunk command without any pre-configured scope.
 <tr>
 <td>
 
+`iroh-http:allow-next-trailer`
+
+</td>
+<td>
+
+Enables the next_trailer command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-next-trailer`
+
+</td>
+<td>
+
+Denies the next_trailer command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:allow-raw-connect`
+
+</td>
+<td>
+
+Enables the raw_connect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-raw-connect`
+
+</td>
+<td>
+
+Denies the raw_connect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `iroh-http:allow-raw-fetch`
 
 </td>
@@ -211,6 +341,32 @@ Enables the send_chunk command without any pre-configured scope.
 <td>
 
 Denies the send_chunk command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:allow-send-trailers`
+
+</td>
+<td>
+
+Enables the send_trailers command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-send-trailers`
+
+</td>
+<td>
+
+Denies the send_trailers command without any pre-configured scope.
 
 </td>
 </tr>

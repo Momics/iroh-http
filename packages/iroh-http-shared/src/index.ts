@@ -52,7 +52,7 @@ export function buildNode(
   const publicKey = PublicKey.fromString(info.nodeId);
   const secretKey = SecretKey._fromBytesWithPublicKey(info.keypair, publicKey);
 
-  return {
+  const node: IrohNode = {
     publicKey,
     secretKey,
     nodeId: info.nodeId,
@@ -65,5 +65,7 @@ export function buildNode(
       await closeEndpoint(info.endpointHandle);
       resolveClosed();
     },
+    [Symbol.asyncDispose]() { return node.close(); },
   };
+  return node;
 }

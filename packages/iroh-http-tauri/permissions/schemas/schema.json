@@ -307,6 +307,42 @@
           "markdownDescription": "Denies the alloc_body_writer command without any pre-configured scope."
         },
         {
+          "description": "Enables the alloc_fetch_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-alloc-fetch-token",
+          "markdownDescription": "Enables the alloc_fetch_token command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the alloc_fetch_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-alloc-fetch-token",
+          "markdownDescription": "Denies the alloc_fetch_token command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_in_flight command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-in-flight",
+          "markdownDescription": "Enables the cancel_in_flight command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_in_flight command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-in-flight",
+          "markdownDescription": "Denies the cancel_in_flight command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-request",
+          "markdownDescription": "Enables the cancel_request command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-request",
+          "markdownDescription": "Denies the cancel_request command without any pre-configured scope."
+        },
+        {
           "description": "Enables the close_endpoint command without any pre-configured scope.",
           "type": "string",
           "const": "allow-close-endpoint",
@@ -355,6 +391,30 @@
           "markdownDescription": "Denies the next_chunk command without any pre-configured scope."
         },
         {
+          "description": "Enables the next_trailer command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-next-trailer",
+          "markdownDescription": "Enables the next_trailer command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the next_trailer command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-next-trailer",
+          "markdownDescription": "Denies the next_trailer command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the raw_connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-raw-connect",
+          "markdownDescription": "Enables the raw_connect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the raw_connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-raw-connect",
+          "markdownDescription": "Denies the raw_connect command without any pre-configured scope."
+        },
+        {
           "description": "Enables the raw_fetch command without any pre-configured scope.",
           "type": "string",
           "const": "allow-raw-fetch",
@@ -389,6 +449,18 @@
           "type": "string",
           "const": "deny-send-chunk",
           "markdownDescription": "Denies the send_chunk command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the send_trailers command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-send-trailers",
+          "markdownDescription": "Enables the send_trailers command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the send_trailers command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-send-trailers",
+          "markdownDescription": "Denies the send_trailers command without any pre-configured scope."
         },
         {
           "description": "Enables the serve command without any pre-configured scope.",

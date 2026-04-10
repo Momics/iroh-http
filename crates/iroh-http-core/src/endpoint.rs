@@ -23,6 +23,15 @@ pub struct NodeOptions {
     /// are advertised in preference order: `iroh-http/1-full`, `-duplex`,
     /// `-trailers`, `iroh-http/1`.
     pub capabilities: Vec<String>,
+    /// Capacity (in chunks) of each body channel.  Default: 32.
+    /// Increase for large fast producers; decrease to tighten backpressure.
+    pub channel_capacity: Option<usize>,
+    /// Maximum byte length of a single chunk in `send_chunk`.
+    /// Chunks larger than this are silently split internally.
+    /// Default: 65536 (64 KB).
+    pub max_chunk_size_bytes: Option<usize>,
+    /// Number of consecutive accept errors before the serve loop gives up.  Default: 5.
+    pub max_consecutive_errors: Option<usize>,
 }
 
 /// A shared Iroh endpoint.
@@ -38,6 +47,8 @@ pub(crate) struct EndpointInner {
     pub ep: Endpoint,
     /// The node's own base32-encoded public key (stable for the lifetime of the key).
     pub node_id_str: String,
+    /// Configured consecutive error limit for the serve accept loop.
+    pub max_consecutive_errors: usize,
 }
 
 impl IrohEndpoint {
@@ -95,16 +106,31 @@ impl IrohEndpoint {
 
         let ep = builder.bind().await.map_err(|e| e.to_string())?;
 
+        // Apply backpressure config for all future channel allocations.
+        crate::stream::configure_backpressure(
+            opts.channel_capacity.unwrap_or(crate::stream::DEFAULT_CHANNEL_CAPACITY),
+            opts.max_chunk_size_bytes.unwrap_or(crate::stream::DEFAULT_MAX_CHUNK_SIZE),
+        );
+
         let node_id_str = crate::base32_encode(ep.id().as_bytes());
 
         Ok(Self {
-            inner: Arc::new(EndpointInner { ep, node_id_str }),
+            inner: Arc::new(EndpointInner {
+                ep,
+                node_id_str,
+                max_consecutive_errors: opts.max_consecutive_errors.unwrap_or(5),
+            }),
         })
     }
 
     /// The node's public key as a lowercase base32 string.
     pub fn node_id(&self) -> &str {
         &self.inner.node_id_str
+    }
+
+    /// The configured consecutive-error limit for the serve loop.
+    pub fn max_consecutive_errors(&self) -> usize {
+        self.inner.max_consecutive_errors
     }
 
     /// The node's raw secret key bytes (32 bytes).

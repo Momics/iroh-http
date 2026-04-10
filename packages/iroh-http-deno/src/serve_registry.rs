@@ -11,7 +11,7 @@ use std::{
 
 use tokio::sync::mpsc;
 
-const QUEUE_CAPACITY: usize = 128;
+const QUEUE_CAPACITY: usize = 256;
 
 /// A queued request ready to be delivered to the TypeScript polling loop.
 pub type QueuedRequest = serde_json::Value;

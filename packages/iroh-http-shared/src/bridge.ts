@@ -112,6 +112,12 @@ export interface NodeOptions {
   relays?: string[];
   /** DNS discovery server URL. */
   dnsDiscovery?: string;
+  /** Capacity (in chunks) of each body channel.  Default: 32. */
+  channelCapacity?: number;
+  /** Maximum byte length of a single chunk.  Larger chunks are split.  Default: 65536 (64 KB). */
+  maxChunkSizeBytes?: number;
+  /** Number of consecutive accept errors before the serve loop gives up.  Default: 5. */
+  maxConsecutiveErrors?: number;
 }
 
 /** The object returned by `createNode`. */
@@ -161,6 +167,8 @@ export interface IrohNode {
   readonly closed: Promise<void>;
   /** Close the endpoint and release resources. */
   close(): Promise<void>;
+  /** Enables `await using node = await createNode()` (TC39 explicit resource management). */
+  [Symbol.asyncDispose](): Promise<void>;
 }
 
 /** Result of the low-level `createEndpoint` FFI call. */

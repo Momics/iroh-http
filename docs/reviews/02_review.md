@@ -1,5 +1,7 @@
 # Reference Pattern Analysis
 
+<!-- status: integrated -->
+
 Comparison of old reference implementations (`.old_references/http-tauri`, `iroh`, `iroh-tauri`, `iroh-deno`) against the current `iroh-http` packages. Findings are grouped by priority.
 
 ---

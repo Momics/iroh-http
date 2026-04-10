@@ -52,7 +52,20 @@ const lib = Deno.dlopen(LIB_PATH, {
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
+// ── Base64 helpers ─────────────────────────────────────────────────────
 
+function encodeBase64(u8: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+  return btoa(bin);
+}
+
+function decodeBase64(s: string): Uint8Array {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 /** Initial output buffer size.  Grown automatically on overflow. */
 const INITIAL_BUF = 4096;
 
@@ -91,11 +104,11 @@ async function call<T>(method: string, payload: unknown): Promise<T> {
 
 export const bridge: Bridge = {
   async nextChunk(handle: number): Promise<Uint8Array | null> {
-    const res = await call<{ chunk: number[] | null }>("nextChunk", { handle });
-    return res.chunk ? new Uint8Array(res.chunk) : null;
+    const res = await call<{ chunk: string | null }>("nextChunk", { handle });
+    return res.chunk ? decodeBase64(res.chunk) : null;
   },
   async sendChunk(handle: number, chunk: Uint8Array): Promise<void> {
-    await call<Record<never, never>>("sendChunk", { handle, chunk: Array.from(chunk) });
+    await call<Record<never, never>>("sendChunk", { handle, chunk: encodeBase64(chunk) });
   },
   async finishBody(handle: number): Promise<void> {
     await call<Record<never, never>>("finishBody", { handle });
@@ -234,10 +247,13 @@ export async function createEndpointInfo(options?: NodeOptions): Promise<Endpoin
   const res = await call<{ endpointHandle: number; nodeId: string; keypair: number[] }>(
     "createEndpoint",
     {
-      key:          keyBytes,
-      idleTimeout:  options?.idleTimeout ?? null,
-      relays:       options?.relays ?? null,
-      dnsDiscovery: options?.dnsDiscovery ?? null,
+      key:                  keyBytes,
+      idleTimeout:          options?.idleTimeout ?? null,
+      relays:               options?.relays ?? null,
+      dnsDiscovery:         options?.dnsDiscovery ?? null,
+      channelCapacity:      options?.channelCapacity ?? null,
+      maxChunkSizeBytes:    options?.maxChunkSizeBytes ?? null,
+      maxConsecutiveErrors: options?.maxConsecutiveErrors ?? null,
     },
   ).catch((e: unknown) => { throw classifyBindError(e); });
   return {

@@ -1,5 +1,6 @@
 //! Tauri commands for the iroh-http plugin.
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::NodeOptions,
@@ -7,15 +8,9 @@ use iroh_http_core::{
     RequestPayload,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{command, ipc::Channel, Runtime};
+use tauri::{command, ipc::Channel};
 
 use crate::state;
-
-// ── Shared response / error type ──────────────────────────────────────────────
-
-fn err(s: impl ToString) -> tauri::Error {
-    tauri::Error::PluginInitialization("iroh-http".into(), s.to_string())
-}
 
 // ── Endpoint ──────────────────────────────────────────────────────────────────
 
@@ -26,6 +21,9 @@ pub struct CreateEndpointArgs {
     pub idle_timeout: Option<u64>,
     pub relays: Option<Vec<String>>,
     pub dns_discovery: Option<String>,
+    pub channel_capacity: Option<usize>,
+    pub max_chunk_size_bytes: Option<usize>,
+    pub max_consecutive_errors: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -47,12 +45,15 @@ pub async fn create_endpoint(
             relays: a.relays.unwrap_or_default(),
             dns_discovery: a.dns_discovery,
             capabilities: Vec::new(), // advertise all by default
+            channel_capacity: a.channel_capacity,
+            max_chunk_size_bytes: a.max_chunk_size_bytes,
+            max_consecutive_errors: a.max_consecutive_errors,
         })
         .unwrap_or_default();
 
     let ep = iroh_http_core::endpoint::IrohEndpoint::bind(opts)
         .await
-        .map_err(|e| e)?;
+        .map_err(|e| iroh_http_core::classify_error_json(e))?;
 
     let node_id = ep.node_id().to_string();
     let keypair = ep.secret_key_bytes().to_vec();
@@ -68,7 +69,7 @@ pub async fn create_endpoint(
 #[command]
 pub async fn close_endpoint(endpoint_handle: u32) -> Result<(), String> {
     let ep = state::remove_endpoint(endpoint_handle)
-        .ok_or_else(|| format!("invalid endpoint handle: {endpoint_handle}"))?;
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     ep.close().await;
     Ok(())
 }
@@ -76,19 +77,20 @@ pub async fn close_endpoint(endpoint_handle: u32) -> Result<(), String> {
 // ── Bridge methods ────────────────────────────────────────────────────────────
 
 #[command]
-pub async fn next_chunk(handle: u32) -> Result<Option<Vec<u8>>, String> {
-    let chunk = iroh_http_core::stream::next_chunk(handle).await?;
-    Ok(chunk.map(|b| b.to_vec()))
+pub async fn next_chunk(handle: u32) -> Result<Option<String>, String> {
+    let chunk = iroh_http_core::stream::next_chunk(handle).await.map_err(|e| iroh_http_core::classify_error_json(e))?;
+    Ok(chunk.map(|b| B64.encode(&b[..])))
 }
 
 #[command]
-pub async fn send_chunk(handle: u32, chunk: Vec<u8>) -> Result<(), String> {
-    iroh_http_core::stream::send_chunk(handle, Bytes::from(chunk)).await
+pub async fn send_chunk(handle: u32, chunk: String) -> Result<(), String> {
+    let bytes = B64.decode(&chunk).map_err(|e| iroh_http_core::classify_error_json(format!("base64 decode: {e}")))?;
+    iroh_http_core::stream::send_chunk(handle, Bytes::from(bytes)).await.map_err(|e| iroh_http_core::classify_error_json(e))
 }
 
 #[command]
 pub fn finish_body(handle: u32) -> Result<(), String> {
-    iroh_http_core::stream::finish_body(handle)
+    iroh_http_core::stream::finish_body(handle).map_err(|e| iroh_http_core::classify_error_json(e))
 }
 
 #[command]
@@ -98,7 +100,7 @@ pub fn cancel_request(handle: u32) {
 
 #[command]
 pub async fn next_trailer(handle: u32) -> Result<Option<Vec<Vec<String>>>, String> {
-    let trailers = iroh_http_core::stream::next_trailer(handle).await?;
+    let trailers = iroh_http_core::stream::next_trailer(handle).await.map_err(|e| iroh_http_core::classify_error_json(e))?;
     Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
 }
 
@@ -108,7 +110,7 @@ pub fn send_trailers(handle: u32, trailers: Vec<Vec<String>>) -> Result<(), Stri
         .into_iter()
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
-    iroh_http_core::stream::send_trailers(handle, pairs)
+    iroh_http_core::stream::send_trailers(handle, pairs).map_err(|e| iroh_http_core::classify_error_json(e))
 }
 
 #[command]
@@ -153,7 +155,7 @@ pub struct FfiResponsePayload {
 #[command]
 pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String> {
     let ep = state::get_endpoint(args.endpoint_handle)
-        .ok_or_else(|| format!("invalid endpoint handle: {}", args.endpoint_handle))?;
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
 
     let pairs: Vec<(String, String)> = args
         .headers
@@ -161,10 +163,10 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
 
-    let req_body_reader = args.req_body_handle.and_then(state::claim_pending_reader);
+    let req_body_reader = args.req_body_handle.and_then(iroh_http_core::stream::claim_pending_reader);
 
     let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.fetch_token)
-        .await?;
+        .await.map_err(iroh_http_core::classify_error_json)?;
 
     let resp_headers: Vec<Vec<String>> = res
         .headers
@@ -205,16 +207,16 @@ pub struct ServeEventPayload {
 /// objects.  JS processes each request and calls `respond_to_request` to
 /// send the response head back.
 #[command]
-pub async fn serve<R: Runtime>(
+pub async fn serve(
     endpoint_handle: u32,
     channel: Channel<ServeEventPayload>,
 ) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| format!("invalid endpoint handle: {endpoint_handle}"))?;
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
 
     iroh_http_core::serve(
-        ep,
-        ServeOptions::default(),
+        ep.clone(),
+        ServeOptions { max_consecutive_errors: Some(ep.max_consecutive_errors()), ..Default::default() },
         move |payload: RequestPayload| {
             let ch = channel.clone();
             let headers: Vec<Vec<String>> = payload
@@ -261,7 +263,7 @@ pub fn respond_to_request(args: RespondArgs) -> Result<(), String> {
         .into_iter()
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
-    respond(args.req_handle, args.status, headers)
+    respond(args.req_handle, args.status, headers).map_err(|e| iroh_http_core::classify_error_json(e))
 }
 
 // ── rawConnect ────────────────────────────────────────────────────────────────
@@ -285,7 +287,7 @@ pub struct FfiDuplexStreamPayload {
 #[command]
 pub async fn raw_connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload, String> {
     let ep = state::get_endpoint(args.endpoint_handle)
-        .ok_or_else(|| format!("invalid endpoint handle: {}", args.endpoint_handle))?;
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
 
     let pairs: Vec<(String, String)> = args
         .headers
@@ -294,7 +296,7 @@ pub async fn raw_connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload,
         .collect();
 
     let duplex = iroh_http_core::raw_connect(&ep, &args.node_id, &args.path, &pairs)
-        .await?;
+        .await.map_err(iroh_http_core::classify_error_json)?;
 
     Ok(FfiDuplexStreamPayload {
         read_handle: duplex.read_handle,

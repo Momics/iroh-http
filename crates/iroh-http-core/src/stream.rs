@@ -20,7 +20,22 @@ use bytes::Bytes;
 use slab::Slab;
 use tokio::sync::mpsc;
 
-const CHANNEL_CAPACITY: usize = 32;
+pub const DEFAULT_CHANNEL_CAPACITY: usize = 32;
+pub const DEFAULT_MAX_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
+
+// ── Global backpressure config (set at endpoint bind time) ──────────────────
+
+static CHANNEL_CAPACITY: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(DEFAULT_CHANNEL_CAPACITY);
+static MAX_CHUNK_SIZE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(DEFAULT_MAX_CHUNK_SIZE);
+
+/// Configure backpressure parameters.  Call once at endpoint bind time.
+/// Subsequent calls update the values for all future channels.
+pub fn configure_backpressure(channel_capacity: usize, max_chunk_bytes: usize) {
+    CHANNEL_CAPACITY.store(channel_capacity, std::sync::atomic::Ordering::Relaxed);
+    MAX_CHUNK_SIZE.store(max_chunk_bytes, std::sync::atomic::Ordering::Relaxed);
+}
 
 // ── Body channel primitives ───────────────────────────────────────────────────
 
@@ -39,7 +54,8 @@ pub struct BodyWriter {
 
 /// Create a matched (writer, reader) pair backed by a bounded mpsc channel.
 pub fn make_body_channel() -> (BodyWriter, BodyReader) {
-    let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+    let cap = CHANNEL_CAPACITY.load(std::sync::atomic::Ordering::Relaxed);
+    let (tx, rx) = mpsc::channel(cap);
     (
         BodyWriter { tx },
         BodyReader {
@@ -150,6 +166,9 @@ pub async fn next_chunk(handle: u32) -> Result<Option<Bytes>, String> {
 }
 
 /// Push a chunk into a writer handle.
+///
+/// Chunks larger than the configured `MAX_CHUNK_SIZE` are split automatically
+/// so individual messages stay within the backpressure budget.
 pub async fn send_chunk(handle: u32, chunk: Bytes) -> Result<(), String> {
     // Clone the Sender (cheap) and release the lock before awaiting.
     let tx = {
@@ -159,9 +178,21 @@ pub async fn send_chunk(handle: u32, chunk: Bytes) -> Result<(), String> {
             .tx
             .clone()
     };
-    tx.send(chunk)
-        .await
-        .map_err(|_| "body reader dropped".to_string())
+    let max = MAX_CHUNK_SIZE.load(std::sync::atomic::Ordering::Relaxed);
+    if chunk.len() <= max {
+        tx.send(chunk).await.map_err(|_| "body reader dropped".to_string())
+    } else {
+        // Split into max-size pieces.
+        let mut offset = 0;
+        while offset < chunk.len() {
+            let end = (offset + max).min(chunk.len());
+            tx.send(chunk.slice(offset..end))
+                .await
+                .map_err(|_| "body reader dropped".to_string())?;
+            offset = end;
+        }
+        Ok(())
+    }
 }
 
 /// Signal end-of-body by dropping the writer from the slab.
