@@ -115,16 +115,16 @@ pub async fn close_endpoint(endpoint_handle: u32) -> napi::Result<()> {
 // ── Bridge methods ────────────────────────────────────────────────────────────
 
 #[napi]
-pub async fn js_next_chunk(handle: u32) -> napi::Result<Option<Uint8Array>> {
+pub async fn js_next_chunk(handle: u32) -> napi::Result<Option<Buffer>> {
     let chunk = next_chunk(handle)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
-    Ok(chunk.map(|b| Uint8Array::new(b.to_vec())))
+    Ok(chunk.map(|b| Buffer::from(b.to_vec())))
 }
 
 #[napi]
 pub async fn js_send_chunk(handle: u32, chunk: Uint8Array) -> napi::Result<()> {
-    let bytes = Bytes::copy_from_slice(chunk.as_ref());
+    let bytes = Bytes::from(chunk.to_vec());
     send_chunk(handle, bytes)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))

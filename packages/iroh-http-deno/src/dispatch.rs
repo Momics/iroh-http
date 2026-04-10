@@ -96,7 +96,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateEndpointPayload {
-    key: Option<Vec<u8>>,
+    key: Option<String>,
     idle_timeout: Option<u64>,
     relays: Option<Vec<String>>,
     dns_discovery: Option<String>,
@@ -111,7 +111,7 @@ async fn create_endpoint(p: Value) -> Value {
         Err(e) => return err(e),
     };
     let opts = NodeOptions {
-        key: args.key.and_then(|k| k.try_into().ok()),
+        key: args.key.and_then(|k| B64.decode(k).ok()?.try_into().ok()),
         idle_timeout_ms: args.idle_timeout,
         relays: args.relays.unwrap_or_default(),
         dns_discovery: args.dns_discovery,

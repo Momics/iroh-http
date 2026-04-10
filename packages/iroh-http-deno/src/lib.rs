@@ -9,6 +9,7 @@ mod dispatch;
 mod serve_registry;
 
 use std::sync::OnceLock;
+use iroh_http_core::stream::next_chunk;
 
 /// Global multi-threaded Tokio runtime.  Initialised once on the first FFI call.
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
@@ -78,4 +79,44 @@ pub extern "C" fn iroh_http_call(
         std::ptr::copy_nonoverlapping(encoded.as_ptr(), out_ptr, len);
     }
     len as i32
+}
+
+/// Raw-buffer `nextChunk` — bypasses JSON dispatch for streaming throughput.
+///
+/// Writes the next chunk bytes directly into `out_ptr[0..out_cap]`.
+///
+/// Return value:
+/// - `n > 0`  — bytes written into the buffer.
+/// - `n == 0` — end of stream; no more chunks.
+/// - `n < 0`  — `|n|` bytes required; caller must retry with a larger buffer.
+///
+/// This symbol is declared `nonblocking: true` in the Deno `dlopen` call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iroh_http_next_chunk(
+    handle: u32,
+    out_ptr: *mut u8,
+    out_cap: usize,
+) -> i32 {
+    if out_cap > 0 && out_ptr.is_null() {
+        return -1;
+    }
+
+    let result = runtime().block_on(next_chunk(handle));
+
+    match result {
+        Err(_) => -1,
+        Ok(None) => 0,
+        Ok(Some(b)) => {
+            let len = b.len();
+            if len > out_cap {
+                return -(len as i32);
+            }
+            // SAFETY: caller guarantees out_ptr is valid for out_cap bytes,
+            // and we have verified len <= out_cap.
+            unsafe {
+                std::ptr::copy_nonoverlapping(b.as_ptr(), out_ptr, len);
+            }
+            len as i32
+        }
+    }
 }

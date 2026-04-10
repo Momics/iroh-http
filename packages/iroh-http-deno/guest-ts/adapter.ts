@@ -46,6 +46,11 @@ const lib = Deno.dlopen(LIB_PATH, {
     result: "i32",
     nonblocking: true,
   },
+  iroh_http_next_chunk: {
+    parameters: ["u32", "buffer", "usize"],
+    result: "i32",
+    nonblocking: true,
+  },
 } as const);
 
 // ── JSON dispatch helper ──────────────────────────────────────────────────────
@@ -55,9 +60,11 @@ const dec = new TextDecoder();
 // ── Base64 helpers ─────────────────────────────────────────────────────
 
 function encodeBase64(u8: Uint8Array): string {
-  let bin = "";
-  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
-  return btoa(bin);
+  const CHUNK = 0x8000; // 32 KB — safe for String.fromCharCode spread
+  const parts: string[] = [];
+  for (let i = 0; i < u8.length; i += CHUNK)
+    parts.push(String.fromCharCode(...u8.subarray(i, i + CHUNK)));
+  return btoa(parts.join(""));
 }
 
 function decodeBase64(s: string): Uint8Array {
@@ -66,13 +73,25 @@ function decodeBase64(s: string): Uint8Array {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-/** Initial output buffer size.  Grown automatically on overflow. */
-const INITIAL_BUF = 4096;
+/** Output buffer shared across calls; grows permanently but never shrinks. */
+let outBuf = new Uint8Array(128 * 1024);
+
+/** Pre-encoded method name buffers (UTF-8). */
+const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
+  [
+    "nextChunk", "sendChunk", "finishBody", "cancelRequest",
+    "nextTrailer", "sendTrailers", "rawFetch", "rawConnect",
+    "serveStart", "nextRequest", "respond", "allocBodyWriter",
+    "createEndpoint", "closeEndpoint", "allocFetchToken", "cancelInFlight",
+  ].map(m => [m, enc.encode(m)])
+);
+
+/** Reusable buffer for raw chunk reads via iroh_http_next_chunk. */
+const chunkBuf = new Uint8Array(65536);
 
 async function call<T>(method: string, payload: unknown): Promise<T> {
-  const methodBuf  = enc.encode(method);
+  const methodBuf  = METHOD_BUFS[method] ?? enc.encode(method);
   const payloadBuf = enc.encode(JSON.stringify(payload));
-  let   outBuf     = new Uint8Array(INITIAL_BUF);
 
   let n = await lib.symbols.iroh_http_call(
     methodBuf,  BigInt(methodBuf.byteLength),
@@ -81,7 +100,7 @@ async function call<T>(method: string, payload: unknown): Promise<T> {
   ) as number;
 
   if (n < 0) {
-    // Output buffer was too small; allocate the required size and retry once.
+    // Output buffer too small; grow permanently and retry once.
     outBuf = new Uint8Array(-n);
     n = await lib.symbols.iroh_http_call(
       methodBuf,  BigInt(methodBuf.byteLength),
@@ -104,8 +123,18 @@ async function call<T>(method: string, payload: unknown): Promise<T> {
 
 export const bridge: Bridge = {
   async nextChunk(handle: number): Promise<Uint8Array | null> {
-    const res = await call<{ chunk: string | null }>("nextChunk", { handle });
-    return res.chunk ? decodeBase64(res.chunk) : null;
+    let n = await lib.symbols.iroh_http_next_chunk(
+      handle, chunkBuf, BigInt(chunkBuf.byteLength),
+    ) as number;
+    if (n < 0) {
+      // Chunk too large for shared buffer; grow and retry once.
+      const grown = new Uint8Array(-n);
+      n = await lib.symbols.iroh_http_next_chunk(
+        handle, grown, BigInt(grown.byteLength),
+      ) as number;
+      return n > 0 ? grown.subarray(0, n) : null;
+    }
+    return n > 0 ? chunkBuf.slice(0, n) : null;
   },
   async sendChunk(handle: number, chunk: Uint8Array): Promise<void> {
     await call<Record<never, never>>("sendChunk", { handle, chunk: encodeBase64(chunk) });
@@ -240,8 +269,8 @@ export const allocBodyWriter: AllocBodyWriterFn = () =>
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 
 export async function createEndpointInfo(options?: NodeOptions): Promise<EndpointInfo> {
-  const keyBytes: number[] | null = options?.key
-    ? Array.from(options.key instanceof Uint8Array ? options.key : options.key.toBytes())
+  const keyBytes: string | null = options?.key
+    ? encodeBase64(options.key instanceof Uint8Array ? options.key : options.key.toBytes())
     : null;
 
   const res = await call<{ endpointHandle: number; nodeId: string; keypair: number[] }>(
