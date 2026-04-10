@@ -31,8 +31,10 @@ __pycache__/
 Thumbs.db
 
 # Editor
-.idea/
-.vscode/settings.json
+.vscode/*
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
 *.swp
 *.swo
 
