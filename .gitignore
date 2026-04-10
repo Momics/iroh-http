@@ -1,0 +1,25 @@
+# Rust
+target/
+
+# Node
+node_modules/
+
+# TypeScript build output (iroh-http-shared, iroh-http-tauri guest-js)
+dist/
+*.tsbuildinfo
+
+# napi-rs generated files (iroh-http-node)
+*.node
+packages/iroh-http-node/index.js
+packages/iroh-http-node/index.d.ts
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+*.swp
+*.swo
+
+# Local folders
+.old_references

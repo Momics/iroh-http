@@ -1,0 +1,24 @@
+[package]
+name = "tauri-plugin-iroh-http"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77.2"
+description = "Tauri plugin for iroh-http peer-to-peer HTTP"
+links = "tauri-plugin-iroh-http"
+
+# staticlib = iOS, cdylib = Android, rlib = desktop / tests
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+iroh-http-core = { path = "../../crates/iroh-http-core" }
+slab = "0.4"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tokio = { version = "1", features = ["rt", "sync"] }
+tracing = "0.1"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

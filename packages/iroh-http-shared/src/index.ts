@@ -1,0 +1,45 @@
+/**
+ * iroh-http-shared — public exports.
+ *
+ * Platform adapters (iroh-http-node, iroh-http-tauri) import from here
+ * to wire their bridge implementations into the shared layer.
+ */
+
+export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
+              NodeOptions, IrohNode, EndpointInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn } from "./bridge.js";
+export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
+export { makeFetch } from "./fetch.js";
+export { makeServe } from "./serve.js";
+
+import type { Bridge, EndpointInfo, NodeOptions, IrohNode, RawServeFn, RawFetchFn, AllocBodyWriterFn } from "./bridge.js";
+import { makeFetch } from "./fetch.js";
+import { makeServe } from "./serve.js";
+
+/**
+ * Factory that constructs an `IrohNode` from platform primitives.
+ *
+ * Each platform adapter calls this after binding an endpoint.
+ *
+ * @param bridge          Platform bridge implementation.
+ * @param info            Endpoint info returned by the low-level bind.
+ * @param rawFetch        Low-level fetch function (platform-specific).
+ * @param rawServe        Low-level serve function (platform-specific).
+ * @param allocBodyWriter Synchronously allocates a body writer handle.
+ * @param closeEndpoint   Closes the bound endpoint.
+ */
+export function buildNode(
+  bridge: Bridge,
+  info: EndpointInfo,
+  rawFetch: RawFetchFn,
+  rawServe: RawServeFn,
+  allocBodyWriter: AllocBodyWriterFn,
+  closeEndpoint: (handle: number) => Promise<void>
+): IrohNode {
+  return {
+    nodeId: info.nodeId,
+    keypair: info.keypair,
+    fetch: makeFetch(bridge, info.endpointHandle, rawFetch, allocBodyWriter),
+    serve: makeServe(bridge, info.endpointHandle, rawServe),
+    close: () => closeEndpoint(info.endpointHandle),
+  };
+}
