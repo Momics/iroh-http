@@ -24,8 +24,7 @@ use crate::{
         insert_trailer_sender, insert_trailer_receiver, remove_trailer_sender,
     }, IrohEndpoint, RequestPayload,
 };
-use iroh_http_framing::{parse_request_head, reason_phrase, serialize_response_head, FramingError,
-                        parse_trailers};
+use iroh_http_framing::{parse_trailers, FramingError};
 
 const READ_BUF: usize = 16 * 1024;
 const DEFAULT_CONCURRENCY: usize = 64;
@@ -141,6 +140,10 @@ async fn handle_connection<F>(
 {
     let remote_id = base32_encode(conn.remote_id().as_bytes());
 
+    let codec = std::sync::Arc::new(tokio::sync::Mutex::new(
+        crate::qpack_bridge::QpackCodec::new(),
+    ));
+
     loop {
         let (send, recv) = match conn.accept_bi().await {
             Ok(pair) => pair,
@@ -155,10 +158,20 @@ async fn handle_connection<F>(
         let on_req = on_request.clone();
         let remote = remote_id.clone();
         let own = own_node_id.clone();
+        let codec_clone = codec.clone();
 
         tokio::spawn(async move {
             let _permit = permit; // held for duration of request
-            if let Err(e) = handle_stream(send, recv, on_req, remote, own).await {
+            let result = handle_stream(
+                send,
+                recv,
+                on_req,
+                remote,
+                own,
+                codec_clone,
+            )
+            .await;
+            if let Err(e) = result {
                 tracing::warn!("iroh-http: stream error: {e}");
             }
         });
@@ -171,12 +184,14 @@ async fn handle_stream<F>(
     on_request: std::sync::Arc<F>,
     remote_node_id: String,
     own_node_id: String,
+    codec: std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
 ) -> Result<(), String>
 where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
     // 1. Read and parse request head.
-    let (method, path, req_headers, leftover) = read_request_head(&mut recv).await?;
+    let (method, path, req_headers, leftover) =
+        read_request_head_qpack(&mut recv, &codec).await?;
 
     // 2. Detect duplex upgrade.
     let is_bidi = req_headers.iter().any(|(k, v)| {
@@ -252,12 +267,18 @@ where
         .headers
         .iter()
         .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
-    let head_bytes = serialize_response_head(
-        response_head.status,
-        reason_phrase(response_head.status),
-        &pairs,
-        res_chunked && !is_bidi, // chunked only when no Content-Length and not duplex
-    );
+
+    // When chunked encoding is needed, inject Transfer-Encoding: chunked
+    // into the QPACK-encoded headers so the client decodes correctly.
+    let mut qpack_pairs = pairs.clone();
+    if res_chunked && !is_bidi {
+        qpack_pairs.push(("transfer-encoding", "chunked"));
+    }
+    let head_bytes = {
+        let mut guard = codec.lock().await;
+        guard.encode_response(response_head.status, &qpack_pairs)
+            .map_err(|e| format!("qpack encode response: {e}"))?
+    };
     send.write_all(&head_bytes)
         .await
         .map_err(|e| format!("write response head: {e}"))?;
@@ -304,8 +325,13 @@ fn allocate_req_handle(sender: oneshot::Sender<ResponseHead>) -> u32 {
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────
 
-async fn read_request_head(
+/// Read a QPACK-encoded request head from the stream.
+///
+/// Wire format: `[2-byte big-endian length][QPACK block]`.
+/// Returns `(method, path, headers, leftover_bytes)`.
+async fn read_request_head_qpack(
     recv: &mut iroh::endpoint::RecvStream,
+    codec: &std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
 ) -> Result<(String, String, Vec<(String, String)>, Vec<u8>), String> {
     let mut buf: Vec<u8> = Vec::new();
 
@@ -319,13 +345,14 @@ async fn read_request_head(
             Some(chunk) => buf.extend_from_slice(&chunk.bytes),
         }
 
-        match parse_request_head(&buf) {
+        let mut guard = codec.lock().await;
+        match guard.decode_request(&buf) {
             Ok((method, path, headers, consumed)) => {
                 let leftover = buf[consumed..].to_vec();
                 return Ok((method, path, headers, leftover));
             }
-            Err(FramingError::Incomplete) => continue,
-            Err(FramingError::Parse(e)) => return Err(format!("parse request head: {e}")),
+            Err(crate::qpack_bridge::DecodeError::Incomplete) => continue,
+            Err(e) => return Err(format!("parse request head: {e}")),
         }
     }
 }

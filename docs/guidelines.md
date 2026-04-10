@@ -71,7 +71,68 @@ consulting internal documentation:
 - The library never exposes raw QUIC handles or connection objects to user code;
   only web-standard types cross the API boundary.
 
-### 5. Naming conventions
+### 5. Standards as model, not constraint
+
+iroh-http is a new protocol built from scratch on QUIC. **Backward
+compatibility with existing HTTP/1.1 or HTTP/2 stacks is not a goal.**
+This is a deliberate freedom: it lets us make better choices at the wire
+level without being held back by 30 years of legacy.
+
+In practice this means two things pull in different directions and must be
+held in balance:
+
+- **API surface follows standards.** The JS developer sees `fetch`,
+  `Request`, `Response`, `ReadableStream`, `AbortSignal` — types every web
+  developer already knows. The Python developer sees `asyncio` conventions.
+  These are not negotiable. A developer familiar with the web platform should
+  be able to use iroh-http without reading a manual.
+
+- **Wire format is unconstrained.** We are not required to support gzip
+  because browsers do. We are not required to use HPACK because HTTP/2 does.
+  Where an HTTP standard headers or mechanism maps cleanly onto our transport
+  (e.g. `Content-Encoding`, `Transfer-Encoding: chunked`, trailers), we use
+  it because it is the right abstraction — not because we need interop. Where
+  a better alternative exists and the standard would add complexity for no
+  benefit, we choose the better alternative and document the divergence.
+
+When evaluating a new feature, ask two separate questions:
+1. *Does the developer-facing API feel standard?* If no, fix it.
+2. *Does the wire format need to be compatible with non-iroh-http peers?*
+   Almost always: no. Design for the best outcome, not the most compatible
+   one.
+
+### 6. Don't reinvent the wheel
+
+Before designing a custom protocol, wire format, or API shape, check whether
+an established standard or well-maintained crate already solves the problem.
+Custom solutions carry a maintenance burden, require documentation, and
+introduce a learning curve for contributors. The bar for diverging from a
+standard must be high.
+
+Concrete applications of this principle:
+
+- **HTTP compression** — `Accept-Encoding` / `Content-Encoding` are the
+  standard HTTP negotiation headers defined by RFC 9110. Use them, rather than
+  inventing a custom ALPN suffix or a bespoke framing flag.
+- **Error shapes** — `DOMException` names and standard Python exceptions exist
+  for a reason. Do not introduce a custom error hierarchy when the platform
+  already has one.
+- **Streaming** — `ReadableStream` / `WritableStream` are universally
+  understood. Never replace them with a callback-based or handle-based API.
+- **Cancellation** — `AbortSignal` and `asyncio` cancellation tokens are the
+  standard primitives. Do not add a `cancel()` method that duplicates them.
+- **Rust dependencies** — prefer a small, well-maintained crate over
+  implementing the same algorithm from scratch. The threshold for pulling in a
+  dependency is lower than the threshold for maintaining an equivalent in this
+  repo.
+
+The only valid reason to diverge is when the standard genuinely does not fit
+the constraint (e.g. `no_std` embedded targets where web globals do not exist,
+or where the standard carries legacy baggage that makes no sense for a
+QUIC-native protocol). In that case, document the divergence explicitly and
+match the standard as closely as the constraint allows.
+
+### 7. Naming conventions
 
 | Concept | JS name | Python name |
 |---|---|---|
