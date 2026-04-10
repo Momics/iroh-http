@@ -77,6 +77,15 @@ export function makeFetch(
       headers: rawRes.headers,
     });
 
+    // Response.url is read-only on the prototype; shadow it on this instance
+    // so callers see the http+iroh:// address of the peer that responded.
+    Object.defineProperty(response, 'url', {
+      value: rawRes.url,
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+
     return response;
   };
 }

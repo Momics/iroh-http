@@ -55,6 +55,8 @@ export interface FfiResponseHead {
 export interface FfiResponse extends FfiResponseHead {
   /** Handle to the response body reader. */
   bodyHandle: number;
+  /** Full `http+iroh://` URL of the responding peer. */
+  url: string;
 }
 
 /**

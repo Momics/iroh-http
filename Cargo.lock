@@ -1526,7 +1526,9 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "slab",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

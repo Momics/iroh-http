@@ -71,6 +71,7 @@ const rawFetch: RawFetchFn = async (
     status: res.status,
     headers: res.headers as [string, string][],
     bodyHandle: res.bodyHandle,
+    url: res.url,
   } satisfies FfiResponse;
 };
 

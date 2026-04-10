@@ -1,8 +1,10 @@
 //! Iroh endpoint lifecycle — create, share, and close.
 
 use std::sync::Arc;
+use std::time::Duration;
 use iroh::{Endpoint, RelayMode, SecretKey};
 use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
+use iroh::endpoint::{IdleTimeout, QuicTransportConfig};
 
 use crate::ALPN;
 
@@ -55,6 +57,15 @@ impl IrohEndpoint {
 
         if let Some(key_bytes) = opts.key {
             builder = builder.secret_key(SecretKey::from_bytes(&key_bytes));
+        }
+
+        if let Some(ms) = opts.idle_timeout_ms {
+            let timeout = IdleTimeout::try_from(Duration::from_millis(ms))
+                .map_err(|e| format!("idle_timeout_ms out of range: {e}"))?;
+            let transport = QuicTransportConfig::builder()
+                .max_idle_timeout(Some(timeout))
+                .build();
+            builder = builder.transport_config(transport);
         }
 
         let ep = builder.bind().await.map_err(|e| e.to_string())?;
