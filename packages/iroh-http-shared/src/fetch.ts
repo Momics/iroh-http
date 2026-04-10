@@ -12,9 +12,12 @@
 
 import type { Bridge, RawFetchFn, AllocBodyWriterFn, RawConnectFn, BidirectionalStream } from "./bridge.js";
 import { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
+import type { PublicKey } from "./keys.js";
+import { resolveNodeId } from "./keys.js";
+import { classifyError } from "./errors.js";
 
 export type FetchFn = (
-  nodeId: string,
+  peer: PublicKey | string,
   input: string | URL,
   init?: RequestInit
 ) => Promise<Response>;
@@ -32,10 +35,11 @@ export function makeFetch(
   allocBodyWriter: AllocBodyWriterFn
 ): FetchFn {
   return async (
-    nodeId: string,
+    peer: PublicKey | string,
     input: string | URL,
     init?: RequestInit
   ): Promise<Response> => {
+    const nodeId = resolveNodeId(peer);
     const url = typeof input === "string" ? input : input.toString();
     const method = init?.method ?? "GET";
     const signal = init?.signal ?? null;
@@ -74,6 +78,9 @@ export function makeFetch(
             abortPromise,
           ])
         : await rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      throw classifyError(err);
     } finally {
       if (signal && onAbort) signal.removeEventListener("abort", onAbort);
     }
@@ -146,10 +153,12 @@ export function makeConnect(
   bridge: Bridge,
   endpointHandle: number,
   rawConnect: RawConnectFn
-): (nodeId: string, path: string, init?: RequestInit) => Promise<BidirectionalStream> {
-  return async (nodeId, path, init) => {
+): (peer: PublicKey | string, path: string, init?: RequestInit) => Promise<BidirectionalStream> {
+  return async (peer, path, init) => {
+    const nodeId = resolveNodeId(peer);
     const headers = normaliseHeaders(init?.headers);
-    const ffi = await rawConnect(endpointHandle, nodeId, path, headers);
+    const ffi = await rawConnect(endpointHandle, nodeId, path, headers)
+      .catch((err) => { throw classifyError(err); });
 
     const readable = makeReadable(bridge, ffi.readHandle);
     const writable = new WritableStream<Uint8Array>({

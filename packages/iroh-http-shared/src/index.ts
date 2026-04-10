@@ -11,10 +11,16 @@ export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
 export { makeFetch, makeConnect } from "./fetch.js";
 export { makeServe } from "./serve.js";
+export { PublicKey, SecretKey, resolveNodeId } from "./keys.js";
+export {
+  IrohError, IrohBindError, IrohConnectError, IrohStreamError, IrohProtocolError,
+  classifyError, classifyBindError,
+} from "./errors.js";
 
 import type { Bridge, EndpointInfo, NodeOptions, IrohNode, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
 import { makeFetch, makeConnect } from "./fetch.js";
 import { makeServe } from "./serve.js";
+import { PublicKey, SecretKey } from "./keys.js";
 
 /**
  * Factory that constructs an `IrohNode` from platform primitives.
@@ -43,7 +49,12 @@ export function buildNode(
     resolveClosed = resolve;
   });
 
+  const publicKey = PublicKey.fromString(info.nodeId);
+  const secretKey = SecretKey._fromBytesWithPublicKey(info.keypair, publicKey);
+
   return {
+    publicKey,
+    secretKey,
     nodeId: info.nodeId,
     keypair: info.keypair,
     fetch: makeFetch(bridge, info.endpointHandle, rawFetch, allocBodyWriter),

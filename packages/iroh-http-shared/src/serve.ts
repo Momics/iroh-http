@@ -18,6 +18,7 @@ import type {
   BidirectionalStream,
 } from "./bridge.js";
 import { makeReadable, pipeToWriter } from "./streams.js";
+import { classifyError } from "./errors.js";
 
 export type ServeHandler = (req: Request) => Response | Promise<Response>;
 
@@ -125,7 +126,7 @@ export function makeServe(
         }
       };
       doPipe().catch((err) =>
-        console.error("[iroh-http] response body pipe error:", err)
+        console.error("[iroh-http] response body pipe error:", classifyError(err))
       );
 
       return {

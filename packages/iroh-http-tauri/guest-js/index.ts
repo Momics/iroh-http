@@ -27,6 +27,8 @@ import {
   type RawConnectFn,
   type AllocBodyWriterFn,
   type RequestPayload,
+  classifyBindError,
+  type SecretKey,
 } from "iroh-http-shared";
 
 const PLUGIN = "plugin:iroh-http";
@@ -190,6 +192,10 @@ const rawConnect: RawConnectFn = async (
  * Create an Iroh node for peer-to-peer HTTP inside a Tauri application.
  */
 export async function createNode(options?: NodeOptions): Promise<IrohNode> {
+  const keyBytes: number[] | null = options?.key
+    ? Array.from(options.key instanceof Uint8Array ? options.key : (options.key as SecretKey).toBytes())
+    : null;
+
   const info = await invoke<{
     endpointHandle: number;
     nodeId: string;
@@ -197,13 +203,13 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   }>(`${PLUGIN}|create_endpoint`, {
     args: options
       ? {
-          key: options.key ? Array.from(options.key) : null,
+          key: keyBytes,
           idleTimeout: options.idleTimeout ?? null,
           relays: options.relays ?? null,
           dnsDiscovery: options.dnsDiscovery ?? null,
         }
       : null,
-  });
+  }).catch((e: unknown) => { throw classifyBindError(e); });
 
   return buildNode(
     bridge,

@@ -5,6 +5,9 @@
  * methods.  All higher-level logic lives in iroh-http-shared and is
  * independent of the underlying transport.
  */
+
+import type { PublicKey, SecretKey } from "./keys.js";
+
 export interface Bridge {
   // ── Body streaming ─────────────────────────────────────────────────────────
   /** Pull the next chunk from a body reader. Returns `null` at EOF. */
@@ -93,8 +96,8 @@ export interface RequestPayload extends FfiRequest {
 
 /** Options accepted by `createNode`. */
 export interface NodeOptions {
-  /** 32-byte Ed25519 secret key.  Omit to generate a new identity. */
-  key?: Uint8Array;
+  /** 32-byte Ed25519 secret key or `SecretKey` object.  Omit to generate a new identity. */
+  key?: SecretKey | Uint8Array;
   /** Idle connection timeout in milliseconds. */
   idleTimeout?: number;
   /** Custom relay server URLs. */
@@ -105,16 +108,25 @@ export interface NodeOptions {
 
 /** The object returned by `createNode`. */
 export interface IrohNode {
-  /** The node's public key — its stable network address. */
+  /**
+   * The node's public identity.
+   */
+  publicKey: PublicKey;
+  /**
+   * The node's secret key — persist `secretKey.toBytes()` to restore identity
+   * across restarts.
+   */
+  secretKey: SecretKey;
+  /** @deprecated Use `publicKey.toString()` instead. */
   nodeId: string;
-  /** The raw 32-byte secret key — persist this to restore identity. */
+  /** @deprecated Use `secretKey.toBytes()` instead. */
   keypair: Uint8Array;
   /**
    * Send an HTTP request to a remote node.
-   * Signature mirrors `globalThis.fetch` with `nodeId` prepended.
+   * Signature mirrors `globalThis.fetch` with `peer` prepended.
    */
   fetch(
-    nodeId: string,
+    peer: PublicKey | string,
     input: string | URL,
     init?: RequestInit
   ): Promise<Response>;
@@ -133,7 +145,7 @@ export interface IrohNode {
    * handshake both sides can read and write concurrently without waiting for
    * the other to finish.  Mirrors `WebTransportSession.createBidirectionalStream()`.
    */
-  createBidirectionalStream(nodeId: string, path: string, init?: RequestInit): Promise<BidirectionalStream>;
+  createBidirectionalStream(peer: PublicKey | string, path: string, init?: RequestInit): Promise<BidirectionalStream>;
   /**
    * Resolves when the node has been closed (either via `close()` or due to
    * a fatal error).  Mirrors `WebTransportSession.closed`.

@@ -42,6 +42,8 @@ import {
   type FfiDuplexStream,
   type RequestPayload,
   type FfiResponseHead,
+  classifyBindError,
+  type SecretKey,
 } from "iroh-http-shared";
 
 // ── Bridge implementation ─────────────────────────────────────────────────────
@@ -140,16 +142,20 @@ const rawConnect: RawConnectFn = async (
  * @param options Optional configuration.  Omit `key` to generate a fresh identity.
  */
 export async function createNode(options?: NodeOptions): Promise<IrohNode> {
+  const keyBytes: Uint8Array | null = options?.key
+    ? (options.key instanceof Uint8Array ? options.key : (options.key as SecretKey).toBytes())
+    : null;
+
   const info = await createEndpoint(
     options
       ? {
-          key: options.key ?? null,
+          key: keyBytes,
           idleTimeout: options.idleTimeout ?? null,
           relays: options.relays ?? null,
           dnsDiscovery: options.dnsDiscovery ?? null,
         }
       : null
-  );
+  ).catch((e: unknown) => { throw classifyBindError(e); });
 
   return buildNode(
     bridge,
