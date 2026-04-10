@@ -10,7 +10,7 @@
  * ```
  */
 
-import { buildNode, type NodeOptions, type IrohNode } from "npm:iroh-http-shared";
+import { buildNode, type NodeOptions, type IrohNode } from "iroh-http-shared";
 import {
   bridge,
   rawFetch,

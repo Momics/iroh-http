@@ -5,19 +5,19 @@
  * raw platform functions needed by iroh-http-shared's buildNode.
  */
 
-import { resolve, dirname, fromFileUrl } from "jsr:@std/path";
-import {
-  type Bridge,
-  type EndpointInfo,
-  type FfiResponse,
-  type FfiResponseHead,
-  type FfiDuplexStream,
-  type RawFetchFn,
-  type RawServeFn,
-  type RawConnectFn,
-  type AllocBodyWriterFn,
-  type RequestPayload,
-} from "npm:iroh-http-shared";
+import { resolve, dirname, fromFileUrl } from "@std/path";
+import type {
+  Bridge,
+  EndpointInfo,
+  FfiResponse,
+  FfiResponseHead,
+  FfiDuplexStream,
+  RawFetchFn,
+  RawServeFn,
+  RawConnectFn,
+  AllocBodyWriterFn,
+  RequestPayload,
+} from "iroh-http-shared";
 
 // ── Platform library resolution ───────────────────────────────────────────────
 
@@ -60,18 +60,18 @@ async function call<T>(method: string, payload: unknown): Promise<T> {
   let   outBuf     = new Uint8Array(INITIAL_BUF);
 
   let n = await lib.symbols.iroh_http_call(
-    methodBuf,  methodBuf.byteLength,
-    payloadBuf, payloadBuf.byteLength,
-    outBuf,     outBuf.byteLength,
+    methodBuf,  BigInt(methodBuf.byteLength),
+    payloadBuf, BigInt(payloadBuf.byteLength),
+    outBuf,     BigInt(outBuf.byteLength),
   ) as number;
 
   if (n < 0) {
     // Output buffer was too small; allocate the required size and retry once.
     outBuf = new Uint8Array(-n);
     n = await lib.symbols.iroh_http_call(
-      methodBuf,  methodBuf.byteLength,
-      payloadBuf, payloadBuf.byteLength,
-      outBuf,     outBuf.byteLength,
+      methodBuf,  BigInt(methodBuf.byteLength),
+      payloadBuf, BigInt(payloadBuf.byteLength),
+      outBuf,     BigInt(outBuf.byteLength),
     ) as number;
   }
 
@@ -113,12 +113,12 @@ export const bridge: Bridge = {
 // ── Platform functions ────────────────────────────────────────────────────────
 
 export const rawFetch: RawFetchFn = async (
-  endpointHandle,
-  nodeId,
-  url,
-  method,
-  headers,
-  reqBodyHandle,
+  endpointHandle: number,
+  nodeId: string,
+  url: string,
+  method: string,
+  headers: [string, string][],
+  reqBodyHandle: number | null,
 ) => {
   const res = await call<{
     status: number;
@@ -144,10 +144,10 @@ export const rawFetch: RawFetchFn = async (
 };
 
 export const rawConnect: RawConnectFn = async (
-  endpointHandle,
-  nodeId,
-  path,
-  headers,
+  endpointHandle: number,
+  nodeId: string,
+  path: string,
+  headers: [string, string][],
 ) => {
   const res = await call<{ readHandle: number; writeHandle: number }>(
     "rawConnect",
@@ -169,8 +169,8 @@ export const rawConnect: RawConnectFn = async (
  * 3. Each request is dispatched to the user callback in the background.
  */
 export const rawServe: RawServeFn = (
-  endpointHandle,
-  _options,
+  endpointHandle: number,
+  _options: Record<string, unknown>,
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ) => {
   call<Record<never, never>>("serveStart", { endpointHandle })
