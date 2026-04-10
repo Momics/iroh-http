@@ -5,6 +5,7 @@
 
 pub mod client;
 pub mod endpoint;
+pub(crate) mod pool;
 pub mod server;
 pub mod stream;
 

@@ -377,6 +377,7 @@ fn create_node<'py>(
             disable_networking,
             drain_timeout_ms:       None,
             handle_ttl_ms:          None,
+            max_pooled_connections: None,
         };
         let ep = IrohEndpoint::bind(opts).await.map_err(py_err)?;
         Ok(IrohNode { ep })

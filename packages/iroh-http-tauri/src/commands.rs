@@ -80,6 +80,7 @@ pub async fn create_endpoint(
             disable_networking: a.disable_networking.unwrap_or(false),
             drain_timeout_ms: a.drain_timeout,
             handle_ttl_ms: a.handle_ttl,
+            max_pooled_connections: None,
         })
         .unwrap_or_default();
 

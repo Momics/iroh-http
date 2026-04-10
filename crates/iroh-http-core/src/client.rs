@@ -81,11 +81,17 @@ pub async fn fetch(
         }
     }
 
+    let ep_raw = endpoint.raw().clone();
+    let addr_clone = addr.clone();
     let conn = endpoint
-        .raw()
-        .connect(addr, ALPN)
-        .await
-        .map_err(|e| format!("connect: {e}"))?;
+        .pool()
+        .get_or_connect(node_id, ALPN, || async move {
+            ep_raw
+                .connect(addr_clone, ALPN)
+                .await
+                .map_err(|e| format!("connect: {e}"))
+        })
+        .await?;
 
     let result = do_request(conn, url, method, headers, req_body_reader);
 
@@ -389,11 +395,17 @@ pub async fn raw_connect(
     let addr = iroh::EndpointAddr::new(node_id);
 
     // Connect using the duplex ALPN — the peer must advertise it.
+    let ep_raw = endpoint.raw().clone();
+    let addr_clone = addr.clone();
     let conn = endpoint
-        .raw()
-        .connect(addr, ALPN_DUPLEX)
-        .await
-        .map_err(|e| format!("connect duplex: {e}"))?;
+        .pool()
+        .get_or_connect(node_id, ALPN_DUPLEX, || async move {
+            ep_raw
+                .connect(addr_clone, ALPN_DUPLEX)
+                .await
+                .map_err(|e| format!("connect duplex: {e}"))
+        })
+        .await?;
 
     let (mut send, mut recv) = conn
         .open_bi()

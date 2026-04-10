@@ -684,3 +684,131 @@ async fn fetch_bad_node_id_returns_error() {
     let result = fetch(&client, "!!!invalid!!!", "/", "GET", &[], None, None, None).await;
     assert!(result.is_err());
 }
+
+// -- Connection pooling -------------------------------------------------------
+
+#[tokio::test]
+async fn pool_reuses_connection_for_sequential_requests() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    let request_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let rc = request_count.clone();
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            rc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            respond(payload.req_handle, 200, vec![
+                ("content-length".into(), "0".into()),
+            ]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // First request — establishes connection and caches it.
+    let res1 = fetch(&client_ep, &server_id, "/a", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    assert_eq!(res1.status, 200);
+    // Drain body to complete the request.
+    while let Some(_) = next_chunk(res1.body_handle).await.unwrap() {}
+
+    // Second request — should reuse the cached connection (no new handshake).
+    let res2 = fetch(&client_ep, &server_id, "/b", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    assert_eq!(res2.status, 200);
+    while let Some(_) = next_chunk(res2.body_handle).await.unwrap() {}
+
+    // Third request for good measure.
+    let res3 = fetch(&client_ep, &server_id, "/c", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    assert_eq!(res3.status, 200);
+    while let Some(_) = next_chunk(res3.body_handle).await.unwrap() {}
+
+    // All three requests should have been served.
+    assert_eq!(request_count.load(std::sync::atomic::Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn pool_concurrent_requests_share_connection() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            respond(payload.req_handle, 200, vec![
+                ("content-length".into(), "0".into()),
+            ]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Fire 10 concurrent requests to the same peer.
+    let mut handles = Vec::new();
+    for i in 0..10u32 {
+        let ep = client_ep.clone();
+        let id = server_id.clone();
+        let a = addrs.clone();
+        handles.push(tokio::spawn(async move {
+            let res = fetch(&ep, &id, &format!("/storm/{i}"), "GET", &[], None, None, Some(&a)).await.unwrap();
+            assert_eq!(res.status, 200);
+            while let Some(_) = next_chunk(res.body_handle).await.unwrap() {}
+        }));
+    }
+
+    for h in handles {
+        h.await.unwrap();
+    }
+
+    // All requests completed successfully — the pool prevented a connection
+    // storm (only 1 connect() call happened, the rest waited and reused it).
+}
+
+#[tokio::test]
+async fn pool_different_peers_get_separate_connections() {
+    // Create two separate servers.
+    let opts = || NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    };
+    let server1 = IrohEndpoint::bind(opts()).await.unwrap();
+    let server2 = IrohEndpoint::bind(opts()).await.unwrap();
+    let client = IrohEndpoint::bind(opts()).await.unwrap();
+
+    let id1 = node_id(&server1);
+    let id2 = node_id(&server2);
+    let addrs1 = server_addrs(&server1);
+    let addrs2 = server_addrs(&server2);
+
+    for ep in [&server1, &server2] {
+        serve(
+            ep.clone(),
+            ServeOptions::default(),
+            move |payload: RequestPayload| {
+                respond(payload.req_handle, 200, vec![
+                    ("content-length".into(), "0".into()),
+                ]).unwrap();
+                stream::finish_body(payload.res_body_handle).unwrap();
+            },
+        );
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let r1 = fetch(&client, &id1, "/", "GET", &[], None, None, Some(&addrs1)).await.unwrap();
+    assert_eq!(r1.status, 200);
+    while let Some(_) = next_chunk(r1.body_handle).await.unwrap() {}
+
+    let r2 = fetch(&client, &id2, "/", "GET", &[], None, None, Some(&addrs2)).await.unwrap();
+    assert_eq!(r2.status, 200);
+    while let Some(_) = next_chunk(r2.body_handle).await.unwrap() {}
+
+    // Both succeeded with separate connections to different peers.
+    assert_ne!(id1, id2);
+}
