@@ -13,7 +13,7 @@ Usage::
         node = await create_node()
         print(node.node_id)
 
-        response = await node.fetch(peer_id, "http+iroh://peer/api/data")
+        response = await node.fetch(peer_id, "httpi://peer/api/data")
         body = await response.bytes()
 
         async def handler(request):

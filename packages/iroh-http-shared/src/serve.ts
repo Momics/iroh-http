@@ -63,10 +63,18 @@ export function makeServe(
       };
       if (reqBody) reqInit.duplex = "half";
 
-      const req = new Request(payload.url, reqInit);
+      const req = new Request(
+        // Replace the custom httpi: scheme with http: so the platform's
+        // WHATWG URL parser accepts the URL.  The original URL is still
+        // accessible via payload.url if the handler needs the full form.
+        payload.url.replace(/^httpi:/, "http:"),
+        reqInit
+      );
 
       // §4: Expose request trailers as req.trailers (Promise<Headers>).
-      if (payload.reqTrailersHandle) {
+      // Use !isBidi check — in duplex mode reqTrailersHandle is 0 (sentinel),
+      // and in non-duplex mode it may also be 0 (first slab slot) but is valid.
+      if (!payload.isBidi) {
         Object.defineProperty(req, "trailers", {
           value: bridge
             .nextTrailer(payload.reqTrailersHandle)
@@ -121,9 +129,10 @@ export function makeServe(
         const trailerPairs: [string, string][] = trailersFn
           ? [...(await trailersFn())] as [string, string][]
           : [];
-        if (payload.resTrailersHandle) {
-          await bridge.sendTrailers(payload.resTrailersHandle, trailerPairs);
-        }
+        // Always send trailers for non-duplex requests (even if empty) so the
+        // Rust pump task is unblocked.  Handle 0 is valid — it just means the
+        // first slab slot was allocated; it is NOT a sentinel in this path.
+        await bridge.sendTrailers(payload.resTrailersHandle, trailerPairs);
       };
       doPipe().catch((err) =>
         console.error("[iroh-http] response body pipe error:", classifyError(err))

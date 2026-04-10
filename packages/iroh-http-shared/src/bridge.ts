@@ -53,7 +53,7 @@ export interface FfiRequest {
   /** HTTP method, e.g. `"GET"`. */
   method: string;
   /**
-   * Full `http+iroh://<server-node-id>/path` URL.
+   * Full `httpi://<server-node-id>/path` URL.
    * Use `new URL(req.url).pathname` for routing.
    */
   url: string;
@@ -73,7 +73,7 @@ export interface FfiResponseHead {
 export interface FfiResponse extends FfiResponseHead {
   /** Handle to the response body reader. */
   bodyHandle: number;
-  /** Full `http+iroh://` URL of the responding peer. */
+  /** Full `httpi://` URL of the responding peer. */
   url: string;
   /** Handle to the response trailer receiver (pass to `bridge.nextTrailer`). */
   trailersHandle: number;

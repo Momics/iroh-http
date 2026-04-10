@@ -162,7 +162,7 @@ async fn do_request(
 
     // Build response URL: set the URL to the remote peer's address.
     let remote_str = base32_encode(conn.remote_id().as_bytes());
-    let response_url = format!("http+iroh://{remote_str}{path}");
+    let response_url = format!("httpi://{remote_str}{path}");
 
     Ok(FfiResponse {
         status,
@@ -323,7 +323,7 @@ async fn read_head(
 }
 
 fn extract_path(url: &str) -> String {
-    // http+iroh://nodeId/path?query  →  /path?query
+    // httpi://nodeId/path?query  →  /path?query
     if let Some(idx) = url.find("://") {
         let after_scheme = &url[idx + 3..];
         if let Some(slash) = after_scheme.find('/') {

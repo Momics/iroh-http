@@ -76,7 +76,7 @@ fn classify_error_code(msg: &str) -> &'static str {
 pub struct FfiRequest {
     /// HTTP method, e.g. "GET".
     pub method: String,
-    /// Full URL, e.g. `http+iroh://<node-id>/path`.
+    /// Full URL, e.g. `httpi://<node-id>/path`.
     pub url: String,
     /// Request headers (iroh-node-id already stripped by framing layer).
     pub headers: Vec<(String, String)>,
@@ -91,7 +91,7 @@ pub struct FfiResponse {
     pub headers: Vec<(String, String)>,
     /// Handle to a [`BodyReader`] containing the response body.
     pub body_handle: u32,
-    /// Full `http+iroh://` URL of the responding peer, e.g. `http+iroh://<node-id>/path`.
+    /// Full `httpi://` URL of the responding peer, e.g. `httpi://<node-id>/path`.
     pub url: String,
     /// Handle to a trailer receiver — call `next_trailer(handle)` after draining
     /// the body to retrieve any response trailers.
@@ -115,7 +115,7 @@ pub struct RequestPayload {
     /// `0` in duplex mode.
     pub res_trailers_handle: u32,
     pub method: String,
-    /// Full `http+iroh://` URL (server's own node-id + path).
+    /// Full `httpi://` URL (server's own node-id + path).
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub remote_node_id: String,

@@ -135,7 +135,7 @@ export function makeFetch(
       headers: rawRes.headers,
     });
 
-    // Shadow the read-only Response.url with the http+iroh:// address (§brief).
+    // Shadow the read-only Response.url with the httpi:// address (§brief).
     Object.defineProperty(response, "url", {
       value: rawRes.url,
       writable: false,

@@ -190,7 +190,7 @@ async def main():
     print(node.keypair)                  # bytes — 32-byte secret key
 
     # HTTP fetch to a remote peer
-    response = await node.fetch(peer_id, "http+iroh://peer/api/data")
+    response = await node.fetch(peer_id, "httpi://peer/api/data")
     body = await response.bytes()        # bytes
     text = await response.text()         # str (UTF-8)
 

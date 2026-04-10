@@ -210,7 +210,7 @@ where
         };
 
     // 7. Construct the full URL.
-    let url = format!("http+iroh://{own_node_id}{path}");
+    let url = format!("httpi://{own_node_id}{path}");
 
     // 8. Spawn recv pump task.
     if is_bidi {
