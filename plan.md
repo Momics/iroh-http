@@ -23,6 +23,11 @@ The work below covers what remains before open-sourcing.
 | 09 | [Mobile lifecycle](docs/patches/09_patch.md) | **pending** | Tauri visibilitychange, health probe, auto-resurrection |
 | 10 | [DX + packaging](docs/patches/10_patch.md) | **pending** | Folder cleanup, `@momics` scope, registry publishing |
 | 11 | [Open-source readiness](docs/patches/11_patch.md) | **pending** | LICENSE, READMEs, CI, examples, checklist |
+| 12 | [Connection pool](docs/patches/12_patch.md) | **pending** | Client-side connection reuse + stream multiplexing |
+| 13 | [QPACK compression](docs/patches/13_patch.md) | **pending** | Header compression via `qpack` crate, ALPN negotiation |
+| 14 | [P2P security hardening](docs/patches/14_patch.md) | **pending** | Max header size, request timeouts, per-peer connection limits |
+| 15 | [Graceful shutdown](docs/patches/15_patch.md) | **pending** | Drain in-flight requests before closing endpoint |
+| 16 | [Integration tests](docs/patches/16_patch.md) | **pending** | Rust integration tests, framing round-trips, CI workflow |
 
 ## Review tracker
 
@@ -30,7 +35,8 @@ The work below covers what remains before open-sourcing.
 |---|-------|--------|---------|
 | 00 | [Base review](docs/reviews/00_review.md) | integrated | 12 findings across all source files |
 | 01 | [Patch 01 review](docs/reviews/01_review.md) | integrated | 6 findings (P0 framing parse bug, etc.) |
-| 02 | [Reference patterns](docs/reviews/02_review.md) | written | Gap analysis vs old implementations |
+| 02 | [Reference patterns](docs/reviews/02_review.md) | integrated | Gap analysis vs old implementations |
+| 03 | [Performance review](docs/reviews/03_review.md) | integrated | 7 findings — 5 fixed, 2 remaining (Node double-copy, Tauri key encoding) |
 
 ---
 

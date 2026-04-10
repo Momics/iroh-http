@@ -6,6 +6,7 @@ description = "Default permissions for iroh-http plugin"
 permissions = [
   "allow-create-endpoint",
   "allow-close-endpoint",
+  "allow-ping",
   "allow-next-chunk",
   "allow-send-chunk",
   "allow-finish-body",

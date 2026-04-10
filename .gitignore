@@ -13,11 +13,23 @@ dist/
 packages/iroh-http-node/index.js
 packages/iroh-http-node/index.d.ts
 
+# Deno compiled libraries
+packages/iroh-http-deno/lib/*.dylib
+packages/iroh-http-deno/lib/*.so
+packages/iroh-http-deno/lib/*.dll
+
+# Python
+__pycache__/
+*.egg-info/
+*.whl
+
 # macOS
 .DS_Store
+Thumbs.db
 
 # Editor
 .idea/
+.vscode/settings.json
 *.swp
 *.swo
 

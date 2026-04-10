@@ -162,6 +162,15 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           channelCapacity: options.channelCapacity ?? null,
           maxChunkSizeBytes: options.maxChunkSizeBytes ?? null,
           maxConsecutiveErrors: options.maxConsecutiveErrors ?? null,
+          discovery: options.discovery
+            ? {
+                mdns: options.discovery.mdns ?? false,
+                serviceName: options.discovery.serviceName ?? null,
+                advertise: options.discovery.advertise ?? true,
+              }
+            : null,
+          drainTimeout: options.drainTimeout ?? null,
+          handleTtl: options.handleTtl ?? null,
         }
       : null
   ).catch((e: unknown) => { throw classifyBindError(e); });

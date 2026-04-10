@@ -1519,6 +1519,7 @@ dependencies = [
  "base64",
  "bytes",
  "iroh-http-core",
+ "iroh-http-discovery",
  "serde",
  "serde_json",
  "slab",
@@ -1545,7 +1546,9 @@ name = "iroh-http-node"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "iroh",
  "iroh-http-core",
+ "iroh-http-discovery",
  "napi",
  "napi-build",
  "napi-derive",

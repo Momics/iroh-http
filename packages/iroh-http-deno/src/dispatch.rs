@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(feature = "discovery")]
+use iroh_http_discovery;
+
 use crate::serve_registry;
 
 // ── Endpoint slab (replicates the napi / tauri pattern) ──────────────────────
@@ -103,6 +106,11 @@ struct CreateEndpointPayload {
     channel_capacity: Option<usize>,
     max_chunk_size_bytes: Option<usize>,
     max_consecutive_errors: Option<usize>,
+    discovery_mdns: Option<bool>,
+    discovery_service_name: Option<String>,
+    discovery_advertise: Option<bool>,
+    drain_timeout: Option<u64>,
+    handle_ttl: Option<u64>,
 }
 
 async fn create_endpoint(p: Value) -> Value {
@@ -110,6 +118,17 @@ async fn create_endpoint(p: Value) -> Value {
         Ok(v) => v,
         Err(e) => return err(e),
     };
+
+    let discovery = if args.discovery_mdns.unwrap_or(false) {
+        Some(iroh_http_core::endpoint::DiscoveryConfig {
+            mdns: true,
+            service_name: args.discovery_service_name.clone(),
+            advertise: args.discovery_advertise.unwrap_or(true),
+        })
+    } else {
+        None
+    };
+
     let opts = NodeOptions {
         key: args.key.and_then(|k| B64.decode(k).ok()?.try_into().ok()),
         idle_timeout_ms: args.idle_timeout,
@@ -119,10 +138,31 @@ async fn create_endpoint(p: Value) -> Value {
         channel_capacity: args.channel_capacity,
         max_chunk_size_bytes: args.max_chunk_size_bytes,
         max_consecutive_errors: args.max_consecutive_errors,
+        discovery: discovery.clone(),
+        drain_timeout_ms: args.drain_timeout,
+        handle_ttl_ms: args.handle_ttl,
     };
     match IrohEndpoint::bind(opts).await {
         Err(e) => err(e),
         Ok(ep) => {
+            // Wire up mDNS discovery if configured.
+            #[cfg(feature = "discovery")]
+            if let Some(ref disc) = discovery {
+                if disc.mdns {
+                    if let Some(ref svc) = disc.service_name {
+                        if let Err(e) = iroh_http_discovery::add_mdns(ep.raw(), svc, disc.advertise) {
+                            return err(e);
+                        }
+                    } else {
+                        return err("discovery.serviceName is required when mdns is true");
+                    }
+                }
+            }
+            #[cfg(not(feature = "discovery"))]
+            if discovery.as_ref().map_or(false, |d| d.mdns) {
+                return err("mDNS discovery was requested but this build was compiled without the \"discovery\" feature");
+            }
+
             let node_id = ep.node_id().to_string();
             let keypair: Vec<u8> = ep.secret_key_bytes().to_vec();
             let handle = insert_endpoint(ep);

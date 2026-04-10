@@ -116,82 +116,131 @@ dynamic table and referenced by index on subsequent requests.
 **Table size**: Default dynamic table capacity of 4096 bytes (same as HTTP/3
 default). Configurable via `NodeOptions.qpack_max_table_capacity`.
 
-### Simplified QPACK (no decoder stream)
+### Implementation: the `qpack` crate
 
-Full QPACK uses two unidirectional QUIC streams (encoder stream and decoder
-stream) for dynamic table synchronisation between concurrent requests. This
-is complex and primarily needed for HTTP/3's highly concurrent request model.
+The [`qpack`](https://crates.io/crates/qpack) crate (v0.1.0, MIT) is an
+extraction of the QPACK module from the hyper community's
+[`h3`](https://github.com/hyperium/h3) crate. The code is identical
+(confirmed by diff) — only import ordering and a `Clone` derive differ.
+This means we get the hyper community's battle-tested, RFC 9204-compliant
+implementation without pulling in the rest of h3.
 
-For iroh-http, a **simplified approach** is sufficient:
+**Dependencies:** `bytes` + `http` — both already in our tree.
 
-1. Use only the **static table** and **literal representations** initially.
-   This alone provides Huffman coding and static index references — a
-   meaningful compression win with zero connection-level state.
-2. Phase in the dynamic table with a **blocking model**: each stream's header
-   block is self-contained (uses only static refs and literals, or references
-   dynamic entries that are guaranteed to exist). No decoder stream required.
-   This is QPACK's "zero required insert count" mode.
-3. The full encoder/decoder stream model can be added later if profiling shows
-   the dynamic table miss rate justifies it.
+**Key API:**
 
-This phased approach keeps the implementation small while still delivering the
-primary compression wins.
+```rust
+// Stateless mode (Phase 1): static table + Huffman, no per-connection state
+qpack::encode_stateless(&mut buf, headers)?;   // -> Result<u64, EncoderError>
+qpack::decode_stateless(&mut buf, max_size)?;  // -> Result<Decoded, DecoderError>
+
+// Stateful mode (Phase 2): adds dynamic table for repeated-header compression
+let mut encoder = qpack::Encoder::new();
+encoder.encode(&mut block, &mut encoder_stream, stream_id, headers)?;
+
+let mut decoder = qpack::Decoder::new();
+let decoded = decoder.decode_header(&mut block)?;
+```
+
+### Phased rollout
+
+**Phase 1 — stateless (ship with this patch):**
+
+Use `encode_stateless()` / `decode_stateless()` only. This gives:
+- Huffman coding of header values (~30% size reduction on ASCII)
+- Static table index references for common headers (`:method: GET` = 1 byte)
+- Zero per-connection state — works even without the connection pool
+
+This is the right starting point. Two function calls, no state management.
+
+**Phase 2 — stateful (future, after Patch 12 lands and we have usage data):**
+
+Switch to `Encoder` / `Decoder` with dynamic tables. Requires:
+- Per-connection encoder/decoder state stored in the connection pool
+- Dynamic table capacity negotiation
+- Encoder/decoder stream wiring (the `qpack` crate supports this)
+
+Only pursue Phase 2 if profiling shows repeated custom headers dominate
+traffic (e.g. large auth tokens sent on every request).
 
 ### Where the code lives
 
 | Layer | Role |
 |---|---|
-| `iroh-http-framing` | Add QPACK encode/decode functions alongside existing HTTP/1.1 functions. Behind a `qpack` Cargo feature (default: on for `std`, off for minimal `no_std` builds). The static table and Huffman table are `const` data — no runtime allocation needed. |
-| `iroh-http-core` | Select the encode/decode path based on the negotiated ALPN. If `iroh-http/2*` was negotiated, use QPACK functions; otherwise fall back to plaintext. The connection pool (Patch 12) holds the per-connection QPACK encoder/decoder state. |
+| `iroh-http-framing` | **Unchanged.** Stays `no_std`, plaintext HTTP/1.1 only. No QPACK dependency. |
+| `iroh-http-core` | Adds `qpack` as an optional dependency behind a `qpack` Cargo feature (default: on). Thin wrapper functions convert between `iroh-http-core`'s `(method, path, headers)` tuples and `qpack::HeaderField` slices. Selects encode/decode path based on negotiated ALPN. |
 | Bridge / JS layers | **No changes.** Headers arrive as `Vec<(String, String)>` regardless of wire encoding. Compression is invisible above the FFI boundary. |
 
-### `iroh-http-framing` API additions
+### Integration in `iroh-http-core`
+
+New internal module `crates/iroh-http-core/src/qpack_bridge.rs`:
 
 ```rust
-// New functions in iroh-http-framing (behind `qpack` feature):
+use qpack::{HeaderField, encode_stateless, decode_stateless};
 
-/// Encode a request head using QPACK.
-/// Returns the length-prefixed encoded header block.
-pub fn qpack_encode_request_head(
-    encoder: &mut QpackEncoder,
-    method: &str,
-    path: &str,
-    headers: &[(&str, &str)],
-    chunked: bool,
-) -> Vec<u8>;
+/// Encode a request head as a QPACK header block with a 2-byte length prefix.
+pub fn encode_request(method: &str, path: &str, headers: &[(&str, &str)], chunked: bool) -> Vec<u8> {
+    let mut fields: Vec<HeaderField> = vec![
+        HeaderField::new(":method", method),
+        HeaderField::new(":path", path),
+    ];
+    for (name, value) in headers {
+        fields.push(HeaderField::new(*name, *value));
+    }
+    if chunked {
+        fields.push(HeaderField::new("transfer-encoding", "chunked"));
+    }
+    let mut block = bytes::BytesMut::new();
+    let _ = encode_stateless(&mut block, fields.iter().map(|f| f.clone()));
+    // Prepend 2-byte big-endian length
+    let len = (block.len() as u16).to_be_bytes();
+    let mut out = Vec::with_capacity(2 + block.len());
+    out.extend_from_slice(&len);
+    out.extend_from_slice(&block);
+    out
+}
 
-/// Decode a QPACK-encoded request head.
-/// Returns (method, path, headers, bytes_consumed).
-pub fn qpack_decode_request_head(
-    decoder: &mut QpackDecoder,
-    bytes: &[u8],
-) -> Result<(String, String, Vec<(String, String)>, usize), FramingError>;
-
-/// Encode a response head using QPACK.
-pub fn qpack_encode_response_head(
-    encoder: &mut QpackEncoder,
-    status: u16,
-    headers: &[(&str, &str)],
-    chunked: bool,
-) -> Vec<u8>;
-
-/// Decode a QPACK-encoded response head.
-pub fn qpack_decode_response_head(
-    decoder: &mut QpackDecoder,
-    bytes: &[u8],
-) -> Result<(u16, String, Vec<(String, String)>, usize), FramingError>;
-
-/// QPACK encoder state (per-connection on the sending side).
-pub struct QpackEncoder { /* static table ref, optional dynamic table */ }
-
-/// QPACK decoder state (per-connection on the receiving side).
-pub struct QpackDecoder { /* static table ref, optional dynamic table */ }
+/// Decode a QPACK header block (after reading the 2-byte length prefix).
+/// Returns (method, path, headers, total_bytes_consumed).
+pub fn decode_request(bytes: &[u8]) -> Result<(String, String, Vec<(String, String)>, usize), String> {
+    if bytes.len() < 2 { return Err("incomplete qpack header".into()); }
+    let block_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+    if bytes.len() < 2 + block_len { return Err("incomplete qpack block".into()); }
+    let mut buf = &bytes[2..2 + block_len];
+    let decoded = decode_stateless(&mut buf, 65536)
+        .map_err(|e| format!("qpack decode: {e:?}"))?;
+    let mut method = String::from("GET");
+    let mut path = String::from("/");
+    let mut headers = Vec::new();
+    for field in decoded.fields() {
+        match field.name.as_ref() {
+            b":method" => method = String::from_utf8_lossy(field.value.as_ref()).into(),
+            b":path" => path = String::from_utf8_lossy(field.value.as_ref()).into(),
+            name => {
+                let n = String::from_utf8_lossy(name).into_owned();
+                let v = String::from_utf8_lossy(field.value.as_ref()).into_owned();
+                headers.push((n, v));
+            }
+        }
+    }
+    Ok((method, path, headers, 2 + block_len))
+}
 ```
+
+Response encode/decode follows the same pattern with `:status` instead of
+`:method`/`:path`.
 
 Body encoding (chunked framing, trailers) is **unchanged** — the existing
 `encode_chunk`, `terminal_chunk`, `serialize_trailers`, and `parse_trailers`
 functions continue to work identically for both `iroh-http/1` and
 `iroh-http/2`.
+
+### Fallback if the crate goes unmaintained
+
+The `qpack` crate is ~4.5K lines (excluding tests). If it ever becomes
+abandoned, the code can be vendored into `iroh-http-core/src/qpack/` under
+MIT attribution in under 5 minutes. The API surface we use (`encode_stateless`,
+`decode_stateless`, `HeaderField`) is small and stable.
 
 ---
 
@@ -211,8 +260,10 @@ nodes connect, they use `iroh-http/2-full`. The wire format difference is
 confined to header encoding — bodies, trailers, and duplex streams work
 identically regardless.
 
-The `qpack` feature in `iroh-http-framing` can be disabled for no_std builds
-to eliminate the static table and Huffman data from the binary (~4 KB).
+`iroh-http-framing` is completely unaffected — it stays `no_std` and plaintext.
+The `qpack` dependency only exists in `iroh-http-core` (which already requires
+`std` + `tokio`). Disabling the `qpack` feature on `iroh-http-core` removes
+the dependency entirely and the node advertises only `iroh-http/1*` ALPNs.
 
 ---
 
@@ -237,13 +288,13 @@ pub struct NodeOptions {
 
 | Layer | Change |
 |---|---|
-| `iroh-http-framing/Cargo.toml` | Add `qpack` feature (default: on). Add `huffman` static data. |
-| `iroh-http-framing/src/qpack.rs` (new) | Static table, Huffman encode/decode, `QpackEncoder`, `QpackDecoder`, header block encode/decode. |
-| `iroh-http-framing/src/lib.rs` | Re-export QPACK types behind feature gate. Add `iroh-http/2*` ALPN constants. |
-| `iroh-http-core/src/client.rs` | After ALPN negotiation, check negotiated proto. Use QPACK encode for `iroh-http/2*`, plaintext for `iroh-http/1*`. |
+| `iroh-http-framing` | **No changes.** Stays `no_std`, plaintext HTTP/1.1 only. |
+| `iroh-http-core/Cargo.toml` | Add `qpack = { version = "0.1", optional = true }`. Add `qpack` feature (default: on). |
+| `iroh-http-core/src/qpack_bridge.rs` (new) | Thin wrapper: converts `(method, path, headers)` tuples to/from `qpack::HeaderField` slices. Handles length-prefix framing and pseudo-header mapping. ~100 lines. |
+| `iroh-http-core/src/lib.rs` | Add `iroh-http/2*` ALPN constants. Conditionally export `qpack_bridge` behind feature gate. |
+| `iroh-http-core/src/client.rs` | After ALPN negotiation, check negotiated proto. Use `qpack_bridge::encode_request` for `iroh-http/2*`, `serialize_request_head` for `iroh-http/1*`. |
 | `iroh-http-core/src/server.rs` | Same: detect negotiated ALPN on accepted connection, select decode path. |
-| `iroh-http-core/src/pool.rs` (from Patch 12) | Store per-connection `QpackEncoder`/`QpackDecoder` alongside the cached `Connection`. |
-| `iroh-http-core/src/endpoint.rs` | Add `iroh-http/2*` ALPNs to the advertised list. Add `qpack_max_table_capacity` to `NodeOptions`. |
+| `iroh-http-core/src/endpoint.rs` | Add `iroh-http/2*` ALPNs to the advertised list (only when `qpack` feature is enabled). Add `qpack_max_table_capacity` to `NodeOptions` (reserved for Phase 2). |
 | Bridge / JS layers | **No changes.** |
 
 ---
@@ -253,11 +304,15 @@ pub struct NodeOptions {
 1. **ALPN fallback test**: Connect a QPACK-capable node to a base-only node.
    Verify they negotiate `iroh-http/1` and communicate correctly.
 2. **Compression test**: Send 100 requests with identical headers. Measure
-   total header bytes on the wire. Expect >80% reduction after warmup
-   (static table hits + Huffman).
-3. **Round-trip test**: Encode headers with `QpackEncoder`, decode with
-   `QpackDecoder`, assert equality.
+   total header bytes on the wire. Expect meaningful reduction from
+   static table hits + Huffman coding.
+3. **Round-trip test**: Encode headers with `qpack::encode_stateless`, decode
+   with `qpack::decode_stateless`, assert equality for various header
+   combinations.
 4. **ESP interop test**: Run an `iroh-http/1`-only node alongside an
    `iroh-http/2` node. Verify bidirectional communication works.
-5. **no_std build test**: Build `iroh-http-framing` with `default-features =
-   false` and confirm it compiles without `qpack`.
+5. **Feature gate test**: Build `iroh-http-core` with
+   `default-features = false` and confirm it compiles without the `qpack`
+   dependency and only advertises `iroh-http/1*` ALPNs.
+6. **no_std unaffected test**: Confirm `iroh-http-framing` continues to build
+   with `no_std` — it should have no awareness of QPACK at all.

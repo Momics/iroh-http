@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "workspaces": [
+    "packages/iroh-http-shared",
+    "packages/iroh-http-node",
+    "packages/iroh-http-tauri"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces",
+    "build:ts": "npm run build --workspaces",
+    "build:rust": "cargo build --release",
+    "build": "npm run build:rust && npm run build:ts"
+  }
+}

@@ -1,5 +1,6 @@
 ---
-status: closed
+status: integrated
+note: 5/7 fixed. Remaining — Finding 2 (Node double-copy .to_vec()) and Finding 6 (Tauri keypair response as number[] not base64). Both low severity.
 ---
 
 # Performance Review: IPC & Streaming Patterns

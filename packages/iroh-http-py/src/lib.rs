@@ -366,6 +366,9 @@ fn create_node<'py>(
             channel_capacity:       None,
             max_chunk_size_bytes:   None,
             max_consecutive_errors: None,
+            discovery:              None,
+            drain_timeout_ms:       None,
+            handle_ttl_ms:          None,
         };
         let ep = IrohEndpoint::bind(opts).await.map_err(py_err)?;
         Ok(IrohNode { ep })

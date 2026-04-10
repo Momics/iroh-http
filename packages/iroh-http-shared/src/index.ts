@@ -14,6 +14,7 @@ export { makeServe } from "./serve.js";
 export { PublicKey, SecretKey, resolveNodeId } from "./keys.js";
 export {
   IrohError, IrohBindError, IrohConnectError, IrohStreamError, IrohProtocolError,
+  IrohAbortError, IrohArgumentError, IrohHandleError,
   classifyError, classifyBindError,
 } from "./errors.js";
 

@@ -3,6 +3,7 @@ name = "iroh-http-framing"
 version = "0.1.0"
 edition = "2021"
 description = "no_std HTTP/1.1 header serialisation and parsing (httparse)"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 httparse = { version = "1", default-features = false }

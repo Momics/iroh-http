@@ -1,0 +1,11 @@
+{
+  "name": "iroh-http-example-deno",
+  "version": "0.1.0",
+  "tasks": {
+    "server": "deno run --allow-ffi --allow-read --allow-env main.ts server",
+    "client": "deno run --allow-ffi --allow-read --allow-env main.ts client"
+  },
+  "imports": {
+    "@momics/iroh-http-deno": "jsr:@momics/iroh-http-deno@^0.1"
+  }
+}

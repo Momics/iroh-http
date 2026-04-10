@@ -3,6 +3,7 @@ name = "iroh-http-core"
 version = "0.1.0"
 edition = "2021"
 description = "Iroh QUIC endpoint, HTTP framing, fetch/serve with FFI-friendly types"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 iroh-http-framing = { path = "../iroh-http-framing" }
