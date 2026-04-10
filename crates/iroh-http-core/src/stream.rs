@@ -175,3 +175,78 @@ pub fn finish_body(handle: u32) -> Result<(), String> {
     slab.remove(handle as usize);
     Ok(())
 }
+
+// ── §3 AbortSignal — cancel a reader ─────────────────────────────────────────
+
+/// Drop a body reader from the global slab, causing any pending `nextChunk`
+/// to return an error and signalling EOF on a cancelled fetch.
+pub fn cancel_reader(handle: u32) {
+    let mut slab = reader_slab().lock().unwrap();
+    if slab.contains(handle as usize) {
+        slab.remove(handle as usize);
+    }
+}
+
+// ── §4 Trailer slabs ──────────────────────────────────────────────────────────
+
+type TrailerTx = tokio::sync::oneshot::Sender<Vec<(String, String)>>;
+type TrailerRx = tokio::sync::oneshot::Receiver<Vec<(String, String)>>;
+
+fn trailer_tx_slab() -> &'static Mutex<Slab<TrailerTx>> {
+    static S: OnceLock<Mutex<Slab<TrailerTx>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(Slab::new()))
+}
+
+fn trailer_rx_slab() -> &'static Mutex<Slab<TrailerRx>> {
+    static S: OnceLock<Mutex<Slab<TrailerRx>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(Slab::new()))
+}
+
+/// Insert a trailer oneshot **sender** into the global slab and return its handle.
+///
+/// Called from the server path: JS reads this handle as `resTrailersHandle` and
+/// calls `sendTrailers(handle, trailers)` to deliver response trailers to Rust.
+pub(crate) fn insert_trailer_sender(tx: TrailerTx) -> u32 {
+    trailer_tx_slab().lock().unwrap().insert(tx) as u32
+}
+
+/// Insert a trailer oneshot **receiver** into the global slab and return its handle.
+///
+/// Called from the fetch path (response trailers) and the server path (request
+/// trailers). JS calls `nextTrailer(handle)` to await and retrieve the trailers.
+pub(crate) fn insert_trailer_receiver(rx: TrailerRx) -> u32 {
+    trailer_rx_slab().lock().unwrap().insert(rx) as u32
+}
+
+/// Deliver trailers from the JS side to the waiting Rust pump task.
+///
+/// Called by the bridge when JS invokes `sendTrailers(resTrailersHandle, pairs)`.
+/// Removes the sender from the slab; calling twice returns an error.
+pub fn send_trailers(handle: u32, trailers: Vec<(String, String)>) -> Result<(), String> {
+    let tx = {
+        let mut slab = trailer_tx_slab().lock().unwrap();
+        if !slab.contains(handle as usize) {
+            return Err(format!("invalid trailer sender handle: {handle}"));
+        }
+        slab.remove(handle as usize)
+    };
+    tx.send(trailers).map_err(|_| "trailer receiver dropped".to_string())
+}
+
+/// Await and retrieve trailers produced by the Rust pump task.
+///
+/// Called by the bridge when JS invokes `nextTrailer(handle)`.
+/// Returns `None` when the sender was dropped without sending (no trailers).
+pub async fn next_trailer(handle: u32) -> Result<Option<Vec<(String, String)>>, String> {
+    let rx = {
+        let mut slab = trailer_rx_slab().lock().unwrap();
+        if !slab.contains(handle as usize) {
+            return Err(format!("invalid trailer receiver handle: {handle}"));
+        }
+        slab.remove(handle as usize)
+    };
+    match rx.await {
+        Ok(trailers) => Ok(Some(trailers)),
+        Err(_) => Ok(None), // sender dropped = no trailers
+    }
+}

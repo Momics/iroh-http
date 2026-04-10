@@ -15,6 +15,7 @@ import type {
   FfiResponseHead,
   RawServeFn,
   RequestPayload,
+  BidirectionalStream,
 } from "./bridge.js";
 import { makeReadable, pipeToWriter } from "./streams.js";
 
@@ -32,10 +33,6 @@ const METHODS_WITH_BODY = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
  * Construct a Deno-compatible `serve` function bound to a specific endpoint.
- *
- * @param bridge          Platform bridge (nextChunk / sendChunk / finishBody).
- * @param endpointHandle  Handle to the bound Iroh endpoint.
- * @param rawServe        Low-level platform serve function.
  */
 export function makeServe(
   bridge: Bridge,
@@ -56,7 +53,6 @@ export function makeServe(
         ["iroh-node-id", payload.remoteNodeId],
       ];
 
-      // Duplex: 'half' allows streaming request bodies in Node.js fetch.
       const reqInit: RequestInit & { duplex?: "half" } = {
         method: payload.method,
         headers,
@@ -66,19 +62,70 @@ export function makeServe(
 
       const req = new Request(payload.url, reqInit);
 
+      // §4: Expose request trailers as req.trailers (Promise<Headers>).
+      if (payload.reqTrailersHandle) {
+        Object.defineProperty(req, "trailers", {
+          value: bridge
+            .nextTrailer(payload.reqTrailersHandle)
+            .then((pairs) => (pairs ? new Headers(pairs) : new Headers())),
+          configurable: true,
+        });
+      }
+
+      // §2: For duplex requests, attach req.acceptWebTransport() so the handler can get both streams.
+      if (payload.isBidi) {
+        const acceptWebTransportFn = (): BidirectionalStream => ({
+          readable: makeReadable(bridge, payload.reqBodyHandle),
+          writable: new WritableStream<Uint8Array>({
+            async write(chunk) {
+              await bridge.sendChunk(payload.resBodyHandle, chunk);
+            },
+            async close() {
+              await bridge.finishBody(payload.resBodyHandle);
+            },
+            async abort() {
+              await bridge.finishBody(payload.resBodyHandle);
+            },
+          }),
+        });
+        Object.defineProperty(req, "acceptWebTransport", {
+          value: acceptWebTransportFn,
+          configurable: true,
+        });
+      }
+
       // Invoke the user handler.
       const res = await Promise.resolve(handler(req));
 
-      // Pipe response body in background — JS does NOT wait for completion
-      // before returning the head.  Rust reads the body concurrently via
-      // sendChunk / finishBody on resBodyHandle.
-      const bodyStream =
-        res.body ?? emptyStream();
-      pipeToWriter(bridge, bodyStream, payload.resBodyHandle).catch((err) =>
+      if (payload.isBidi) {
+        // Duplex mode: the handler manages both streams via req.duplex().
+        // We only return the response head (101); body piping is handler-driven.
+        return {
+          status: res.status,
+          headers: [...res.headers] as [string, string][],
+        };
+      }
+
+      // §4: Collect the response trailers callback (non-standard extension).
+      const trailersFn = (res as unknown as Record<string, unknown>)
+        .trailers as (() => Headers | Promise<Headers>) | undefined;
+
+      // Pipe response body in the background, then send trailers.
+      const bodyStream = res.body ?? emptyStream();
+      const doPipe = async () => {
+        await pipeToWriter(bridge, bodyStream, payload.resBodyHandle);
+        // Always call sendTrailers so the Rust pump task can proceed.
+        const trailerPairs: [string, string][] = trailersFn
+          ? [...(await trailersFn())] as [string, string][]
+          : [];
+        if (payload.resTrailersHandle) {
+          await bridge.sendTrailers(payload.resTrailersHandle, trailerPairs);
+        }
+      };
+      doPipe().catch((err) =>
         console.error("[iroh-http] response body pipe error:", err)
       );
 
-      // Return the response head so Rust can write the status line + headers.
       return {
         status: res.status,
         headers: [...res.headers] as [string, string][],

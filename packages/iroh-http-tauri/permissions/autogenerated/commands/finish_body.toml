@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-finish-body"
+description = "Enables the finish_body command without any pre-configured scope."
+commands.allow = ["finish_body"]
+
+[[permission]]
+identifier = "deny-finish-body"
+description = "Denies the finish_body command without any pre-configured scope."
+commands.deny = ["finish_body"]

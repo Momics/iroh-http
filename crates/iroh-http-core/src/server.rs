@@ -21,9 +21,11 @@ use crate::{
     client::pump_body_to_stream,
     stream::{
         insert_reader, insert_writer, make_body_channel, BodyWriter,
+        insert_trailer_sender, insert_trailer_receiver,
     }, IrohEndpoint, RequestPayload,
 };
-use iroh_http_framing::{parse_request_head, reason_phrase, serialize_response_head, FramingError};
+use iroh_http_framing::{parse_request_head, reason_phrase, serialize_response_head, FramingError,
+                        parse_trailers};
 
 const READ_BUF: usize = 16 * 1024;
 const DEFAULT_CONCURRENCY: usize = 64;
@@ -154,39 +156,68 @@ where
     // 1. Read and parse request head.
     let (method, path, req_headers, leftover) = read_request_head(&mut recv).await?;
 
-    // 2. Allocate request body channel (reader in global slab, writer pumped from stream).
+    // 2. Detect duplex upgrade.
+    let is_bidi = req_headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("upgrade") && v.eq_ignore_ascii_case("iroh-duplex")
+    });
+
+    // 3. Allocate request body channel.
     let (req_writer, req_reader) = make_body_channel();
     let req_body_handle = insert_reader(req_reader);
 
-    // 3. Allocate response body channel.
+    // 4. Allocate response body channel.
     let (res_writer, res_reader) = make_body_channel();
     let res_body_handle = insert_writer(res_writer);
 
-    // 4. Allocate oneshot for response head.
+    // 5. Allocate oneshot for response head.
     let (tx, rx) = oneshot::channel::<ResponseHead>();
     let req_handle = allocate_req_handle(tx);
 
-    // 5. Construct the full URL (server side: http+iroh://<own-node-id>/path).
+    // 6. Allocate trailer channels (skipped for duplex — raw bytes only).
+    let (opt_req_trailer_tx, opt_res_trailer_rx, req_trailers_handle, res_trailers_handle) =
+        if !is_bidi {
+            let (rq_tx, rq_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
+            let rq_h = insert_trailer_receiver(rq_rx);
+
+            let (rs_tx, rs_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
+            let rs_h = insert_trailer_sender(rs_tx);
+
+            (Some(rq_tx), Some(rs_rx), rq_h, rs_h)
+        } else {
+            (None, None, 0u32, 0u32)
+        };
+
+    // 7. Construct the full URL.
     let url = format!("http+iroh://{own_node_id}{path}");
 
-    // 6. Spawn pump task: stream → reqBodyWriter channel.
-    tokio::spawn(pump_recv_to_body(recv, req_writer, leftover));
+    // 8. Spawn recv pump task.
+    if is_bidi {
+        tokio::spawn(pump_recv_raw_to_body(recv, req_writer, leftover));
+    } else {
+        let rq_tx = opt_req_trailer_tx.expect("non-duplex req_trailer_tx");
+        tokio::spawn(pump_recv_to_body(recv, req_writer, leftover, rq_tx));
+    }
 
-    // 7. Notify JS.
+    // 9. Notify JS.
     on_request(RequestPayload {
         req_handle,
         req_body_handle,
         res_body_handle,
+        req_trailers_handle,
+        res_trailers_handle,
         method: method.clone(),
         url,
         headers: req_headers,
         remote_node_id,
+        is_bidi,
     });
 
-    // 8. Await JS response head.
-    let response_head = rx.await.map_err(|_| "JS handler dropped without responding")?;
+    // 10. Await JS response head.
+    let response_head = rx
+        .await
+        .map_err(|_| "JS handler dropped without responding")?;
 
-    // 9. Write response head.
+    // 11. Write response head.
     let pairs: Vec<(&str, &str)> = response_head
         .headers
         .iter()
@@ -196,14 +227,20 @@ where
         response_head.status,
         reason_phrase(response_head.status),
         &pairs,
-        true, // chunked
+        !is_bidi, // chunked only in non-duplex mode
     );
     send.write_all(&head_bytes)
         .await
         .map_err(|e| format!("write response head: {e}"))?;
 
-    // 10. Pump response body (from JS's sendChunk calls) to QUIC send stream.
-    pump_body_to_stream(res_reader, &mut send, true).await?;
+    // 12. Pump response body.
+    if is_bidi {
+        // Duplex: raw bytes, no chunked encoding, no trailers.
+        pump_body_raw_to_stream(res_reader, &mut send).await?;
+    } else {
+        let rs_rx = opt_res_trailer_rx.expect("non-duplex res_trailer_rx");
+        pump_body_to_stream(res_reader, &mut send, true, Some(rs_rx)).await?;
+    }
 
     send.finish().map_err(|e| format!("finish stream: {e}"))?;
 
@@ -254,10 +291,12 @@ async fn read_request_head(
 
 /// Pump a `RecvStream` into a `BodyWriter` channel, handling chunked encoding.
 /// `already_read` is bytes already consumed during head parsing.
+/// Trailer bytes after the terminal chunk are parsed and delivered via `trailer_tx`.
 async fn pump_recv_to_body(
     mut recv: iroh::endpoint::RecvStream,
     writer: BodyWriter,
     already_read: Vec<u8>,
+    trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
 ) {
     let mut buf = already_read;
 
@@ -266,7 +305,12 @@ async fn pump_recv_to_body(
         loop {
             match iroh_http_framing::parse_chunk_header(&buf) {
                 None => break, // need more bytes
-                Some((0, _)) => return, // terminal chunk → EOF
+                Some((0, header_consumed)) => {
+                    let after_header = buf[header_consumed..].to_vec();
+                    let trailers = read_trailers_from_buf(&mut recv, after_header).await;
+                    let _ = trailer_tx.send(trailers);
+                    return; // terminal chunk → EOF
+                }
                 Some((size, header_len)) => {
                     let data_end = header_len + size;
                     let trailer_end = data_end + 2;
@@ -292,6 +336,69 @@ async fn pump_recv_to_body(
                 return;
             }
             Ok(Some(chunk)) => buf.extend_from_slice(&chunk.bytes),
+        }
+    }
+}
+
+/// Pump raw (unchunked) bytes from a `RecvStream` into a `BodyWriter` channel.
+/// Used for duplex connections where no HTTP framing is applied after headers.
+async fn pump_recv_raw_to_body(
+    mut recv: iroh::endpoint::RecvStream,
+    writer: BodyWriter,
+    already_read: Vec<u8>,
+) {
+    if !already_read.is_empty() {
+        let data = Bytes::copy_from_slice(&already_read);
+        if writer.send_chunk(data).await.is_err() {
+            return;
+        }
+    }
+    loop {
+        match recv.read_chunk(READ_BUF).await {
+            Ok(Some(chunk)) => {
+                let data = Bytes::copy_from_slice(&chunk.bytes);
+                if writer.send_chunk(data).await.is_err() {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+}
+
+/// Pump raw bytes from a `BodyReader` channel to a `SendStream` without chunked encoding.
+/// Used for duplex connections.
+async fn pump_body_raw_to_stream(
+    reader: crate::stream::BodyReader,
+    send: &mut iroh::endpoint::SendStream,
+) -> Result<(), String> {
+    loop {
+        match reader.next_chunk().await {
+            None => break,
+            Some(data) => {
+                send.write_all(&data)
+                    .await
+                    .map_err(|e| format!("write duplex chunk: {e}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Read a complete trailer block from a stream, starting with `buf`.
+/// Returns the parsed trailers, or an empty `Vec` on parse failure or early EOF.
+async fn read_trailers_from_buf(
+    recv: &mut iroh::endpoint::RecvStream,
+    mut buf: Vec<u8>,
+) -> Vec<(String, String)> {
+    loop {
+        match parse_trailers(&buf) {
+            Ok((trailers, _)) => return trailers,
+            Err(FramingError::Incomplete) => match recv.read_chunk(READ_BUF).await {
+                Ok(Some(chunk)) => buf.extend_from_slice(&chunk.bytes),
+                _ => return Vec::new(),
+            },
+            Err(_) => return Vec::new(),
         }
     }
 }

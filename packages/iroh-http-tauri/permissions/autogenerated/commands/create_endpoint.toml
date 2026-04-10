@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-create-endpoint"
+description = "Enables the create_endpoint command without any pre-configured scope."
+commands.allow = ["create_endpoint"]
+
+[[permission]]
+identifier = "deny-create-endpoint"
+description = "Denies the create_endpoint command without any pre-configured scope."
+commands.deny = ["create_endpoint"]

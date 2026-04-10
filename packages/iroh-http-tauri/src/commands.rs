@@ -46,6 +46,7 @@ pub async fn create_endpoint(
             idle_timeout_ms: a.idle_timeout,
             relays: a.relays.unwrap_or_default(),
             dns_discovery: a.dns_discovery,
+            capabilities: Vec::new(), // advertise all by default
         })
         .unwrap_or_default();
 
@@ -91,6 +92,26 @@ pub fn finish_body(handle: u32) -> Result<(), String> {
 }
 
 #[command]
+pub fn cancel_request(handle: u32) {
+    iroh_http_core::stream::cancel_reader(handle);
+}
+
+#[command]
+pub async fn next_trailer(handle: u32) -> Result<Option<Vec<Vec<String>>>, String> {
+    let trailers = iroh_http_core::stream::next_trailer(handle).await?;
+    Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
+}
+
+#[command]
+pub fn send_trailers(handle: u32, trailers: Vec<Vec<String>>) -> Result<(), String> {
+    let pairs: Vec<(String, String)> = trailers
+        .into_iter()
+        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+        .collect();
+    iroh_http_core::stream::send_trailers(handle, pairs)
+}
+
+#[command]
 pub fn alloc_body_writer() -> u32 {
     state::js_alloc_body_writer()
 }
@@ -115,6 +136,7 @@ pub struct FfiResponsePayload {
     pub headers: Vec<Vec<String>>,
     pub body_handle: u32,
     pub url: String,
+    pub trailers_handle: u32,
 }
 
 #[command]
@@ -144,6 +166,7 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
         headers: resp_headers,
         body_handle: res.body_handle,
         url: res.url,
+        trailers_handle: res.trailers_handle,
     })
 }
 
@@ -156,6 +179,9 @@ pub struct ServeEventPayload {
     pub req_handle: u32,
     pub req_body_handle: u32,
     pub res_body_handle: u32,
+    pub req_trailers_handle: u32,
+    pub res_trailers_handle: u32,
+    pub is_bidi: bool,
     pub method: String,
     pub url: String,
     pub headers: Vec<Vec<String>>,
@@ -189,6 +215,9 @@ pub async fn serve<R: Runtime>(
                 req_handle: payload.req_handle,
                 req_body_handle: payload.req_body_handle,
                 res_body_handle: payload.res_body_handle,
+                req_trailers_handle: payload.req_trailers_handle,
+                res_trailers_handle: payload.res_trailers_handle,
+                is_bidi: payload.is_bidi,
                 method: payload.method,
                 url: payload.url,
                 headers,
@@ -214,9 +243,6 @@ pub struct RespondArgs {
 }
 
 /// Send the response head for a pending request.
-///
-/// Called by JS after it has computed the response status and headers.
-/// The response body is written separately via `send_chunk` / `finish_body`.
 #[command]
 pub fn respond_to_request(args: RespondArgs) -> Result<(), String> {
     let headers: Vec<(String, String)> = args
@@ -225,4 +251,42 @@ pub fn respond_to_request(args: RespondArgs) -> Result<(), String> {
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
     respond(args.req_handle, args.status, headers)
+}
+
+// ── rawConnect ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawConnectArgs {
+    pub endpoint_handle: u32,
+    pub node_id: String,
+    pub path: String,
+    pub headers: Vec<Vec<String>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FfiDuplexStreamPayload {
+    pub read_handle: u32,
+    pub write_handle: u32,
+}
+
+#[command]
+pub async fn raw_connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload, String> {
+    let ep = state::get_endpoint(args.endpoint_handle)
+        .ok_or_else(|| format!("invalid endpoint handle: {}", args.endpoint_handle))?;
+
+    let pairs: Vec<(String, String)> = args
+        .headers
+        .into_iter()
+        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+        .collect();
+
+    let duplex = iroh_http_core::raw_connect(&ep, &args.node_id, &args.path, &pairs)
+        .await?;
+
+    Ok(FfiDuplexStreamPayload {
+        read_handle: duplex.read_handle,
+        write_handle: duplex.write_handle,
+    })
 }

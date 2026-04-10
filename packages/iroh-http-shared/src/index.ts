@@ -6,13 +6,14 @@
  */
 
 export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
-              NodeOptions, IrohNode, EndpointInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn } from "./bridge.js";
+              NodeOptions, IrohNode, EndpointInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn,
+              FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn } from "./bridge.js";
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
-export { makeFetch } from "./fetch.js";
+export { makeFetch, makeConnect } from "./fetch.js";
 export { makeServe } from "./serve.js";
 
-import type { Bridge, EndpointInfo, NodeOptions, IrohNode, RawServeFn, RawFetchFn, AllocBodyWriterFn } from "./bridge.js";
-import { makeFetch } from "./fetch.js";
+import type { Bridge, EndpointInfo, NodeOptions, IrohNode, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
+import { makeFetch, makeConnect } from "./fetch.js";
 import { makeServe } from "./serve.js";
 
 /**
@@ -24,6 +25,7 @@ import { makeServe } from "./serve.js";
  * @param info            Endpoint info returned by the low-level bind.
  * @param rawFetch        Low-level fetch function (platform-specific).
  * @param rawServe        Low-level serve function (platform-specific).
+ * @param rawConnect      Low-level duplex connect function (platform-specific).
  * @param allocBodyWriter Synchronously allocates a body writer handle.
  * @param closeEndpoint   Closes the bound endpoint.
  */
@@ -32,14 +34,25 @@ export function buildNode(
   info: EndpointInfo,
   rawFetch: RawFetchFn,
   rawServe: RawServeFn,
+  rawConnect: RawConnectFn,
   allocBodyWriter: AllocBodyWriterFn,
   closeEndpoint: (handle: number) => Promise<void>
 ): IrohNode {
+  let resolveClosed!: () => void;
+  const closedPromise = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+
   return {
     nodeId: info.nodeId,
     keypair: info.keypair,
     fetch: makeFetch(bridge, info.endpointHandle, rawFetch, allocBodyWriter),
     serve: makeServe(bridge, info.endpointHandle, rawServe),
-    close: () => closeEndpoint(info.endpointHandle),
+    createBidirectionalStream: makeConnect(bridge, info.endpointHandle, rawConnect),
+    closed: closedPromise,
+    close: async () => {
+      await closeEndpoint(info.endpointHandle);
+      resolveClosed();
+    },
   };
 }

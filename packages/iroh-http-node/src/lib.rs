@@ -15,6 +15,7 @@ use iroh_http_core::{
     stream::{
         alloc_body_writer, claim_pending_reader, finish_body,
         next_chunk, send_chunk, store_pending_reader,
+        cancel_reader, next_trailer, send_trailers,
     },
     RequestPayload,
 };
@@ -74,6 +75,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         idle_timeout_ms: o.idle_timeout.map(|t| t as u64),
         relays: o.relays.unwrap_or_default(),
         dns_discovery: o.dns_discovery,
+        capabilities: Vec::new(), // advertise all by default
     }).unwrap_or_default();
 
     let ep = IrohEndpoint::bind(opts)
@@ -128,6 +130,28 @@ pub fn js_finish_body(handle: u32) -> napi::Result<()> {
 }
 
 #[napi]
+pub fn js_cancel_request(handle: u32) {
+    cancel_reader(handle);
+}
+
+#[napi]
+pub async fn js_next_trailer(handle: u32) -> napi::Result<Option<Vec<Vec<String>>>> {
+    let trailers = next_trailer(handle)
+        .await
+        .map_err(|e| napi::Error::new(Status::GenericFailure, e))?;
+    Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
+}
+
+#[napi]
+pub fn js_send_trailers(handle: u32, trailers: Vec<Vec<String>>) -> napi::Result<()> {
+    let pairs: Vec<(String, String)> = trailers
+        .into_iter()
+        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+        .collect();
+    send_trailers(handle, pairs).map_err(|e| napi::Error::new(Status::GenericFailure, e))
+}
+
+#[napi]
 pub fn js_alloc_body_writer() -> u32 {
     let (handle, reader) = alloc_body_writer();
     store_pending_reader(handle, reader);
@@ -142,6 +166,7 @@ pub struct JsFfiResponse {
     pub headers: Vec<Vec<String>>,
     pub body_handle: u32,
     pub url: String,
+    pub trailers_handle: u32,
 }
 
 #[napi]
@@ -183,6 +208,7 @@ pub async fn raw_fetch(
         headers: resp_headers,
         body_handle: res.body_handle,
         url: res.url,
+        trailers_handle: res.trailers_handle,
     })
 }
 
@@ -211,6 +237,9 @@ pub fn raw_serve(
             obj.set("reqHandle", env.create_uint32(p.req_handle)?)?;
             obj.set("reqBodyHandle", env.create_uint32(p.req_body_handle)?)?;
             obj.set("resBodyHandle", env.create_uint32(p.res_body_handle)?)?;
+            obj.set("reqTrailersHandle", env.create_uint32(p.req_trailers_handle)?)?;
+            obj.set("resTrailersHandle", env.create_uint32(p.res_trailers_handle)?)?;
+            obj.set("isBidi", env.get_boolean(p.is_bidi)?)?;
             obj.set("method", env.create_string(&p.method)?)?;
             obj.set("url", env.create_string(&p.url)?)?;
             obj.set("remoteNodeId", env.create_string(&p.remote_node_id)?)?;
@@ -264,4 +293,40 @@ pub fn raw_serve(
     );
 
     Ok(())
+}
+
+// ── rawConnect ────────────────────────────────────────────────────────────────
+
+#[napi(object)]
+pub struct JsFfiDuplexStream {
+    pub read_handle: u32,
+    pub write_handle: u32,
+}
+
+/// Open a full-duplex connection to a remote node.
+///
+/// Returns handles for reading (from server) and writing (to server).
+/// Use `jsNextChunk(readHandle)` and `jsSendChunk(writeHandle, chunk)`.
+#[napi]
+pub async fn raw_connect(
+    endpoint_handle: u32,
+    node_id: String,
+    path: String,
+    headers: Vec<Vec<String>>,
+) -> napi::Result<JsFfiDuplexStream> {
+    let ep = get_endpoint(endpoint_handle)?;
+
+    let pairs: Vec<(String, String)> = headers
+        .into_iter()
+        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+        .collect();
+
+    let duplex = iroh_http_core::raw_connect(&ep, &node_id, &path, &pairs)
+        .await
+        .map_err(|e| napi::Error::new(Status::GenericFailure, e))?;
+
+    Ok(JsFfiDuplexStream {
+        read_handle: duplex.read_handle,
+        write_handle: duplex.write_handle,
+    })
 }

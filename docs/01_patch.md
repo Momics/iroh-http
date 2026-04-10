@@ -1,3 +1,7 @@
+---
+status: integrated
+---
+
 # iroh-http — Protocol Extensions
 
 This document specifies four additions to the base architecture described in `brief.md`. Each is self-contained and can be implemented independently.

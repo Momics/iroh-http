@@ -6,7 +6,7 @@ use iroh::{Endpoint, RelayMode, SecretKey};
 use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
 use iroh::endpoint::{IdleTimeout, QuicTransportConfig};
 
-use crate::ALPN;
+use crate::{ALPN, ALPN_DUPLEX, ALPN_TRAILERS, ALPN_FULL};
 
 /// Configuration passed to [`IrohEndpoint::bind`].
 #[derive(Debug, Default, Clone)]
@@ -19,6 +19,10 @@ pub struct NodeOptions {
     pub relays: Vec<String>,
     /// DNS discovery server URL override.  Uses n0 DNS defaults when `None`.
     pub dns_discovery: Option<String>,
+    /// Capabilities to advertise via ALPN.  When empty, all supported capabilities
+    /// are advertised in preference order: `iroh-http/1-full`, `-duplex`,
+    /// `-trailers`, `iroh-http/1`.
+    pub capabilities: Vec<String>,
 }
 
 /// A shared Iroh endpoint.
@@ -50,10 +54,31 @@ impl IrohEndpoint {
             RelayMode::custom(urls)
         };
 
+        let alpns: Vec<Vec<u8>> = if opts.capabilities.is_empty() {
+            // Advertise all capabilities in preference order.
+            vec![
+                ALPN_FULL.to_vec(),
+                ALPN_DUPLEX.to_vec(),
+                ALPN_TRAILERS.to_vec(),
+                ALPN.to_vec(),
+            ]
+        } else {
+            let mut list: Vec<Vec<u8>> = opts
+                .capabilities
+                .iter()
+                .map(|c| c.as_bytes().to_vec())
+                .collect();
+            // Always include the base protocol so the node can talk to base-only peers.
+            if !list.iter().any(|a| a == ALPN) {
+                list.push(ALPN.to_vec());
+            }
+            list
+        };
+
         let mut builder = Endpoint::empty_builder(relay_mode)
             .address_lookup(PkarrPublisher::n0_dns())
             .address_lookup(DnsAddressLookup::n0_dns())
-            .alpns(vec![ALPN.to_vec()]);
+            .alpns(alpns);
 
         if let Some(key_bytes) = opts.key {
             builder = builder.secret_key(SecretKey::from_bytes(&key_bytes));

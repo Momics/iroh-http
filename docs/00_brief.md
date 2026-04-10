@@ -1,3 +1,7 @@
+---
+status: integrated
+---
+
 # iroh-http — Architecture Overview
 
 ## What This Is
@@ -6,9 +10,11 @@ A transport layer that replaces TCP/DNS with Iroh QUIC connections. Instead of a
 
 The library exposes three things to JavaScript:
 
-- `createNode(options?)` — creates a node, returns an object with `fetch`, `serve`, `nodeId`, `keypair`, and `close`
+- `createNode(options?)` — creates a node, returns an object with `fetch`, `serve`, `createBidirectionalStream`, `closed`, `nodeId`, `keypair`, and `close`
 - `node.fetch(nodeId, url, init?)` — send an HTTP request to a remote node
 - `node.serve(options, handler)` — receive HTTP requests, Deno-style
+- `node.createBidirectionalStream(nodeId, path, init?)` — open a bidirectional streaming connection
+- `node.closed` — `Promise<void>` that resolves when the node closes (mirrors WebTransport)
 
 Both `fetch` and `serve` are fully web-standard (`Request`, `Response`, streaming bodies). The JS API is identical regardless of whether you are in Node.js or Tauri. Only the internal bridge changes.
 
@@ -64,7 +70,8 @@ iroh-http/
 │  const node = await createNode({ key: savedKey })   │
 │  node.serve({}, req => res)                         │
 │  node.fetch(peerId, '/api')                         │
-│  node.close()                                       │
+│  node.createBidirectionalStream(peerId, '/ws')      │
+│  node.close()  /  await node.closed                 │
 └─────────────────┬───────────────────────────────────┘
                   │  web-standard Request / Response
 ┌─────────────────▼───────────────────────────────────┐
@@ -80,6 +87,11 @@ iroh-http/
     │  .node addon  │   │  invoke() bridge  │
     └────────┬──────┘   └────────┬──────────┘
              │                   │
+    ┌────────▼──────┐            │
+    │  iroh-http-   │            │
+    │  deno (FFI)   │            │
+    │  .dylib/.so   │            │
+    └────────┬──────┘            │
              └─────────┬─────────┘
                        │  FFI / Tauri commands
           ┌────────────▼────────────────────────┐

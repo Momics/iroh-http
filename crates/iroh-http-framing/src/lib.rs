@@ -176,10 +176,96 @@ pub fn encode_chunk(data: &[u8]) -> Vec<u8> {
     buf
 }
 
-/// The HTTP/1.1 terminal chunk `0\r\n\r\n` that signals end of body.
+/// The HTTP/1.1 terminal chunk `0\r\n\r\n` that signals end of body (no trailers).
 pub fn terminal_chunk() -> &'static [u8] {
     b"0\r\n\r\n"
 }
+
+/// The start of the terminal chunk `0\r\n` without the empty-trailer terminator.
+///
+/// Use this when you plan to write trailers immediately after.
+/// Always follow with [`serialize_trailers`].
+pub fn terminal_chunk_start() -> &'static [u8] {
+    b"0\r\n"
+}
+
+/// Serialize a trailer header block that follows the terminal chunk.
+///
+/// Produces `Name: Value\r\n` entries terminated by an empty line `\r\n`.
+/// An empty `trailers` slice produces just `\r\n` (equivalent to no trailers).
+pub fn serialize_trailers(trailers: &[(&str, &str)]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    for (name, value) in trailers {
+        push_str(&mut buf, name);
+        push_str(&mut buf, ": ");
+        push_str(&mut buf, value);
+        push_str(&mut buf, "\r\n");
+    }
+    push_str(&mut buf, "\r\n");
+    buf
+}
+
+/// Parse a trailer header block from `bytes` (data immediately after the `0\r\n` terminal chunk).
+///
+/// A lone `\r\n` is a valid empty trailer block.
+/// Returns `(trailers, bytes_consumed)`, or `FramingError::Incomplete` when more data is needed.
+pub fn parse_trailers(
+    bytes: &[u8],
+) -> Result<(Vec<(String, String)>, usize), FramingError> {
+    // Empty block: just the trailing \r\n
+    if bytes.starts_with(b"\r\n") {
+        return Ok((Vec::new(), 2));
+    }
+    // Find the \r\n\r\n that ends the trailer section.
+    let block_end = bytes
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or(FramingError::Incomplete)?;
+    let total = block_end + 4;
+    // `block` includes each header line's trailing \r\n so we can find value boundaries.
+    let block = &bytes[..block_end + 2];
+
+    let mut trailers = Vec::new();
+    let mut pos = 0;
+
+    while pos < block.len() {
+        if block[pos..].starts_with(b"\r\n") {
+            break;
+        }
+        let colon = block[pos..]
+            .iter()
+            .position(|&b| b == b':')
+            .ok_or_else(|| FramingError::Parse("invalid trailer header".into()))?;
+        let name = core::str::from_utf8(&block[pos..pos + colon])
+            .map_err(|_| FramingError::Parse("invalid trailer name encoding".into()))?
+            .trim()
+            .to_string();
+        let value_start = pos + colon + 1;
+        let crlf = block[value_start..]
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .ok_or_else(|| FramingError::Parse("missing CRLF in trailer".into()))?;
+        let value = core::str::from_utf8(&block[value_start..value_start + crlf])
+            .map_err(|_| FramingError::Parse("invalid trailer value encoding".into()))?
+            .trim()
+            .to_string();
+        trailers.push((name, value));
+        pos = value_start + crlf + 2;
+    }
+
+    Ok((trailers, total))
+}
+
+// ── ALPN identifiers ─────────────────────────────────────────────────────────
+
+/// Base Iroh-HTTP protocol (unidirectional, no trailers).
+pub const ALPN_BASE: &[u8] = b"iroh-http/1";
+/// Base + bidirectional streaming (§2).
+pub const ALPN_DUPLEX: &[u8] = b"iroh-http/1-duplex";
+/// Base + trailer headers (§4).
+pub const ALPN_TRAILERS: &[u8] = b"iroh-http/1-trailers";
+/// Base + bidirectional + trailers + cancellation signals.
+pub const ALPN_FULL: &[u8] = b"iroh-http/1-full";
 
 /// Parse the header of one chunked segment from `data`.
 ///

@@ -2,27 +2,34 @@
  * Bridge interface — the only thing that differs between Node.js and Tauri.
  *
  * Each platform (iroh-http-node / iroh-http-tauri) implements exactly these
- * three methods.  All higher-level logic lives in iroh-http-shared and is
+ * methods.  All higher-level logic lives in iroh-http-shared and is
  * independent of the underlying transport.
  */
 export interface Bridge {
-  /**
-   * Pull the next chunk from a body reader identified by `handle`.
-   * Returns `null` when the body is fully consumed (EOF).
-   */
+  // ── Body streaming ─────────────────────────────────────────────────────────
+  /** Pull the next chunk from a body reader. Returns `null` at EOF. */
   nextChunk(handle: number): Promise<Uint8Array | null>;
-
-  /**
-   * Push `chunk` into a body writer identified by `handle`.
-   */
+  /** Push `chunk` into a body writer. */
   sendChunk(handle: number, chunk: Uint8Array): Promise<void>;
-
-  /**
-   * Signal end-of-body for the writer at `handle`.
-   * After this call the writer is invalid and the associated reader will
-   * eventually return `null` from `nextChunk`.
-   */
+  /** Signal end-of-body for the writer at `handle`. */
   finishBody(handle: number): Promise<void>;
+
+  // ── §3 AbortSignal cancellation ────────────────────────────────────────────
+  /** Drop a body reader from the Rust slab, cancelling an in-flight fetch. */
+  cancelRequest(handle: number): Promise<void>;
+
+  // ── §4 Trailer headers ──────────────────────────────────────────────────────
+  /**
+   * Await and retrieve trailers produced after the body is consumed.
+   * Returns `null` when no trailers were sent.
+   */
+  nextTrailer(handle: number): Promise<[string, string][] | null>;
+  /**
+   * Deliver response trailers from the JS handler to the Rust server task.
+   * Call after `finishBody`. This must be called exactly once per
+   * `resTrailersHandle`; calling it resolves the waiting pump task.
+   */
+  sendTrailers(handle: number, trailers: [string, string][]): Promise<void>;
 }
 
 // ── FFI data types ────────────────────────────────────────────────────────────
@@ -57,6 +64,8 @@ export interface FfiResponse extends FfiResponseHead {
   bodyHandle: number;
   /** Full `http+iroh://` URL of the responding peer. */
   url: string;
+  /** Handle to the response trailer receiver (pass to `bridge.nextTrailer`). */
+  trailersHandle: number;
 }
 
 /**
@@ -72,6 +81,12 @@ export interface RequestPayload extends FfiRequest {
   reqBodyHandle: number;
   /** Body writer handle for the response body. */
   resBodyHandle: number;
+  /** Trailer receiver handle — JS calls `bridge.nextTrailer(reqTrailersHandle)` to read request trailers. `0` in duplex mode. */
+  reqTrailersHandle: number;
+  /** Trailer sender handle — JS calls `bridge.sendTrailers(resTrailersHandle, pairs)` to send response trailers. `0` in duplex mode. */
+  resTrailersHandle: number;
+  /** True when the client sent `Upgrade: iroh-duplex`. */
+  isBidi: boolean;
 }
 
 // ── Platform function types ───────────────────────────────────────────────────
@@ -111,6 +126,19 @@ export interface IrohNode {
     options: Record<string, unknown>,
     handler: (req: Request) => Response | Promise<Response>
   ): void;
+  /**
+   * Open a bidirectional streaming connection to a remote node (§2).
+   *
+   * The peer must advertise `iroh-http/1-duplex` capability.  After the
+   * handshake both sides can read and write concurrently without waiting for
+   * the other to finish.  Mirrors `WebTransportSession.createBidirectionalStream()`.
+   */
+  createBidirectionalStream(nodeId: string, path: string, init?: RequestInit): Promise<BidirectionalStream>;
+  /**
+   * Resolves when the node has been closed (either via `close()` or due to
+   * a fatal error).  Mirrors `WebTransportSession.closed`.
+   */
+  readonly closed: Promise<void>;
   /** Close the endpoint and release resources. */
   close(): Promise<void>;
 }
@@ -141,3 +169,32 @@ export type RawFetchFn = (
 
 /** Allocate a body writer handle (may be sync or async). */
 export type AllocBodyWriterFn = () => number | Promise<number>;
+
+// ── §2 Bidirectional streaming types ─────────────────────────────────────────
+
+/** Raw duplex stream handles returned by `rawConnect`. */
+export interface FfiDuplexStream {
+  /** Handle for reading data sent by the server. */
+  readHandle: number;
+  /** Handle for writing data to the server. */
+  writeHandle: number;
+}
+
+/** Full-duplex stream returned by `node.createBidirectionalStream()`. Mirrors `WebTransportBidirectionalStream`. */
+export interface BidirectionalStream {
+  /** Receive data from the server. */
+  readable: ReadableStream<Uint8Array>;
+  /** Send data to the server. */
+  writable: WritableStream<Uint8Array>;
+}
+
+/** @deprecated Use {@link BidirectionalStream} instead. */
+export type DuplexStream = BidirectionalStream;
+
+/** Raw connect function provided by each platform bridge. */
+export type RawConnectFn = (
+  endpointHandle: number,
+  nodeId: string,
+  path: string,
+  headers: [string, string][],
+) => Promise<FfiDuplexStream>;

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-alloc-body-writer"
+description = "Enables the alloc_body_writer command without any pre-configured scope."
+commands.allow = ["alloc_body_writer"]
+
+[[permission]]
+identifier = "deny-alloc-body-writer"
+description = "Denies the alloc_body_writer command without any pre-configured scope."
+commands.deny = ["alloc_body_writer"]
