@@ -416,6 +416,18 @@ export interface IrohNode {
    */
   addr(): Promise<NodeAddrInfo>;
   /**
+   * Generate a ticket string encoding this node's current address.
+   *
+   * The ticket contains the node ID and all known addresses (relay URLs +
+   * direct IPs). Share it with peers — they can pass it to `fetch()` or
+   * `connect()` in place of a bare node ID.
+   *
+   * Tickets become stale when addresses change (e.g. after a network
+   * change). They always remain usable via the embedded public key + DNS
+   * fallback, but the direct path hint may be out of date.
+   */
+  ticket(): Promise<string>;
+  /**
    * Home relay URL, or `null` if not connected to a relay.
    */
   homeRelay(): Promise<string | null>;

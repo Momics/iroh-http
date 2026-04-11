@@ -9,7 +9,7 @@ use iroh::endpoint::Connection;
 
 
 use crate::{
-    base32_encode, parse_node_id,
+    base32_encode, parse_node_addr,
     stream::{BodyReader, BodyWriter, make_body_channel, insert_reader, insert_writer},
     FfiResponse, FfiDuplexStream, IrohEndpoint, ALPN, ALPN_DUPLEX,
 };
@@ -73,8 +73,13 @@ pub async fn fetch(
         in_flight_map().lock().unwrap().get(&id).cloned()
     });
 
-    let node_id = parse_node_id(remote_node_id)?;
+    let parsed = parse_node_addr(remote_node_id)?;
+    let node_id = parsed.node_id;
     let mut addr = iroh::EndpointAddr::new(node_id);
+    // Merge direct addresses from the ticket (if any) and from explicit args.
+    for a in &parsed.direct_addrs {
+        addr = addr.with_ip_addr(*a);
+    }
     if let Some(addrs) = direct_addrs {
         for a in addrs {
             addr = addr.with_ip_addr(*a);
@@ -472,8 +477,12 @@ pub async fn raw_connect(
     path: &str,
     headers: &[(String, String)],
 ) -> Result<FfiDuplexStream, String> {
-    let node_id = parse_node_id(remote_node_id)?;
-    let addr = iroh::EndpointAddr::new(node_id);
+    let parsed = parse_node_addr(remote_node_id)?;
+    let node_id = parsed.node_id;
+    let mut addr = iroh::EndpointAddr::new(node_id);
+    for a in &parsed.direct_addrs {
+        addr = addr.with_ip_addr(*a);
+    }
 
     // Connect using the duplex ALPN — the peer must advertise it.
     let ep_raw = endpoint.raw().clone();

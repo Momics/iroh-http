@@ -13,6 +13,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::close_endpoint,
             commands::ping,
             commands::node_addr,
+            commands::node_ticket,
             commands::home_relay,
             commands::peer_info,
             commands::next_chunk,

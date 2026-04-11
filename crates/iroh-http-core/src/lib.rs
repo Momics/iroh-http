@@ -23,6 +23,12 @@ pub use client::{fetch, raw_connect, alloc_fetch_token, cancel_in_flight};
 pub use server::serve;
 pub use server::ServeHandle;
 
+// ── Node tickets ─────────────────────────────────────────────────────────────
+// (defined below, re-exported here at the top for easy discovery)
+// pub fn node_ticket(ep: &IrohEndpoint) -> String
+// pub fn parse_node_addr(s: &str) -> Result<ParsedNodeAddr, String>
+// pub struct ParsedNodeAddr { pub node_id, pub direct_addrs }
+
 // ── Key operations ───────────────────────────────────────────────────────────
 
 /// Sign arbitrary bytes with a 32-byte Ed25519 secret key.
@@ -176,7 +182,7 @@ pub const ALPN_TRAILERS: &[u8] = b"iroh-http/1-trailers";
 pub const ALPN_FULL: &[u8] = b"iroh-http/1-full";
 
 /// Encode 32 raw bytes as lowercase base32 (no padding).
-pub(crate) fn base32_encode(bytes: &[u8]) -> String {
+pub fn base32_encode(bytes: &[u8]) -> String {
     const BASE32: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
     let mut result = String::new();
     let mut bits: u32 = 0;
@@ -223,6 +229,52 @@ pub(crate) fn parse_node_id(s: &str) -> Result<iroh::PublicKey, String> {
         .try_into()
         .map_err(|_| "node-id must be 32 bytes".to_string())?;
     iroh::PublicKey::from_bytes(&arr).map_err(|e| e.to_string())
+}
+
+// ── Node tickets ──────────────────────────────────────────────────────────────
+
+/// Generate a ticket string for the given endpoint.
+///
+/// A ticket is a JSON-encoded `NodeAddrInfo` containing the node ID and all
+/// known addresses (relay URLs + direct IPs). Share it with peers so they can
+/// connect directly without DNS discovery.
+pub fn node_ticket(ep: &IrohEndpoint) -> String {
+    let info = ep.node_addr();
+    serde_json::to_string(&info).unwrap_or_default()
+}
+
+/// Parsed node address from a ticket string, bare node ID, or JSON address info.
+pub struct ParsedNodeAddr {
+    /// The node's public key.
+    pub node_id: iroh::PublicKey,
+    /// Direct IP addresses extracted from the ticket (may be empty).
+    pub direct_addrs: Vec<std::net::SocketAddr>,
+}
+
+/// Parse a string that may be a bare node ID, a ticket string (JSON-encoded
+/// `NodeAddrInfo`), or a JSON object with `id` and `addrs` fields.
+///
+/// Returns the parsed public key and any direct socket addresses.
+pub fn parse_node_addr(s: &str) -> Result<ParsedNodeAddr, String> {
+    // 1. Try parsing as JSON (ticket string or NodeAddrInfo object)
+    if let Ok(info) = serde_json::from_str::<NodeAddrInfo>(s) {
+        let node_id = parse_node_id(&info.id)?;
+        let direct_addrs = info
+            .addrs
+            .iter()
+            .filter_map(|a| a.parse::<std::net::SocketAddr>().ok())
+            .collect();
+        return Ok(ParsedNodeAddr {
+            node_id,
+            direct_addrs,
+        });
+    }
+    // 2. Fall back to bare base32 node ID
+    let node_id = parse_node_id(s)?;
+    Ok(ParsedNodeAddr {
+        node_id,
+        direct_addrs: Vec::new(),
+    })
 }
 
 #[cfg(test)]

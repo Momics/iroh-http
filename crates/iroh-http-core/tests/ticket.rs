@@ -1,0 +1,35 @@
+//! Node ticket integration tests.
+
+use iroh_http_core::{NodeAddrInfo, parse_node_addr};
+
+#[test]
+fn parse_node_addr_accepts_bare_node_id() {
+    let key = iroh::SecretKey::generate(&mut rand::rng());
+    let b32 = iroh_http_core::base32_encode(key.public().as_bytes());
+    let parsed = parse_node_addr(&b32).unwrap();
+    assert_eq!(parsed.node_id, key.public());
+    assert!(parsed.direct_addrs.is_empty());
+}
+
+#[test]
+fn parse_node_addr_accepts_ticket_json() {
+    let key = iroh::SecretKey::generate(&mut rand::rng());
+    let b32 = iroh_http_core::base32_encode(key.public().as_bytes());
+    let info = NodeAddrInfo {
+        id: b32.clone(),
+        addrs: vec![
+            "https://relay.example.com".to_string(),
+            "127.0.0.1:12345".to_string(),
+        ],
+    };
+    let ticket = serde_json::to_string(&info).unwrap();
+    let parsed = parse_node_addr(&ticket).unwrap();
+    assert_eq!(parsed.node_id, key.public());
+    assert_eq!(parsed.direct_addrs.len(), 1);
+    assert_eq!(parsed.direct_addrs[0].to_string(), "127.0.0.1:12345");
+}
+
+#[test]
+fn parse_node_addr_rejects_garbage() {
+    assert!(parse_node_addr("not-a-valid-thing!!!").is_err());
+}

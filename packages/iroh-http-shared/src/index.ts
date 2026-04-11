@@ -21,6 +21,22 @@ export {
   classifyError, classifyBindError,
 } from "./errors.js";
 
+/**
+ * Extract the node ID from a ticket string without network I/O.
+ *
+ * Accepts a ticket string (JSON-encoded address info) or a bare node ID
+ * string (returned unchanged).
+ */
+export function ticketNodeId(ticket: string): string {
+  try {
+    const info = JSON.parse(ticket) as { id?: string };
+    if (info && typeof info.id === "string") return info.id;
+  } catch {
+    // Not JSON — treat as bare node ID
+  }
+  return ticket;
+}
+
 import type { Bridge, EndpointInfo, NodeOptions, IrohNode, NodeAddrInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
 import { makeFetch, makeConnect } from "./fetch.js";
 import { makeServe } from "./serve.js";
@@ -30,6 +46,8 @@ import { PublicKey, SecretKey, resolveNodeId } from "./keys.js";
 export interface AddrFunctions {
   /** Full node address: node ID + relay URL(s) + direct socket addresses. */
   nodeAddr(endpointHandle: number): Promise<NodeAddrInfo>;
+  /** Generate a ticket string. */
+  nodeTicket(endpointHandle: number): Promise<string>;
   /** Home relay URL, or null if not connected to a relay. */
   homeRelay(endpointHandle: number): Promise<string | null>;
   /** Known addresses for a remote peer, or null if unknown. */
@@ -89,6 +107,10 @@ export function buildNode(
     addr: async () => {
       if (!addrFns) throw new Error("addr() not supported by this platform adapter");
       return addrFns.nodeAddr(info.endpointHandle);
+    },
+    ticket: async () => {
+      if (!addrFns) throw new Error("ticket() not supported by this platform adapter");
+      return addrFns.nodeTicket(info.endpointHandle);
     },
     homeRelay: async () => {
       if (!addrFns) return null;

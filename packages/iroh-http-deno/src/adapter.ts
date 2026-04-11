@@ -370,6 +370,9 @@ export const denoAddrFns: AddrFunctions = {
     const res = await call<NodeAddrInfo>("nodeAddr", { endpointHandle: handle });
     return res;
   },
+  nodeTicket: async (handle) => {
+    return call<string>("nodeTicket", { endpointHandle: handle });
+  },
   homeRelay: async (handle) => {
     const res = await call<string | null>("homeRelay", { endpointHandle: handle });
     return res;

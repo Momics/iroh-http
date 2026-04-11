@@ -1,5 +1,5 @@
 ---
-status: pending
+status: done
 ---
 
 # iroh-http — Patch 20: `serve` API Ergonomics

@@ -277,6 +277,11 @@ impl IrohNode {
         (info.id, info.addrs)
     }
 
+    /// Generate a shareable ticket string encoding this node's current address.
+    fn ticket(&self) -> String {
+        iroh_http_core::node_ticket(&self.ep)
+    }
+
     /// Home relay URL, or None if not connected to a relay.
     fn home_relay(&self) -> Option<String> {
         self.ep.home_relay()

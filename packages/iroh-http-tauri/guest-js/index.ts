@@ -292,6 +292,9 @@ const tauriAddrFns: AddrFunctions = {
   nodeAddr: async (handle) => {
     return invoke<NodeAddrInfo>(`${PLUGIN}|node_addr`, { endpointHandle: handle });
   },
+  nodeTicket: async (handle) => {
+    return invoke<string>(`${PLUGIN}|node_ticket`, { endpointHandle: handle });
+  },
   homeRelay: async (handle) => {
     return invoke<string | null>(`${PLUGIN}|home_relay`, { endpointHandle: handle });
   },
