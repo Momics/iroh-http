@@ -9,8 +9,12 @@ pub(crate) mod pool;
 pub(crate) mod qpack_bridge;
 pub mod server;
 pub mod stream;
+#[cfg(feature = "compression")]
+pub mod compress;
 
 pub use endpoint::{IrohEndpoint, NodeOptions, NodeAddrInfo, DiscoveryConfig};
+#[cfg(feature = "compression")]
+pub use compress::CompressionOptions;
 pub use stream::{
     alloc_body_writer, next_chunk, send_chunk, finish_body, cancel_reader,
     next_trailer, send_trailers, BodyReader,

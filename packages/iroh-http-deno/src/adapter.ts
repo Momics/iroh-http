@@ -338,6 +338,10 @@ export async function createEndpointInfo(options?: NodeOptions): Promise<Endpoin
       proxyUrl:             options?.proxyUrl ?? null,
       proxyFromEnv:         options?.proxyFromEnv ?? null,
       keylog:               options?.keylog ?? null,
+      compressionLevel:     typeof options?.compression === "object"
+        ? options.compression.level ?? null : options?.compression ? 3 : null,
+      compressionMinBodyBytes: typeof options?.compression === "object"
+        ? options.compression.minBodyBytes ?? null : null,
     },
   ).catch((e: unknown) => { throw classifyBindError(e); });
   return {

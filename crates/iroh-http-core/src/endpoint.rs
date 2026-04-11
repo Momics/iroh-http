@@ -82,6 +82,12 @@ pub struct NodeOptions {
     /// Maximum byte size of a QPACK-encoded request or response head.
     /// Default: 65536 (64 KB).
     pub max_header_size: Option<usize>,
+
+    // ── Compression ─────────────────────────────────────────────────────────
+    /// Body compression options.  `None` disables compression (default).
+    /// Only effective when the `compression` feature is enabled.
+    #[cfg(feature = "compression")]
+    pub compression: Option<crate::compress::CompressionOptions>,
 }
 
 /// A shared Iroh endpoint.
@@ -105,6 +111,9 @@ pub(crate) struct EndpointInner {
     pub max_header_size: usize,
     /// Active serve handle, if `serve()` has been called.
     pub serve_handle: std::sync::Mutex<Option<ServeHandle>>,
+    /// Body compression options, if the feature is enabled.
+    #[cfg(feature = "compression")]
+    pub compression: Option<crate::compress::CompressionOptions>,
 }
 
 impl IrohEndpoint {
@@ -220,6 +229,8 @@ impl IrohEndpoint {
                 pool: ConnectionPool::new(opts.max_pooled_connections),
                 max_header_size: opts.max_header_size.unwrap_or(64 * 1024),
                 serve_handle: std::sync::Mutex::new(None),
+                #[cfg(feature = "compression")]
+                compression: opts.compression,
             }),
         })
     }
@@ -279,6 +290,12 @@ impl IrohEndpoint {
     /// Access the connection pool.
     pub(crate) fn pool(&self) -> &ConnectionPool {
         &self.inner.pool
+    }
+
+    /// Compression options, if the `compression` feature is enabled.
+    #[cfg(feature = "compression")]
+    pub fn compression(&self) -> Option<&crate::compress::CompressionOptions> {
+        self.inner.compression.as_ref()
     }
 
     /// Returns the local socket addresses this endpoint is bound to.

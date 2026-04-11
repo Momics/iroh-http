@@ -376,7 +376,7 @@ fn send_500(req_handle: u32, res_body_handle: u32) {
 ///   relays       — list of custom relay server URL strings.
 ///   dns_discovery — custom DNS discovery server URL.
 #[pyfunction]
-#[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false, relay_mode=None, bind_addrs=None, proxy_url=None, proxy_from_env=false, keylog=false))]
+#[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false, relay_mode=None, bind_addrs=None, proxy_url=None, proxy_from_env=false, keylog=false, compression_level=None, compression_min_body_bytes=None))]
 fn create_node<'py>(
     py: Python<'py>,
     key: Option<Vec<u8>>,
@@ -389,6 +389,10 @@ fn create_node<'py>(
     proxy_url: Option<String>,
     proxy_from_env: bool,
     keylog: bool,
+    #[allow(unused_variables)]
+    compression_level: Option<i32>,
+    #[allow(unused_variables)]
+    compression_min_body_bytes: Option<usize>,
 ) -> PyResult<Bound<'py, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let opts = NodeOptions {
@@ -412,6 +416,15 @@ fn create_node<'py>(
             proxy_url,
             proxy_from_env,
             keylog,
+            #[cfg(feature = "compression")]
+            compression: if compression_level.is_some() || compression_min_body_bytes.is_some() {
+                Some(iroh_http_core::CompressionOptions {
+                    level: compression_level.unwrap_or(3),
+                    min_body_bytes: compression_min_body_bytes.unwrap_or(512),
+                })
+            } else {
+                None
+            },
         };
         let ep = IrohEndpoint::bind(opts).await.map_err(py_err)?;
         Ok(IrohNode { ep })
