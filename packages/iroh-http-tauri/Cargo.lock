@@ -2374,6 +2374,7 @@ dependencies = [
  "bytes",
  "iroh",
  "iroh-http-framing",
+ "qpack",
  "slab",
  "tokio",
  "tracing",
@@ -3939,6 +3940,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "qpack"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a4d4d85f50f59c6b93b23b1b359d30ae7029d4d22147431568effc8522b3f3e"
+dependencies = [
+ "bytes",
+ "http",
 ]
 
 [[package]]
