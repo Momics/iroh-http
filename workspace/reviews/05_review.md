@@ -89,7 +89,7 @@ No issues found. All limits working at Rust level.
 - [x] Framing inline tests — ~22 tests
 - [x] QPACK inline tests — 7 tests
 - [x] Stream/pool/compress inline tests — ~24 tests
-- [ ] **P0 — CI does not run `cargo test`**
+- [x] **P0 — CI does not run `cargo test`** ✅ FIXED — added `cargo test --workspace` to ci.yml
   - `.github/workflows/ci.yml` runs `cargo check`, `clippy`, `fmt` only
   - 85+ tests exist but never execute in CI
   - A regression can ship completely unnoticed
@@ -163,7 +163,7 @@ No issues found. All limits working at Rust level.
 - [x] JS never sees compressed bytes
 - [x] Configuration exposed in JS: `createNode({ compression: true | { level, minBodyBytes } })`
 - [x] Configuration exposed in Python: `create_node(compression_level=3, compression_min_body_bytes=1024)`
-- [ ] **P0 — Compression is BULK, not streaming**
+- [x] **P0 — Compression is BULK, not streaming** ✅ FIXED — rewritten with `async-compression` ZstdEncoder/ZstdDecoder, both sides fully streaming
   - `compress_body()` and `decompress_body()` accumulate the entire body into
     memory, then compress/decompress in one shot
   - This completely defeats the streaming architecture
@@ -447,11 +447,8 @@ No issues found.
 
 ### P0 — Fix immediately
 
-- [ ] **Add `cargo test --workspace` to CI** (`ci.yml` `rust-check` job)
-- [ ] **Streaming zstd** — replace bulk `compress_body()` / `decompress_body()` with
-  streaming `AsyncRead`-based wrappers (e.g. `async-compression` crate). This is
-  the single most critical implementation defect — it turns a streaming
-  transport into a buffering one
+- [x] **Add `cargo test --workspace` to CI** (`ci.yml` `rust-check` job) ✅ DONE
+- [x] **Streaming zstd** — replaced with `async-compression` `ZstdEncoder`/`ZstdDecoder` ✅ DONE
 - [ ] **Regenerate `index.d.ts`** for `iroh-http-node` via `napi build --platform`.
   Current file is dangerously out of sync with actual napi exports
 

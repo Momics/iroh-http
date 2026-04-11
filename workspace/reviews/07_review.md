@@ -137,14 +137,7 @@ what to borrow from standards and what to build itself.
 
 ### P0 — Fix immediately
 
-- [ ] **Bulk compression must become streaming**
-  - `compress.rs` accumulates entire body in `Vec<u8>` before compressing
-  - Use `async-compression` crate: `ZstdEncoder::new(reader)` wraps an
-    `AsyncRead` and compresses frame-by-frame as data flows
-  - This is not a design question — the current code violates the spec, the
-    docs, and defeats streaming
-  - **Decompression bomb risk**: `decompress_loop` doubles buffer up to 256 MB
-    with no cap relative to `max_request_body_bytes`
+- [x] **Bulk compression must become streaming** ✅ FIXED — rewritten with `async-compression` `ZstdEncoder`/`ZstdDecoder` wrapping a custom `BodyAsyncRead` adapter. Both compress and decompress are now truly streaming with 64KB output buffers. No full-body accumulation. Removed direct `zstd` and `tokio-util` deps.
 
 ### P1 — Significant quality issues
 
