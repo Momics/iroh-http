@@ -542,6 +542,18 @@ pub fn raw_serve(
     Ok(())
 }
 
+/// Stop the serve loop for the given endpoint (graceful shutdown).
+///
+/// This signals the accept loop to stop but does NOT close the endpoint or
+/// drain in-flight requests.  Call `closeEndpoint` afterwards if you want
+/// a full teardown.
+#[napi]
+pub fn stop_serve(endpoint_handle: u32) -> napi::Result<()> {
+    let ep = get_endpoint(endpoint_handle)?;
+    ep.stop_serve();
+    Ok(())
+}
+
 
 // ── rawConnect ────────────────────────────────────────────────────────────────
 

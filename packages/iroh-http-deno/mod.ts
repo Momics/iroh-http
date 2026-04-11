@@ -5,7 +5,8 @@
  * import { createNode } from "@momics/iroh-http-deno";
  *
  * const node = await createNode({ key: savedKey });
- * node.serve({}, req => new Response("hello"));
+ * const server = node.serve(req => new Response("hello"));
+ * await server.finished;
  * const res = await node.fetch(peerId, "/api");
  * ```
  */
@@ -19,6 +20,7 @@ import {
   allocBodyWriter,
   createEndpointInfo,
   closeEndpoint,
+  stopServe,
   denoAddrFns,
 } from "./src/adapter.ts";
 
@@ -37,6 +39,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawConnect,
     allocBodyWriter,
     closeEndpoint,
+    stopServe,
     denoAddrFns,
   );
 }

@@ -7,6 +7,7 @@
  */
 
 import type { PublicKey, SecretKey } from "./keys.js";
+import type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
 
 export interface Bridge {
   // ── Body streaming ─────────────────────────────────────────────────────────
@@ -321,10 +322,11 @@ export interface IrohFetchInit extends RequestInit {
  *
  * @example Serve requests:
  * ```ts
- * node.serve({}, (req) => {
+ * const server = node.serve((req) => {
  *   const peer = req.headers.get('iroh-node-id');
  *   return Response.json({ hello: peer });
  * });
+ * await server.finished;
  * ```
  *
  * @example Automatic cleanup with `await using` (TC39):
@@ -368,12 +370,20 @@ export interface IrohNode {
   ): Promise<Response>;
   /**
    * Start listening for incoming HTTP requests.
-   * Deno-compatible `serve` signature.
+   *
+   * Supports three call signatures:
+   * - `serve(handler)` — handler only (most common)
+   * - `serve(options, handler)` — options + handler
+   * - `serve({ handler, ...options })` — handler inside options object
+   *
+   * Returns a `ServeHandle` whose `finished` promise resolves when the
+   * serve loop terminates.
    */
-  serve(
-    options: Record<string, unknown>,
-    handler: (req: Request) => Response | Promise<Response>
-  ): void;
+  serve: {
+    (handler: ServeHandler): ServeHandle;
+    (options: ServeOptions, handler: ServeHandler): ServeHandle;
+    (options: ServeOptions & { handler: ServeHandler }): ServeHandle;
+  };
   /**
    * Open a bidirectional streaming connection to a remote node (§2).
    *

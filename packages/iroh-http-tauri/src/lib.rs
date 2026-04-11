@@ -26,6 +26,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::cancel_in_flight,
             commands::raw_fetch,
             commands::serve,
+            commands::stop_serve,
             commands::respond_to_request,
             commands::raw_connect,
             commands::secret_key_sign,

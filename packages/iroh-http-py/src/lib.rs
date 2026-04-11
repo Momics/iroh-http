@@ -256,6 +256,11 @@ impl IrohNode {
         Ok(())
     }
 
+    /// Stop the serve loop (graceful shutdown), without closing the endpoint.
+    fn stop_serve(&self) {
+        self.ep.stop_serve();
+    }
+
     /// Close the endpoint and release all resources.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let ep = self.ep.clone();

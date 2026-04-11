@@ -10,6 +10,7 @@ export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
               FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn,
               RelayMode, IrohFetchInit, DiscoveryOptions, LifecycleOptions,
               NodeAddrInfo, PeerDiscoveryEvent } from "./bridge.js";
+export type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
 export { makeFetch, makeConnect } from "./fetch.js";
 export { makeServe } from "./serve.js";
@@ -47,6 +48,7 @@ export interface AddrFunctions {
  * @param rawConnect      Low-level duplex connect function (platform-specific).
  * @param allocBodyWriter Synchronously allocates a body writer handle.
  * @param closeEndpoint   Closes the bound endpoint.
+ * @param stopServe       Stops the serve loop for graceful shutdown.
  * @param addrFns         Platform-specific address introspection functions.
  * @returns A fully wired `IrohNode` ready for `fetch`, `serve`, and `close`.
  *
@@ -65,6 +67,7 @@ export function buildNode(
   rawConnect: RawConnectFn,
   allocBodyWriter: AllocBodyWriterFn,
   closeEndpoint: (handle: number) => Promise<void>,
+  stopServe: (handle: number) => void,
   addrFns?: AddrFunctions,
 ): IrohNode {
   let resolveClosed!: () => void;
@@ -81,7 +84,7 @@ export function buildNode(
     nodeId: info.nodeId,
     keypair: info.keypair,
     fetch: makeFetch(bridge, info.endpointHandle, rawFetch, allocBodyWriter),
-    serve: makeServe(bridge, info.endpointHandle, rawServe),
+    serve: makeServe(bridge, info.endpointHandle, rawServe, info.nodeId, closedPromise, () => stopServe(info.endpointHandle)),
     createBidirectionalStream: makeConnect(bridge, info.endpointHandle, rawConnect),
     addr: async () => {
       if (!addrFns) throw new Error("addr() not supported by this platform adapter");

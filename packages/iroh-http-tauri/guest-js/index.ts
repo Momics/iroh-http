@@ -364,6 +364,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawConnect,
     allocBodyWriter,
     (handle) => invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: handle }),
+    (handle) => { invoke(`${PLUGIN}|stop_serve`, { endpointHandle: handle }).catch(() => {}); },
     tauriAddrFns,
   );
 

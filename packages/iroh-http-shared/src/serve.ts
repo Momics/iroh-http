@@ -2,11 +2,9 @@
  * `makeServe` — wraps the raw platform serve in a Deno-compatible signature.
  *
  * ```ts
- * const serve = makeServe(bridge, endpointHandle, rawServe);
- * serve({}, async (req) => {
- *   const peerId = req.headers.get('iroh-node-id');
- *   return Response.json({ peer: peerId });
- * });
+ * const serve = makeServe(bridge, handle, rawServe, nodeId, finished, stopServe);
+ * const server = serve(async (req) => Response.json({ ok: true }));
+ * await server.finished;
  * ```
  */
 
@@ -33,10 +31,69 @@ import { classifyError } from "./errors.js";
  */
 export type ServeHandler = (req: Request) => Response | Promise<Response>;
 
-export type ServeFn = (
-  options: Record<string, unknown>,
-  handler: ServeHandler
-) => void;
+/**
+ * Options for the `serve()` call.
+ *
+ * All fields are optional.  The handler can be passed here (single-argument
+ * form) or as a separate second argument.
+ */
+export interface ServeOptions {
+  /**
+   * Called once when the serve loop is ready to accept connections.
+   *
+   * Iroh binds during `createNode`, not during `serve`, so the loop is
+   * immediately live after `serve()` returns.
+   */
+  onListen?: (info: { nodeId: string }) => void;
+
+  /**
+   * Called when a request handler throws or rejects.
+   *
+   * The returned `Response` is sent to the client.  If this callback also
+   * throws, the request receives a bare `500 Internal Server Error`.
+   *
+   * @default Returns `500 Internal Server Error` with no body.
+   */
+  onError?: (error: unknown) => Response | Promise<Response>;
+
+  /**
+   * When the signal is aborted, the serve loop stops accepting new
+   * connections and drains in-flight requests (graceful shutdown).
+   *
+   * This only stops the serve loop — the node itself stays alive.
+   */
+  signal?: AbortSignal;
+
+  /**
+   * Inline handler — allows the single-argument `serve({ handler })` form.
+   * Mutually exclusive with passing `handler` as the second argument.
+   */
+  handler?: ServeHandler;
+}
+
+/**
+ * Handle returned by `serve()`.
+ */
+export interface ServeHandle {
+  /**
+   * Resolves when the serve loop terminates — either because `node.close()`
+   * was called, `signal` was aborted, or a fatal error occurred.
+   */
+  readonly finished: Promise<void>;
+}
+
+/**
+ * Three overloaded call signatures for `serve()`:
+ *
+ * 1. `serve(handler)` — handler only (most common).
+ * 2. `serve(options, handler)` — options + handler.
+ * 3. `serve(optionsWithHandler)` — handler inside options object.
+ */
+export type ServeFn = {
+  (handler: ServeHandler): ServeHandle;
+  (options: ServeOptions, handler: ServeHandler): ServeHandle;
+  (options: ServeOptions & { handler: ServeHandler }): ServeHandle;
+};
 
 /**
  * HTTP methods that carry a request body.
@@ -49,33 +106,61 @@ const METHODS_WITH_BODY = new Set(["POST", "PUT", "PATCH", "DELETE"]);
  * @param bridge          Platform bridge implementation (sendChunk, finishBody, etc.).
  * @param endpointHandle  Slab handle returned by the low-level bind.
  * @param rawServe        Platform-specific raw serve function.
- * @returns A `serve` function: `(options, handler) => void`.
+ * @param nodeId          The node's base32 public key string.
+ * @param finished        Promise that resolves when the serve loop terminates.
+ * @param stopServe       Calls the platform's stopServe FFI to gracefully shut down.
+ * @returns A `serve` function with three overloaded call signatures.
  *
  * @example
  * ```ts
- * const serve = makeServe(bridge, handle, rawServe);
- * serve({}, async (req) => {
+ * const server = serve(async (req) => {
  *   const peer = req.headers.get('iroh-node-id');
  *   return Response.json({ echo: await req.text(), peer });
  * });
+ * await server.finished;
  * ```
  */
 export function makeServe(
   bridge: Bridge,
   endpointHandle: number,
-  rawServe: RawServeFn
+  rawServe: RawServeFn,
+  nodeId: string,
+  finished: Promise<void>,
+  stopServe: () => void,
 ): ServeFn {
-  return (options, handler) => {
-    rawServe(endpointHandle, options, async (payload: RequestPayload): Promise<FfiResponseHead> => {
+  return ((...args: unknown[]): ServeHandle => {
+    // Parse overloaded arguments.
+    let handler: ServeHandler;
+    let options: ServeOptions = {};
+
+    if (typeof args[0] === "function") {
+      // serve(handler)
+      handler = args[0] as ServeHandler;
+    } else if (args.length >= 2 && typeof args[1] === "function") {
+      // serve(options, handler)
+      options = (args[0] as ServeOptions) ?? {};
+      handler = args[1] as ServeHandler;
+    } else if (args.length === 1 && typeof args[0] === "object" && args[0] !== null) {
+      // serve({ handler, ...options })
+      const opts = args[0] as ServeOptions & { handler: ServeHandler };
+      if (typeof opts.handler !== "function") {
+        throw new TypeError("serve() requires a handler function");
+      }
+      handler = opts.handler;
+      options = opts;
+    } else {
+      throw new TypeError("serve() requires a handler function");
+    }
+
+    const onError = options.onError ?? defaultOnError;
+
+    rawServe(endpointHandle, {}, async (payload: RequestPayload): Promise<FfiResponseHead> => {
       // Build a web-standard Request.
       const hasBody = METHODS_WITH_BODY.has(payload.method.toUpperCase());
-      // §1.7: In duplex mode the handler reads the body via req.acceptWebTransport().readable,
-      // so do NOT create a second ReadableStream from the same handle here.
       const reqBody = (hasBody && !payload.isBidi)
         ? makeReadable(bridge, payload.reqBodyHandle)
         : null;
 
-      // Inject the authenticated peer identity as a header.
       const headers: [string, string][] = [
         ...payload.headers,
         ["iroh-node-id", payload.remoteNodeId],
@@ -89,16 +174,10 @@ export function makeServe(
       if (reqBody) reqInit.duplex = "half";
 
       const req = new Request(
-        // Replace the custom httpi: scheme with http: so the platform's
-        // WHATWG URL parser accepts the URL.  The original URL is still
-        // accessible via payload.url if the handler needs the full form.
         payload.url.replace(/^httpi:/, "http:"),
         reqInit
       );
 
-      // §4: Expose request trailers as req.trailers (Promise<Headers>).
-      // Use !isBidi check — in duplex mode reqTrailersHandle is 0 (sentinel),
-      // and in non-duplex mode it may also be 0 (first slab slot) but is valid.
       if (!payload.isBidi) {
         Object.defineProperty(req, "trailers", {
           value: bridge
@@ -108,7 +187,6 @@ export function makeServe(
         });
       }
 
-      // §2: For duplex requests, attach req.acceptWebTransport() so the handler can get both streams.
       if (payload.isBidi) {
         const acceptWebTransportFn = (): BidirectionalStream => ({
           readable: makeReadable(bridge, payload.reqBodyHandle),
@@ -130,33 +208,34 @@ export function makeServe(
         });
       }
 
-      // Invoke the user handler.
-      const res = await Promise.resolve(handler(req));
+      // Invoke the user handler with onError fallback.
+      let res: Response;
+      try {
+        res = await Promise.resolve(handler(req));
+      } catch (err) {
+        try {
+          res = await Promise.resolve(onError(err));
+        } catch {
+          res = new Response(null, { status: 500 });
+        }
+      }
 
       if (payload.isBidi) {
-        // Duplex mode: the handler manages both streams via req.duplex().
-        // We only return the response head (101); body piping is handler-driven.
         return {
           status: res.status,
           headers: [...res.headers] as [string, string][],
         };
       }
 
-      // §4: Collect the response trailers callback (non-standard extension).
       const trailersFn = (res as unknown as Record<string, unknown>)
         .trailers as (() => Headers | Promise<Headers>) | undefined;
 
-      // Pipe response body in the background, then send trailers.
       const bodyStream = res.body ?? emptyStream();
       const doPipe = async () => {
         await pipeToWriter(bridge, bodyStream, payload.resBodyHandle);
-        // Always call sendTrailers so the Rust pump task can proceed.
         const trailerPairs: [string, string][] = trailersFn
           ? [...(await trailersFn())] as [string, string][]
           : [];
-        // Always send trailers for non-duplex requests (even if empty) so the
-        // Rust pump task is unblocked.  Handle 0 is valid — it just means the
-        // first slab slot was allocated; it is NOT a sentinel in this path.
         await bridge.sendTrailers(payload.resTrailersHandle, trailerPairs);
       };
       doPipe().catch((err) =>
@@ -168,7 +247,27 @@ export function makeServe(
         headers: [...res.headers] as [string, string][],
       };
     });
-  };
+
+    // Fire onListen synchronously — iroh binds during createNode, so the
+    // serve loop is immediately live after rawServe returns.
+    options.onListen?.({ nodeId });
+
+    // Wire signal → stopServe for graceful shutdown.
+    if (options.signal) {
+      if (options.signal.aborted) {
+        stopServe();
+      } else {
+        options.signal.addEventListener("abort", () => stopServe(), { once: true });
+      }
+    }
+
+    return { finished };
+  }) as ServeFn;
+}
+
+function defaultOnError(error: unknown): Response {
+  console.error("[iroh-http] unhandled handler error:", error);
+  return new Response(null, { status: 500 });
 }
 
 function emptyStream(): ReadableStream<Uint8Array> {
