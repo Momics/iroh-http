@@ -334,6 +334,7 @@ export async function createEndpointInfo(options?: NodeOptions): Promise<Endpoin
       maxConnectionsPerPeer: options?.maxConnectionsPerPeer ?? null,
       requestTimeout:       options?.requestTimeout ?? null,
       maxRequestBodyBytes:  options?.maxRequestBodyBytes ?? null,
+      maxHeaderBytes:       options?.maxHeaderBytes ?? null,
     },
   ).catch((e: unknown) => { throw classifyBindError(e); });
   return {

@@ -157,6 +157,7 @@ struct CreateEndpointPayload {
     max_connections_per_peer: Option<usize>,
     request_timeout: Option<u64>,
     max_request_body_bytes: Option<usize>,
+    max_header_bytes: Option<usize>,
 }
 
 async fn create_endpoint(p: Value) -> Value {
@@ -181,7 +182,7 @@ async fn create_endpoint(p: Value) -> Value {
         drain_timeout_ms: args.drain_timeout,
         handle_ttl_ms: args.handle_ttl,
         max_pooled_connections: None,
-        max_header_size: None,
+        max_header_size: args.max_header_bytes,
         proxy_url: args.proxy_url,
         proxy_from_env: args.proxy_from_env.unwrap_or(false),
         keylog: args.keylog.unwrap_or(false),
