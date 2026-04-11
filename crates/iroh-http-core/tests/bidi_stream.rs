@@ -85,8 +85,8 @@ async fn session_bidi_stream_round_trip() {
     assert_eq!(b_received, expected);
 
     // Now it's safe to close — both sides have finished reading.
-    session_close(session_b).ok();
-    session_close(session_a).ok();
+    session_close(session_b, 0, "").ok();
+    session_close(session_a, 0, "").ok();
 }
 
 // -- Multiple streams on one session ------------------------------------------
@@ -132,8 +132,8 @@ async fn session_multiple_bidi_streams() {
     }
 
     let session_b = b_handle.await.unwrap();
-    session_close(session_b).ok();
-    session_close(session_a).ok();
+    session_close(session_b, 0, "").ok();
+    session_close(session_a, 0, "").ok();
 }
 
 // -- Backpressure -------------------------------------------------------------
@@ -178,8 +178,8 @@ async fn session_bidi_stream_backpressure() {
     let eof = next_chunk(stream.read_handle).await.unwrap();
     assert!(eof.is_none());
 
-    session_close(session_b).ok();
-    session_close(session_a).ok();
+    session_close(session_b, 0, "").ok();
+    session_close(session_a, 0, "").ok();
 }
 
 // -- Clean close --------------------------------------------------------------
@@ -210,6 +210,6 @@ async fn session_bidi_stream_clean_close() {
     assert!(eof.is_none());
 
     let session_b = b_handle.await.unwrap();
-    session_close(session_b).ok();
-    session_close(session_a).ok();
+    session_close(session_b, 0, "").ok();
+    session_close(session_a, 0, "").ok();
 }

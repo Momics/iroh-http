@@ -10,7 +10,7 @@ export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
               FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn,
               RelayMode, IrohFetchInit, DiscoveryOptions, MdnsOptions, LifecycleOptions,
               NodeAddrInfo, PeerDiscoveryEvent, PeerStats, PathInfo } from "./bridge.js";
-export type { IrohSession, WebTransportBidirectionalStream, RawSessionFns } from "./session.js";
+export type { IrohSession, WebTransportBidirectionalStream, WebTransportCloseInfo, WebTransportDatagramDuplexStream, RawSessionFns } from "./session.js";
 export { buildSession } from "./session.js";
 export type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
@@ -40,7 +40,7 @@ export function ticketNodeId(ticket: string): string {
 }
 
 import type { Bridge, EndpointInfo, NodeOptions, IrohNode, MdnsOptions, NodeAddrInfo, PeerDiscoveryEvent, PeerStats, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
-import type { RawSessionFns } from "./session.js";
+import type { RawSessionFns, WebTransportCloseInfo } from "./session.js";
 import { buildSession } from "./session.js";
 import { makeFetch, makeConnect } from "./fetch.js";
 import { makeServe } from "./serve.js";
@@ -112,8 +112,8 @@ export function buildNode(
   discoveryFns?: DiscoveryFunctions,
   sessionFns?: RawSessionFns,
 ): IrohNode {
-  let resolveClosed!: () => void;
-  const closedPromise = new Promise<void>((resolve) => {
+  let resolveClosed!: (info: WebTransportCloseInfo) => void;
+  const closedPromise = new Promise<WebTransportCloseInfo>((resolve) => {
     resolveClosed = resolve;
   });
 
@@ -126,7 +126,7 @@ export function buildNode(
     nodeId: info.nodeId,
     keypair: info.keypair,
     fetch: makeFetch(bridge, info.endpointHandle, rawFetch, allocBodyWriter),
-    serve: makeServe(bridge, info.endpointHandle, rawServe, info.nodeId, closedPromise, () => stopServe(info.endpointHandle)),
+    serve: makeServe(bridge, info.endpointHandle, rawServe, info.nodeId, closedPromise.then(() => {}), () => stopServe(info.endpointHandle)),
     async connect(peer, init?) {
       if (!sessionFns) throw new Error("connect() not supported by this platform adapter");
       const nodeId = resolveNodeId(peer);
@@ -211,7 +211,7 @@ export function buildNode(
     closed: closedPromise,
     close: async () => {
       await closeEndpoint(info.endpointHandle);
-      resolveClosed();
+      resolveClosed({ closeCode: 0, reason: "" });
     },
     [Symbol.asyncDispose]() { return node.close(); },
   };

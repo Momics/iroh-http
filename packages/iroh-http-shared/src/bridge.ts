@@ -8,7 +8,7 @@
 
 import type { PublicKey, SecretKey } from "./keys.js";
 import type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
-import type { IrohSession } from "./session.js";
+import type { IrohSession, WebTransportCloseInfo } from "./session.js";
 
 export interface Bridge {
   // ── Body streaming ─────────────────────────────────────────────────────────
@@ -421,7 +421,7 @@ export interface IrohNode {
    * Resolves when the node has been closed (either via `close()` or due to
    * a fatal error).  Mirrors `WebTransportSession.closed`.
    */
-  readonly closed: Promise<void>;
+  readonly closed: Promise<WebTransportCloseInfo>;
   /**
    * Full node address: node ID + relay URL(s) + direct socket addresses.
    * Share this with remote peers so they can connect directly.

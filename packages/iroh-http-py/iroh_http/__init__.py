@@ -33,6 +33,7 @@ from .iroh_http_py import (  # noqa: F401
     IrohResponse,
     IrohSession,
     IrohBidiStream,
+    IrohUniStream,
 )
 
-__all__ = ["create_node", "IrohNode", "IrohRequest", "IrohResponse", "IrohSession", "IrohBidiStream"]
+__all__ = ["create_node", "IrohNode", "IrohRequest", "IrohResponse", "IrohSession", "IrohBidiStream", "IrohUniStream"]

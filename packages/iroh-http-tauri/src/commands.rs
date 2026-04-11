@@ -503,11 +503,74 @@ pub async fn session_next_bidi_stream(session_handle: u32) -> Result<Option<Sess
     }))
 }
 
-/// Close a session.
+/// Close a session with optional close code and reason.
 #[command]
-pub async fn session_close(session_handle: u32) -> Result<(), String> {
-    iroh_http_core::session_close(session_handle)
+pub async fn session_close(session_handle: u32, close_code: Option<u32>, reason: Option<String>) -> Result<(), String> {
+    iroh_http_core::session_close(session_handle, close_code.unwrap_or(0), reason.as_deref().unwrap_or(""))
         .map_err(iroh_http_core::classify_error_json)
+}
+
+/// Wait for a session to close. Returns { closeCode, reason }.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseInfoPayload {
+    pub close_code: u32,
+    pub reason: String,
+}
+
+#[command]
+pub async fn session_closed(session_handle: u32) -> Result<CloseInfoPayload, String> {
+    let info = iroh_http_core::session_closed(session_handle)
+        .await
+        .map_err(iroh_http_core::classify_error_json)?;
+    Ok(CloseInfoPayload {
+        close_code: info.close_code,
+        reason: info.reason,
+    })
+}
+
+/// Open a new unidirectional (send-only) stream on a session.
+/// Returns a write handle.
+#[command]
+pub async fn session_create_uni_stream(session_handle: u32) -> Result<u32, String> {
+    iroh_http_core::session_create_uni_stream(session_handle)
+        .await
+        .map_err(iroh_http_core::classify_error_json)
+}
+
+/// Accept the next incoming unidirectional stream on a session.
+/// Returns a read handle, or null when the session is closed.
+#[command]
+pub async fn session_next_uni_stream(session_handle: u32) -> Result<Option<u32>, String> {
+    iroh_http_core::session_next_uni_stream(session_handle)
+        .await
+        .map_err(iroh_http_core::classify_error_json)
+}
+
+/// Send a datagram on a session. Data is base64-encoded.
+#[command]
+pub async fn session_send_datagram(session_handle: u32, data: String) -> Result<(), String> {
+    let bytes = B64.decode(&data)
+        .map_err(|e| format!("base64 decode: {e}"))?;
+    iroh_http_core::session_send_datagram(session_handle, &bytes)
+        .map_err(iroh_http_core::classify_error_json)
+}
+
+/// Receive the next datagram on a session. Returns base64, or null when closed.
+#[command]
+pub async fn session_recv_datagram(session_handle: u32) -> Result<Option<String>, String> {
+    let result = iroh_http_core::session_recv_datagram(session_handle)
+        .await
+        .map_err(iroh_http_core::classify_error_json)?;
+    Ok(result.map(|d| B64.encode(&d)))
+}
+
+/// Get the maximum datagram payload size for a session.
+#[command]
+pub fn session_max_datagram_size(session_handle: u32) -> Result<Option<u32>, String> {
+    let result = iroh_http_core::session_max_datagram_size(session_handle)
+        .map_err(iroh_http_core::classify_error_json)?;
+    Ok(result.map(|s| s as u32))
 }
 
 // ── Key operations ────────────────────────────────────────────────────────────

@@ -716,9 +716,70 @@ pub async fn session_next_bidi_stream(
 
 /// Close a session.
 #[napi]
-pub async fn session_close_handle(session_handle: u32) -> napi::Result<()> {
-    iroh_http_core::session_close(session_handle)
+pub async fn session_close_handle(session_handle: u32, close_code: Option<u32>, reason: Option<String>) -> napi::Result<()> {
+    iroh_http_core::session_close(session_handle, close_code.unwrap_or(0), reason.as_deref().unwrap_or(""))
         .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+}
+
+/// Wait for a session to close. Returns close info { closeCode, reason }.
+#[napi(object)]
+pub struct JsCloseInfo {
+    pub close_code: u32,
+    pub reason: String,
+}
+
+#[napi]
+pub async fn session_closed(session_handle: u32) -> napi::Result<JsCloseInfo> {
+    let info = iroh_http_core::session_closed(session_handle)
+        .await
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    Ok(JsCloseInfo {
+        close_code: info.close_code,
+        reason: info.reason,
+    })
+}
+
+/// Open a new unidirectional (send-only) stream on a session.
+/// Returns a write handle.
+#[napi]
+pub async fn session_create_uni_stream(session_handle: u32) -> napi::Result<u32> {
+    iroh_http_core::session_create_uni_stream(session_handle)
+        .await
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+}
+
+/// Accept the next incoming unidirectional stream on a session.
+/// Returns a read handle, or null when the session is closed.
+#[napi]
+pub async fn session_next_uni_stream(session_handle: u32) -> napi::Result<Option<u32>> {
+    iroh_http_core::session_next_uni_stream(session_handle)
+        .await
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+}
+
+/// Send a datagram on a session.
+#[napi]
+pub async fn session_send_datagram(session_handle: u32, data: Uint8Array) -> napi::Result<()> {
+    iroh_http_core::session_send_datagram(session_handle, data.as_ref())
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+}
+
+/// Receive the next datagram on a session. Returns null when the session closes.
+#[napi]
+pub async fn session_recv_datagram(session_handle: u32) -> napi::Result<Option<Buffer>> {
+    let result = iroh_http_core::session_recv_datagram(session_handle)
+        .await
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    Ok(result.map(|d| Buffer::from(d)))
+}
+
+/// Get the maximum datagram payload size for a session.
+/// Returns null if datagrams are not supported.
+#[napi]
+pub fn session_max_datagram_size(session_handle: u32) -> napi::Result<Option<u32>> {
+    let result = iroh_http_core::session_max_datagram_size(session_handle)
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    Ok(result.map(|s| s as u32))
 }
 
 // ── Key operations ────────────────────────────────────────────────────────────

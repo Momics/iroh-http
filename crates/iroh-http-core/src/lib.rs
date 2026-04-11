@@ -21,7 +21,9 @@ pub use stream::{
     next_trailer, send_trailers, BodyReader,
 };
 pub use client::{fetch, raw_connect, alloc_fetch_token, cancel_in_flight};
-pub use session::{session_connect, session_create_bidi_stream, session_next_bidi_stream, session_close, session_accept, session_remote_id};
+pub use session::{session_connect, session_create_bidi_stream, session_next_bidi_stream, session_close, session_accept, session_remote_id,
+                  session_ready, session_closed, session_create_uni_stream, session_next_uni_stream,
+                  session_send_datagram, session_recv_datagram, session_max_datagram_size, CloseInfo};
 pub use server::serve;
 pub use server::ServeHandle;
 
