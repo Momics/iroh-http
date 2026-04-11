@@ -10,6 +10,8 @@ export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
               FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn,
               RelayMode, IrohFetchInit, DiscoveryOptions, MdnsOptions, LifecycleOptions,
               NodeAddrInfo, PeerDiscoveryEvent, PeerStats, PathInfo } from "./bridge.js";
+export type { IrohSession, WebTransportBidirectionalStream, RawSessionFns } from "./session.js";
+export { buildSession } from "./session.js";
 export type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
 export { makeFetch, makeConnect } from "./fetch.js";
@@ -38,6 +40,8 @@ export function ticketNodeId(ticket: string): string {
 }
 
 import type { Bridge, EndpointInfo, NodeOptions, IrohNode, MdnsOptions, NodeAddrInfo, PeerDiscoveryEvent, PeerStats, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
+import type { RawSessionFns } from "./session.js";
+import { buildSession } from "./session.js";
 import { makeFetch, makeConnect } from "./fetch.js";
 import { makeServe } from "./serve.js";
 import { PublicKey, SecretKey, resolveNodeId } from "./keys.js";
@@ -84,6 +88,8 @@ export interface DiscoveryFunctions {
  * @param closeEndpoint   Closes the bound endpoint.
  * @param stopServe       Stops the serve loop for graceful shutdown.
  * @param addrFns         Platform-specific address introspection functions.
+ * @param discoveryFns    Platform-specific mDNS discovery functions.
+ * @param sessionFns      Platform-specific session (connect/bidi stream) functions.
  * @returns A fully wired `IrohNode` ready for `fetch`, `serve`, and `close`.
  *
  * @example
@@ -104,6 +110,7 @@ export function buildNode(
   stopServe: (handle: number) => void,
   addrFns?: AddrFunctions,
   discoveryFns?: DiscoveryFunctions,
+  sessionFns?: RawSessionFns,
 ): IrohNode {
   let resolveClosed!: () => void;
   const closedPromise = new Promise<void>((resolve) => {
@@ -120,7 +127,14 @@ export function buildNode(
     keypair: info.keypair,
     fetch: makeFetch(bridge, info.endpointHandle, rawFetch, allocBodyWriter),
     serve: makeServe(bridge, info.endpointHandle, rawServe, info.nodeId, closedPromise, () => stopServe(info.endpointHandle)),
-    createBidirectionalStream: makeConnect(bridge, info.endpointHandle, rawConnect),
+    async connect(peer, init?) {
+      if (!sessionFns) throw new Error("connect() not supported by this platform adapter");
+      const nodeId = resolveNodeId(peer);
+      const directAddrs = init?.directAddrs ?? null;
+      const sessionHandle = await sessionFns.connect(info.endpointHandle, nodeId, directAddrs);
+      const remotePk = PublicKey.fromString(nodeId);
+      return buildSession(bridge, sessionHandle, remotePk, sessionFns);
+    },
     browse(options?: MdnsOptions, signal?: AbortSignal): AsyncIterable<PeerDiscoveryEvent> {
       if (!discoveryFns) throw new Error("browse() not supported by this platform adapter");
       const fns = discoveryFns;

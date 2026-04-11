@@ -445,6 +445,71 @@ pub async fn raw_connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload,
     })
 }
 
+// ── Session ───────────────────────────────────────────────────────────────────
+
+/// Arguments for establishing a session.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConnectArgs {
+    pub endpoint_handle: u32,
+    pub node_id: String,
+    pub direct_addrs: Option<Vec<String>>,
+}
+
+/// Establish a session (QUIC connection) to a remote peer.
+#[command]
+pub async fn session_connect(args: SessionConnectArgs) -> Result<u32, String> {
+    let ep = state::get_endpoint(args.endpoint_handle)
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
+
+    let addrs: Option<Vec<std::net::SocketAddr>> = args.direct_addrs.as_ref().map(|v| {
+        v.iter()
+            .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
+            .collect()
+    });
+
+    iroh_http_core::session_connect(&ep, &args.node_id, addrs.as_deref())
+        .await.map_err(iroh_http_core::classify_error_json)
+}
+
+/// Handles for a bidirectional stream on a session.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionBidiStreamPayload {
+    pub read_handle: u32,
+    pub write_handle: u32,
+}
+
+/// Open a new bidirectional stream on an existing session.
+#[command]
+pub async fn session_create_bidi_stream(session_handle: u32) -> Result<SessionBidiStreamPayload, String> {
+    let duplex = iroh_http_core::session_create_bidi_stream(session_handle)
+        .await.map_err(iroh_http_core::classify_error_json)?;
+    Ok(SessionBidiStreamPayload {
+        read_handle: duplex.read_handle,
+        write_handle: duplex.write_handle,
+    })
+}
+
+/// Accept the next incoming bidirectional stream on a session.
+/// Returns null when the session is closed.
+#[command]
+pub async fn session_next_bidi_stream(session_handle: u32) -> Result<Option<SessionBidiStreamPayload>, String> {
+    let result = iroh_http_core::session_next_bidi_stream(session_handle)
+        .await.map_err(iroh_http_core::classify_error_json)?;
+    Ok(result.map(|d| SessionBidiStreamPayload {
+        read_handle: d.read_handle,
+        write_handle: d.write_handle,
+    }))
+}
+
+/// Close a session.
+#[command]
+pub async fn session_close(session_handle: u32) -> Result<(), String> {
+    iroh_http_core::session_close(session_handle)
+        .map_err(iroh_http_core::classify_error_json)
+}
+
 // ── Key operations ────────────────────────────────────────────────────────────
 
 /// Sign arbitrary bytes with a 32-byte Ed25519 secret key (base64-encoded).

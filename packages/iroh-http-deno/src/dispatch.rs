@@ -116,6 +116,10 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "mdnsBrowseClose" => mdns_browse_close_dispatch(p),
         "mdnsAdvertise" => mdns_advertise_dispatch(p),
         "mdnsAdvertiseClose" => mdns_advertise_close_dispatch(p),
+        "sessionConnect" => session_connect_dispatch(p).await,
+        "sessionCreateBidiStream" => session_create_bidi_stream_dispatch(p).await,
+        "sessionNextBidiStream" => session_next_bidi_stream_dispatch(p).await,
+        "sessionClose" => session_close_dispatch(p),
         _ => err(format!("unknown method: {method}")),
     }
 }
@@ -764,4 +768,70 @@ fn mdns_advertise_close_dispatch(p: Value) -> Value {
         }
     }
     ok(json!({}))
+}
+
+// ── Session ───────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionConnectPayload {
+    endpoint_handle: u32,
+    node_id: String,
+    direct_addrs: Option<Vec<String>>,
+}
+
+async fn session_connect_dispatch(p: Value) -> Value {
+    let args: SessionConnectPayload = match serde_json::from_value(p) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => return err(format!("invalid endpoint handle: {}", args.endpoint_handle)),
+    };
+    let addrs = parse_direct_addrs(&args.direct_addrs);
+    match iroh_http_core::session_connect(&ep, &args.node_id, addrs.as_deref()).await {
+        Err(e) => err(e),
+        Ok(handle) => ok(json!({ "sessionHandle": handle })),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionHandlePayload {
+    session_handle: u32,
+}
+
+async fn session_create_bidi_stream_dispatch(p: Value) -> Value {
+    let args: SessionHandlePayload = match serde_json::from_value(p) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    match iroh_http_core::session_create_bidi_stream(args.session_handle).await {
+        Err(e) => err(e),
+        Ok(d) => ok(json!({ "readHandle": d.read_handle, "writeHandle": d.write_handle })),
+    }
+}
+
+async fn session_next_bidi_stream_dispatch(p: Value) -> Value {
+    let args: SessionHandlePayload = match serde_json::from_value(p) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    match iroh_http_core::session_next_bidi_stream(args.session_handle).await {
+        Err(e) => err(e),
+        Ok(None) => ok(json!(null)),
+        Ok(Some(d)) => ok(json!({ "readHandle": d.read_handle, "writeHandle": d.write_handle })),
+    }
+}
+
+fn session_close_dispatch(p: Value) -> Value {
+    let args: SessionHandlePayload = match serde_json::from_value(p) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    match iroh_http_core::session_close(args.session_handle) {
+        Err(e) => err(e),
+        Ok(()) => ok(json!({})),
+    }
 }

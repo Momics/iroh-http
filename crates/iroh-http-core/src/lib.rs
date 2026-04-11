@@ -8,6 +8,7 @@ pub mod endpoint;
 pub(crate) mod pool;
 pub(crate) mod qpack_bridge;
 pub mod server;
+pub mod session;
 pub mod stream;
 #[cfg(feature = "compression")]
 pub mod compress;
@@ -20,6 +21,7 @@ pub use stream::{
     next_trailer, send_trailers, BodyReader,
 };
 pub use client::{fetch, raw_connect, alloc_fetch_token, cancel_in_flight};
+pub use session::{session_connect, session_create_bidi_stream, session_next_bidi_stream, session_close, session_accept, session_remote_id};
 pub use server::serve;
 pub use server::ServeHandle;
 

@@ -23,6 +23,7 @@ import {
   stopServe,
   denoAddrFns,
   denoDiscoveryFns,
+  denoSessionFns,
 } from "./src/adapter.ts";
 
 /**
@@ -43,6 +44,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     stopServe,
     denoAddrFns,
     denoDiscoveryFns,
+    denoSessionFns,
   );
 }
 

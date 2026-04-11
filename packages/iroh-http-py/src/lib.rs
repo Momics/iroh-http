@@ -145,6 +145,100 @@ impl IrohRequest {
     }
 }
 
+// ── IrohBidiStream ──────────────────────────────────────────────────────────
+
+/// A bidirectional byte stream.
+///
+/// Use `write(data)` to send, iterate with `async for chunk in stream:` to read,
+/// and `close()` when done.
+#[pyclass]
+struct IrohBidiStream {
+    read_handle: u32,
+    write_handle: u32,
+}
+
+#[pymethods]
+impl IrohBidiStream {
+    /// Write bytes to the stream.
+    fn write<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.write_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            send_chunk(handle, Bytes::from(data)).await.map_err(py_err)?;
+            Ok(())
+        })
+    }
+
+    /// Read the next chunk. Returns None at EOF.
+    fn read<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.read_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            match next_chunk(handle).await.map_err(py_err)? {
+                None => Ok(Python::with_gil(|py| py.None())),
+                Some(b) => Python::with_gil(|py| {
+                    Ok(PyBytes::new_bound(py, &b).into_any().unbind())
+                }),
+            }
+        })
+    }
+
+    /// Close (finish) the write side of the stream.
+    fn close(&self) -> PyResult<()> {
+        finish_body(self.write_handle).map_err(py_err)
+    }
+
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.read_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            match next_chunk(handle).await.map_err(py_err)? {
+                None => Err(pyo3::exceptions::PyStopAsyncIteration::new_err(())),
+                Some(b) => Python::with_gil(|py| {
+                    Ok(PyBytes::new_bound(py, &b).into_any().unbind())
+                }),
+            }
+        })
+    }
+}
+
+// ── IrohSession ──────────────────────────────────────────────────────────────
+
+/// A session (QUIC connection) to a single remote peer.
+///
+/// Use `create_bidirectional_stream()` to open streams.
+#[pyclass]
+struct IrohSession {
+    session_handle: u32,
+}
+
+#[pymethods]
+impl IrohSession {
+    /// Open a new bidirectional stream on this session.
+    fn create_bidirectional_stream<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.session_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let duplex = iroh_http_core::session_create_bidi_stream(handle)
+                .await
+                .map_err(py_err)?;
+            Ok(IrohBidiStream {
+                read_handle: duplex.read_handle,
+                write_handle: duplex.write_handle,
+            })
+        })
+    }
+
+    /// Close this session.
+    fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.session_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            iroh_http_core::session_close(handle).map_err(py_err)?;
+            Ok(())
+        })
+    }
+}
+
 // ── IrohNode ─────────────────────────────────────────────────────────────────
 
 /// An Iroh peer-to-peer HTTP node.
@@ -165,6 +259,30 @@ impl IrohNode {
     #[getter]
     fn keypair<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new_bound(py, &self.ep.secret_key_bytes())
+    }
+
+    /// Open a session (QUIC connection) to a remote peer.
+    ///
+    /// Returns an `IrohSession` that can open bidirectional streams.
+    #[pyo3(signature = (peer_id, direct_addrs=None))]
+    fn connect<'py>(
+        &self,
+        py: Python<'py>,
+        peer_id: String,
+        direct_addrs: Option<Vec<String>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let ep = self.ep.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let addrs: Option<Vec<std::net::SocketAddr>> = direct_addrs.map(|v| {
+                v.iter()
+                    .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
+                    .collect()
+            });
+            let handle = iroh_http_core::session_connect(&ep, &peer_id, addrs.as_deref())
+                .await
+                .map_err(py_err)?;
+            Ok(IrohSession { session_handle: handle })
+        })
     }
 
     /// Send an HTTP request to a remote peer.
@@ -503,5 +621,7 @@ fn iroh_http_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IrohNode>()?;
     m.add_class::<IrohRequest>()?;
     m.add_class::<IrohResponse>()?;
+    m.add_class::<IrohSession>()?;
+    m.add_class::<IrohBidiStream>()?;
     Ok(())
 }
