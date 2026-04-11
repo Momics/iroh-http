@@ -46,8 +46,10 @@ import {
   type AllocBodyWriterFn,
   type RequestPayload,
   type AddrFunctions,
+  type DiscoveryFunctions,
   type NodeAddrInfo,
   type PeerStats,
+  type PeerDiscoveryEvent,
   type RelayMode,
   type DiscoveryOptions,
   classifyBindError,
@@ -269,23 +271,11 @@ function normaliseRelayMode(mode?: RelayMode): {
 
 /** Normalise DiscoveryOptions into flat fields for the Rust adapter. */
 function normaliseDiscovery(disc?: DiscoveryOptions): {
-  mdns: boolean;
-  serviceName?: string;
-  advertise: boolean;
   dnsEnabled: boolean;
 } {
-  if (!disc) return { mdns: false, advertise: true, dnsEnabled: true };
+  if (!disc) return { dnsEnabled: true };
   const dnsEnabled = disc.dns !== false;
-  if (disc.mdns === true) return { mdns: true, advertise: true, dnsEnabled };
-  if (disc.mdns && typeof disc.mdns === "object") {
-    return {
-      mdns: true,
-      advertise: disc.mdns.advertise ?? true,
-      serviceName: disc.mdns.serviceName,
-      dnsEnabled,
-    };
-  }
-  return { mdns: false, advertise: true, dnsEnabled };
+  return { dnsEnabled };
 }
 
 /** Address introspection functions backed by Tauri invoke calls. */
@@ -304,6 +294,25 @@ const tauriAddrFns: AddrFunctions = {
   },
   peerStats: async (handle, nodeId) => {
     return invoke<PeerStats | null>(`${PLUGIN}|peer_stats`, { endpointHandle: handle, nodeId });
+  },
+};
+
+/** Discovery functions backed by Tauri invoke calls. */
+const tauriDiscoveryFns: DiscoveryFunctions = {
+  mdnsBrowse: async (handle, serviceName) => {
+    return invoke<number>(`${PLUGIN}|mdns_browse`, { endpointHandle: handle, serviceName });
+  },
+  mdnsNextEvent: async (browseHandle) => {
+    return invoke<PeerDiscoveryEvent | null>(`${PLUGIN}|mdns_next_event`, { browseHandle });
+  },
+  mdnsBrowseClose: (browseHandle) => {
+    void invoke(`${PLUGIN}|mdns_browse_close`, { browseHandle });
+  },
+  mdnsAdvertise: async (handle, serviceName) => {
+    return invoke<number>(`${PLUGIN}|mdns_advertise`, { endpointHandle: handle, serviceName });
+  },
+  mdnsAdvertiseClose: (advertiseHandle) => {
+    void invoke(`${PLUGIN}|mdns_advertise_close`, { advertiseHandle });
   },
 };
 
@@ -338,9 +347,6 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           channelCapacity: options.channelCapacity ?? null,
           maxChunkSizeBytes: options.maxChunkSizeBytes ?? null,
           maxConsecutiveErrors: options.maxConsecutiveErrors ?? null,
-          discoveryMdns: discovery.mdns,
-          discoveryServiceName: discovery.serviceName ?? null,
-          discoveryAdvertise: discovery.advertise,
           drainTimeout: options.drainTimeout ?? null,
           handleTtl: options.handleTtl ?? null,
           disableNetworking,
@@ -373,6 +379,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     (handle) => invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: handle }),
     (handle) => { invoke(`${PLUGIN}|stop_serve`, { endpointHandle: handle }).catch(() => {}); },
     tauriAddrFns,
+    tauriDiscoveryFns,
   );
 
   // Install lifecycle listener for mobile/reconnect support.

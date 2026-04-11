@@ -436,7 +436,6 @@ fn create_node<'py>(
             channel_capacity:       None,
             max_chunk_size_bytes:   None,
             max_consecutive_errors: None,
-            discovery:              None,
             disable_networking,
             drain_timeout_ms:       None,
             handle_ttl_ms:          None,

@@ -103,33 +103,20 @@ export interface RequestPayload extends FfiRequest {
 
 // ── Platform function types ───────────────────────────────────────────────────
 
-/** Options for mDNS local network discovery. */
+/** Options for discovery configuration. */
 export type DiscoveryOptions = {
   /**
    * Enable DNS discovery via n0's DNS servers.  Default: true.
    * Set to `false` for LAN-only deployments.
    */
   dns?: boolean;
-
-  /**
-   * Local network discovery via mDNS.
-   *
-   * Set to `true` for defaults, or pass an object to customise.
-   * Omit or set `false` to disable.  Default: false.
-   */
-  mdns?: boolean | {
-    /**
-     * Advertise this node on the LAN.  Set `false` to listen without being
-     * discoverable.  Default: true.
-     */
-    advertise?: boolean;
-    /**
-     * mDNS swarm identifier.  Different apps on the same LAN should use
-     * different names to avoid cross-talk.  Default: iroh's built-in name.
-     */
-    serviceName?: string;
-  };
 };
+
+/** Options for mDNS browse/advertise calls. */
+export interface MdnsOptions {
+  /** Application-specific mDNS service name.  Default: `'iroh-http'`. */
+  serviceName?: string;
+}
 
 /** Options for mobile/background lifecycle management. */
 export interface LifecycleOptions {
@@ -400,11 +387,34 @@ export interface IrohNode {
    */
   createBidirectionalStream(peer: PublicKey | string, path: string, init?: RequestInit): Promise<BidirectionalStream>;
   /**
-   * Subscribe to local network peer discovery events.
-   * Only available when the node was created with `discovery.mdns: true`.
-   * Returns a cleanup function that removes the listener.
+   * Discover peers on the local network via mDNS.
+   *
+   * Returns an `AsyncIterable` of discovery events.  Breaking from the loop
+   * or aborting the signal stops the underlying browse session.
+   *
+   * @example
+   * ```ts
+   * for await (const ev of node.browse({ serviceName: 'my-app' })) {
+   *   if (ev.isActive) console.log('found', ev.nodeId);
+   * }
+   * ```
    */
-  onPeerDiscovered?(callback: (event: PeerDiscoveryEvent) => void): () => void;
+  browse(options?: MdnsOptions, signal?: AbortSignal): AsyncIterable<PeerDiscoveryEvent>;
+  /**
+   * Advertise this node on the local network via mDNS.
+   *
+   * Returns a `Promise<void>` that resolves when advertising stops.
+   * Pass a signal to cancel advertising.
+   *
+   * @example
+   * ```ts
+   * const ac = new AbortController();
+   * void node.advertise({ serviceName: 'my-app' }, ac.signal);
+   * // ... later:
+   * ac.abort(); // stop advertising
+   * ```
+   */
+  advertise(options?: MdnsOptions, signal?: AbortSignal): Promise<void>;
   /**
    * Resolves when the node has been closed (either via `close()` or due to
    * a fatal error).  Mirrors `WebTransportSession.closed`.

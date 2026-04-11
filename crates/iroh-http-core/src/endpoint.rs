@@ -11,17 +11,6 @@ use crate::{ALPN, ALPN_DUPLEX, ALPN_TRAILERS, ALPN_FULL};
 use crate::pool::ConnectionPool;
 use crate::server::ServeHandle;
 
-/// Configuration for mDNS local network discovery.
-#[derive(Debug, Default, Clone)]
-pub struct DiscoveryConfig {
-    /// Enable mDNS local discovery.  Default: false.
-    pub mdns: bool,
-    /// Application-specific mDNS service name.  Required when `mdns` is true.
-    pub service_name: Option<String>,
-    /// Whether to advertise this node.  Default: true.
-    pub advertise: bool,
-}
-
 /// Configuration passed to [`IrohEndpoint::bind`].
 #[derive(Debug, Default, Clone)]
 pub struct NodeOptions {
@@ -46,8 +35,6 @@ pub struct NodeOptions {
     pub dns_discovery: Option<String>,
     /// Whether to enable DNS discovery.  Default: true.
     pub dns_discovery_enabled: bool,
-    /// Local peer discovery configuration.
-    pub discovery: Option<DiscoveryConfig>,
 
     // ── Capabilities ────────────────────────────────────────────────────────
     /// Capabilities to advertise via ALPN.  When empty, all supported capabilities
