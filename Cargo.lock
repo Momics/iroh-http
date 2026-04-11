@@ -1574,9 +1574,6 @@ dependencies = [
 [[package]]
 name = "iroh-http-framing"
 version = "0.1.0"
-dependencies = [
- "httparse",
-]
 
 [[package]]
 name = "iroh-http-node"

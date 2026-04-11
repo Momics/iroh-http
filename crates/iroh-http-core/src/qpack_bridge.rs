@@ -22,7 +22,7 @@ const MAX_HEADER_SIZE: u64 = 256 * 1024;
 
 /// Encode a request head (method, path, headers) into the wire format:
 /// `[2-byte length][QPACK block]`.
-pub fn encode_request_stateless(
+fn encode_request_stateless(
     method: &str,
     path: &str,
     headers: &[(&str, &str)],
@@ -32,7 +32,7 @@ pub fn encode_request_stateless(
 }
 
 /// Encode a response head (status, headers) into the wire format.
-pub fn encode_response_stateless(
+fn encode_response_stateless(
     status: u16,
     headers: &[(&str, &str)],
 ) -> Result<Vec<u8>, String> {
@@ -43,7 +43,7 @@ pub fn encode_response_stateless(
 /// Decode a request head from the wire format.
 ///
 /// Returns `(method, path, headers, bytes_consumed)`.
-pub fn decode_request_stateless(
+fn decode_request_stateless(
     buf: &[u8],
 ) -> Result<(String, String, Vec<(String, String)>, usize), DecodeError> {
     let (fields, consumed) = decode_wire_block(buf)?;
@@ -69,7 +69,7 @@ pub fn decode_request_stateless(
 /// Decode a response head from the wire format.
 ///
 /// Returns `(status, headers, bytes_consumed)`.
-pub fn decode_response_stateless(
+fn decode_response_stateless(
     buf: &[u8],
 ) -> Result<(u16, Vec<(String, String)>, usize), DecodeError> {
     let (fields, consumed) = decode_wire_block(buf)?;

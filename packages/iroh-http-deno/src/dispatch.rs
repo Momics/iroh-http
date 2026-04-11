@@ -7,6 +7,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
+    parse_direct_addrs,
     server::respond,
     stream::{
         alloc_body_writer, cancel_reader, claim_pending_reader, finish_body,
@@ -24,16 +25,6 @@ use std::sync::Arc;
 #[cfg(feature = "discovery")]
 use tokio::sync::Mutex as TokioMutex;
 use crate::serve_registry;
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn parse_direct_addrs(addrs: &Option<Vec<String>>) -> Option<Vec<std::net::SocketAddr>> {
-    addrs.as_ref().map(|v| {
-        v.iter()
-            .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
-            .collect()
-    })
-}
 
 // ── Endpoint slab (replicates the napi / tauri pattern) ──────────────────────
 
@@ -134,6 +125,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // compression fields only read under #[cfg(feature = "compression")]
 struct CreateEndpointPayload {
     key: Option<String>,
     idle_timeout: Option<u64>,
