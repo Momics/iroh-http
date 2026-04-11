@@ -25,6 +25,9 @@
     "build": "tsc --project tsconfig.json",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@scure/base": "^1.2.6"
+  },
   "devDependencies": {
     "typescript": "^5.0.0"
   },

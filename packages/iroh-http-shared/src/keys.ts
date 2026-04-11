@@ -1,66 +1,19 @@
 /**
  * PublicKey and SecretKey — typed wrappers around Ed25519 key material.
  *
- * Zero platform dependencies: uses only `crypto.subtle` (available in
- * Node 18+, Deno, Tauri webview, and all modern browsers).
+ * Uses `@scure/base` for RFC 4648 base32 encoding and `crypto.subtle`
+ * for Ed25519 signature verification (Node 18+, Deno, modern browsers).
  */
+
+import { base32 } from "@scure/base";
 
 // ── Base32 codec ──────────────────────────────────────────────────────────────
 //
-// Alphabet: RFC 4648 §6 (a-z2-7, no padding), case-insensitive decoding.
-// This matches the encoding used by iroh for Ed25519 public-key node IDs.
-//
-// Kept inline to avoid adding a runtime dependency for ~40 lines. If a
-// maintained base32 npm package is ever added to the monorepo (e.g.
-// @scure/base), replace this block with:
-//   import { base32 } from "@scure/base";
-//   const base32Encode = (b: Uint8Array) => base32.encode(b).toLowerCase();
-//   const base32Decode = (s: string)     => base32.decode(s.toUpperCase());
+// Iroh node IDs are RFC 4648 base32 (a-z2-7, no padding, lowercase).
+// @scure/base uses uppercase; we normalise on encode/decode.
 
-const BASE32_CHARS = "abcdefghijklmnopqrstuvwxyz234567";
-const BASE32_TABLE = new Uint8Array(256).fill(0xff);
-for (let i = 0; i < BASE32_CHARS.length; i++) {
-  BASE32_TABLE[BASE32_CHARS.charCodeAt(i)] = i;
-  // Accept uppercase too.
-  BASE32_TABLE[BASE32_CHARS.toUpperCase().charCodeAt(i)] = i;
-}
-
-function base32Encode(bytes: Uint8Array): string {
-  let result = "";
-  let bits = 0;
-  let value = 0;
-  for (const byte of bytes) {
-    value = (value << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      bits -= 5;
-      result += BASE32_CHARS[(value >> bits) & 0x1f];
-    }
-  }
-  if (bits > 0) {
-    result += BASE32_CHARS[(value << (5 - bits)) & 0x1f];
-  }
-  return result;
-}
-
-function base32Decode(s: string): Uint8Array {
-  const bytes: number[] = [];
-  let bits = 0;
-  let value = 0;
-  for (let i = 0; i < s.length; i++) {
-    const v = BASE32_TABLE[s.charCodeAt(i)];
-    if (v === 0xff) {
-      throw new TypeError(`Invalid base32 character '${s[i]}' at position ${i}`);
-    }
-    value = (value << 5) | v;
-    bits += 5;
-    if (bits >= 8) {
-      bits -= 8;
-      bytes.push((value >> bits) & 0xff);
-    }
-  }
-  return new Uint8Array(bytes);
-}
+const base32Encode = (b: Uint8Array): string => base32.encode(b).toLowerCase();
+const base32Decode = (s: string): Uint8Array => base32.decode(s.toUpperCase());
 
 // ── Web Crypto algorithm descriptor ──────────────────────────────────────────
 
