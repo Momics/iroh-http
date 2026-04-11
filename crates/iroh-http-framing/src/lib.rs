@@ -82,9 +82,7 @@ pub fn serialize_trailers(trailers: &[(&str, &str)]) -> Vec<u8> {
 ///
 /// A lone `\r\n` is a valid empty trailer block.
 /// Returns `(trailers, bytes_consumed)`, or `FramingError::Incomplete` when more data is needed.
-pub fn parse_trailers(
-    bytes: &[u8],
-) -> Result<(Vec<(String, String)>, usize), FramingError> {
+pub fn parse_trailers(bytes: &[u8]) -> Result<(Vec<(String, String)>, usize), FramingError> {
     // Empty block: just the trailing \r\n
     if bytes.starts_with(b"\r\n") {
         return Ok((Vec::new(), 2));

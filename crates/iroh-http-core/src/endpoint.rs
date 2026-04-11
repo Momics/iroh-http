@@ -1,15 +1,15 @@
 //! Iroh endpoint lifecycle — create, share, and close.
 
-use std::sync::Arc;
-use std::time::Duration;
-use iroh::{Endpoint, RelayMode, SecretKey};
 use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
 use iroh::endpoint::{IdleTimeout, QuicTransportConfig, TransportAddrUsage};
+use iroh::{Endpoint, RelayMode, SecretKey};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Duration;
 
-use crate::{ALPN, ALPN_DUPLEX, ALPN_TRAILERS, ALPN_FULL};
 use crate::pool::ConnectionPool;
 use crate::server::ServeHandle;
+use crate::{ALPN, ALPN_DUPLEX, ALPN_FULL, ALPN_TRAILERS};
 
 /// Configuration passed to [`IrohEndpoint::bind`].
 #[derive(Debug, Default, Clone)]
@@ -147,7 +147,9 @@ impl IrohEndpoint {
                 Some("disabled") => RelayMode::Disabled,
                 Some("custom") => {
                     if opts.relays.is_empty() {
-                        return Err("relay_mode \"custom\" requires at least one URL in `relays`".into());
+                        return Err(
+                            "relay_mode \"custom\" requires at least one URL in `relays`".into(),
+                        );
                     }
                     let urls = opts
                         .relays
@@ -181,8 +183,7 @@ impl IrohEndpoint {
             list
         };
 
-        let mut builder = Endpoint::empty_builder(relay_mode)
-            .alpns(alpns);
+        let mut builder = Endpoint::empty_builder(relay_mode).alpns(alpns);
 
         // DNS discovery (enabled by default unless disable_networking).
         if !opts.disable_networking && opts.dns_discovery_enabled {
@@ -192,7 +193,9 @@ impl IrohEndpoint {
                     .map_err(|e| format!("invalid dns_discovery URL: {e}"))?;
                 builder = builder
                     .address_lookup(PkarrPublisher::builder(url.clone()))
-                    .address_lookup(DnsAddressLookup::builder(url.host_str().unwrap_or_default().to_string()));
+                    .address_lookup(DnsAddressLookup::builder(
+                        url.host_str().unwrap_or_default().to_string(),
+                    ));
             } else {
                 builder = builder
                     .address_lookup(PkarrPublisher::n0_dns())
@@ -218,13 +221,16 @@ impl IrohEndpoint {
             let sock: std::net::SocketAddr = addr_str
                 .parse()
                 .map_err(|e| format!("invalid bind address \"{addr_str}\": {e}"))?;
-            builder = builder.bind_addr(sock)
+            builder = builder
+                .bind_addr(sock)
                 .map_err(|e| format!("bind address \"{addr_str}\": {e}"))?;
         }
 
         // Proxy configuration.
         if let Some(ref proxy) = opts.proxy_url {
-            let url: url::Url = proxy.parse().map_err(|e| format!("invalid proxy URL: {e}"))?;
+            let url: url::Url = proxy
+                .parse()
+                .map_err(|e| format!("invalid proxy URL: {e}"))?;
             builder = builder.proxy_url(url);
         } else if opts.proxy_from_env {
             builder = builder.proxy_from_env();
@@ -239,13 +245,19 @@ impl IrohEndpoint {
 
         // Apply backpressure config for all future channel allocations.
         crate::stream::configure_backpressure(
-            opts.channel_capacity.unwrap_or(crate::stream::DEFAULT_CHANNEL_CAPACITY),
-            opts.max_chunk_size_bytes.unwrap_or(crate::stream::DEFAULT_MAX_CHUNK_SIZE),
-            opts.drain_timeout_ms.unwrap_or(crate::stream::DEFAULT_DRAIN_TIMEOUT_MS),
+            opts.channel_capacity
+                .unwrap_or(crate::stream::DEFAULT_CHANNEL_CAPACITY),
+            opts.max_chunk_size_bytes
+                .unwrap_or(crate::stream::DEFAULT_MAX_CHUNK_SIZE),
+            opts.drain_timeout_ms
+                .unwrap_or(crate::stream::DEFAULT_DRAIN_TIMEOUT_MS),
         );
 
         // Start slab TTL sweep if configured.
-        crate::stream::start_slab_sweep(opts.handle_ttl_ms.unwrap_or(crate::stream::DEFAULT_SLAB_TTL_MS));
+        crate::stream::start_slab_sweep(
+            opts.handle_ttl_ms
+                .unwrap_or(crate::stream::DEFAULT_SLAB_TTL_MS),
+        );
 
         let node_id_str = crate::base32_encode(ep.id().as_bytes());
 
@@ -260,7 +272,8 @@ impl IrohEndpoint {
                 max_consecutive_errors: opts.max_consecutive_errors.unwrap_or(5),
                 pool: ConnectionPool::new(
                     opts.max_pooled_connections,
-                    opts.pool_idle_timeout_ms.map(std::time::Duration::from_millis),
+                    opts.pool_idle_timeout_ms
+                        .map(std::time::Duration::from_millis),
                 ),
                 max_header_size: opts.max_header_size.unwrap_or(64 * 1024),
                 max_concurrency: opts.max_concurrency,
@@ -314,7 +327,12 @@ impl IrohEndpoint {
     /// If no serve loop is running, closes the endpoint immediately.
     pub async fn close(&self) {
         crate::stream::unregister_endpoint(self.inner.endpoint_idx);
-        let handle = self.inner.serve_handle.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let handle = self
+            .inner
+            .serve_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         if let Some(h) = handle {
             h.drain().await;
         }
@@ -325,7 +343,12 @@ impl IrohEndpoint {
     /// no drain period.
     pub async fn close_force(&self) {
         crate::stream::unregister_endpoint(self.inner.endpoint_idx);
-        let handle = self.inner.serve_handle.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let handle = self
+            .inner
+            .serve_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         if let Some(h) = handle {
             h.abort();
         }
@@ -334,7 +357,11 @@ impl IrohEndpoint {
 
     /// Store a serve handle so that `close()` can drain it.
     pub fn set_serve_handle(&self, handle: ServeHandle) {
-        *self.inner.serve_handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+        *self
+            .inner
+            .serve_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(handle);
     }
 
     /// Signal the serve loop to stop accepting new connections.
@@ -342,7 +369,13 @@ impl IrohEndpoint {
     /// Returns immediately — does NOT close the endpoint or drain in-flight
     /// requests.  The handle is preserved so `close()` can still drain later.
     pub fn stop_serve(&self) {
-        if let Some(h) = self.inner.serve_handle.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        if let Some(h) = self
+            .inner
+            .serve_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
             h.shutdown();
         }
     }
@@ -390,7 +423,12 @@ impl IrohEndpoint {
 
     /// Home relay URL, or `None` if not connected to a relay.
     pub fn home_relay(&self) -> Option<String> {
-        self.inner.ep.addr().relay_urls().next().map(|u| u.to_string())
+        self.inner
+            .ep
+            .addr()
+            .relay_urls()
+            .next()
+            .map(|u| u.to_string())
     }
 
     /// Known addresses for a remote peer, or `None` if not in the endpoint's cache.
@@ -518,7 +556,8 @@ pub fn parse_direct_addrs(
         Some(v) => {
             let mut out = Vec::with_capacity(v.len());
             for s in v {
-                let addr = s.parse::<std::net::SocketAddr>()
+                let addr = s
+                    .parse::<std::net::SocketAddr>()
                     .map_err(|e| format!("invalid direct address {s:?}: {e}"))?;
                 out.push(addr);
             }

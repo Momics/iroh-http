@@ -12,10 +12,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use crate::stream::{make_body_channel, BodyReader, BodyWriter};
 use bytes::{Buf, Bytes};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
-use crate::stream::{BodyReader, BodyWriter, make_body_channel};
 
 /// Options for body compression.
 #[derive(Debug, Clone)]
@@ -120,12 +120,18 @@ async fn decompress_loop(input: BodyReader, writer: &BodyWriter) -> Result<(), S
 
     let mut out_buf = vec![0u8; 64 * 1024];
     loop {
-        let n = decoder.read(&mut out_buf).await
+        let n = decoder
+            .read(&mut out_buf)
+            .await
             .map_err(|e| format!("zstd decompress: {e}"))?;
         if n == 0 {
             break;
         }
-        if writer.send_chunk(Bytes::copy_from_slice(&out_buf[..n])).await.is_err() {
+        if writer
+            .send_chunk(Bytes::copy_from_slice(&out_buf[..n]))
+            .await
+            .is_err()
+        {
             return Ok(());
         }
     }
@@ -150,24 +156,27 @@ async fn compress_task(input: BodyReader, writer: BodyWriter, level: i32) {
     }
 }
 
-async fn compress_loop(
-    input: BodyReader,
-    writer: &BodyWriter,
-    level: i32,
-) -> Result<(), String> {
+async fn compress_loop(input: BodyReader, writer: &BodyWriter, level: i32) -> Result<(), String> {
     let async_read = BodyAsyncRead::new(input);
     let buf_read = tokio::io::BufReader::new(async_read);
     let quality = async_compression::Level::Precise(level);
-    let mut encoder = async_compression::tokio::bufread::ZstdEncoder::with_quality(buf_read, quality);
+    let mut encoder =
+        async_compression::tokio::bufread::ZstdEncoder::with_quality(buf_read, quality);
 
     let mut out_buf = vec![0u8; 64 * 1024];
     loop {
-        let n = encoder.read(&mut out_buf).await
+        let n = encoder
+            .read(&mut out_buf)
+            .await
             .map_err(|e| format!("zstd compress: {e}"))?;
         if n == 0 {
             break;
         }
-        if writer.send_chunk(Bytes::copy_from_slice(&out_buf[..n])).await.is_err() {
+        if writer
+            .send_chunk(Bytes::copy_from_slice(&out_buf[..n]))
+            .await
+            .is_err()
+        {
             return Ok(());
         }
     }

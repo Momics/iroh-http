@@ -5,15 +5,12 @@
 //! Rust end-to-end.
 
 use bytes::Bytes;
-use iroh_http_core::{
-    IrohEndpoint, NodeOptions, fetch, serve,
-    next_chunk, next_trailer, send_trailers,
-    alloc_fetch_token, cancel_in_flight,
-    server::ServeOptions,
-    RequestPayload,
-};
 use iroh_http_core::server::respond;
 use iroh_http_core::stream;
+use iroh_http_core::{
+    alloc_fetch_token, cancel_in_flight, fetch, next_chunk, next_trailer, send_trailers, serve,
+    server::ServeOptions, IrohEndpoint, NodeOptions, RequestPayload,
+};
 
 /// Create a pair of locally-connected endpoints (relay disabled).
 async fn make_pair() -> (IrohEndpoint, IrohEndpoint) {
@@ -47,16 +44,30 @@ async fn basic_get_200() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            respond(payload.req_handle, 200, vec![
-                ("content-length".into(), "0".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                200,
+                vec![("content-length".into(), "0".into())],
+            )
+            .unwrap();
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let res = fetch(&client_ep, &server_id, "/hello", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/hello",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res.status, 200);
     assert!(res.url.starts_with("httpi://"));
     assert!(res.url.contains("/hello"));
@@ -75,15 +86,21 @@ async fn get_with_body() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            let path = payload.url.split("://").nth(1)
+            let path = payload
+                .url
+                .split("://")
+                .nth(1)
                 .and_then(|s| s.find('/').map(|i| &s[i..]))
                 .unwrap_or("/")
                 .to_string();
             let body_bytes = Bytes::from(path.as_bytes().to_vec());
 
-            respond(payload.req_handle, 200, vec![
-                ("content-type".into(), "text/plain".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                200,
+                vec![("content-type".into(), "text/plain".into())],
+            )
+            .unwrap();
 
             let handle = payload.res_body_handle;
             tokio::spawn(async move {
@@ -95,7 +112,18 @@ async fn get_with_body() {
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let res = fetch(&client_ep, &server_id, "/echo/test", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/echo/test",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res.status, 200);
 
     let mut body = Vec::new();
@@ -131,7 +159,9 @@ async fn post_with_request_body() {
 
                 let response_body = format!("received {} bytes", body.len());
                 respond(req_handle, 200, vec![]).unwrap();
-                stream::send_chunk(res_body_handle, Bytes::from(response_body.into_bytes())).await.unwrap();
+                stream::send_chunk(res_body_handle, Bytes::from(response_body.into_bytes()))
+                    .await
+                    .unwrap();
                 stream::finish_body(res_body_handle).unwrap();
             });
         },
@@ -144,17 +174,24 @@ async fn post_with_request_body() {
     let body_len = body_data.len();
 
     tokio::spawn(async move {
-        stream::send_chunk(writer_handle, Bytes::from(body_data)).await.unwrap();
+        stream::send_chunk(writer_handle, Bytes::from(body_data))
+            .await
+            .unwrap();
         stream::finish_body(writer_handle).unwrap();
     });
 
     let res = fetch(
-        &client_ep, &server_id, "/upload", "POST",
+        &client_ep,
+        &server_id,
+        "/upload",
+        "POST",
         &[("content-type".to_string(), "text/plain".to_string())],
         Some(body_reader),
         None,
         Some(&addrs),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     assert_eq!(res.status, 200);
 
@@ -162,7 +199,10 @@ async fn post_with_request_body() {
     while let Some(chunk) = next_chunk(res.body_handle).await.unwrap() {
         body.extend_from_slice(&chunk);
     }
-    assert_eq!(String::from_utf8(body).unwrap(), format!("received {body_len} bytes"));
+    assert_eq!(
+        String::from_utf8(body).unwrap(),
+        format!("received {body_len} bytes")
+    );
 }
 
 // -- Response headers ---------------------------------------------------------
@@ -177,19 +217,38 @@ async fn custom_response_headers() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            respond(payload.req_handle, 201, vec![
-                ("x-custom".into(), "test-value".into()),
-                ("content-length".into(), "0".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                201,
+                vec![
+                    ("x-custom".into(), "test-value".into()),
+                    ("content-length".into(), "0".into()),
+                ],
+            )
+            .unwrap();
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let res = fetch(&client_ep, &server_id, "/api", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/api",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res.status, 201);
-    assert!(res.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("x-custom") && v == "test-value"));
+    assert!(res
+        .headers
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("x-custom") && v == "test-value"));
 }
 
 // -- Request headers + method -------------------------------------------------
@@ -205,9 +264,10 @@ async fn request_headers_and_method() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             assert_eq!(payload.method, "DELETE");
-            let has_auth = payload.headers.iter().any(|(k, v)|
-                k.eq_ignore_ascii_case("authorization") && v == "Bearer token123"
-            );
+            let has_auth = payload
+                .headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer token123");
             assert!(has_auth, "authorization header missing");
 
             respond(payload.req_handle, 204, vec![]).unwrap();
@@ -218,11 +278,17 @@ async fn request_headers_and_method() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let res = fetch(
-        &client_ep, &server_id, "/resource/42", "DELETE",
+        &client_ep,
+        &server_id,
+        "/resource/42",
+        "DELETE",
         &[("authorization".to_string(), "Bearer token123".to_string())],
-        None, None,
+        None,
+        None,
         Some(&addrs),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
     assert_eq!(res.status, 204);
 }
 
@@ -249,14 +315,33 @@ async fn url_uses_httpi_scheme() {
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let res = fetch(&client_ep, &server_id, "/test/path", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/test/path",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
 
     assert!(res.url.starts_with("httpi://"), "res.url = {}", res.url);
     assert!(res.url.ends_with("/test/path"), "res.url = {}", res.url);
 
     let server_url = captured_url.lock().unwrap().clone();
-    assert!(server_url.starts_with("httpi://"), "server url = {}", server_url);
-    assert!(server_url.ends_with("/test/path"), "server url = {}", server_url);
+    assert!(
+        server_url.starts_with("httpi://"),
+        "server url = {}",
+        server_url
+    );
+    assert!(
+        server_url.ends_with("/test/path"),
+        "server url = {}",
+        server_url
+    );
 }
 
 // -- Remote node ID -----------------------------------------------------------
@@ -282,7 +367,18 @@ async fn remote_node_id_is_populated() {
     );
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let _res = fetch(&client_ep, &server_id, "/", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let _res = fetch(
+        &client_ep,
+        &server_id,
+        "/",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
 
     let remote = captured_remote.lock().unwrap().clone();
     assert_eq!(remote, client_id, "Server should see the client's node ID");
@@ -308,7 +404,9 @@ async fn multiple_sequential_requests() {
             respond(payload.req_handle, 200, vec![]).unwrap();
             let h = payload.res_body_handle;
             tokio::spawn(async move {
-                stream::send_chunk(h, Bytes::from(body.into_bytes())).await.unwrap();
+                stream::send_chunk(h, Bytes::from(body.into_bytes()))
+                    .await
+                    .unwrap();
                 stream::finish_body(h).unwrap();
             });
         },
@@ -317,7 +415,18 @@ async fn multiple_sequential_requests() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     for i in 0..3u32 {
-        let res = fetch(&client_ep, &server_id, &format!("/req/{i}"), "GET", &[], None, None, Some(&addrs)).await.unwrap();
+        let res = fetch(
+            &client_ep,
+            &server_id,
+            &format!("/req/{i}"),
+            "GET",
+            &[],
+            None,
+            None,
+            Some(&addrs),
+        )
+        .await
+        .unwrap();
         assert_eq!(res.status, 200);
 
         let mut body = Vec::new();
@@ -340,34 +449,52 @@ async fn response_trailers() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            respond(payload.req_handle, 200, vec![
-                ("trailer".into(), "x-checksum".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                200,
+                vec![("trailer".into(), "x-checksum".into())],
+            )
+            .unwrap();
 
             let body_h = payload.res_body_handle;
             let trailer_h = payload.res_trailers_handle;
             tokio::spawn(async move {
-                stream::send_chunk(body_h, Bytes::from("data")).await.unwrap();
+                stream::send_chunk(body_h, Bytes::from("data"))
+                    .await
+                    .unwrap();
                 stream::finish_body(body_h).unwrap();
-                send_trailers(trailer_h, vec![
-                    ("x-checksum".into(), "abc123".into()),
-                ]).unwrap();
+                send_trailers(trailer_h, vec![("x-checksum".into(), "abc123".into())]).unwrap();
             });
         },
     );
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let res = fetch(&client_ep, &server_id, "/with-trailers", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/with-trailers",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res.status, 200);
 
     while let Some(_chunk) = next_chunk(res.body_handle).await.unwrap() {}
 
     let trailers = next_trailer(res.trailers_handle).await.unwrap();
     let trailers = trailers.expect("expected trailers");
-    assert!(trailers.iter().any(|(k, v)|
-        k.eq_ignore_ascii_case("x-checksum") && v == "abc123"
-    ), "trailers: {:?}", trailers);
+    assert!(
+        trailers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("x-checksum") && v == "abc123"),
+        "trailers: {:?}",
+        trailers
+    );
 }
 
 // -- Empty body POST ----------------------------------------------------------
@@ -405,12 +532,17 @@ async fn post_empty_body() {
     stream::finish_body(writer_handle).unwrap();
 
     let res = fetch(
-        &client_ep, &server_id, "/empty", "POST",
+        &client_ep,
+        &server_id,
+        "/empty",
+        "POST",
         &[("content-length".to_string(), "0".to_string())],
         Some(body_reader),
         None,
         Some(&addrs),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
     assert_eq!(res.status, 204);
 }
 
@@ -426,9 +558,12 @@ async fn concurrent_requests() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            respond(payload.req_handle, 200, vec![
-                ("content-length".into(), "0".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                200,
+                vec![("content-length".into(), "0".into())],
+            )
+            .unwrap();
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
@@ -442,7 +577,18 @@ async fn concurrent_requests() {
         let id = server_id.clone();
         let a = addrs.clone();
         handles.push(tokio::spawn(async move {
-            let res = fetch(&ep, &id, &format!("/concurrent/{i}"), "GET", &[], None, None, Some(&a)).await.unwrap();
+            let res = fetch(
+                &ep,
+                &id,
+                &format!("/concurrent/{i}"),
+                "GET",
+                &[],
+                None,
+                None,
+                Some(&a),
+            )
+            .await
+            .unwrap();
             assert_eq!(res.status, 200);
             i
         }));
@@ -491,8 +637,16 @@ async fn fetch_cancelled_via_token() {
     });
 
     let result = fetch(
-        &client_ep, &server_id, "/slow", "GET", &[], None, Some(token), Some(&addrs),
-    ).await;
+        &client_ep,
+        &server_id,
+        "/slow",
+        "GET",
+        &[],
+        None,
+        Some(token),
+        Some(&addrs),
+    )
+    .await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), "aborted");
 }
@@ -608,23 +762,43 @@ async fn url_with_query_params() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             *captured.lock().unwrap() = payload.url.clone();
-            respond(payload.req_handle, 200, vec![
-                ("content-length".into(), "0".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                200,
+                vec![("content-length".into(), "0".into())],
+            )
+            .unwrap();
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let res = fetch(&client_ep, &server_id, "/search?q=test&page=1", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/search?q=test&page=1",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res.status, 200);
 
     let server_url = captured_url.lock().unwrap().clone();
-    assert!(server_url.contains("/search?q=test&page=1"),
-        "server url should contain query params: {}", server_url);
-    assert!(res.url.contains("/search?q=test&page=1"),
-        "response url should contain query params: {}", res.url);
+    assert!(
+        server_url.contains("/search?q=test&page=1"),
+        "server url should contain query params: {}",
+        server_url
+    );
+    assert!(
+        res.url.contains("/search?q=test&page=1"),
+        "response url should contain query params: {}",
+        res.url
+    );
 }
 
 // -- respond() error path -----------------------------------------------------
@@ -662,7 +836,18 @@ async fn response_without_trailer_header_still_works() {
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let res = fetch(&client_ep, &server_id, "/no-trailers", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/no-trailers",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res.status, 200);
 
     let mut body = Vec::new();
@@ -701,9 +886,12 @@ async fn pool_reuses_connection_for_sequential_requests() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             rc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            respond(payload.req_handle, 200, vec![
-                ("content-length".into(), "0".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                200,
+                vec![("content-length".into(), "0".into())],
+            )
+            .unwrap();
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
@@ -711,18 +899,51 @@ async fn pool_reuses_connection_for_sequential_requests() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // First request — establishes connection and caches it.
-    let res1 = fetch(&client_ep, &server_id, "/a", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res1 = fetch(
+        &client_ep,
+        &server_id,
+        "/a",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res1.status, 200);
     // Drain body to complete the request.
     while let Some(_) = next_chunk(res1.body_handle).await.unwrap() {}
 
     // Second request — should reuse the cached connection (no new handshake).
-    let res2 = fetch(&client_ep, &server_id, "/b", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res2 = fetch(
+        &client_ep,
+        &server_id,
+        "/b",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res2.status, 200);
     while let Some(_) = next_chunk(res2.body_handle).await.unwrap() {}
 
     // Third request for good measure.
-    let res3 = fetch(&client_ep, &server_id, "/c", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res3 = fetch(
+        &client_ep,
+        &server_id,
+        "/c",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res3.status, 200);
     while let Some(_) = next_chunk(res3.body_handle).await.unwrap() {}
 
@@ -740,9 +961,12 @@ async fn pool_concurrent_requests_share_connection() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            respond(payload.req_handle, 200, vec![
-                ("content-length".into(), "0".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                200,
+                vec![("content-length".into(), "0".into())],
+            )
+            .unwrap();
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
@@ -756,7 +980,18 @@ async fn pool_concurrent_requests_share_connection() {
         let id = server_id.clone();
         let a = addrs.clone();
         handles.push(tokio::spawn(async move {
-            let res = fetch(&ep, &id, &format!("/storm/{i}"), "GET", &[], None, None, Some(&a)).await.unwrap();
+            let res = fetch(
+                &ep,
+                &id,
+                &format!("/storm/{i}"),
+                "GET",
+                &[],
+                None,
+                None,
+                Some(&a),
+            )
+            .await
+            .unwrap();
             assert_eq!(res.status, 200);
             while let Some(_) = next_chunk(res.body_handle).await.unwrap() {}
         }));
@@ -791,9 +1026,12 @@ async fn pool_different_peers_get_separate_connections() {
             ep.clone(),
             ServeOptions::default(),
             move |payload: RequestPayload| {
-                respond(payload.req_handle, 200, vec![
-                    ("content-length".into(), "0".into()),
-                ]).unwrap();
+                respond(
+                    payload.req_handle,
+                    200,
+                    vec![("content-length".into(), "0".into())],
+                )
+                .unwrap();
                 stream::finish_body(payload.res_body_handle).unwrap();
             },
         );
@@ -801,11 +1039,15 @@ async fn pool_different_peers_get_separate_connections() {
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let r1 = fetch(&client, &id1, "/", "GET", &[], None, None, Some(&addrs1)).await.unwrap();
+    let r1 = fetch(&client, &id1, "/", "GET", &[], None, None, Some(&addrs1))
+        .await
+        .unwrap();
     assert_eq!(r1.status, 200);
     while let Some(_) = next_chunk(r1.body_handle).await.unwrap() {}
 
-    let r2 = fetch(&client, &id2, "/", "GET", &[], None, None, Some(&addrs2)).await.unwrap();
+    let r2 = fetch(&client, &id2, "/", "GET", &[], None, None, Some(&addrs2))
+        .await
+        .unwrap();
     assert_eq!(r2.status, 200);
     while let Some(_) = next_chunk(r2.body_handle).await.unwrap() {}
 
@@ -821,7 +1063,9 @@ async fn make_pair_custom_server(server_opts: NodeOptions) -> (IrohEndpoint, Iro
     let client = IrohEndpoint::bind(NodeOptions {
         disable_networking: true,
         ..Default::default()
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     (server, client)
 }
 
@@ -832,7 +1076,8 @@ async fn header_bomb_rejected() {
         disable_networking: true,
         max_header_size: Some(256), // very small
         ..Default::default()
-    }).await;
+    })
+    .await;
     let server_id = node_id(&server_ep);
     let addrs = server_addrs(&server_ep);
 
@@ -840,9 +1085,12 @@ async fn header_bomb_rejected() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            respond(payload.req_handle, 200, vec![
-                ("content-length".into(), "0".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                200,
+                vec![("content-length".into(), "0".into())],
+            )
+            .unwrap();
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
@@ -854,11 +1102,23 @@ async fn header_bomb_rejected() {
     let headers = vec![("x-big".to_string(), big_value)];
 
     let result = fetch(
-        &client_ep, &server_id, "/bomb", "GET", &headers, None, None, Some(&addrs),
-    ).await;
+        &client_ep,
+        &server_id,
+        "/bomb",
+        "GET",
+        &headers,
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await;
 
     // The server should reject the oversized head and the client will see an error.
-    assert!(result.is_err(), "expected error for oversized header, got: {:?}", result);
+    assert!(
+        result.is_err(),
+        "expected error for oversized header, got: {:?}",
+        result
+    );
 }
 
 /// The client should also reject oversized response heads.
@@ -867,13 +1127,17 @@ async fn response_header_bomb_rejected() {
     let server_ep = IrohEndpoint::bind(NodeOptions {
         disable_networking: true,
         ..Default::default()
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     // Client has a tiny max_header_size.
     let client_ep = IrohEndpoint::bind(NodeOptions {
         disable_networking: true,
         max_header_size: Some(128),
         ..Default::default()
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     let server_id = node_id(&server_ep);
     let addrs = server_addrs(&server_ep);
 
@@ -882,9 +1146,7 @@ async fn response_header_bomb_rejected() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             let big_value = "Y".repeat(200);
-            respond(payload.req_handle, 200, vec![
-                ("x-huge".into(), big_value),
-            ]).unwrap();
+            respond(payload.req_handle, 200, vec![("x-huge".into(), big_value)]).unwrap();
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
@@ -893,10 +1155,22 @@ async fn response_header_bomb_rejected() {
 
     // The client has max_header_size=128, so the server's big response header should be rejected.
     let result = fetch(
-        &client_ep, &server_id, "/big-response", "GET", &[], None, None, Some(&addrs),
-    ).await;
+        &client_ep,
+        &server_id,
+        "/big-response",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await;
 
-    assert!(result.is_err(), "expected error for oversized response header, got: {:?}", result);
+    assert!(
+        result.is_err(),
+        "expected error for oversized response header, got: {:?}",
+        result
+    );
 }
 
 /// Normal traffic should work with default settings.
@@ -910,13 +1184,18 @@ async fn default_limits_allow_normal_traffic() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            respond(payload.req_handle, 200, vec![
-                ("content-length".into(), "5".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                200,
+                vec![("content-length".into(), "5".into())],
+            )
+            .unwrap();
 
             let handle = payload.res_body_handle;
             tokio::spawn(async move {
-                stream::send_chunk(handle, Bytes::from_static(b"hello")).await.unwrap();
+                stream::send_chunk(handle, Bytes::from_static(b"hello"))
+                    .await
+                    .unwrap();
                 stream::finish_body(handle).unwrap();
             });
         },
@@ -926,8 +1205,17 @@ async fn default_limits_allow_normal_traffic() {
 
     // Should work fine with default 64KB header limit.
     let res = fetch(
-        &client_ep, &server_id, "/normal", "GET", &[], None, None, Some(&addrs),
-    ).await.unwrap();
+        &client_ep,
+        &server_id,
+        "/normal",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res.status, 200);
 
     let chunk = next_chunk(res.body_handle).await.unwrap();
@@ -962,9 +1250,12 @@ async fn body_limit_exceeded_resets_stream() {
                 }
                 // Respond with how many bytes we got.
                 let body = format!("{total}");
-                respond(req_h, 200, vec![
-                    ("content-type".into(), "text/plain".into()),
-                ]).unwrap();
+                respond(
+                    req_h,
+                    200,
+                    vec![("content-type".into(), "text/plain".into())],
+                )
+                .unwrap();
                 stream::send_chunk(res_h, Bytes::from(body)).await.unwrap();
                 stream::finish_body(res_h).unwrap();
             });
@@ -982,9 +1273,16 @@ async fn body_limit_exceeded_resets_stream() {
     });
 
     let result = fetch(
-        &client_ep, &server_id, "/upload", "POST",
-        &[], Some(reader), None, Some(&addrs),
-    ).await;
+        &client_ep,
+        &server_id,
+        "/upload",
+        "POST",
+        &[],
+        Some(reader),
+        None,
+        Some(&addrs),
+    )
+    .await;
 
     send_task.await.unwrap();
 
@@ -992,8 +1290,14 @@ async fn body_limit_exceeded_resets_stream() {
     // either way the server should not have received all 256 bytes.
     if let Ok(res) = result {
         if let Ok(Some(chunk)) = next_chunk(res.body_handle).await {
-            let received: usize = std::str::from_utf8(&chunk).unwrap_or("0").parse().unwrap_or(0);
-            assert!(received <= 64, "server received {received} bytes, should be <= 64");
+            let received: usize = std::str::from_utf8(&chunk)
+                .unwrap_or("0")
+                .parse()
+                .unwrap_or(0);
+            assert!(
+                received <= 64,
+                "server received {received} bytes, should be <= 64"
+            );
         }
     }
     // If the fetch errored entirely, that's also acceptable — the stream was reset.
@@ -1020,7 +1324,9 @@ async fn max_header_size_default_is_64kb() {
     let ep = IrohEndpoint::bind(NodeOptions {
         disable_networking: true,
         ..Default::default()
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     assert_eq!(ep.max_header_size(), 64 * 1024);
 }
 
@@ -1031,7 +1337,9 @@ async fn max_header_size_custom() {
         disable_networking: true,
         max_header_size: Some(1024),
         ..Default::default()
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     assert_eq!(ep.max_header_size(), 1024);
 }
 
@@ -1063,10 +1371,10 @@ async fn graceful_shutdown_drains_in_flight() {
                 started.notify_one();
                 // Simulate a slow handler (1s).
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                respond(req_h, 200, vec![
-                    ("content-length".into(), "2".into()),
-                ]).unwrap();
-                stream::send_chunk(res_h, Bytes::from_static(b"ok")).await.unwrap();
+                respond(req_h, 200, vec![("content-length".into(), "2".into())]).unwrap();
+                stream::send_chunk(res_h, Bytes::from_static(b"ok"))
+                    .await
+                    .unwrap();
                 stream::finish_body(res_h).unwrap();
             });
         },
@@ -1101,7 +1409,11 @@ async fn graceful_shutdown_drains_in_flight() {
 
     // The in-flight request should have succeeded.
     let result = fetch_task.await.unwrap();
-    assert!(result.is_ok(), "in-flight request should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "in-flight request should succeed: {:?}",
+        result
+    );
     let res = result.unwrap();
     assert_eq!(res.status, 200);
 }
@@ -1137,7 +1449,9 @@ async fn close_without_serve_is_immediate() {
     let ep = IrohEndpoint::bind(NodeOptions {
         disable_networking: true,
         ..Default::default()
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     let start = std::time::Instant::now();
     ep.close().await;
@@ -1160,9 +1474,12 @@ async fn shutdown_rejects_new_requests() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            respond(payload.req_handle, 200, vec![
-                ("content-length".into(), "0".into()),
-            ]).unwrap();
+            respond(
+                payload.req_handle,
+                200,
+                vec![("content-length".into(), "0".into())],
+            )
+            .unwrap();
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
@@ -1170,7 +1487,18 @@ async fn shutdown_rejects_new_requests() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // First request should succeed.
-    let res = fetch(&client_ep, &server_id, "/before", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/before",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     assert_eq!(res.status, 200);
     while let Ok(Some(_)) = next_chunk(res.body_handle).await {}
 
@@ -1181,8 +1509,22 @@ async fn shutdown_rejects_new_requests() {
     server_ep.close_force().await;
 
     // Request after shutdown should fail.
-    let result = fetch(&client_ep, &server_id, "/after", "GET", &[], None, None, Some(&addrs)).await;
-    assert!(result.is_err(), "expected error after shutdown, got: {:?}", result);
+    let result = fetch(
+        &client_ep,
+        &server_id,
+        "/after",
+        "GET",
+        &[],
+        None,
+        None,
+        Some(&addrs),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "expected error after shutdown, got: {:?}",
+        result
+    );
 }
 
 /// ServeHandle::shutdown() returns immediately without blocking.
@@ -1250,12 +1592,25 @@ async fn large_body_round_trip() {
     let data_clone = data.clone();
     let send_task = tokio::spawn(async move {
         for chunk in data_clone.chunks(8192) {
-            stream::send_chunk(writer_handle, Bytes::copy_from_slice(chunk)).await.unwrap();
+            stream::send_chunk(writer_handle, Bytes::copy_from_slice(chunk))
+                .await
+                .unwrap();
         }
         stream::finish_body(writer_handle).unwrap();
     });
 
-    let res = fetch(&client_ep, &server_id, "/echo", "POST", &[], Some(body_reader), None, Some(&addrs)).await.unwrap();
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/echo",
+        "POST",
+        &[],
+        Some(body_reader),
+        None,
+        Some(&addrs),
+    )
+    .await
+    .unwrap();
     send_task.await.unwrap();
     assert_eq!(res.status, 200);
 
@@ -1332,7 +1687,9 @@ async fn fetch_json_post() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            let content_type = payload.headers.iter()
+            let content_type = payload
+                .headers
+                .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
@@ -1351,10 +1708,15 @@ async fn fetch_json_post() {
                 assert_eq!(content_type, "application/json");
 
                 // Echo it back as JSON with content-type.
-                respond(req_handle, 200, vec![
-                    ("content-type".into(), "application/json".into()),
-                ]).unwrap();
-                stream::send_chunk(res_body_handle, Bytes::from(body)).await.unwrap();
+                respond(
+                    req_handle,
+                    200,
+                    vec![("content-type".into(), "application/json".into())],
+                )
+                .unwrap();
+                stream::send_chunk(res_body_handle, Bytes::from(body))
+                    .await
+                    .unwrap();
                 stream::finish_body(res_body_handle).unwrap();
             });
         },
@@ -1368,7 +1730,9 @@ async fn fetch_json_post() {
     let headers = vec![("content-type".to_string(), "application/json".to_string())];
 
     let send_task = tokio::spawn(async move {
-        stream::send_chunk(writer_handle, Bytes::from_static(json_body)).await.unwrap();
+        stream::send_chunk(writer_handle, Bytes::from_static(json_body))
+            .await
+            .unwrap();
         stream::finish_body(writer_handle).unwrap();
     });
 
@@ -1381,11 +1745,15 @@ async fn fetch_json_post() {
         Some(body_reader),
         None,
         Some(&addrs),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
     send_task.await.unwrap();
     assert_eq!(res.status, 200);
 
-    let ct = res.headers.iter()
+    let ct = res
+        .headers
+        .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
         .map(|(_, v)| v.as_str());
     assert_eq!(ct, Some("application/json"));
@@ -1430,9 +1798,36 @@ async fn serve_concurrency_limit() {
 
     // Fire 3 concurrent requests — all should succeed.
     let (r1, r2, r3) = tokio::join!(
-        fetch(&client_ep, &server_id, "/r1", "GET", &[], None, None, Some(&addrs)),
-        fetch(&client_ep, &server_id, "/r2", "GET", &[], None, None, Some(&addrs)),
-        fetch(&client_ep, &server_id, "/r3", "GET", &[], None, None, Some(&addrs)),
+        fetch(
+            &client_ep,
+            &server_id,
+            "/r1",
+            "GET",
+            &[],
+            None,
+            None,
+            Some(&addrs)
+        ),
+        fetch(
+            &client_ep,
+            &server_id,
+            "/r2",
+            "GET",
+            &[],
+            None,
+            None,
+            Some(&addrs)
+        ),
+        fetch(
+            &client_ep,
+            &server_id,
+            "/r3",
+            "GET",
+            &[],
+            None,
+            None,
+            Some(&addrs)
+        ),
     );
     assert_eq!(r1.unwrap().status, 200);
     assert_eq!(r2.unwrap().status, 200);
@@ -1457,13 +1852,17 @@ async fn fetch_unknown_peer() {
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         fetch(&client_ep, &fake_id, "/", "GET", &[], None, None, None),
-    ).await;
+    )
+    .await;
 
     // Should not hang — either a timeout or a connection error.
     match result {
         Ok(Err(_)) => {} // connection error — expected
-        Err(_) => {}    // our 5s timeout — also acceptable if iroh takes longer
-        Ok(Ok(res)) => panic!("expected error connecting to unknown peer, got status {}", res.status),
+        Err(_) => {}     // our 5s timeout — also acceptable if iroh takes longer
+        Ok(Ok(res)) => panic!(
+            "expected error connecting to unknown peer, got status {}",
+            res.status
+        ),
     }
 }
 
@@ -1508,7 +1907,17 @@ async fn node_close_drains_in_flight() {
     let fetch_task = tokio::spawn({
         let client_ep = client_ep.clone();
         async move {
-            fetch(&client_ep, &server_id, "/drain-test", "GET", &[], None, None, Some(&addrs)).await
+            fetch(
+                &client_ep,
+                &server_id,
+                "/drain-test",
+                "GET",
+                &[],
+                None,
+                None,
+                Some(&addrs),
+            )
+            .await
         }
     });
 
@@ -1556,7 +1965,9 @@ async fn body_exceeds_limit_resets_stream() {
     let big_body = vec![b'x'; 10_000];
     let (writer_handle, body_reader) = stream::alloc_body_writer();
     tokio::spawn(async move {
-        stream::send_chunk(writer_handle, Bytes::from(big_body)).await.unwrap();
+        stream::send_chunk(writer_handle, Bytes::from(big_body))
+            .await
+            .unwrap();
         stream::finish_body(writer_handle).unwrap();
     });
 
@@ -1569,7 +1980,8 @@ async fn body_exceeds_limit_resets_stream() {
         Some(body_reader),
         None,
         Some(&addrs),
-    ).await;
+    )
+    .await;
 
     // Stream reset should produce an error or the body read fails.
     // Either the fetch errors or it succeeds but body is truncated.
@@ -1612,8 +2024,18 @@ async fn request_timeout_fires() {
     // Use a generous budget since this test may run alongside many others.
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        fetch(&client_ep, &server_id, "/slow", "GET", &[], None, None, Some(&addrs)),
-    ).await;
+        fetch(
+            &client_ep,
+            &server_id,
+            "/slow",
+            "GET",
+            &[],
+            None,
+            None,
+            Some(&addrs),
+        ),
+    )
+    .await;
 
     // Should not hang — accept either an error or a 200 that raced through.
     assert!(result.is_ok(), "fetch should not hang past the timeout");

@@ -11,9 +11,9 @@
 //! - iOS / Android (Tauri mobile): use the platform's native service discovery;
 
 #[cfg(feature = "mdns")]
-use std::sync::Arc;
+use iroh::address_lookup::{DiscoveryEvent, MdnsAddressLookup};
 #[cfg(feature = "mdns")]
-use iroh::address_lookup::{MdnsAddressLookup, DiscoveryEvent};
+use std::sync::Arc;
 
 // ── Peer discovery event ─────────────────────────────────────────────────────
 
@@ -45,34 +45,30 @@ impl BrowseSession {
     pub async fn next_event(&mut self) -> Option<PeerDiscoveryEvent> {
         use iroh::TransportAddr;
 
-        loop {
-            let ev = self.rx.recv().await?;
-            match ev {
-                DiscoveryEvent::Discovered { endpoint_info, .. } => {
-                    let node_id = endpoint_info.endpoint_id.to_string();
-                    let mut addrs = Vec::new();
-                    for a in endpoint_info.data.addrs() {
-                        match a {
-                            TransportAddr::Ip(sock) => addrs.push(sock.to_string()),
-                            TransportAddr::Relay(url) => addrs.push(url.to_string()),
-                            other => addrs.push(format!("{:?}", other)),
-                        }
+        let ev = self.rx.recv().await?;
+        Some(match ev {
+            DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                let node_id = endpoint_info.endpoint_id.to_string();
+                let mut addrs = Vec::new();
+                for a in endpoint_info.data.addrs() {
+                    match a {
+                        TransportAddr::Ip(sock) => addrs.push(sock.to_string()),
+                        TransportAddr::Relay(url) => addrs.push(url.to_string()),
+                        other => addrs.push(format!("{:?}", other)),
                     }
-                    return Some(PeerDiscoveryEvent {
-                        is_active: true,
-                        node_id,
-                        addrs,
-                    });
                 }
-                DiscoveryEvent::Expired { endpoint_id } => {
-                    return Some(PeerDiscoveryEvent {
-                        is_active: false,
-                        node_id: endpoint_id.to_string(),
-                        addrs: Vec::new(),
-                    });
+                PeerDiscoveryEvent {
+                    is_active: true,
+                    node_id,
+                    addrs,
                 }
             }
-        }
+            DiscoveryEvent::Expired { endpoint_id } => PeerDiscoveryEvent {
+                is_active: false,
+                node_id: endpoint_id.to_string(),
+                addrs: Vec::new(),
+            },
+        })
     }
 }
 

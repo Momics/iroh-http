@@ -11,31 +11,40 @@
 //! Each slotted reader uses a `tokio::sync::Mutex` so the `recv` future can
 //! be awaited without holding the slab's `std::sync::Mutex`.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use bytes::Bytes;
 use tokio::sync::mpsc;
 
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 32;
 pub const DEFAULT_MAX_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
-pub const DEFAULT_DRAIN_TIMEOUT_MS: u64 = 30_000;     // 30 s
-pub const DEFAULT_SLAB_TTL_MS: u64 = 300_000;         // 5 min
+pub const DEFAULT_DRAIN_TIMEOUT_MS: u64 = 30_000; // 30 s
+pub const DEFAULT_SLAB_TTL_MS: u64 = 300_000; // 5 min
 
 // ── Composite handle encoding ─────────────────────────────────────────────────
 pub const STREAM_BITS: u32 = 20;
 pub const STREAM_MASK: u32 = (1 << STREAM_BITS) - 1;
 
-pub fn compose_handle(ep: u32, idx: u32) -> u32 { (ep << STREAM_BITS) | idx }
-pub fn decompose_handle(h: u32) -> (u32, u32) { (h >> STREAM_BITS, h & STREAM_MASK) }
+pub fn compose_handle(ep: u32, idx: u32) -> u32 {
+    (ep << STREAM_BITS) | idx
+}
+pub fn decompose_handle(h: u32) -> (u32, u32) {
+    (h >> STREAM_BITS, h & STREAM_MASK)
+}
 
 // ── Moved types ───────────────────────────────────────────────────────────────
-pub struct SessionEntry { pub conn: iroh::endpoint::Connection }
-pub struct ResponseHeadEntry { pub status: u16, pub headers: Vec<(String, String)> }
+pub struct SessionEntry {
+    pub conn: iroh::endpoint::Connection,
+}
+pub struct ResponseHeadEntry {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+}
 
 // ── Global backpressure config (set at endpoint bind time) ──────────────────
 // These values are process-global; they are set from the first endpoint that
@@ -57,9 +66,18 @@ static BACKPRESSURE_CONFIGURED: std::sync::atomic::AtomicBool =
 /// Configure backpressure parameters.  Only the **first** call takes effect;
 /// subsequent calls are silently ignored so that a second endpoint bind does
 /// not clobber the config of an already-running endpoint.
-pub fn configure_backpressure(channel_capacity: usize, max_chunk_bytes: usize, drain_timeout_ms: u64) {
+pub fn configure_backpressure(
+    channel_capacity: usize,
+    max_chunk_bytes: usize,
+    drain_timeout_ms: u64,
+) {
     if BACKPRESSURE_CONFIGURED
-        .compare_exchange(false, true, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire)
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
         .is_ok()
     {
         CHANNEL_CAPACITY.store(channel_capacity, std::sync::atomic::Ordering::Relaxed);
@@ -80,7 +98,10 @@ pub struct TimestampedEntry<T> {
 }
 impl<T> TimestampedEntry<T> {
     pub(crate) fn new(inner: T) -> Self {
-        Self { inner, created_at: Instant::now() }
+        Self {
+            inner,
+            created_at: Instant::now(),
+        }
     }
 
     fn is_expired(&self, ttl: Duration) -> bool {
@@ -158,6 +179,12 @@ pub struct SlabSet {
     pub next_req_id: AtomicU32,
 }
 
+impl Default for SlabSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SlabSet {
     pub fn new() -> Self {
         Self {
@@ -194,37 +221,65 @@ pub fn alloc_endpoint_idx() -> u32 {
 }
 
 pub fn register_endpoint(ep_idx: u32, slabs: Arc<SlabSet>) {
-    slab_registry().lock().unwrap_or_else(|e| e.into_inner()).insert(ep_idx, slabs);
+    slab_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(ep_idx, slabs);
 }
 
 pub fn unregister_endpoint(ep_idx: u32) {
-    slab_registry().lock().unwrap_or_else(|e| e.into_inner()).remove(&ep_idx);
+    slab_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&ep_idx);
 }
 
 pub(crate) fn get_slabs(ep_idx: u32) -> Option<Arc<SlabSet>> {
-    slab_registry().lock().unwrap_or_else(|e| e.into_inner()).get(&ep_idx).cloned()
+    slab_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&ep_idx)
+        .cloned()
 }
 
 pub(crate) fn global_slabs() -> Arc<SlabSet> {
     let mut reg = slab_registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.entry(0).or_insert_with(|| Arc::new(SlabSet::new())).clone()
+    reg.entry(0)
+        .or_insert_with(|| Arc::new(SlabSet::new()))
+        .clone()
 }
 
 // ── Public handle operations ──────────────────────────────────────────────────
 
 /// Insert a `BodyReader` into the endpoint's slab and return its composite handle.
 pub fn insert_reader(ep_idx: u32, reader: BodyReader) -> u32 {
-    let slabs = if ep_idx == 0 { global_slabs() } else { get_slabs(ep_idx).expect("endpoint not registered") };
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
+        get_slabs(ep_idx).expect("endpoint not registered")
+    };
     let key = slabs.reader_next.fetch_add(1, Ordering::Relaxed);
-    slabs.reader.lock().unwrap_or_else(|e| e.into_inner()).insert(key, TimestampedEntry::new(reader));
+    slabs
+        .reader
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, TimestampedEntry::new(reader));
     compose_handle(ep_idx, key)
 }
 
 /// Insert a `BodyWriter` into the endpoint's slab and return its composite handle.
 pub fn insert_writer(ep_idx: u32, writer: BodyWriter) -> u32 {
-    let slabs = if ep_idx == 0 { global_slabs() } else { get_slabs(ep_idx).expect("endpoint not registered") };
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
+        get_slabs(ep_idx).expect("endpoint not registered")
+    };
     let key = slabs.writer_next.fetch_add(1, Ordering::Relaxed);
-    slabs.writer.lock().unwrap_or_else(|e| e.into_inner()).insert(key, TimestampedEntry::new(writer));
+    slabs
+        .writer
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, TimestampedEntry::new(writer));
     compose_handle(ep_idx, key)
 }
 
@@ -240,25 +295,49 @@ pub fn alloc_body_writer() -> (u32, BodyReader) {
 
 /// Insert a `SessionEntry` into the endpoint's slab and return its composite handle.
 pub(crate) fn insert_session_for(ep_idx: u32, entry: SessionEntry) -> u32 {
-    let slabs = if ep_idx == 0 { global_slabs() } else { get_slabs(ep_idx).expect("endpoint not registered") };
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
+        get_slabs(ep_idx).expect("endpoint not registered")
+    };
     let key = slabs.session_next.fetch_add(1, Ordering::Relaxed);
-    slabs.session.lock().unwrap_or_else(|e| e.into_inner()).insert(key, entry);
+    slabs
+        .session
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, entry);
     compose_handle(ep_idx, key)
 }
 
 /// Store the reader side of a newly allocated writer channel.
 pub fn store_pending_reader(writer_handle: u32, reader: BodyReader) {
     let (ep_idx, idx) = decompose_handle(writer_handle);
-    let slabs = if ep_idx == 0 { global_slabs() } else { get_slabs(ep_idx).expect("endpoint not registered") };
-    slabs.pending_readers.lock().unwrap_or_else(|e| e.into_inner()).insert(idx, reader);
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
+        get_slabs(ep_idx).expect("endpoint not registered")
+    };
+    slabs
+        .pending_readers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(idx, reader);
 }
 
 /// Claim the reader that was paired with `writer_handle`.
 /// Returns `None` if already claimed or never stored.
 pub fn claim_pending_reader(writer_handle: u32) -> Option<BodyReader> {
     let (ep_idx, idx) = decompose_handle(writer_handle);
-    let slabs = if ep_idx == 0 { global_slabs() } else { get_slabs(ep_idx)? };
-    let result = slabs.pending_readers.lock().unwrap_or_else(|e| e.into_inner()).remove(&idx);
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
+        get_slabs(ep_idx)?
+    };
+    let result = slabs
+        .pending_readers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&idx);
     result
 }
 
@@ -273,7 +352,9 @@ pub async fn next_chunk(handle: u32) -> Result<Option<Bytes>, String> {
     let (ep_idx, idx) = decompose_handle(handle);
     // Clone the Arc — allows awaiting without holding the slab mutex.
     let rx_arc = {
-        let slabs = if ep_idx == 0 { global_slabs() } else {
+        let slabs = if ep_idx == 0 {
+            global_slabs()
+        } else {
             get_slabs(ep_idx).ok_or_else(|| format!("invalid reader handle: {handle}"))?
         };
         let slab = slabs.reader.lock().unwrap_or_else(|e| e.into_inner());
@@ -288,10 +369,19 @@ pub async fn next_chunk(handle: u32) -> Result<Option<Bytes>, String> {
 
     // Clean up on EOF so the map entry is removed promptly.
     if chunk.is_none() {
-        let slabs = if ep_idx == 0 { global_slabs() } else {
-            match get_slabs(ep_idx) { Some(s) => s, None => return Ok(None) }
+        let slabs = if ep_idx == 0 {
+            global_slabs()
+        } else {
+            match get_slabs(ep_idx) {
+                Some(s) => s,
+                None => return Ok(None),
+            }
         };
-        slabs.reader.lock().unwrap_or_else(|e| e.into_inner()).remove(&idx);
+        slabs
+            .reader
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&idx);
     }
 
     Ok(chunk)
@@ -305,7 +395,9 @@ pub async fn send_chunk(handle: u32, chunk: Bytes) -> Result<(), String> {
     let (ep_idx, idx) = decompose_handle(handle);
     // Clone the Sender (cheap) and release the lock before awaiting.
     let tx = {
-        let slabs = if ep_idx == 0 { global_slabs() } else {
+        let slabs = if ep_idx == 0 {
+            global_slabs()
+        } else {
             get_slabs(ep_idx).ok_or_else(|| format!("invalid writer handle: {handle}"))?
         };
         let slab = slabs.writer.lock().unwrap_or_else(|e| e.into_inner());
@@ -341,7 +433,9 @@ pub async fn send_chunk(handle: u32, chunk: Bytes) -> Result<(), String> {
 /// The associated `BodyReader` will return `None` on its next poll.
 pub fn finish_body(handle: u32) -> Result<(), String> {
     let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = if ep_idx == 0 { global_slabs() } else {
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
         get_slabs(ep_idx).ok_or_else(|| format!("invalid writer handle: {handle}"))?
     };
     let mut slab = slabs.writer.lock().unwrap_or_else(|e| e.into_inner());
@@ -358,27 +452,52 @@ pub fn finish_body(handle: u32) -> Result<(), String> {
 /// to return an error and signalling EOF on a cancelled fetch.
 pub fn cancel_reader(handle: u32) {
     let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = if ep_idx == 0 { global_slabs() } else {
-        match get_slabs(ep_idx) { Some(s) => s, None => return }
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
+        match get_slabs(ep_idx) {
+            Some(s) => s,
+            None => return,
+        }
     };
-    slabs.reader.lock().unwrap_or_else(|e| e.into_inner()).remove(&idx);
+    slabs
+        .reader
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&idx);
 }
 
 // ── §4 Trailer operations ──────────────────────────────────────────────────────
 
 /// Insert a trailer oneshot **sender** into the endpoint's slab and return its composite handle.
 pub(crate) fn insert_trailer_sender(ep_idx: u32, tx: TrailerTx) -> u32 {
-    let slabs = if ep_idx == 0 { global_slabs() } else { get_slabs(ep_idx).expect("endpoint not registered") };
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
+        get_slabs(ep_idx).expect("endpoint not registered")
+    };
     let key = slabs.trailer_tx_next.fetch_add(1, Ordering::Relaxed);
-    slabs.trailer_tx.lock().unwrap_or_else(|e| e.into_inner()).insert(key, TimestampedEntry::new(tx));
+    slabs
+        .trailer_tx
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, TimestampedEntry::new(tx));
     compose_handle(ep_idx, key)
 }
 
 /// Insert a trailer oneshot **receiver** into the endpoint's slab and return its composite handle.
 pub(crate) fn insert_trailer_receiver(ep_idx: u32, rx: TrailerRx) -> u32 {
-    let slabs = if ep_idx == 0 { global_slabs() } else { get_slabs(ep_idx).expect("endpoint not registered") };
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
+        get_slabs(ep_idx).expect("endpoint not registered")
+    };
     let key = slabs.trailer_rx_next.fetch_add(1, Ordering::Relaxed);
-    slabs.trailer_rx.lock().unwrap_or_else(|e| e.into_inner()).insert(key, TimestampedEntry::new(rx));
+    slabs
+        .trailer_rx
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, TimestampedEntry::new(rx));
     compose_handle(ep_idx, key)
 }
 
@@ -388,16 +507,27 @@ pub(crate) fn insert_trailer_receiver(ep_idx: u32, rx: TrailerRx) -> u32 {
 /// which `pump_body_to_stream` handles via `unwrap_or_default()`.
 pub(crate) fn remove_trailer_sender(handle: u32) {
     let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = if ep_idx == 0 { global_slabs() } else {
-        match get_slabs(ep_idx) { Some(s) => s, None => return }
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
+        match get_slabs(ep_idx) {
+            Some(s) => s,
+            None => return,
+        }
     };
-    slabs.trailer_tx.lock().unwrap_or_else(|e| e.into_inner()).remove(&idx);
+    slabs
+        .trailer_tx
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&idx);
 }
 
 /// Deliver trailers from the JS side to the waiting Rust pump task.
 pub fn send_trailers(handle: u32, trailers: Vec<(String, String)>) -> Result<(), String> {
     let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = if ep_idx == 0 { global_slabs() } else {
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
         get_slabs(ep_idx).ok_or_else(|| format!("invalid trailer sender handle: {handle}"))?
     };
     let tx = {
@@ -406,13 +536,16 @@ pub fn send_trailers(handle: u32, trailers: Vec<(String, String)>) -> Result<(),
             .ok_or_else(|| format!("invalid trailer sender handle: {handle}"))?
             .inner
     };
-    tx.send(trailers).map_err(|_| "trailer receiver dropped".to_string())
+    tx.send(trailers)
+        .map_err(|_| "trailer receiver dropped".to_string())
 }
 
 /// Await and retrieve trailers produced by the Rust pump task.
 pub async fn next_trailer(handle: u32) -> Result<Option<Vec<(String, String)>>, String> {
     let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = if ep_idx == 0 { global_slabs() } else {
+    let slabs = if ep_idx == 0 {
+        global_slabs()
+    } else {
         get_slabs(ep_idx).ok_or_else(|| format!("invalid trailer receiver handle: {handle}"))?
     };
     let rx = {
@@ -430,8 +563,7 @@ pub async fn next_trailer(handle: u32) -> Result<Option<Vec<(String, String)>>, 
 // ── Slab TTL sweep ────────────────────────────────────────────────────────────
 
 /// Ensures at most one slab sweep task is running process-wide.
-static SWEEP_STARTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static SWEEP_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Start a background task that sweeps expired slab entries every 60 seconds.
 /// Pass `ttl_ms = 0` to disable sweeping.
@@ -443,7 +575,12 @@ pub fn start_slab_sweep(ttl_ms: u64) {
         return;
     }
     if SWEEP_STARTED
-        .compare_exchange(false, true, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire)
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
         .is_err()
     {
         return; // already running
@@ -461,8 +598,11 @@ pub fn start_slab_sweep(ttl_ms: u64) {
 
 fn sweep_all(ttl: Duration) {
     let registry_snapshot: Vec<Arc<SlabSet>> = slab_registry()
-        .lock().unwrap_or_else(|e| e.into_inner())
-        .values().cloned().collect();
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .cloned()
+        .collect();
     for slabs in registry_snapshot {
         sweep_reader_slab(&slabs, ttl);
         sweep_writer_slab(&slabs, ttl);
@@ -473,49 +613,73 @@ fn sweep_all(ttl: Duration) {
 
 fn sweep_reader_slab(slabs: &SlabSet, ttl: Duration) {
     let mut s = slabs.reader.lock().unwrap_or_else(|e| e.into_inner());
-    let expired: Vec<u32> = s.iter()
+    let expired: Vec<u32> = s
+        .iter()
         .filter(|(_, e)| e.is_expired(ttl))
         .map(|(k, _)| *k)
         .collect();
     if !expired.is_empty() {
-        for key in &expired { s.remove(key); }
-        tracing::debug!("[iroh-http] swept {} expired reader entries (ttl={ttl:?})", expired.len());
+        for key in &expired {
+            s.remove(key);
+        }
+        tracing::debug!(
+            "[iroh-http] swept {} expired reader entries (ttl={ttl:?})",
+            expired.len()
+        );
     }
 }
 
 fn sweep_writer_slab(slabs: &SlabSet, ttl: Duration) {
     let mut s = slabs.writer.lock().unwrap_or_else(|e| e.into_inner());
-    let expired: Vec<u32> = s.iter()
+    let expired: Vec<u32> = s
+        .iter()
         .filter(|(_, e)| e.is_expired(ttl))
         .map(|(k, _)| *k)
         .collect();
     if !expired.is_empty() {
-        for key in &expired { s.remove(key); }
-        tracing::debug!("[iroh-http] swept {} expired writer entries (ttl={ttl:?})", expired.len());
+        for key in &expired {
+            s.remove(key);
+        }
+        tracing::debug!(
+            "[iroh-http] swept {} expired writer entries (ttl={ttl:?})",
+            expired.len()
+        );
     }
 }
 
 fn sweep_trailer_tx_slab(slabs: &SlabSet, ttl: Duration) {
     let mut s = slabs.trailer_tx.lock().unwrap_or_else(|e| e.into_inner());
-    let expired: Vec<u32> = s.iter()
+    let expired: Vec<u32> = s
+        .iter()
         .filter(|(_, e)| e.is_expired(ttl))
         .map(|(k, _)| *k)
         .collect();
     if !expired.is_empty() {
-        for key in &expired { s.remove(key); }
-        tracing::debug!("[iroh-http] swept {} expired trailer_tx entries (ttl={ttl:?})", expired.len());
+        for key in &expired {
+            s.remove(key);
+        }
+        tracing::debug!(
+            "[iroh-http] swept {} expired trailer_tx entries (ttl={ttl:?})",
+            expired.len()
+        );
     }
 }
 
 fn sweep_trailer_rx_slab(slabs: &SlabSet, ttl: Duration) {
     let mut s = slabs.trailer_rx.lock().unwrap_or_else(|e| e.into_inner());
-    let expired: Vec<u32> = s.iter()
+    let expired: Vec<u32> = s
+        .iter()
         .filter(|(_, e)| e.is_expired(ttl))
         .map(|(k, _)| *k)
         .collect();
     if !expired.is_empty() {
-        for key in &expired { s.remove(key); }
-        tracing::debug!("[iroh-http] swept {} expired trailer_rx entries (ttl={ttl:?})", expired.len());
+        for key in &expired {
+            s.remove(key);
+        }
+        tracing::debug!(
+            "[iroh-http] swept {} expired trailer_rx entries (ttl={ttl:?})",
+            expired.len()
+        );
     }
 }
 
@@ -532,15 +696,10 @@ pub(crate) async fn pump_quic_recv_to_body(
     mut recv: iroh::endpoint::RecvStream,
     writer: BodyWriter,
 ) {
-    loop {
-        match recv.read_chunk(PUMP_READ_BUF).await {
-            Ok(Some(chunk)) => {
-                let bytes = Bytes::copy_from_slice(&chunk.bytes);
-                if writer.send_chunk(bytes).await.is_err() {
-                    break;
-                }
-            }
-            _ => break,
+    while let Ok(Some(chunk)) = recv.read_chunk(PUMP_READ_BUF).await {
+        let bytes = Bytes::copy_from_slice(&chunk.bytes);
+        if writer.send_chunk(bytes).await.is_err() {
+            break;
         }
     }
     // writer drops → BodyReader sees EOF.
@@ -596,9 +755,10 @@ mod tests {
         while let Some(chunk) = reader.next_chunk().await {
             collected.push(chunk);
         }
-        assert_eq!(collected, vec![
-            Bytes::from("a"), Bytes::from("b"), Bytes::from("c"),
-        ]);
+        assert_eq!(
+            collected,
+            vec![Bytes::from("a"), Bytes::from("b"), Bytes::from("c"),]
+        );
     }
 
     #[tokio::test]
@@ -711,9 +871,7 @@ mod tests {
         let tx_handle = insert_trailer_sender(0, tx);
         let rx_handle = insert_trailer_receiver(0, rx);
 
-        send_trailers(tx_handle, vec![
-            ("x-checksum".into(), "abc".into()),
-        ]).unwrap();
+        send_trailers(tx_handle, vec![("x-checksum".into(), "abc".into())]).unwrap();
 
         let result = next_trailer(rx_handle).await.unwrap();
         let trailers = result.unwrap();
@@ -725,14 +883,18 @@ mod tests {
     fn send_trailers_invalid_handle() {
         let result = send_trailers(999999, vec![]);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid trailer sender handle"));
+        assert!(result
+            .unwrap_err()
+            .contains("invalid trailer sender handle"));
     }
 
     #[tokio::test]
     async fn next_trailer_invalid_handle() {
         let result = next_trailer(999999).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid trailer receiver handle"));
+        assert!(result
+            .unwrap_err()
+            .contains("invalid trailer receiver handle"));
     }
 
     #[tokio::test]

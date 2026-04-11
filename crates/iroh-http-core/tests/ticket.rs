@@ -1,6 +1,6 @@
 //! Node ticket integration tests.
 
-use iroh_http_core::{NodeAddrInfo, parse_node_addr};
+use iroh_http_core::{parse_node_addr, NodeAddrInfo};
 
 #[test]
 fn parse_node_addr_accepts_bare_node_id() {

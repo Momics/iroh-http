@@ -10,8 +10,8 @@ use iroh_http_core::{
     parse_direct_addrs,
     server::respond,
     stream::{
-        alloc_body_writer, cancel_reader, claim_pending_reader, finish_body,
-        next_chunk, next_trailer, send_chunk, send_trailers, store_pending_reader,
+        alloc_body_writer, cancel_reader, claim_pending_reader, finish_body, next_chunk,
+        next_trailer, send_chunk, send_trailers, store_pending_reader,
     },
     RequestPayload,
 };
@@ -19,12 +19,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
 
+use crate::serve_registry;
 #[cfg(feature = "discovery")]
-use iroh_http_discovery;#[cfg(feature = "discovery")]
+use iroh_http_discovery as _;
+#[cfg(feature = "discovery")]
 use std::sync::Arc;
 #[cfg(feature = "discovery")]
 use tokio::sync::Mutex as TokioMutex;
-use crate::serve_registry;
 
 // ── Endpoint slab (replicates the napi / tauri pattern) ──────────────────────
 
@@ -171,7 +172,12 @@ async fn create_endpoint(p: Value) -> Value {
             };
             match <[u8; 32]>::try_from(decoded) {
                 Ok(arr) => Some(arr),
-                Err(v) => return err(format!("secret key must be exactly 32 bytes, got {}", v.len())),
+                Err(v) => {
+                    return err(format!(
+                        "secret key must be exactly 32 bytes, got {}",
+                        v.len()
+                    ))
+                }
             }
         }
     };
@@ -203,7 +209,9 @@ async fn create_endpoint(p: Value) -> Value {
         max_request_body_bytes: args.max_request_body_bytes,
         drain_timeout_secs: None,
         #[cfg(feature = "compression")]
-        compression: if args.compression_level.is_some() || args.compression_min_body_bytes.is_some() {
+        compression: if args.compression_level.is_some()
+            || args.compression_min_body_bytes.is_some()
+        {
             Some(iroh_http_core::CompressionOptions {
                 level: args.compression_level.unwrap_or(3),
                 min_body_bytes: args.compression_min_body_bytes.unwrap_or(512),
@@ -292,9 +300,10 @@ async fn peer_info_dispatch(p: Value) -> Value {
     };
     match get_endpoint(handle) {
         None => err(format!("invalid endpoint handle: {handle}")),
-        Some(ep) => {
-            ok(ep.peer_info(node_id).await.map(|info| json!({ "id": info.id, "addrs": info.addrs })))
-        }
+        Some(ep) => ok(ep
+            .peer_info(node_id)
+            .await
+            .map(|info| json!({ "id": info.id, "addrs": info.addrs }))),
     }
 }
 
@@ -309,9 +318,7 @@ async fn peer_stats_dispatch(p: Value) -> Value {
     };
     match get_endpoint(handle) {
         None => err(format!("invalid endpoint handle: {handle}")),
-        Some(ep) => {
-            ok(ep.peer_stats(node_id).await)
-        }
+        Some(ep) => ok(ep.peer_stats(node_id).await),
     }
 }
 
@@ -412,7 +419,13 @@ fn send_trailers_dispatch(p: Value) -> Value {
     };
     let pairs: Vec<(String, String)> = raw
         .into_iter()
-        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+        .filter_map(|p| {
+            if p.len() == 2 {
+                Some((p[0].clone(), p[1].clone()))
+            } else {
+                None
+            }
+        })
         .collect();
     match send_trailers(handle, pairs) {
         Ok(()) => ok(json!({})),
@@ -447,17 +460,35 @@ async fn raw_fetch(p: Value) -> Value {
     let pairs: Vec<(String, String)> = args
         .headers
         .into_iter()
-        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+        .filter_map(|p| {
+            if p.len() == 2 {
+                Some((p[0].clone(), p[1].clone()))
+            } else {
+                None
+            }
+        })
         .collect();
     let reader = args.req_body_handle.and_then(claim_pending_reader);
     let addrs = match parse_direct_addrs(&args.direct_addrs) {
         Ok(a) => a,
         Err(e) => return err(e),
     };
-    match iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, reader, args.fetch_token, addrs.as_deref()).await {
+    match iroh_http_core::fetch(
+        &ep,
+        &args.node_id,
+        &args.url,
+        &args.method,
+        &pairs,
+        reader,
+        args.fetch_token,
+        addrs.as_deref(),
+    )
+    .await
+    {
         Err(e) => err(e),
         Ok(res) => {
-            let headers: Vec<Vec<String>> = res.headers.into_iter().map(|(k, v)| vec![k, v]).collect();
+            let headers: Vec<Vec<String>> =
+                res.headers.into_iter().map(|(k, v)| vec![k, v]).collect();
             ok(json!({
                 "status": res.status,
                 "headers": headers,
@@ -492,7 +523,13 @@ async fn raw_connect_dispatch(p: Value) -> Value {
     let pairs: Vec<(String, String)> = args
         .headers
         .into_iter()
-        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+        .filter_map(|p| {
+            if p.len() == 2 {
+                Some((p[0].clone(), p[1].clone()))
+            } else {
+                None
+            }
+        })
         .collect();
     match iroh_http_core::raw_connect(&ep, &args.node_id, &args.path, &pairs).await {
         Err(e) => err(e),
@@ -542,8 +579,11 @@ async fn serve_start(p: Value) -> Value {
                 // rather than stalling the accept loop or growing memory unboundedly.
                 if tx.try_send(event).is_err() {
                     tracing::warn!("iroh-http-deno: serve queue full — dropping request with 503");
-                    let _ = respond(payload.req_handle, 503,
-                        vec![("content-length".to_string(), "0".to_string())]);
+                    let _ = respond(
+                        payload.req_handle,
+                        503,
+                        vec![("content-length".to_string(), "0".to_string())],
+                    );
                 }
             });
         },
@@ -595,7 +635,13 @@ fn respond_dispatch(p: Value) -> Value {
     let headers: Vec<(String, String)> = args
         .headers
         .into_iter()
-        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+        .filter_map(|p| {
+            if p.len() == 2 {
+                Some((p[0].clone(), p[1].clone()))
+            } else {
+                None
+            }
+        })
         .collect();
     match respond(args.req_handle, args.status, headers) {
         Ok(()) => ok(json!({})),
@@ -663,7 +709,11 @@ fn public_key_verify_dispatch(p: Value) -> Value {
         },
         Err(e) => return err(format!("base64 decode sig: {e}")),
     };
-    ok(json!(iroh_http_core::public_key_verify(&key_bytes, &data_bytes, &sig_bytes)))
+    ok(json!(iroh_http_core::public_key_verify(
+        &key_bytes,
+        &data_bytes,
+        &sig_bytes
+    )))
 }
 
 fn generate_secret_key_dispatch() -> Value {
@@ -705,7 +755,10 @@ async fn mdns_browse_dispatch(p: Value) -> Value {
         match iroh_http_discovery::start_browse(ep.raw(), service_name).await {
             Err(e) => err(e),
             Ok(session) => {
-                let h = browse_slab().lock().unwrap().insert(Arc::new(TokioMutex::new(session))) as u32;
+                let h = browse_slab()
+                    .lock()
+                    .unwrap()
+                    .insert(Arc::new(TokioMutex::new(session))) as u32;
                 ok(json!(h))
             }
         }
@@ -859,7 +912,11 @@ fn session_close_dispatch(p: Value) -> Value {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    match iroh_http_core::session_close(args.session_handle, args.close_code.unwrap_or(0), args.reason.as_deref().unwrap_or("")) {
+    match iroh_http_core::session_close(
+        args.session_handle,
+        args.close_code.unwrap_or(0),
+        args.reason.as_deref().unwrap_or(""),
+    ) {
         Err(e) => err(e),
         Ok(()) => ok(json!({})),
     }

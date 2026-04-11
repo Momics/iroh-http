@@ -2,12 +2,16 @@
 //!
 //! Exports `create_node`, `IrohNode`, `IrohRequest`, `IrohResponse` via PyO3.
 
+// The `?` operator always applies `From::from` even when types already match.
+// In PyO3 async functions that pattern causes spurious `useless_conversion` hits.
+#![allow(clippy::useless_conversion)]
+
 use std::sync::Arc;
 
 use bytes::Bytes;
 use iroh_http_core::{
     server::respond,
-    stream::{finish_body, next_chunk, send_chunk, make_body_channel},
+    stream::{finish_body, make_body_channel, next_chunk, send_chunk},
     IrohEndpoint, NodeOptions,
 };
 use pyo3::{
@@ -27,25 +31,31 @@ fn py_err(e: impl std::fmt::Display) -> PyErr {
 /// Response returned by `IrohNode.fetch`.
 #[pyclass]
 struct IrohResponse {
-    status:      u16,
-    headers:     Vec<(String, String)>,
+    status: u16,
+    headers: Vec<(String, String)>,
     body_handle: u32,
-    url:         String,
+    url: String,
 }
 
 #[pymethods]
 impl IrohResponse {
     /// HTTP status code.
     #[getter]
-    fn status(&self) -> u16 { self.status }
+    fn status(&self) -> u16 {
+        self.status
+    }
 
     /// Response headers as a list of `(name, value)` tuples.
     #[getter]
-    fn headers(&self) -> Vec<(String, String)> { self.headers.clone() }
+    fn headers(&self) -> Vec<(String, String)> {
+        self.headers.clone()
+    }
 
     /// Final URL of the responding peer.
     #[getter]
-    fn url(&self) -> &str { &self.url }
+    fn url(&self) -> &str {
+        &self.url
+    }
 
     /// Read the full response body and return it as `bytes`.
     fn bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -58,9 +68,7 @@ impl IrohResponse {
                     Some(b) => buf.extend_from_slice(&b),
                 }
             }
-            Python::with_gil(|py| {
-                Ok(PyBytes::new_bound(py, &buf).into_any().unbind())
-            })
+            Python::with_gil(|py| Ok(PyBytes::new_bound(py, &buf).into_any().unbind()))
         })
     }
 
@@ -75,8 +83,7 @@ impl IrohResponse {
                     Some(b) => buf.extend_from_slice(&b),
                 }
             }
-            String::from_utf8(buf)
-                .map_err(|e| py_err(format!("UTF-8 decode error: {e}")))
+            String::from_utf8(buf).map_err(|e| py_err(format!("UTF-8 decode error: {e}")))
         })
     }
 
@@ -91,8 +98,8 @@ impl IrohResponse {
                     Some(b) => buf.extend_from_slice(&b),
                 }
             }
-            let text = String::from_utf8(buf)
-                .map_err(|e| py_err(format!("UTF-8 decode error: {e}")))?;
+            let text =
+                String::from_utf8(buf).map_err(|e| py_err(format!("UTF-8 decode error: {e}")))?;
             Python::with_gil(|py| {
                 let json_mod = py.import_bound("json")?;
                 Ok(json_mod.call_method1("loads", (text,))?.into_any().unbind())
@@ -115,9 +122,9 @@ impl IrohResponse {
 #[pyclass(name = "HandlerResponse")]
 #[derive(Clone)]
 struct HandlerResponse {
-    status:  u16,
+    status: u16,
     headers: Vec<(String, String)>,
-    body:    Vec<u8>,
+    body: Vec<u8>,
 }
 
 #[pymethods]
@@ -130,56 +137,64 @@ impl HandlerResponse {
     ///     headers: List of ``(name, value)`` header tuples (default: []).
     #[new]
     #[pyo3(signature = (status=200, body=None, headers=None))]
-    fn new(
-        status: u16,
-        body: Option<Vec<u8>>,
-        headers: Option<Vec<(String, String)>>,
-    ) -> Self {
+    fn new(status: u16, body: Option<Vec<u8>>, headers: Option<Vec<(String, String)>>) -> Self {
         Self {
             status,
             headers: headers.unwrap_or_default(),
-            body:    body.unwrap_or_default(),
+            body: body.unwrap_or_default(),
         }
     }
 
     /// HTTP status code.
     #[getter]
-    fn status(&self) -> u16 { self.status }
+    fn status(&self) -> u16 {
+        self.status
+    }
 
     /// Response headers as a list of `(name, value)` tuples.
     #[getter]
-    fn headers(&self) -> Vec<(String, String)> { self.headers.clone() }
+    fn headers(&self) -> Vec<(String, String)> {
+        self.headers.clone()
+    }
 
     /// Response body bytes.
     #[getter]
-    fn body(&self) -> Vec<u8> { self.body.clone() }
+    fn body(&self) -> Vec<u8> {
+        self.body.clone()
+    }
 }
-
-
 
 /// Incoming request passed to the `serve` handler.
 #[pyclass]
 struct IrohRequest {
     pub req_body_handle: u32,
-    pub method:          String,
-    pub url:             String,
-    pub headers:         Vec<(String, String)>,
-    pub remote_node_id:  String,
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub remote_node_id: String,
 }
 
 #[pymethods]
 impl IrohRequest {
     #[getter]
-    fn method(&self) -> &str { &self.method }
+    fn method(&self) -> &str {
+        &self.method
+    }
 
     #[getter]
-    fn url(&self) -> &str { &self.url }
+    fn url(&self) -> &str {
+        &self.url
+    }
 
     #[getter]
-    fn remote_node_id(&self) -> &str { &self.remote_node_id }
+    fn remote_node_id(&self) -> &str {
+        &self.remote_node_id
+    }
 
     #[getter]
-    fn headers(&self) -> Vec<(String, String)> { self.headers.clone() }
+    fn headers(&self) -> Vec<(String, String)> {
+        self.headers.clone()
+    }
 
     /// Read and return the full request body as `bytes`.
     fn body<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -192,9 +207,7 @@ impl IrohRequest {
                     Some(b) => buf.extend_from_slice(&b),
                 }
             }
-            Python::with_gil(|py| {
-                Ok(PyBytes::new_bound(py, &buf).into_any().unbind())
-            })
+            Python::with_gil(|py| Ok(PyBytes::new_bound(py, &buf).into_any().unbind()))
         })
     }
 }
@@ -227,7 +240,9 @@ impl IrohUniStream {
     fn write<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
         let handle = self.write_handle;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            send_chunk(handle, Bytes::from(data)).await.map_err(py_err)?;
+            send_chunk(handle, Bytes::from(data))
+                .await
+                .map_err(py_err)?;
             Ok(())
         })
     }
@@ -244,7 +259,9 @@ impl IrohBidiStream {
     fn write<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
         let handle = self.write_handle;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            send_chunk(handle, Bytes::from(data)).await.map_err(py_err)?;
+            send_chunk(handle, Bytes::from(data))
+                .await
+                .map_err(py_err)?;
             Ok(())
         })
     }
@@ -255,9 +272,9 @@ impl IrohBidiStream {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             match next_chunk(handle).await.map_err(py_err)? {
                 None => Ok(Python::with_gil(|py| py.None())),
-                Some(b) => Python::with_gil(|py| {
-                    Ok(PyBytes::new_bound(py, &b).into_any().unbind())
-                }),
+                Some(b) => {
+                    Python::with_gil(|py| Ok(PyBytes::new_bound(py, &b).into_any().unbind()))
+                }
             }
         })
     }
@@ -276,9 +293,9 @@ impl IrohBidiStream {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             match next_chunk(handle).await.map_err(py_err)? {
                 None => Err(pyo3::exceptions::PyStopAsyncIteration::new_err(())),
-                Some(b) => Python::with_gil(|py| {
-                    Ok(PyBytes::new_bound(py, &b).into_any().unbind())
-                }),
+                Some(b) => {
+                    Python::with_gil(|py| Ok(PyBytes::new_bound(py, &b).into_any().unbind()))
+                }
             }
         })
     }
@@ -299,7 +316,9 @@ struct IrohBrowseSession {
 #[cfg(feature = "mdns")]
 #[pymethods]
 impl IrohBrowseSession {
-    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> { slf }
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
 
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let ptr = self as *const IrohBrowseSession as usize;
@@ -368,11 +387,14 @@ impl IrohSession {
     fn recv_datagram<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let handle = self.session_handle;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            match iroh_http_core::session_recv_datagram(handle).await.map_err(py_err)? {
+            match iroh_http_core::session_recv_datagram(handle)
+                .await
+                .map_err(py_err)?
+            {
                 None => Ok(Python::with_gil(|py| py.None())),
-                Some(b) => Python::with_gil(|py| {
-                    Ok(PyBytes::new_bound(py, &b).into_any().unbind())
-                }),
+                Some(b) => {
+                    Python::with_gil(|py| Ok(PyBytes::new_bound(py, &b).into_any().unbind()))
+                }
             }
         })
     }
@@ -385,7 +407,12 @@ impl IrohSession {
 
     /// Close this session with an optional close code and reason.
     #[pyo3(signature = (close_code=0, reason=""))]
-    fn close<'py>(&self, py: Python<'py>, close_code: u32, reason: &str) -> PyResult<Bound<'py, PyAny>> {
+    fn close<'py>(
+        &self,
+        py: Python<'py>,
+        close_code: u32,
+        reason: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let handle = self.session_handle;
         let reason = reason.to_owned();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -400,7 +427,9 @@ impl IrohSession {
     fn ready<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let handle = self.session_handle;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            iroh_http_core::session_ready(handle).await.map_err(py_err)?;
+            iroh_http_core::session_ready(handle)
+                .await
+                .map_err(py_err)?;
             Ok(())
         })
     }
@@ -411,7 +440,9 @@ impl IrohSession {
     fn closed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let handle = self.session_handle;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let info = iroh_http_core::session_closed(handle).await.map_err(py_err)?;
+            let info = iroh_http_core::session_closed(handle)
+                .await
+                .map_err(py_err)?;
             Ok((info.close_code, info.reason))
         })
     }
@@ -422,12 +453,16 @@ impl IrohSession {
     fn next_bidirectional_stream<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let handle = self.session_handle;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            match iroh_http_core::session_next_bidi_stream(handle).await.map_err(py_err)? {
+            match iroh_http_core::session_next_bidi_stream(handle)
+                .await
+                .map_err(py_err)?
+            {
                 Some(duplex) => Ok(Python::with_gil(|py| {
                     IrohBidiStream {
                         read_handle: duplex.read_handle,
                         write_handle: duplex.write_handle,
-                    }.into_py(py)
+                    }
+                    .into_py(py)
                 })),
                 None => Ok(Python::with_gil(|py| py.None())),
             }
@@ -441,12 +476,16 @@ impl IrohSession {
     fn next_unidirectional_stream<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let handle = self.session_handle;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            match iroh_http_core::session_next_uni_stream(handle).await.map_err(py_err)? {
+            match iroh_http_core::session_next_uni_stream(handle)
+                .await
+                .map_err(py_err)?
+            {
                 Some(read_handle) => Ok(Python::with_gil(|py| {
                     IrohBidiStream {
                         read_handle,
                         write_handle: 0,
-                    }.into_py(py)
+                    }
+                    .into_py(py)
                 })),
                 None => Ok(Python::with_gil(|py| py.None())),
             }
@@ -457,8 +496,12 @@ impl IrohSession {
         let handle = slf.session_handle;
         let py = slf.py();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            iroh_http_core::session_ready(handle).await.map_err(py_err)?;
-            Ok(IrohSession { session_handle: handle })
+            iroh_http_core::session_ready(handle)
+                .await
+                .map_err(py_err)?;
+            Ok(IrohSession {
+                session_handle: handle,
+            })
         })
     }
 
@@ -519,7 +562,9 @@ impl IrohNode {
             let handle = iroh_http_core::session_connect(&ep, &peer_id, addrs.as_deref())
                 .await
                 .map_err(py_err)?;
-            Ok(IrohSession { session_handle: handle })
+            Ok(IrohSession {
+                session_handle: handle,
+            })
         })
     }
 
@@ -528,6 +573,7 @@ impl IrohNode {
     /// `peer_id` is the base32-encoded public key of the target node.
     /// Returns an `IrohResponse` coroutine.
     #[pyo3(signature = (peer_id, url, method="GET", headers=None, body=None, direct_addrs=None))]
+    #[allow(clippy::too_many_arguments)]
     fn fetch<'py>(
         &self,
         py: Python<'py>,
@@ -538,8 +584,8 @@ impl IrohNode {
         body: Option<Vec<u8>>,
         direct_addrs: Option<Vec<String>>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let ep      = self.ep.clone();
-        let method  = method.to_owned();
+        let ep = self.ep.clone();
+        let method = method.to_owned();
         let headers = headers.unwrap_or_default();
 
         // Wire up the optional body through a channel so the core fetch can
@@ -561,14 +607,23 @@ impl IrohNode {
                     .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
                     .collect()
             });
-            let res = iroh_http_core::fetch(&ep, &peer_id, &url, &method, &headers, body_reader, None, addrs.as_deref())
-                .await
-                .map_err(py_err)?;
+            let res = iroh_http_core::fetch(
+                &ep,
+                &peer_id,
+                &url,
+                &method,
+                &headers,
+                body_reader,
+                None,
+                addrs.as_deref(),
+            )
+            .await
+            .map_err(py_err)?;
             Ok(IrohResponse {
-                status:      res.status,
-                headers:     res.headers,
+                status: res.status,
+                headers: res.headers,
                 body_handle: res.body_handle,
-                url:         res.url,
+                url: res.url,
             })
         })
     }
@@ -580,24 +635,20 @@ impl IrohNode {
     /// dict with keys `status` (int), `headers` (list of ``(name, value)``
     /// tuples), and `body` (bytes).
     fn serve(&self, _py: Python<'_>, handler: PyObject) -> PyResult<()> {
-        let ep      = self.ep.clone();
+        let ep = self.ep.clone();
         let handler = Arc::new(handler);
 
         // Use an mpsc channel so the synchronous `on_request` callback can
         // hand payloads off to an async polling loop without blocking.
         let (tx, mut rx) = tokio::sync::mpsc::channel::<iroh_http_core::RequestPayload>(64);
 
-        let handle = iroh_http_core::serve(
-            ep.clone(),
-            ep.serve_options(),
-            move |payload| {
-                let tx = tx.clone();
-                // `on_request` is synchronous; spawn to avoid blocking the accept task.
-                tokio::spawn(async move {
-                    let _ = tx.send(payload).await;
-                });
-            },
-        );
+        let handle = iroh_http_core::serve(ep.clone(), ep.serve_options(), move |payload| {
+            let tx = tx.clone();
+            // `on_request` is synchronous; spawn to avoid blocking the accept task.
+            tokio::spawn(async move {
+                let _ = tx.send(payload).await;
+            });
+        });
         ep.set_serve_handle(handle);
 
         // Polling task: receives each payload, calls the Python handler, sends response.
@@ -649,7 +700,10 @@ impl IrohNode {
     fn peer_info<'py>(&self, py: Python<'py>, node_id: String) -> PyResult<Bound<'py, PyAny>> {
         let ep = self.ep.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(ep.peer_info(&node_id).await.map(|info| (info.id, info.addrs)))
+            Ok(ep
+                .peer_info(&node_id)
+                .await
+                .map(|info| (info.id, info.addrs)))
         })
     }
 
@@ -660,7 +714,9 @@ impl IrohNode {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let stats = ep.peer_stats(&node_id).await;
             Ok(stats.map(|s| {
-                let paths: Vec<(bool, String, bool)> = s.paths.into_iter()
+                let paths: Vec<(bool, String, bool)> = s
+                    .paths
+                    .into_iter()
                     .map(|p| (p.relay, p.addr, p.active))
                     .collect();
                 (s.relay, s.relay_url, paths)
@@ -686,7 +742,9 @@ impl IrohNode {
                 let session = iroh_http_discovery::start_browse(ep.raw(), &svc)
                     .await
                     .map_err(py_err)?;
-                Ok(IrohBrowseSession { inner: tokio::sync::Mutex::new(session) })
+                Ok(IrohBrowseSession {
+                    inner: tokio::sync::Mutex::new(session),
+                })
             });
         }
         #[cfg(not(feature = "mdns"))]
@@ -720,9 +778,7 @@ impl IrohNode {
     fn __aenter__<'py>(slf: PyRef<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
         let py = slf.py();
         let ep = slf.ep.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(IrohNode { ep })
-        })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(IrohNode { ep }) })
     }
 
     fn __aexit__<'py>(
@@ -741,20 +797,20 @@ impl IrohNode {
 }
 
 async fn handle_request(handler: Arc<PyObject>, payload: iroh_http_core::RequestPayload) {
-    let req_handle    = payload.req_handle;
+    let req_handle = payload.req_handle;
     let res_body_handle = payload.res_body_handle;
 
     // Build the IrohRequest and call the Python handler to get a coroutine.
     let fut = Python::with_gil(|py| {
         let ireq = IrohRequest {
             req_body_handle: payload.req_body_handle,
-            method:          payload.method.clone(),
-            url:             payload.url.clone(),
-            headers:         payload.headers.clone(),
-            remote_node_id:  payload.remote_node_id.clone(),
+            method: payload.method.clone(),
+            url: payload.url.clone(),
+            headers: payload.headers.clone(),
+            remote_node_id: payload.remote_node_id.clone(),
         };
         let py_req = Bound::new(py, ireq).map_err(py_err)?;
-        let coro   = handler.call1(py, (py_req,)).map_err(|e| py_err(e))?;
+        let coro = handler.call1(py, (py_req,)).map_err(py_err)?;
         pyo3_async_runtimes::tokio::into_future(coro.into_bound(py))
     });
 
@@ -769,7 +825,8 @@ async fn handle_request(handler: Arc<PyObject>, payload: iroh_http_core::Request
 
     let py_result = fut.await;
 
-    let outcome = Python::with_gil(|py| -> PyResult<(u16, Vec<(String, String)>, Vec<u8>)> {
+    type HandlerOutcome = (u16, Vec<(String, String)>, Vec<u8>);
+    let outcome = Python::with_gil(|py| -> PyResult<HandlerOutcome> {
         let obj = py_result?;
         let bound = obj.bind(py);
 
@@ -848,6 +905,7 @@ fn send_500(req_handle: u32, res_body_handle: u32) {
 ///   request_timeout          — Per-request timeout in milliseconds (default 60000, 0 = disabled).
 ///   max_request_body_bytes   — Reject request bodies larger than this (default unlimited).
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false, relay_mode=None, bind_addrs=None, proxy_url=None, proxy_from_env=false, keylog=false, compression_level=None, compression_min_body_bytes=None, max_concurrency=None, max_connections_per_peer=None, request_timeout=None, max_request_body_bytes=None))]
 fn create_node<'py>(
     py: Python<'py>,
@@ -861,10 +919,8 @@ fn create_node<'py>(
     proxy_url: Option<String>,
     proxy_from_env: bool,
     keylog: bool,
-    #[allow(unused_variables)]
-    compression_level: Option<i32>,
-    #[allow(unused_variables)]
-    compression_min_body_bytes: Option<usize>,
+    #[allow(unused_variables)] compression_level: Option<i32>,
+    #[allow(unused_variables)] compression_min_body_bytes: Option<usize>,
     max_concurrency: Option<usize>,
     max_connections_per_peer: Option<usize>,
     request_timeout: Option<u64>,
@@ -875,28 +931,30 @@ fn create_node<'py>(
             key: match key {
                 Some(k) => {
                     let arr: [u8; 32] = k.try_into().map_err(|_| {
-                        pyo3::exceptions::PyValueError::new_err("secret key must be exactly 32 bytes")
+                        pyo3::exceptions::PyValueError::new_err(
+                            "secret key must be exactly 32 bytes",
+                        )
                     })?;
                     Some(arr)
                 }
                 None => None,
             },
-            idle_timeout_ms:        idle_timeout,
+            idle_timeout_ms: idle_timeout,
             relay_mode,
-            relays:                 relays.unwrap_or_default(),
-            bind_addrs:             bind_addrs.unwrap_or_default(),
+            relays: relays.unwrap_or_default(),
+            bind_addrs: bind_addrs.unwrap_or_default(),
             dns_discovery,
-            dns_discovery_enabled:  true,
-            capabilities:           Vec::new(),
-            channel_capacity:       None,
-            max_chunk_size_bytes:   None,
+            dns_discovery_enabled: true,
+            capabilities: Vec::new(),
+            channel_capacity: None,
+            max_chunk_size_bytes: None,
             max_consecutive_errors: None,
             disable_networking,
-            drain_timeout_ms:       None,
-            handle_ttl_ms:          None,
+            drain_timeout_ms: None,
+            handle_ttl_ms: None,
             max_pooled_connections: None,
-            pool_idle_timeout_ms:   None,
-            max_header_size:        None,
+            pool_idle_timeout_ms: None,
+            max_header_size: None,
             proxy_url,
             proxy_from_env,
             keylog,
@@ -926,7 +984,8 @@ fn create_node<'py>(
 /// Returns a 64-byte signature.
 #[pyfunction]
 fn secret_key_sign(secret_key: Vec<u8>, data: Vec<u8>) -> PyResult<Vec<u8>> {
-    let key_bytes: [u8; 32] = secret_key.try_into()
+    let key_bytes: [u8; 32] = secret_key
+        .try_into()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("secret key must be 32 bytes"))?;
     Ok(iroh_http_core::secret_key_sign(&key_bytes, &data).to_vec())
 }
@@ -935,11 +994,15 @@ fn secret_key_sign(secret_key: Vec<u8>, data: Vec<u8>) -> PyResult<Vec<u8>> {
 /// Returns True on success, False on failure.
 #[pyfunction]
 fn public_key_verify(public_key: Vec<u8>, data: Vec<u8>, signature: Vec<u8>) -> PyResult<bool> {
-    let key_bytes: [u8; 32] = public_key.try_into()
+    let key_bytes: [u8; 32] = public_key
+        .try_into()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("public key must be 32 bytes"))?;
-    let sig_bytes: [u8; 64] = signature.try_into()
+    let sig_bytes: [u8; 64] = signature
+        .try_into()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("signature must be 64 bytes"))?;
-    Ok(iroh_http_core::public_key_verify(&key_bytes, &data, &sig_bytes))
+    Ok(iroh_http_core::public_key_verify(
+        &key_bytes, &data, &sig_bytes,
+    ))
 }
 
 /// Generate a fresh Ed25519 secret key. Returns 32 raw bytes.
