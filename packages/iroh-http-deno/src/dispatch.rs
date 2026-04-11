@@ -103,6 +103,9 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "serveStart" => serve_start(p).await,
         "nextRequest" => next_request(p).await,
         "respond" => respond_dispatch(p),
+        "secretKeySign" => secret_key_sign_dispatch(p),
+        "publicKeyVerify" => public_key_verify_dispatch(p),
+        "generateSecretKey" => generate_secret_key_dispatch(),
         _ => err(format!("unknown method: {method}")),
     }
 }
@@ -549,4 +552,71 @@ fn respond_dispatch(p: Value) -> Value {
         Ok(()) => ok(json!({})),
         Err(e) => err(e),
     }
+}
+
+// ── Key operations ─────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SignPayload {
+    secret_key: String,
+    data: String,
+}
+
+fn secret_key_sign_dispatch(p: Value) -> Value {
+    let args: SignPayload = match serde_json::from_value(p) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    let key_bytes: [u8; 32] = match B64.decode(&args.secret_key) {
+        Ok(v) => match v.try_into() {
+            Ok(a) => a,
+            Err(_) => return err("secret key must be 32 bytes"),
+        },
+        Err(e) => return err(format!("base64 decode key: {e}")),
+    };
+    let data_bytes = match B64.decode(&args.data) {
+        Ok(v) => v,
+        Err(e) => return err(format!("base64 decode data: {e}")),
+    };
+    let sig = iroh_http_core::secret_key_sign(&key_bytes, &data_bytes);
+    ok(json!(B64.encode(sig)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VerifyPayload {
+    public_key: String,
+    data: String,
+    signature: String,
+}
+
+fn public_key_verify_dispatch(p: Value) -> Value {
+    let args: VerifyPayload = match serde_json::from_value(p) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    let key_bytes: [u8; 32] = match B64.decode(&args.public_key) {
+        Ok(v) => match v.try_into() {
+            Ok(a) => a,
+            Err(_) => return err("public key must be 32 bytes"),
+        },
+        Err(e) => return err(format!("base64 decode key: {e}")),
+    };
+    let data_bytes = match B64.decode(&args.data) {
+        Ok(v) => v,
+        Err(e) => return err(format!("base64 decode data: {e}")),
+    };
+    let sig_bytes: [u8; 64] = match B64.decode(&args.signature) {
+        Ok(v) => match v.try_into() {
+            Ok(a) => a,
+            Err(_) => return err("signature must be 64 bytes"),
+        },
+        Err(e) => return err(format!("base64 decode sig: {e}")),
+    };
+    ok(json!(iroh_http_core::public_key_verify(&key_bytes, &data_bytes, &sig_bytes)))
+}
+
+fn generate_secret_key_dispatch() -> Value {
+    ok(json!(B64.encode(iroh_http_core::generate_secret_key())))
 }

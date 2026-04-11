@@ -454,3 +454,42 @@ pub async fn raw_connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload,
     })
 }
 
+// ── Key operations ────────────────────────────────────────────────────────────
+
+/// Sign arbitrary bytes with a 32-byte Ed25519 secret key (base64-encoded).
+/// Returns a 64-byte signature as base64.
+#[command]
+pub fn secret_key_sign(secret_key: String, data: String) -> Result<String, String> {
+    let key_bytes: [u8; 32] = B64.decode(&secret_key)
+        .map_err(|e| format!("base64 decode key: {e}"))?
+        .try_into()
+        .map_err(|_| "secret key must be 32 bytes".to_string())?;
+    let data_bytes = B64.decode(&data)
+        .map_err(|e| format!("base64 decode data: {e}"))?;
+    let sig = iroh_http_core::secret_key_sign(&key_bytes, &data_bytes);
+    Ok(B64.encode(sig))
+}
+
+/// Verify a 64-byte Ed25519 signature against a 32-byte public key.
+/// All inputs base64-encoded.  Returns `true` on success.
+#[command]
+pub fn public_key_verify(public_key: String, data: String, signature: String) -> Result<bool, String> {
+    let key_bytes: [u8; 32] = B64.decode(&public_key)
+        .map_err(|e| format!("base64 decode key: {e}"))?
+        .try_into()
+        .map_err(|_| "public key must be 32 bytes".to_string())?;
+    let data_bytes = B64.decode(&data)
+        .map_err(|e| format!("base64 decode data: {e}"))?;
+    let sig_bytes: [u8; 64] = B64.decode(&signature)
+        .map_err(|e| format!("base64 decode sig: {e}"))?
+        .try_into()
+        .map_err(|_| "signature must be 64 bytes".to_string())?;
+    Ok(iroh_http_core::public_key_verify(&key_bytes, &data_bytes, &sig_bytes))
+}
+
+/// Generate a fresh Ed25519 secret key. Returns 32 raw bytes as base64.
+#[command]
+pub fn generate_secret_key() -> String {
+    B64.encode(iroh_http_core::generate_secret_key())
+}
+
