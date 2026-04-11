@@ -82,6 +82,8 @@ pub struct JsNodeOptions {
     pub max_consecutive_errors: Option<u32>,
     pub drain_timeout: Option<f64>,
     pub handle_ttl: Option<f64>,
+    pub max_pooled_connections: Option<u32>,
+    pub pool_idle_timeout_ms: Option<f64>,
     pub disable_networking: Option<bool>,
     pub proxy_url: Option<String>,
     pub proxy_from_env: Option<bool>,
@@ -141,7 +143,8 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         disable_networking: o.disable_networking.unwrap_or(false),
         drain_timeout_ms: o.drain_timeout.map(|v| v as u64),
         handle_ttl_ms: o.handle_ttl.map(|v| v as u64),
-        max_pooled_connections: None,
+        max_pooled_connections: o.max_pooled_connections.map(|v| v as usize),
+        pool_idle_timeout_ms: o.pool_idle_timeout_ms.map(|v| v as u64),
         max_header_size: o.max_header_bytes.map(|v| v as usize),
         proxy_url: o.proxy_url,
         proxy_from_env: o.proxy_from_env.unwrap_or(false),
@@ -510,7 +513,8 @@ pub async fn raw_fetch(
 
     let req_body_reader = req_body_handle.and_then(claim_pending_reader);
 
-    let addrs = parse_direct_addrs(&direct_addrs);
+    let addrs = parse_direct_addrs(&direct_addrs)
+        .map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
     let res = iroh_http_core::fetch(&ep, &node_id, &url, &method, &pairs, req_body_reader, Some(fetch_token), addrs.as_deref())
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
@@ -672,7 +676,8 @@ pub async fn session_connect(
     direct_addrs: Option<Vec<String>>,
 ) -> napi::Result<u32> {
     let ep = get_endpoint(endpoint_handle)?;
-    let addrs = parse_direct_addrs(&direct_addrs);
+    let addrs = parse_direct_addrs(&direct_addrs)
+        .map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
     let handle = iroh_http_core::session_connect(&ep, &node_id, addrs.as_deref())
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;

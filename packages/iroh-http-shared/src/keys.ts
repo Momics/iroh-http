@@ -5,7 +5,17 @@
  * Node 18+, Deno, Tauri webview, and all modern browsers).
  */
 
-// ── Base32 codec (alphabet: a-z2-7, no padding) ───────────────────────────────
+// ── Base32 codec ──────────────────────────────────────────────────────────────
+//
+// Alphabet: RFC 4648 §6 (a-z2-7, no padding), case-insensitive decoding.
+// This matches the encoding used by iroh for Ed25519 public-key node IDs.
+//
+// Kept inline to avoid adding a runtime dependency for ~40 lines. If a
+// maintained base32 npm package is ever added to the monorepo (e.g.
+// @scure/base), replace this block with:
+//   import { base32 } from "@scure/base";
+//   const base32Encode = (b: Uint8Array) => base32.encode(b).toLowerCase();
+//   const base32Decode = (s: string)     => base32.decode(s.toUpperCase());
 
 const BASE32_CHARS = "abcdefghijklmnopqrstuvwxyz234567";
 const BASE32_TABLE = new Uint8Array(256).fill(0xff);

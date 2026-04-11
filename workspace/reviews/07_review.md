@@ -1,5 +1,5 @@
 ---
-status: reported
+status: partial
 source: guidelines.md, crates/iroh-http-core
 date: 2026-04-11
 ---
@@ -141,15 +141,11 @@ what to borrow from standards and what to build itself.
 
 ### P1 — Significant quality issues
 
-- [ ] **Global mutable singletons everywhere**
-  - 6+ `OnceLock<Mutex<Slab<...>>>` global statics (reader, writer, trailer_tx,
-    trailer_rx, pending_readers, pending_responses, in_flight_tokens, sessions)
-  - A second `IrohEndpoint::bind()` silently reconfigures backpressure for ALL
-    existing channels
-  - Fix: move slab ownership into `IrohEndpoint`. Each endpoint gets its own
-    slab set. This also enables proper cleanup on endpoint close
-  - This is the single biggest Rust quality problem — global mutable state is
-    antithetical to Rust's ownership model
+- [ ] **Global mutable singletons — partially mitigated, root cause deferred**
+  - 6+ `OnceLock<Mutex<Slab<...>>>` global statics remain (`reader`, `writer`, `trailer_tx`, `trailer_rx`, `pending_readers`, `pending_responses`, `in_flight_tokens`, `sessions`)
+  - ✅ **R6-07**: `configure_backpressure()` now guarded by `BACKPRESSURE_CONFIGURED` AtomicBool — first-bind-wins, second call is a no-op. The "silently reconfigures" sub-bug is fixed.
+  - ✅ **R6-08**: `start_slab_sweep()` now guarded by `SWEEP_STARTED` AtomicBool — idempotent.
+  - ⚠️ **Root cause remains**: Slabs are still process-global. The correct long-term fix is to move slab ownership into `IrohEndpoint` so each endpoint manages its own handle space and cleans up on close. This is a significant architectural refactor — deferred to a dedicated work item.
 
 - [x] **Error classification via string matching** ✅ FIXED — session.rs now uses typed `ConnectionError` variant matching via `is_connection_closed()` helper. `classify_error_code()` in lib.rs left as-is (inherently string-based, operates on arbitrary error messages)
 

@@ -55,6 +55,8 @@ enum Slot {
 /// Thread-safe QUIC connection pool.
 pub(crate) struct ConnectionPool {
     inner: Mutex<PoolInner>,
+    /// Connections idle for longer than this are evicted on next access.
+    idle_timeout: Option<std::time::Duration>,
 }
 
 struct PoolInner {
@@ -63,13 +65,17 @@ struct PoolInner {
 }
 
 impl ConnectionPool {
-    /// Create a new pool.  `max_idle` limits cached connections (`None` = unlimited).
-    pub fn new(max_idle: Option<usize>) -> Self {
+    /// Create a new pool.
+    ///
+    /// - `max_idle`: maximum number of cached connections (`None` = unlimited).
+    /// - `idle_timeout`: evict connections that have been idle longer than this.
+    pub fn new(max_idle: Option<usize>, idle_timeout: Option<std::time::Duration>) -> Self {
         Self {
             inner: Mutex::new(PoolInner {
                 conns: HashMap::new(),
                 max_idle,
             }),
+            idle_timeout,
         }
     }
 
@@ -104,14 +110,17 @@ impl ConnectionPool {
             if let Some(slot) = inner.conns.get_mut(&key) {
                 match slot {
                     Slot::Ready(pooled, last_used) => {
-                        if pooled.conn.close_reason().is_none() {
-                            *last_used = std::time::Instant::now();
-                            Action::Hit(pooled.clone())
-                        } else {
+                        let timed_out = self
+                            .idle_timeout
+                            .is_some_and(|d| last_used.elapsed() > d);
+                        if timed_out || pooled.conn.close_reason().is_some() {
                             inner.conns.remove(&key);
                             let (tx, rx) = tokio::sync::watch::channel(None);
                             inner.conns.insert(key.clone(), Slot::Connecting(rx));
                             Action::Connect(tx)
+                        } else {
+                            *last_used = std::time::Instant::now();
+                            Action::Hit(pooled.clone())
                         }
                     }
                     Slot::Connecting(rx) => Action::Wait(rx.clone()),
@@ -218,7 +227,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_starts_empty() {
-        let pool = ConnectionPool::new(None);
+        let pool = ConnectionPool::new(None, None);
         assert_eq!(pool.len(), 0);
     }
 

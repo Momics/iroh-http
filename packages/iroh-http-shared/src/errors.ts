@@ -14,6 +14,19 @@
  * Every error from the Rust/FFI layer is an `IrohError` or subclass, providing
  * a machine-readable `.code` string for programmatic handling.
  *
+ * The `.name` property follows `DOMException` naming conventions where a
+ * direct analogue exists, so existing web-platform error-handling patterns
+ * work without modification:
+ *
+ * | Subclass            | `.name`        | DOMException equivalent     |
+ * |---------------------|----------------|-----------------------------|
+ * | IrohAbortError      | "AbortError"   | DOMException AbortError     |
+ * | IrohConnectError    | "NetworkError" | DOMException NetworkError   |
+ * | IrohBindError       | "NetworkError" | DOMException NetworkError   |
+ * | IrohArgumentError   | "TypeError"    | DOMException TypeError      |
+ * | IrohStreamError     | "IrohStreamError"  | (no direct analogue)    |
+ * | IrohProtocolError   | "IrohProtocolError" | (no direct analogue)   |
+ *
  * @example
  * ```ts
  * try {
@@ -22,6 +35,9 @@
  *   if (e instanceof IrohError) {
  *     console.error(`[${e.code}] ${e.message}`);
  *   }
+ *   // Web-platform pattern also works:
+ *   if (e.name === "NetworkError") { /* peer unreachable *\/ }
+ *   if (e.name === "AbortError")   { /* user cancelled  *\/ }
  * }
  * ```
  */
@@ -60,7 +76,7 @@ export class IrohError extends Error {
 export class IrohBindError extends IrohError {
   constructor(message: string, code: string) {
     super(message, code);
-    this.name = "IrohBindError";
+    this.name = "NetworkError";
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -84,7 +100,7 @@ export class IrohBindError extends IrohError {
 export class IrohConnectError extends IrohError {
   constructor(message: string, code: string) {
     super(message, code);
-    this.name = "IrohConnectError";
+    this.name = "NetworkError";
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -120,7 +136,7 @@ export class IrohAbortError extends IrohError {
 export class IrohArgumentError extends IrohError {
   constructor(message: string, code = "INVALID_ARGUMENT") {
     super(message, code);
-    this.name = "IrohArgumentError";
+    this.name = "TypeError";
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }

@@ -101,7 +101,61 @@ impl IrohResponse {
     }
 }
 
-// ── IrohRequest ──────────────────────────────────────────────────────────────
+// ── HandlerResponse ──────────────────────────────────────────────────────────
+
+/// Response value object returned by a `serve` handler.
+///
+/// Handlers may return either a `HandlerResponse` instance or a plain dict
+/// with `status`, `headers`, and `body` keys.
+///
+/// ```python
+/// async def handler(req):
+///     return HandlerResponse(200, b"hello", [("content-type", "text/plain")])
+/// ```
+#[pyclass(name = "HandlerResponse")]
+#[derive(Clone)]
+struct HandlerResponse {
+    status:  u16,
+    headers: Vec<(String, String)>,
+    body:    Vec<u8>,
+}
+
+#[pymethods]
+impl HandlerResponse {
+    /// Create a handler response.
+    ///
+    /// Args:
+    ///     status: HTTP status code (default: 200).
+    ///     body:   Response body bytes (default: b"").
+    ///     headers: List of ``(name, value)`` header tuples (default: []).
+    #[new]
+    #[pyo3(signature = (status=200, body=None, headers=None))]
+    fn new(
+        status: u16,
+        body: Option<Vec<u8>>,
+        headers: Option<Vec<(String, String)>>,
+    ) -> Self {
+        Self {
+            status,
+            headers: headers.unwrap_or_default(),
+            body:    body.unwrap_or_default(),
+        }
+    }
+
+    /// HTTP status code.
+    #[getter]
+    fn status(&self) -> u16 { self.status }
+
+    /// Response headers as a list of `(name, value)` tuples.
+    #[getter]
+    fn headers(&self) -> Vec<(String, String)> { self.headers.clone() }
+
+    /// Response body bytes.
+    #[getter]
+    fn body(&self) -> Vec<u8> { self.body.clone() }
+}
+
+
 
 /// Incoming request passed to the `serve` handler.
 #[pyclass]
@@ -716,7 +770,16 @@ async fn handle_request(handler: Arc<PyObject>, payload: iroh_http_core::Request
 
     let outcome = Python::with_gil(|py| -> PyResult<(u16, Vec<(String, String)>, Vec<u8>)> {
         let obj = py_result?;
-        let dict = obj.bind(py).downcast::<PyDict>()?.clone();
+        let bound = obj.bind(py);
+
+        // Accept HandlerResponse instance or a plain dict.
+        if let Ok(hr) = bound.extract::<HandlerResponse>() {
+            return Ok((hr.status, hr.headers, hr.body));
+        }
+
+        let dict = bound.downcast::<PyDict>().map_err(|_| {
+            py_err("handler must return a HandlerResponse or a dict with 'status', 'headers', 'body'")
+        })?.clone();
         let status: u16 = dict
             .get_item("status")?
             .ok_or_else(|| py_err("handler result missing 'status'"))?
@@ -831,6 +894,7 @@ fn create_node<'py>(
             drain_timeout_ms:       None,
             handle_ttl_ms:          None,
             max_pooled_connections: None,
+            pool_idle_timeout_ms:   None,
             max_header_size:        None,
             proxy_url,
             proxy_from_env,
@@ -894,6 +958,7 @@ fn iroh_http_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IrohNode>()?;
     m.add_class::<IrohRequest>()?;
     m.add_class::<IrohResponse>()?;
+    m.add_class::<HandlerResponse>()?;
     m.add_class::<IrohSession>()?;
     m.add_class::<IrohBidiStream>()?;
     m.add_class::<IrohUniStream>()?;

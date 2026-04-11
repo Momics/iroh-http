@@ -139,11 +139,15 @@ struct CreateEndpointPayload {
     max_consecutive_errors: Option<usize>,
     drain_timeout: Option<u64>,
     handle_ttl: Option<u64>,
+    max_pooled_connections: Option<usize>,
+    pool_idle_timeout_ms: Option<u64>,
     disable_networking: Option<bool>,
     proxy_url: Option<String>,
     proxy_from_env: Option<bool>,
     keylog: Option<bool>,
+    #[allow(dead_code)] // only read when `compression` feature is enabled
     compression_level: Option<i32>,
+    #[allow(dead_code)] // only read when `compression` feature is enabled
     compression_min_body_bytes: Option<usize>,
     max_concurrency: Option<usize>,
     max_connections_per_peer: Option<usize>,
@@ -158,8 +162,22 @@ async fn create_endpoint(p: Value) -> Value {
         Err(e) => return err(e),
     };
 
+    let key: Option<[u8; 32]> = match args.key {
+        None => None,
+        Some(k) => {
+            let decoded = match B64.decode(&k) {
+                Ok(d) => d,
+                Err(_) => return err("secret key: invalid base64"),
+            };
+            match <[u8; 32]>::try_from(decoded) {
+                Ok(arr) => Some(arr),
+                Err(v) => return err(format!("secret key must be exactly 32 bytes, got {}", v.len())),
+            }
+        }
+    };
+
     let opts = NodeOptions {
-        key: args.key.and_then(|k| B64.decode(k).ok()?.try_into().ok()),
+        key,
         idle_timeout_ms: args.idle_timeout,
         relay_mode: args.relay_mode,
         relays: args.relays.unwrap_or_default(),
@@ -173,7 +191,8 @@ async fn create_endpoint(p: Value) -> Value {
         disable_networking: args.disable_networking.unwrap_or(false),
         drain_timeout_ms: args.drain_timeout,
         handle_ttl_ms: args.handle_ttl,
-        max_pooled_connections: None,
+        max_pooled_connections: args.max_pooled_connections,
+        pool_idle_timeout_ms: args.pool_idle_timeout_ms,
         max_header_size: args.max_header_bytes,
         proxy_url: args.proxy_url,
         proxy_from_env: args.proxy_from_env.unwrap_or(false),
@@ -431,7 +450,10 @@ async fn raw_fetch(p: Value) -> Value {
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
     let reader = args.req_body_handle.and_then(claim_pending_reader);
-    let addrs = parse_direct_addrs(&args.direct_addrs);
+    let addrs = match parse_direct_addrs(&args.direct_addrs) {
+        Ok(a) => a,
+        Err(e) => return err(e),
+    };
     match iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, reader, args.fetch_token, addrs.as_deref()).await {
         Err(e) => err(e),
         Ok(res) => {
@@ -793,7 +815,10 @@ async fn session_connect_dispatch(p: Value) -> Value {
         Some(e) => e,
         None => return err(format!("invalid endpoint handle: {}", args.endpoint_handle)),
     };
-    let addrs = parse_direct_addrs(&args.direct_addrs);
+    let addrs = match parse_direct_addrs(&args.direct_addrs) {
+        Ok(a) => a,
+        Err(e) => return err(e),
+    };
     match iroh_http_core::session_connect(&ep, &args.node_id, addrs.as_deref()).await {
         Err(e) => err(e),
         Ok(handle) => ok(json!({ "sessionHandle": handle })),

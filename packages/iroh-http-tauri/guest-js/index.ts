@@ -33,19 +33,9 @@ function decodeBase64(s: string): Uint8Array {
 }
 import {
   buildNode,
-  type Bridge,
-  type FfiResponse,
-  type FfiResponseHead,
-  type FfiDuplexStream,
   type NodeOptions,
   type LifecycleOptions,
   type IrohNode,
-  type RawFetchFn,
-  type RawServeFn,
-  type RawConnectFn,
-  type RawSessionFns,
-  type AllocBodyWriterFn,
-  type RequestPayload,
   type AddrFunctions,
   type DiscoveryFunctions,
   type NodeAddrInfo,
@@ -56,6 +46,18 @@ import {
   classifyBindError,
   type SecretKey,
 } from "@momics/iroh-http-shared";
+import type {
+  Bridge,
+  FfiResponse,
+  FfiResponseHead,
+  FfiDuplexStream,
+  RawFetchFn,
+  RawServeFn,
+  RawConnectFn,
+  RawSessionFns,
+  AllocBodyWriterFn,
+  RequestPayload,
+} from "@momics/iroh-http-shared/adapter";
 
 const PLUGIN = "plugin:iroh-http";
 
@@ -401,6 +403,8 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           maxConsecutiveErrors: options.maxConsecutiveErrors ?? null,
           drainTimeout: options.drainTimeout ?? null,
           handleTtl: options.handleTtl ?? null,
+          maxPooledConnections: options.maxPooledConnections ?? null,
+          poolIdleTimeoutMs: options.poolIdleTimeoutMs ?? null,
           disableNetworking,
           proxyUrl: options.proxyUrl ?? null,
           proxyFromEnv: options.proxyFromEnv ?? null,

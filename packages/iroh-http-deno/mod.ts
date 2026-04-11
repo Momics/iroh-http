@@ -25,6 +25,7 @@ import {
   denoDiscoveryFns,
   denoSessionFns,
 } from "./src/adapter.ts";
+export { secretKeySign, publicKeyVerify, generateSecretKey } from "./src/adapter.ts";
 
 /**
  * Create an Iroh node for peer-to-peer HTTP.

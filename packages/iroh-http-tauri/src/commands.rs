@@ -6,21 +6,12 @@ use iroh_http_core::{
     endpoint::NodeOptions,
     server::respond,
     RequestPayload,
+    parse_direct_addrs,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{command, ipc::Channel};
 
 use crate::state;
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn parse_direct_addrs(addrs: &Option<Vec<String>>) -> Option<Vec<std::net::SocketAddr>> {
-    addrs.as_ref().map(|v| {
-        v.iter()
-            .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
-            .collect()
-    })
-}
 
 // ── Endpoint ──────────────────────────────────────────────────────────────────
 
@@ -70,8 +61,17 @@ pub async fn create_endpoint(
     args: Option<CreateEndpointArgs>,
 ) -> Result<EndpointInfoPayload, String> {
     let opts = args
-        .map(|a| NodeOptions {
-            key: a.key.and_then(|k| B64.decode(k).ok()?.try_into().ok()),
+        .map(|a| -> Result<NodeOptions, String> { Ok(NodeOptions {
+            key: match a.key {
+                Some(k) => {
+                    let decoded = B64.decode(&k)
+                        .map_err(|_| "secret key: invalid base64".to_string())?;
+                    let arr: [u8; 32] = decoded.try_into()
+                        .map_err(|v: Vec<u8>| format!("secret key must be exactly 32 bytes, got {}", v.len()))?;
+                    Some(arr)
+                }
+                None => None,
+            },
             idle_timeout_ms: a.idle_timeout,
             relay_mode: a.relay_mode,
             relays: a.relays.unwrap_or_default(),
@@ -104,7 +104,8 @@ pub async fn create_endpoint(
             } else {
                 None
             },
-        })
+        }) })
+        .transpose()?
         .unwrap_or_default();
 
     let ep = iroh_http_core::endpoint::IrohEndpoint::bind(opts)
@@ -303,7 +304,7 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
 
     let req_body_reader = args.req_body_handle.and_then(iroh_http_core::stream::claim_pending_reader);
 
-    let addrs = parse_direct_addrs(&args.direct_addrs);
+    let addrs = parse_direct_addrs(&args.direct_addrs).map_err(|e| e)?;
     let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.fetch_token, addrs.as_deref())
         .await.map_err(iroh_http_core::classify_error_json)?;
 

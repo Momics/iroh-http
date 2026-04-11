@@ -1,8 +1,6 @@
 //! Outgoing HTTP request — `fetch()` implementation.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use iroh::endpoint::Connection;
@@ -10,7 +8,8 @@ use iroh::endpoint::Connection;
 
 use crate::{
     base32_encode, parse_node_addr,
-    stream::{BodyReader, BodyWriter, make_body_channel, insert_reader, insert_writer},
+    stream::{BodyReader, BodyWriter, make_body_channel, insert_reader, insert_writer,
+             compose_handle, decompose_handle},
     FfiResponse, FfiDuplexStream, IrohEndpoint, ALPN, ALPN_DUPLEX,
 };
 use iroh_http_framing::{
@@ -22,30 +21,27 @@ const READ_BUF: usize = 16 * 1024;
 
 // ── In-flight fetch cancellation ──────────────────────────────────────────────
 
-static NEXT_FETCH_TOKEN: AtomicU32 = AtomicU32::new(1);
-
-fn in_flight_map() -> &'static Mutex<HashMap<u32, Arc<tokio::sync::Notify>>> {
-    static MAP: OnceLock<Mutex<HashMap<u32, Arc<tokio::sync::Notify>>>> = OnceLock::new();
-    MAP.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 /// Allocate a cancellation token for an upcoming `fetch` call.
 ///
 /// Call this before `rawFetch`, wire `AbortSignal → cancel_in_flight(token)`,
 /// and pass `token` to the platform's `rawFetch`/`fetch` binding.  The token
 /// is automatically removed from the map when the fetch completes.
 pub fn alloc_fetch_token() -> u32 {
-    let id = NEXT_FETCH_TOKEN.fetch_add(1, Ordering::Relaxed);
+    let slabs = crate::stream::global_slabs();
+    let id = slabs.next_fetch_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let notify = Arc::new(tokio::sync::Notify::new());
-    in_flight_map().lock().unwrap_or_else(|e| e.into_inner()).insert(id, notify);
-    id
+    slabs.fetch_cancel.lock().unwrap_or_else(|e| e.into_inner()).insert(id, notify);
+    compose_handle(0, id)
 }
 
 /// Signal an in-flight fetch to abort.  Safe to call after the fetch has
 /// already completed — it is a no-op in that case.
-pub fn cancel_in_flight(token_id: u32) {
-    if let Some(notify) = in_flight_map().lock().unwrap_or_else(|e| e.into_inner()).get(&token_id) {
-        notify.notify_one();
+pub fn cancel_in_flight(token: u32) {
+    let (ep_idx, id) = decompose_handle(token);
+    if let Some(slabs) = crate::stream::get_slabs(ep_idx) {
+        if let Some(notify) = slabs.fetch_cancel.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
+            notify.notify_one();
+        }
     }
 }
 
@@ -69,9 +65,12 @@ pub async fn fetch(
     direct_addrs: Option<&[std::net::SocketAddr]>,
 ) -> Result<FfiResponse, String> {
     // Retrieve the cancellation Notify for this token, if any.
-    let cancel_notify = fetch_token.and_then(|id| {
-        in_flight_map().lock().unwrap_or_else(|e| e.into_inner()).get(&id).cloned()
+    let cancel_notify = fetch_token.and_then(|token| {
+        let (ep_idx, id) = decompose_handle(token);
+        crate::stream::get_slabs(ep_idx)
+            .and_then(|s| s.fetch_cancel.lock().unwrap_or_else(|e| e.into_inner()).get(&id).cloned())
     });
+    let ep_idx = endpoint.inner.endpoint_idx;
 
     let parsed = parse_node_addr(remote_node_id)?;
     let node_id = parsed.node_id;
@@ -126,6 +125,7 @@ pub async fn fetch(
     }
 
     let result = do_request(
+        ep_idx,
         conn,
         url,
         method,
@@ -145,14 +145,18 @@ pub async fn fetch(
     };
 
     // Clean up the token regardless of outcome.
-    if let Some(id) = fetch_token {
-        in_flight_map().lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+    if let Some(token) = fetch_token {
+        let (ep_idx_t, id) = decompose_handle(token);
+        if let Some(slabs) = crate::stream::get_slabs(ep_idx_t) {
+            slabs.fetch_cancel.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        }
     }
 
     out
 }
 
 async fn do_request(
+    ep_idx: u32,
     conn: Connection,
     url: &str,
     method: &str,
@@ -231,7 +235,7 @@ async fn do_request(
     let (res_writer, res_reader) = make_body_channel();
     // Set up a trailer channel — the pump task will send trailers when found.
     let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-    let trailer_handle = crate::stream::insert_trailer_receiver(trailer_rx);
+    let trailer_handle = crate::stream::insert_trailer_receiver(ep_idx, trailer_rx);
 
     tokio::spawn(pump_stream_to_body(recv, res_writer, consumed, trailer_tx, resp_is_chunked));
 
@@ -244,7 +248,7 @@ async fn do_request(
         res_reader
     };
 
-    let body_handle = insert_reader(res_reader);
+    let body_handle = insert_reader(ep_idx, res_reader);
 
     // Build response URL: set the URL to the remote peer's address.
     let remote_str = base32_encode(conn.remote_id().as_bytes());
@@ -529,12 +533,13 @@ pub async fn raw_connect(
 
     // Receive side: pump data from server into a BodyReader channel.
     let (server_write, server_read) = make_body_channel();
-    let read_handle = insert_reader(server_read);
+    let ep_idx = endpoint.inner.endpoint_idx;
+    let read_handle = insert_reader(ep_idx, server_read);
     tokio::spawn(pump_quic_recv_to_body(recv, server_write));
 
     // Send side: pump data from a BodyWriter channel to the server.
     let (client_write, client_read) = make_body_channel();
-    let write_handle = insert_writer(client_write);
+    let write_handle = insert_writer(ep_idx, client_write);
     tokio::spawn(pump_body_to_quic_send(client_read, send));
 
     Ok(FfiDuplexStream {
