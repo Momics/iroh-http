@@ -10,6 +10,9 @@ The most interesting recipes are the ones where **removing the server is the
 whole point**: devices that communicate directly, trust derived from physical
 proximity, state that lives on the edge and syncs peer-to-peer.
 
+For the big picture — what emerges when many nodes are connected — start with
+the [Ecosystem overview](ecosystem.md).
+
 ---
 
 ## Decentralized patterns
@@ -79,6 +82,56 @@ are you, how do I know it's really you, and how do I find your other devices?
 
 ---
 
+## Identity lifecycle
+
+- [Key rotation and recovery](key-rotation.md) — planned device rotation,
+  emergency revocation of compromised keys, catastrophic recovery from
+  threshold custody; the part of identity management that's hardest to
+  improvise in a crisis
+
+---
+
+## Coordination patterns
+
+These patterns emerge at the network level — what nodes can do *together* that
+none can do alone.
+
+- [Append-only log](append-only-log.md) — each node maintains a signed,
+  tamper-evident history; subscribers replay it to derive state; the
+  foundation for audit trails, collaborative docs, and distributed databases
+- [Witness receipts](witness-receipts.md) — a third node counter-signs a
+  two-party exchange; both parties receive cryptographic proof; disputes
+  resolved without institutions
+- [Threshold custody](threshold-custody.md) — split a secret key across N
+  peers (k-of-n Shamir); no single peer can act alone; reconstruct from any k;
+  applied to key recovery, shared vaults, dead man's switches
+- [Capability attenuation](capability-attenuation.md) — delegate a *subset*
+  of your permissions; each hop can only restrict, never expand; chains are
+  verifiable without contacting the root issuer (object-capability model)
+- [Named nodes](named-nodes.md) — claim a human-readable name by signing it;
+  peers store and relay the mapping; scoped to a group, no registrar required
+- [Schema and version negotiation](schema-negotiation.md) — peers on
+  different versions of your protocol coexist; new nodes speak the richer
+  protocol with each other and the older protocol with unupgraded peers;
+  rolling upgrades with no coordination required
+
+---
+
+## Compute and distribution
+
+- [Job dispatch](job-dispatch.md) — peers advertise spare CPU/GPU capacity;
+  clients submit render, transcode, index, or inference jobs; results stream
+  back; no job queue server, no cloud function platform
+- [Release channels](release-channels.md) — sign a release with your node key;
+  subscribers follow the append-only release log; peers propagate the archive
+  so the origin barely has to serve anyone; no CDN, no package registry
+- [Capability advertisement](capability-advertisement.md) — peers announce
+  not just presence but *what they offer*: storage, compute, inbox, gateway;
+  others discover matching peers dynamically; the service-discovery layer
+  that makes the full ecosystem self-organising
+
+---
+
 ## Infrastructure patterns
 
 These use iroh-http as a transport layer where the P2P identity and
@@ -96,11 +149,32 @@ hole-punching still add something conventional HTTPS cannot.
 
 ## Security patterns
 
-- [Capability tokens](capability-tokens.md) — issue and verify signed access
-  tokens using iroh-http's Ed25519 key primitives; zero-round-trip
-  verification, no token database
+- [Capability tokens](capability-tokens.md) — single-hop signed access tokens;
+  start here before building attenuation chains
 - [Middleware](middleware.md) — compose rate limiting, auth, and logging into
   a serve handler using a two-line `compose()` helper
+
+---
+
+## When not to use any of this
+
+iroh-http adds value when the absence of a central server is the point. It
+adds complexity when a simple server would do.
+
+**Reach for a conventional server when:**
+- Your data is public and you want search engine indexing
+- You need a global namespace that strangers can discover without out-of-band
+  setup (iroh names are scoped to groups, not the internet)
+- Your peer set is entirely controlled by one organisation on a reliable
+  network (just use HTTPS)
+- You need sub-10ms latency and both sides are in the same data centre
+
+**The P2P approach pays off when:**
+- Data must not leave the user's devices
+- Devices are behind CGNAT with no static IP or port forwarding
+- The peer set spans personal devices across different networks
+- Resilience matters more than peak performance
+- You don't want to run, pay for, or trust a central server
 
 ---
 

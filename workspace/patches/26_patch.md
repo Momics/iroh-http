@@ -1,5 +1,5 @@
 ---
-status: pending
+status: done
 refs: features/tickets.md
 ---
 

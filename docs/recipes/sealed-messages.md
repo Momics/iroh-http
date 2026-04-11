@@ -241,6 +241,46 @@ async function deliver(node: IrohNode, recipientId: string, msg: Uint8Array) {
 - **Inbox blindness**: the relay node cannot read, modify, or correlate
   message contents — only recipient IDs.
 
+## Failure modes
+
+- **Inbox node offline**: the sender retries later via the
+  [offline-first](offline-first.md) outbox pattern, or tries direct delivery
+  first and falls back to an inbox.
+- **Inbox node lost**: all undelivered messages are lost along with the inbox.
+  Mitigate by using multiple inbox nodes and sending to all of them (only
+  one delivery per recipient is needed).
+- **Key compromise before opening**: if the recipient's node key is
+  compromised, the attacker can open sealed messages. Key rotation
+  ([key-rotation.md](key-rotation.md)) limits the blast radius — rotate the
+  key, notify senders, messages sealed to old key are inaccessible.
+- **Replay**: a message body can be re-submitted to the inbox or re-POSTed
+  to the recipient's `/message` endpoint. Add a nonce inside the sealed
+  payload and deduplicate by nonce on the receiver side.
+
+## Threat model
+
+**Protects against:**
+- Inbox node reading or modifying message content (encrypted to recipient's key)
+- Network observers reading messages in transit (QUIC + encryption layer)
+- Spoofing the recipient's node ID (iroh QUIC authenticates node IDs)
+
+**Does not protect against:**
+- Sender identity — anyone who knows the recipient's public key can seal a
+  message. Add a sender signature inside the sealed payload for authorship
+  proof (see [sign-verify](../features/sign-verify.md)).
+- Metadata: the inbox node knows who is messaging whom (sender node ID →
+  recipient node ID). Use onion routing or a blind-relay pattern if metadata
+  privacy is required.
+- Recipient's node key being compromised — sealed messages are only as
+  private as the recipient's private key storage.
+
+## When not to use this pattern
+
+For synchronous communication between online peers, a direct `POST` to the
+recipient's `/message` endpoint is simpler. Sealed messages (with an inbox)
+are for async delivery: the sender doesn't know if the recipient is online,
+or the message needs to survive hours or days before delivery.
+
 ## See also
 
 - [Sign/verify feature](../features/sign-verify.md) — add a sender signature

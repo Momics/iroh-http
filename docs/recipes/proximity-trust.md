@@ -136,6 +136,42 @@ network or wired subnet. It does not traverse routers. A peer that appears in
 segment. That is considerably stronger than "same ISP" or "same city" and is
 a reasonable proxy for physical proximity.
 
+## Failure modes
+
+- **mDNS blocked**: some managed networks (corporate WiFi, hotels) disable
+  multicast. `lanPeers` stays empty; all peers appear as `'relayed'`. The
+  safe fallback: treat unknown path type as `'relayed'` (lowest trust).
+  Never default to `'lan'`.
+- **LAN peer impersonation**: mDNS announces a node ID but doesn't prove
+  the announcer controls that key. The QUIC connection does prove it — iroh
+  verifies the node ID against the TLS certificate on handshake. An mDNS
+  spoof results in a connection failure, not a trust escalation.
+- **VPN tunnels**: a VPN can make a remote peer appear to be on the same
+  broadcast domain. A node arriving via VPN will be announced via mDNS and
+  appear as `'lan'`. If your VPN is a trusted boundary this is correct
+  behaviour; if the VPN is untrusted, gate LAN trust on a separate allow-list.
+
+## Threat model
+
+**Protects against:**
+- A random internet peer reaching LAN-only endpoints (they can't appear in
+  mDNS unless they're physically on the network)
+- Relay-node impersonation (relay nodes can't forge node IDs — QUIC
+  authenticates end-to-end)
+
+**Does not protect against:**
+- A malicious device physically on your LAN (coffee shop WiFi, shared
+  office). Physical network access = LAN trust in this model. For
+  higher-security contexts, require a capability token even from LAN peers.
+- An attacker who has already compromised a LAN device and is using its
+  node ID — mitigated by key rotation when a device is lost.
+
+## When not to use this pattern
+
+If your application has no meaningful distinction between LAN and WAN
+accessibility (e.g. a public content mirror), skip proximity tiers and
+use capability tokens alone for access control.
+
 ## See also
 
 - [Device handoff](device-handoff.md) — proximity trust applied to QR-code
