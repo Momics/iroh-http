@@ -48,6 +48,14 @@ export interface AddrFunctions {
  * @param allocBodyWriter Synchronously allocates a body writer handle.
  * @param closeEndpoint   Closes the bound endpoint.
  * @param addrFns         Platform-specific address introspection functions.
+ * @returns A fully wired `IrohNode` ready for `fetch`, `serve`, and `close`.
+ *
+ * @example
+ * ```ts
+ * // Platform adapter wiring (typically internal):
+ * const node = buildNode(bridge, info, rawFetch, rawServe, rawConnect, alloc, close, addrFns);
+ * const res = await node.fetch(peerId, '/hello');
+ * ```
  */
 export function buildNode(
   bridge: Bridge,

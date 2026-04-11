@@ -75,6 +75,9 @@ pub struct JsDiscoveryOptions {
     pub advertise: Option<bool>,
 }
 
+/// Configuration options for creating an Iroh endpoint.
+///
+/// All fields are optional — omit or pass `None` for sensible defaults.
 #[napi(object)]
 pub struct JsNodeOptions {
     pub key: Option<Uint8Array>,
@@ -98,13 +101,21 @@ pub struct JsNodeOptions {
     pub compression_min_body_bytes: Option<u32>,
 }
 
+/// Info returned after a successful `createEndpoint` call.
 #[napi(object)]
 pub struct JsEndpointInfo {
+    /// Opaque handle for the endpoint — pass to all bridge functions.
     pub endpoint_handle: u32,
+    /// Base32-encoded public key (stable node identity).
     pub node_id: String,
+    /// 32-byte Ed25519 secret key — store to restore the same identity.
     pub keypair: Uint8Array,
 }
 
+/// Bind an Iroh QUIC endpoint and return a handle for subsequent operations.
+///
+/// This is the entry point for creating an iroh-http node. Pass `None` for
+/// all-default configuration or supply a `JsNodeOptions` to customise.
 #[napi]
 pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsEndpointInfo> {
     let discovery_js = options.as_ref().and_then(|o| o.discovery.as_ref()).map(|d| DiscoveryConfig {
@@ -195,6 +206,10 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
     })
 }
 
+/// Gracefully close an Iroh endpoint.
+///
+/// Signals the serve loop (if any) to stop accepting, drains in-flight
+/// requests, then shuts down the QUIC endpoint.
 #[napi]
 pub async fn close_endpoint(endpoint_handle: u32) -> napi::Result<()> {
     #[cfg(feature = "discovery")]
@@ -280,6 +295,9 @@ pub async fn peer_info(endpoint_handle: u32, node_id: String) -> napi::Result<Op
 
 // ── Body streaming ────────────────────────────────────────────────────────────
 
+/// Read the next chunk from a body reader handle.
+///
+/// Returns `null` at EOF. The handle is automatically cleaned up after EOF.
 #[napi]
 pub async fn js_next_chunk(handle: u32) -> napi::Result<Option<Buffer>> {
     let chunk = next_chunk(handle)
@@ -288,6 +306,9 @@ pub async fn js_next_chunk(handle: u32) -> napi::Result<Option<Buffer>> {
     Ok(chunk.map(|b| Buffer::from(b.to_vec())))
 }
 
+/// Push a chunk into a body writer handle.
+///
+/// Large chunks are automatically split to stay within backpressure limits.
 #[napi]
 pub async fn js_send_chunk(handle: u32, chunk: Uint8Array) -> napi::Result<()> {
     let bytes = Bytes::from(chunk.to_vec());
@@ -296,16 +317,23 @@ pub async fn js_send_chunk(handle: u32, chunk: Uint8Array) -> napi::Result<()> {
         .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
 }
 
+/// Signal end-of-body by dropping the writer.
+///
+/// The paired `BodyReader` will return `null` on its next `nextChunk` call.
 #[napi]
 pub fn js_finish_body(handle: u32) -> napi::Result<()> {
     finish_body(handle).map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
 }
 
+/// Cancel a body reader, causing any pending `nextChunk` to return null.
 #[napi]
 pub fn js_cancel_request(handle: u32) {
     cancel_reader(handle);
 }
 
+/// Await and retrieve trailer headers from a completed request/response.
+///
+/// Returns `null` if no trailers were sent.
 #[napi]
 pub async fn js_next_trailer(handle: u32) -> napi::Result<Option<Vec<Vec<String>>>> {
     let trailers = next_trailer(handle)
@@ -314,6 +342,7 @@ pub async fn js_next_trailer(handle: u32) -> napi::Result<Option<Vec<Vec<String>
     Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
 }
 
+/// Deliver response trailer headers to the Rust pump task.
 #[napi]
 pub fn js_send_trailers(handle: u32, trailers: Vec<Vec<String>>) -> napi::Result<()> {
     let pairs: Vec<(String, String)> = trailers
@@ -323,6 +352,10 @@ pub fn js_send_trailers(handle: u32, trailers: Vec<Vec<String>>) -> napi::Result
     send_trailers(handle, pairs).map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
 }
 
+/// Allocate a body writer handle for streaming request bodies.
+///
+/// Call this before `rawFetch` to get a handle that can be written to
+/// with `sendChunk` / `finishBody`.
 #[napi]
 pub fn js_alloc_body_writer() -> u32 {
     let (handle, reader) = alloc_body_writer();
@@ -330,11 +363,17 @@ pub fn js_alloc_body_writer() -> u32 {
     handle
 }
 
+/// Allocate a cancellation token for an upcoming `rawFetch` call.
+///
+/// Wire `AbortSignal → cancelInFlight(token)` for request cancellation.
 #[napi]
 pub fn js_alloc_fetch_token() -> u32 {
     iroh_http_core::alloc_fetch_token()
 }
 
+/// Cancel an in-flight fetch by its cancellation token.
+///
+/// Safe to call after the fetch has already completed (no-op).
 #[napi]
 pub fn js_cancel_in_flight(token: u32) {
     iroh_http_core::cancel_in_flight(token);
@@ -342,15 +381,26 @@ pub fn js_cancel_in_flight(token: u32) {
 
 // ── rawFetch ──────────────────────────────────────────────────────────────────
 
+/// Raw response returned by `rawFetch`.
+///
+/// The shared TS layer wraps this into a web-standard `Response`.
 #[napi(object)]
 pub struct JsFfiResponse {
+    /// HTTP status code.
     pub status: u32,
+    /// Response headers as `[[key, value], ...]`.
     pub headers: Vec<Vec<String>>,
+    /// Handle to the response body reader (`nextChunk`).
     pub body_handle: u32,
+    /// Full `httpi://` URL of the responding peer.
     pub url: String,
+    /// Handle to await response trailer headers.
     pub trailers_handle: u32,
 }
 
+/// Send an HTTP request to a remote Iroh peer.
+///
+/// Low-level function — the shared TS layer wraps this in `makeFetch`.
 #[napi]
 pub async fn raw_fetch(
     endpoint_handle: u32,
@@ -482,9 +532,12 @@ pub fn raw_serve(
 
 // ── rawConnect ────────────────────────────────────────────────────────────────
 
+/// Handles for a full-duplex QUIC stream.
 #[napi(object)]
 pub struct JsFfiDuplexStream {
+    /// Body reader handle — call `nextChunk(readHandle)` to receive data.
     pub read_handle: u32,
+    /// Body writer handle — call `sendChunk(writeHandle, …)` to send data.
     pub write_handle: u32,
 }
 

@@ -20,6 +20,17 @@ import type {
 import { makeReadable, pipeToWriter } from "./streams.js";
 import { classifyError } from "./errors.js";
 
+/**
+ * A request handler that receives a web-standard `Request` and returns a `Response`.
+ *
+ * The `Request` is augmented with:
+ * - `req.headers.get('iroh-node-id')` — the authenticated peer's public key.
+ * - `req.trailers` — a `Promise<Headers>` resolving to request trailer headers.
+ * - `req.acceptWebTransport()` — (duplex only) returns `{ readable, writable }`.
+ *
+ * The `Response` may include a non-standard `trailers` callback:
+ * `() => Headers | Promise<Headers>` that is called after the body completes.
+ */
 export type ServeHandler = (req: Request) => Response | Promise<Response>;
 
 export type ServeFn = (
@@ -34,6 +45,20 @@ const METHODS_WITH_BODY = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
  * Construct a Deno-compatible `serve` function bound to a specific endpoint.
+ *
+ * @param bridge          Platform bridge implementation (sendChunk, finishBody, etc.).
+ * @param endpointHandle  Slab handle returned by the low-level bind.
+ * @param rawServe        Platform-specific raw serve function.
+ * @returns A `serve` function: `(options, handler) => void`.
+ *
+ * @example
+ * ```ts
+ * const serve = makeServe(bridge, handle, rawServe);
+ * serve({}, async (req) => {
+ *   const peer = req.headers.get('iroh-node-id');
+ *   return Response.json({ echo: await req.text(), peer });
+ * });
+ * ```
  */
 export function makeServe(
   bridge: Bridge,
