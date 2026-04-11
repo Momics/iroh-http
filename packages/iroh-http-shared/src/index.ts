@@ -7,7 +7,7 @@
 
 // ── Public types ────────────────────────────────────────────────────────────
 export type { CloseOptions, NodeOptions, IrohNode, EndpointInfo,
-              RelayMode, IrohFetchInit, DiscoveryOptions, MdnsOptions, LifecycleOptions,
+              RelayMode, IrohFetchInit,
               NodeAddrInfo, PeerDiscoveryEvent, PeerStats, PathInfo,
               BidirectionalStream, DuplexStream } from "./bridge.js";
 export type { IrohSession, WebTransportBidirectionalStream, WebTransportCloseInfo, WebTransportDatagramDuplexStream } from "./session.js";

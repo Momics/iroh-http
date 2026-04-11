@@ -104,27 +104,10 @@ export interface RequestPayload extends FfiRequest {
 
 // ── Platform function types ───────────────────────────────────────────────────
 
-/** Options for discovery configuration. */
-export type DiscoveryOptions = {
-  /**
-   * Enable DNS discovery via n0's DNS servers.  Default: true.
-   * Set to `false` for LAN-only deployments.
-   */
-  dns?: boolean;
-};
-
-/** Options for mDNS browse/advertise calls. */
+/** @internal Options for mDNS browse/advertise calls. */
 export interface MdnsOptions {
   /** Application-specific mDNS service name.  Default: `'iroh-http'`. */
   serviceName?: string;
-}
-
-/** Options for mobile/background lifecycle management. */
-export interface LifecycleOptions {
-  /** Automatically reconnect if the endpoint goes dead.  Default: false. */
-  autoReconnect?: boolean;
-  /** Maximum reconnect attempts before marking the node dead.  Default: 3. */
-  maxRetries?: number;
 }
 
 /**
@@ -191,19 +174,55 @@ export interface NodeOptions {
    * @example `"192.168.1.5:0"`, `["0.0.0.0:0", "[::]:0"]`
    */
   bindAddr?: string | string[];
-  /** Idle connection timeout in milliseconds. @default 60000 */
+  /**
+   * QUIC connection-level idle timeout in milliseconds. If no new streams are
+   * opened within this window, the connection closes. Does not affect the
+   * lifetime of individual in-progress streams. Default: 60 000.
+   */
   idleTimeout?: number;
 
   // ── Discovery ─────────────────────────────────────────────────────────────
-  /** DNS discovery server URL override.  Uses n0 DNS defaults when unset. */
+  /**
+   * Peer discovery configuration.
+   *
+   * Controls how this node finds other peers on the network.  Both DNS and
+   * mDNS are independently configurable.
+   *
+   * @example DNS with a custom server URL:
+   * ```ts
+   * discovery: { dns: { serverUrl: "https://dns.example.com" } }
+   * ```
+   *
+   * @example LAN-only (disable DNS discovery):
+   * ```ts
+   * discovery: { dns: false }
+   * ```
+   */
+  discovery?: {
+    /**
+     * DNS discovery configuration.
+     * - `true` — enabled with n0 default servers (default).
+     * - `false` — disabled; useful for LAN-only deployments.
+     * - `{ serverUrl }` — enabled with a custom server URL.
+     */
+    dns?: boolean | { serverUrl?: string };
+    /**
+     * mDNS configuration.  Runtime control is via `node.browse()` /
+     * `node.advertise()`; set this to pre-configure the default service name.
+     * - `true` — enabled with service name `"iroh-http"`.
+     * - `false` — disabled.
+     * - `{ serviceName }` — enabled with a custom service name.
+     */
+    mdns?: boolean | { serviceName?: string };
+  };
+
+  /**
+   * @deprecated Pass `discovery: { dns: { serverUrl } }` instead.
+   * Will be removed in a future release.
+   */
   dnsDiscovery?: string;
-  /** Local peer discovery configuration. */
-  discovery?: DiscoveryOptions;
 
   // ── Power-user options ────────────────────────────────────────────────────
-  //
-  // Leave unset unless you have a specific reason. Incorrect values can
-  // silently break connectivity or degrade performance.
   /**
    * HTTP proxy URL for relay traffic.  For corporate networks that route
    * UDP through an HTTP proxy.
@@ -220,16 +239,44 @@ export interface NodeOptions {
    * Default: false.
    */
   keylog?: boolean;
-  /** Capacity (in chunks) of each body channel.  Default: 32. */
-  channelCapacity?: number;
-  /** Maximum byte length of a single chunk.  Larger chunks are split.  Default: 65536 (64 KB). */
-  maxChunkSizeBytes?: number;
-  /** Number of consecutive accept errors before the serve loop gives up.  Default: 5. */
-  maxConsecutiveErrors?: number;
-  /** Milliseconds to wait for a slow body reader before dropping.  Default: 30 000. */
-  drainTimeout?: number;
-  /** TTL in milliseconds for slab handle entries.  `0` disables sweeping.  Default: 300 000. */
-  handleTtl?: number;
+
+  // ── Advanced internal knobs ────────────────────────────────────────────────
+  /**
+   * Advanced internal configuration.
+   *
+   * Leave unset unless you have a specific reason. Incorrect values can
+   * silently break connectivity or degrade performance.
+   */
+  advanced?: {
+    /**
+     * Controls backpressure between the Rust pump and your JS handler.
+     * If your handler reads the request body slowly, the channel fills up and
+     * the Rust sender pauses. Raise this to reduce stalls under slow consumers;
+     * lower it to tighten memory use under high concurrency. Default: 32.
+     */
+    channelCapacity?: number;
+    /**
+     * Maximum byte length of a single chunk. Larger payloads are split into
+     * multiple channel messages. Default: 65536 (64 KB).
+     */
+    maxChunkSizeBytes?: number;
+    /**
+     * Milliseconds to wait for a slow body reader to consume a chunk before
+     * the connection is dropped. Default: 30 000.
+     */
+    drainTimeout?: number;
+    /**
+     * TTL in milliseconds for internal handle-table entries. Set to 0 to
+     * disable periodic sweeping. Incorrect values can cause premature handle
+     * invalidation or unbounded memory growth. Default: 300 000.
+     */
+    handleTtl?: number;
+    /**
+     * Number of consecutive accept errors before the serve loop gives up.
+     * Increase if you see spurious shutdowns under adversarial load. Default: 5.
+     */
+    maxConsecutiveErrors?: number;
+  };
   /**
    * Maximum number of idle QUIC connections to keep in the pool.
    * `undefined` means unlimited.
@@ -291,9 +338,38 @@ export interface NodeOptions {
    */
   maxHeaderBytes?: number;
 
-  // ── Mobile / background lifecycle ─────────────────────────────────────────
-  /** Mobile/background lifecycle options. */
-  lifecycle?: LifecycleOptions;
+  // ── Reconnect ──────────────────────────────────────────────────────────────
+  /**
+   * Automatic reconnect configuration.
+   *
+   * If enabled, the node will attempt to reconnect to the network after
+   * losing connectivity. On mobile platforms this also handles
+   * app-backgrounding and suspend cycles.
+   */
+  reconnect?: {
+    /**
+     * Automatically reconnect if the QUIC endpoint becomes unreachable.
+     * On mobile, this also handles app-backgrounding/suspend cycles.
+     * Default: false.
+     */
+    auto?: boolean;
+    /**
+     * Maximum reconnect attempts before marking the node as permanently dead.
+     * Default: 3.
+     */
+    maxRetries?: number;
+  };
+
+  /**
+   * @deprecated Use {@link NodeOptions.reconnect} instead.
+   * Will be removed in a future release.
+   */
+  lifecycle?: {
+    /** @deprecated Use `reconnect.auto` instead. */
+    autoReconnect?: boolean;
+    /** @deprecated Use `reconnect.maxRetries` instead. */
+    maxRetries?: number;
+  };
 
   // ── Testing / CI ──────────────────────────────────────────────────────────
   /**

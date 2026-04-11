@@ -296,13 +296,17 @@ function normaliseRelayMode(mode?: import("@momics/iroh-http-shared").RelayMode)
   return { relayMode: "custom", relays: [mode], disableNetworking: false };
 }
 
-/** Normalise DiscoveryOptions into flat fields for the Rust adapter. */
-function normaliseDiscovery(disc?: import("@momics/iroh-http-shared").DiscoveryOptions): {
+/** Normalise the `discovery` option into flat fields for the Rust adapter. */
+function normaliseDiscovery(disc?: import("@momics/iroh-http-shared").NodeOptions["discovery"]): {
   dnsEnabled: boolean;
+  dnsServerUrl?: string;
 } {
   if (!disc) return { dnsEnabled: true };
-  const dnsEnabled = disc.dns !== false;
-  return { dnsEnabled };
+  if (disc.dns === false) return { dnsEnabled: false };
+  if (typeof disc.dns === "object" && disc.dns !== null) {
+    return { dnsEnabled: true, dnsServerUrl: disc.dns.serverUrl };
+  }
+  return { dnsEnabled: true };
 }
 
 export async function createEndpointInfo(options?: NodeOptions): Promise<EndpointInfo> {
@@ -324,13 +328,13 @@ export async function createEndpointInfo(options?: NodeOptions): Promise<Endpoin
       relayMode:            relayMode ?? null,
       relays:               relays ?? null,
       bindAddrs,
-      dnsDiscovery:         options?.dnsDiscovery ?? null,
+      dnsDiscovery:         discovery.dnsServerUrl ?? options?.dnsDiscovery ?? null,
       dnsDiscoveryEnabled:  discovery.dnsEnabled,
-      channelCapacity:      options?.channelCapacity ?? null,
-      maxChunkSizeBytes:    options?.maxChunkSizeBytes ?? null,
-      maxConsecutiveErrors: options?.maxConsecutiveErrors ?? null,
-      drainTimeout:         options?.drainTimeout ?? null,
-      handleTtl:            options?.handleTtl ?? null,
+      channelCapacity:      options?.advanced?.channelCapacity ?? null,
+      maxChunkSizeBytes:    options?.advanced?.maxChunkSizeBytes ?? null,
+      maxConsecutiveErrors: options?.advanced?.maxConsecutiveErrors ?? null,
+      drainTimeout:         options?.advanced?.drainTimeout ?? null,
+      handleTtl:            options?.advanced?.handleTtl ?? null,
       maxPooledConnections: options?.maxPooledConnections ?? null,
       poolIdleTimeoutMs:    options?.poolIdleTimeoutMs ?? null,
       disableNetworking,
