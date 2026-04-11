@@ -121,12 +121,18 @@ pub async fn create_endpoint(
     })
 }
 
-/// Gracefully close an Iroh endpoint, draining in-flight requests.
+/// Close an Iroh endpoint.
+///
+/// If `force` is `true`, aborts immediately.  Otherwise drains in-flight requests.
 #[command]
-pub async fn close_endpoint(endpoint_handle: u32) -> Result<(), String> {
+pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> Result<(), String> {
     let ep = state::remove_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
-    ep.close().await;
+    if force.unwrap_or(false) {
+        ep.close_force().await;
+    } else {
+        ep.close().await;
+    }
     Ok(())
 }
 

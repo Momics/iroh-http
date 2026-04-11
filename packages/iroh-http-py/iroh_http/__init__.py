@@ -34,6 +34,20 @@ from .iroh_http_py import (  # noqa: F401
     IrohSession,
     IrohBidiStream,
     IrohUniStream,
+    secret_key_sign,
+    public_key_verify,
+    generate_secret_key,
 )
 
-__all__ = ["create_node", "IrohNode", "IrohRequest", "IrohResponse", "IrohSession", "IrohBidiStream", "IrohUniStream"]
+__all__ = [
+    "create_node",
+    "IrohNode",
+    "IrohRequest",
+    "IrohResponse",
+    "IrohSession",
+    "IrohBidiStream",
+    "IrohUniStream",
+    "secret_key_sign",
+    "public_key_verify",
+    "generate_secret_key",
+]

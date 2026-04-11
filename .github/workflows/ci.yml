@@ -25,6 +25,8 @@ jobs:
         run: cargo check --workspace
       - name: cargo check (tauri plugin)
         run: cd packages/iroh-http-tauri && cargo check
+      - name: cargo test (workspace)
+        run: cargo test --workspace
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: cargo clippy

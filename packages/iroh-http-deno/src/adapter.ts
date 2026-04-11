@@ -343,8 +343,8 @@ export async function createEndpointInfo(options?: NodeOptions): Promise<Endpoin
   };
 }
 
-export async function closeEndpoint(handle: number): Promise<void> {
-  await call<Record<never, never>>("closeEndpoint", { endpointHandle: handle });
+export async function closeEndpoint(handle: number, force?: boolean): Promise<void> {
+  await call<Record<never, never>>("closeEndpoint", { endpointHandle: handle, force: force ?? null });
 }
 
 export function stopServe(handle: number): void {

@@ -124,14 +124,17 @@ pub struct JsEndpointInfo {
 /// all-default configuration or supply a `JsNodeOptions` to customise.
 #[napi]
 pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsEndpointInfo> {
-    let opts = options.map(|o| NodeOptions {
-        key: o.key.map(|k| {
-            let mut arr = [0u8; 32];
-            let slice = k.as_ref();
-            let len = slice.len().min(32);
-            arr[..len].copy_from_slice(&slice[..len]);
-            arr
-        }),
+    let opts = options.map(|o| -> napi::Result<NodeOptions> { Ok(NodeOptions {
+        key: match o.key {
+            Some(k) => {
+                let slice = k.as_ref();
+                let arr: [u8; 32] = slice.try_into().map_err(|_| {
+                    napi::Error::new(Status::InvalidArg, format!("secret key must be exactly 32 bytes, got {}", slice.len()))
+                })?;
+                Some(arr)
+            }
+            None => None,
+        },
         idle_timeout_ms: o.idle_timeout.map(|t| t as u64),
         relay_mode: o.relay_mode,
         relays: o.relays.unwrap_or_default(),
@@ -164,7 +167,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         } else {
             None
         },
-    }).unwrap_or_default();
+    }) }).transpose()?.unwrap_or_default();
 
     let ep = IrohEndpoint::bind(opts)
         .await
@@ -181,12 +184,12 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
     })
 }
 
-/// Gracefully close an Iroh endpoint.
+/// Close an Iroh endpoint.
 ///
-/// Signals the serve loop (if any) to stop accepting, drains in-flight
-/// requests, then shuts down the QUIC endpoint.
+/// If `force` is `true`, aborts immediately without draining in-flight
+/// requests.  Otherwise performs a graceful shutdown.
 #[napi]
-pub async fn close_endpoint(endpoint_handle: u32) -> napi::Result<()> {
+pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> napi::Result<()> {
     let ep = {
         let mut slab = endpoint_slab().lock().unwrap();
         if !slab.contains(endpoint_handle as usize) {
@@ -194,7 +197,11 @@ pub async fn close_endpoint(endpoint_handle: u32) -> napi::Result<()> {
         }
         slab.remove(endpoint_handle as usize)
     };
-    ep.close().await;
+    if force.unwrap_or(false) {
+        ep.close_force().await;
+    } else {
+        ep.close().await;
+    }
     Ok(())
 }
 

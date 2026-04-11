@@ -314,7 +314,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawServe,
     rawConnect,
     allocBodyWriter,
-    (handle) => closeEndpoint(handle),
+    (handle, force?) => closeEndpoint(handle, force ?? null),
     (handle) => napiStopServe(handle),
     addrFns,
     discoveryFns,

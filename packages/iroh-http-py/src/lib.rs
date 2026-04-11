@@ -305,6 +305,65 @@ impl IrohSession {
             Ok(())
         })
     }
+
+    /// Wait for the session handshake to complete.
+    ///
+    /// Resolves immediately for iroh sessions (handshake completes during connect).
+    fn ready<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.session_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            iroh_http_core::session_ready(handle).await.map_err(py_err)?;
+            Ok(())
+        })
+    }
+
+    /// Wait for the session to close and return (close_code, reason).
+    ///
+    /// Blocks until the connection is closed by either side.
+    fn closed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.session_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let info = iroh_http_core::session_closed(handle).await.map_err(py_err)?;
+            Ok((info.close_code, info.reason))
+        })
+    }
+
+    /// Accept the next incoming bidirectional stream from the remote peer.
+    ///
+    /// Returns an `IrohBidiStream`, or `None` when the session closes.
+    fn next_bidirectional_stream<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.session_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            match iroh_http_core::session_next_bidi_stream(handle).await.map_err(py_err)? {
+                Some(duplex) => Ok(Python::with_gil(|py| {
+                    IrohBidiStream {
+                        read_handle: duplex.read_handle,
+                        write_handle: duplex.write_handle,
+                    }.into_py(py)
+                })),
+                None => Ok(Python::with_gil(|py| py.None())),
+            }
+        })
+    }
+
+    /// Accept the next incoming unidirectional (receive-only) stream.
+    ///
+    /// Returns an `IrohBidiStream` with a read handle (write handle is unused),
+    /// or `None` when the session closes.
+    fn next_unidirectional_stream<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.session_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            match iroh_http_core::session_next_uni_stream(handle).await.map_err(py_err)? {
+                Some(read_handle) => Ok(Python::with_gil(|py| {
+                    IrohBidiStream {
+                        read_handle,
+                        write_handle: 0,
+                    }.into_py(py)
+                })),
+                None => Ok(Python::with_gil(|py| py.None())),
+            }
+        })
+    }
 }
 
 // ── IrohNode ─────────────────────────────────────────────────────────────────
@@ -611,7 +670,15 @@ fn create_node<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let opts = NodeOptions {
-            key:                    key.and_then(|k| k.try_into().ok()),
+            key: match key {
+                Some(k) => {
+                    let arr: [u8; 32] = k.try_into().map_err(|_| {
+                        pyo3::exceptions::PyValueError::new_err("secret key must be exactly 32 bytes")
+                    })?;
+                    Some(arr)
+                }
+                None => None,
+            },
             idle_timeout_ms:        idle_timeout,
             relay_mode,
             relays:                 relays.unwrap_or_default(),

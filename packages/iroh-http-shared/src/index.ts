@@ -5,7 +5,7 @@
  * to wire their bridge implementations into the shared layer.
  */
 
-export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
+export type { Bridge, CloseOptions, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
               NodeOptions, IrohNode, EndpointInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn,
               FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn,
               RelayMode, IrohFetchInit, DiscoveryOptions, MdnsOptions, LifecycleOptions,
@@ -39,7 +39,7 @@ export function ticketNodeId(ticket: string): string {
   return ticket;
 }
 
-import type { Bridge, EndpointInfo, NodeOptions, IrohNode, MdnsOptions, NodeAddrInfo, PeerDiscoveryEvent, PeerStats, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
+import type { Bridge, CloseOptions, EndpointInfo, NodeOptions, IrohNode, MdnsOptions, NodeAddrInfo, PeerDiscoveryEvent, PeerStats, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
 import type { RawSessionFns, WebTransportCloseInfo } from "./session.js";
 import { buildSession } from "./session.js";
 import { makeFetch, makeConnect } from "./fetch.js";
@@ -106,7 +106,7 @@ export function buildNode(
   rawServe: RawServeFn,
   rawConnect: RawConnectFn,
   allocBodyWriter: AllocBodyWriterFn,
-  closeEndpoint: (handle: number) => Promise<void>,
+  closeEndpoint: (handle: number, force?: boolean) => Promise<void>,
   stopServe: (handle: number) => void,
   addrFns?: AddrFunctions,
   discoveryFns?: DiscoveryFunctions,
@@ -209,8 +209,8 @@ export function buildNode(
       return addrFns.peerStats(info.endpointHandle, nodeId);
     },
     closed: closedPromise,
-    close: async () => {
-      await closeEndpoint(info.endpointHandle);
+    close: async (options?) => {
+      await closeEndpoint(info.endpointHandle, options?.force);
       resolveClosed({ closeCode: 0, reason: "" });
     },
     [Symbol.asyncDispose]() { return node.close(); },

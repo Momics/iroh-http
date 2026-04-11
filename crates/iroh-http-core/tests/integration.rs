@@ -1005,12 +1005,12 @@ async fn per_peer_connection_limit_config() {
     // Just verify that the config fields compile and can be set.
     let opts = ServeOptions {
         max_connections_per_peer: Some(2),
-        request_timeout_secs: Some(30),
+        request_timeout_ms: Some(30_000),
         max_request_body_bytes: Some(1024 * 1024),
         ..Default::default()
     };
     assert_eq!(opts.max_connections_per_peer, Some(2));
-    assert_eq!(opts.request_timeout_secs, Some(30));
+    assert_eq!(opts.request_timeout_ms, Some(30_000));
     assert_eq!(opts.max_request_body_bytes, Some(1024 * 1024));
 }
 
@@ -1206,4 +1206,192 @@ async fn shutdown_returns_immediately() {
         elapsed < std::time::Duration::from_millis(100),
         "shutdown() blocked for {elapsed:?}"
     );
+}
+
+// -- Additional coverage tests -----------------------------------------------
+
+/// Round-trip a 1 MB body to verify streaming works for large payloads.
+#[tokio::test]
+async fn large_body_round_trip() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            // Echo the request body back as the response body.
+            let req_body_handle = payload.req_body_handle;
+            let res_body_handle = payload.res_body_handle;
+            let req_handle = payload.req_handle;
+
+            tokio::spawn(async move {
+                respond(req_handle, 200, vec![]).unwrap();
+
+                while let Ok(Some(chunk)) = next_chunk(req_body_handle).await {
+                    stream::send_chunk(res_body_handle, chunk).await.unwrap();
+                }
+                stream::finish_body(res_body_handle).unwrap();
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // 1 MB of patterned data.
+    let data: Vec<u8> = (0u8..=255).cycle().take(1024 * 1024).collect();
+
+    // Allocate a body writer so we can stream the request body.
+    let (writer_handle, body_reader) = stream::alloc_body_writer();
+
+    // Send the body in chunks concurrently with fetch.
+    let data_clone = data.clone();
+    let send_task = tokio::spawn(async move {
+        for chunk in data_clone.chunks(8192) {
+            stream::send_chunk(writer_handle, Bytes::copy_from_slice(chunk)).await.unwrap();
+        }
+        stream::finish_body(writer_handle).unwrap();
+    });
+
+    let res = fetch(&client_ep, &server_id, "/echo", "POST", &[], Some(body_reader), None, Some(&addrs)).await.unwrap();
+    send_task.await.unwrap();
+    assert_eq!(res.status, 200);
+
+    let mut received = Vec::new();
+    while let Ok(Some(chunk)) = next_chunk(res.body_handle).await {
+        received.extend_from_slice(&chunk);
+    }
+    assert_eq!(received.len(), data.len());
+    assert_eq!(received, data);
+}
+
+/// Both peers serve and fetch from each other simultaneously.
+#[tokio::test]
+async fn mutual_fetch() {
+    let (ep_a, ep_b) = make_pair().await;
+    let id_a = node_id(&ep_a);
+    let id_b = node_id(&ep_b);
+    let addrs_a = server_addrs(&ep_a);
+    let addrs_b = server_addrs(&ep_b);
+
+    // Both nodes serve a handler that responds with their own node ID.
+    for (ep, id) in [(&ep_a, id_a.clone()), (&ep_b, id_b.clone())] {
+        let my_id = id.clone();
+        serve(
+            ep.clone(),
+            ServeOptions::default(),
+            move |payload: RequestPayload| {
+                let body = Bytes::from(my_id.clone().into_bytes());
+                let res_body = payload.res_body_handle;
+                let req = payload.req_handle;
+                tokio::spawn(async move {
+                    respond(req, 200, vec![]).unwrap();
+                    stream::send_chunk(res_body, body).await.unwrap();
+                    stream::finish_body(res_body).unwrap();
+                });
+            },
+        );
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // A fetches from B, B fetches from A — concurrently.
+    let (res_ab, res_ba) = tokio::join!(
+        fetch(&ep_a, &id_b, "/who", "GET", &[], None, None, Some(&addrs_b)),
+        fetch(&ep_b, &id_a, "/who", "GET", &[], None, None, Some(&addrs_a)),
+    );
+
+    let res_ab = res_ab.unwrap();
+    let res_ba = res_ba.unwrap();
+
+    // A fetching B should get B's ID.
+    let mut body_ab = Vec::new();
+    while let Ok(Some(c)) = next_chunk(res_ab.body_handle).await {
+        body_ab.extend_from_slice(&c);
+    }
+    assert_eq!(String::from_utf8(body_ab).unwrap(), id_b);
+
+    // B fetching A should get A's ID.
+    let mut body_ba = Vec::new();
+    while let Ok(Some(c)) = next_chunk(res_ba.body_handle).await {
+        body_ba.extend_from_slice(&c);
+    }
+    assert_eq!(String::from_utf8(body_ba).unwrap(), id_a);
+}
+
+/// POST JSON with content-type verification.
+#[tokio::test]
+async fn fetch_json_post() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            let content_type = payload.headers.iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            let req_body_handle = payload.req_body_handle;
+            let res_body_handle = payload.res_body_handle;
+            let req_handle = payload.req_handle;
+
+            tokio::spawn(async move {
+                // Read request body.
+                let mut body = Vec::new();
+                while let Ok(Some(chunk)) = next_chunk(req_body_handle).await {
+                    body.extend_from_slice(&chunk);
+                }
+
+                // Verify content-type was sent.
+                assert_eq!(content_type, "application/json");
+
+                // Echo it back as JSON with content-type.
+                respond(req_handle, 200, vec![
+                    ("content-type".into(), "application/json".into()),
+                ]).unwrap();
+                stream::send_chunk(res_body_handle, Bytes::from(body)).await.unwrap();
+                stream::finish_body(res_body_handle).unwrap();
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let json_body = b"{\"hello\":\"world\"}";
+    let (writer_handle, body_reader) = stream::alloc_body_writer();
+
+    let headers = vec![("content-type".to_string(), "application/json".to_string())];
+
+    let send_task = tokio::spawn(async move {
+        stream::send_chunk(writer_handle, Bytes::from_static(json_body)).await.unwrap();
+        stream::finish_body(writer_handle).unwrap();
+    });
+
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/api/data",
+        "POST",
+        &headers,
+        Some(body_reader),
+        None,
+        Some(&addrs),
+    ).await.unwrap();
+    send_task.await.unwrap();
+    assert_eq!(res.status, 200);
+
+    let ct = res.headers.iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.as_str());
+    assert_eq!(ct, Some("application/json"));
+
+    let mut body = Vec::new();
+    while let Ok(Some(chunk)) = next_chunk(res.body_handle).await {
+        body.extend_from_slice(&chunk);
+    }
+    assert_eq!(&body, json_body);
 }

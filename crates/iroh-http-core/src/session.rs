@@ -12,8 +12,15 @@ use slab::Slab;
 
 use crate::{
     parse_node_addr, FfiDuplexStream, IrohEndpoint, ALPN_DUPLEX,
-    stream::{make_body_channel, insert_reader, insert_writer, BodyReader, BodyWriter},
+    stream::{make_body_channel, insert_reader, insert_writer, pump_quic_recv_to_body, pump_body_to_quic_send},
 };
+
+/// Returns `true` if the connection error means "connection ended" rather
+/// than a protocol-level bug.  Used to return `None` instead of `Err`.
+fn is_connection_closed(err: &iroh::endpoint::ConnectionError) -> bool {
+    use iroh::endpoint::ConnectionError::*;
+    matches!(err, ApplicationClosed(_) | ConnectionClosed(_) | Reset | TimedOut | LocallyClosed)
+}
 
 /// Close information returned when a session ends.
 #[derive(Debug, Clone, Serialize)]
@@ -22,8 +29,6 @@ pub struct CloseInfo {
     pub close_code: u32,
     pub reason: String,
 }
-
-const READ_BUF: usize = 16 * 1024;
 
 // ── Session slab ─────────────────────────────────────────────────────────────
 
@@ -124,15 +129,8 @@ pub async fn session_next_bidi_stream(
 
     match conn.accept_bi().await {
         Ok((send, recv)) => Ok(Some(wrap_bidi_stream(send, recv))),
-        Err(e) => {
-            // ConnectionError means the connection is closed.
-            let msg = e.to_string();
-            if msg.contains("closed") || msg.contains("reset") || msg.contains("timed out") {
-                Ok(None)
-            } else {
-                Err(format!("accept_bi: {e}"))
-            }
-        }
+        Err(e) if is_connection_closed(&e) => Ok(None),
+        Err(e) => Err(format!("accept_bi: {e}")),
     }
 }
 
@@ -184,10 +182,13 @@ pub async fn session_ready(_session_handle: u32) -> Result<(), String> {
 
 /// Wait for the session to close and return the close information.
 ///
-/// Blocks until the connection is closed by either side.
+/// Blocks until the connection is closed by either side.  Removes the
+/// session from the slab so resources are freed.
 pub async fn session_closed(session_handle: u32) -> Result<CloseInfo, String> {
     let conn = get_conn(session_handle)?;
     let err = conn.closed().await;
+    // Connection is dead — clean up the slab entry.
+    session_slab().lock().unwrap().try_remove(session_handle as usize);
     let (close_code, reason) = parse_connection_error(&err);
     Ok(CloseInfo { close_code, reason })
 }
@@ -208,7 +209,7 @@ pub async fn session_create_uni_stream(
 
     let (send_writer, send_reader) = make_body_channel();
     let write_handle = insert_writer(send_writer);
-    tokio::spawn(pump_send(send_reader, send));
+    tokio::spawn(pump_body_to_quic_send(send_reader, send));
 
     Ok(write_handle)
 }
@@ -225,17 +226,11 @@ pub async fn session_next_uni_stream(
         Ok(recv) => {
             let (recv_writer, recv_reader) = make_body_channel();
             let read_handle = insert_reader(recv_reader);
-            tokio::spawn(pump_recv(recv, recv_writer));
+            tokio::spawn(pump_quic_recv_to_body(recv, recv_writer));
             Ok(Some(read_handle))
         }
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("closed") || msg.contains("reset") || msg.contains("timed out") {
-                Ok(None)
-            } else {
-                Err(format!("accept_uni: {e}"))
-            }
-        }
+        Err(e) if is_connection_closed(&e) => Ok(None),
+        Err(e) => Err(format!("accept_uni: {e}")),
     }
 }
 
@@ -262,14 +257,8 @@ pub async fn session_recv_datagram(
     let conn = get_conn(session_handle)?;
     match conn.read_datagram().await {
         Ok(data) => Ok(Some(data.to_vec())),
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("closed") || msg.contains("reset") || msg.contains("timed out") {
-                Ok(None)
-            } else {
-                Err(format!("recv_datagram: {e}"))
-            }
-        }
+        Err(e) if is_connection_closed(&e) => Ok(None),
+        Err(e) => Err(format!("recv_datagram: {e}")),
     }
 }
 
@@ -291,48 +280,17 @@ fn wrap_bidi_stream(
     // Receive side: pump from QUIC recv → BodyWriter → BodyReader (JS reads via nextChunk).
     let (recv_writer, recv_reader) = make_body_channel();
     let read_handle = insert_reader(recv_reader);
-    tokio::spawn(pump_recv(recv, recv_writer));
+    tokio::spawn(pump_quic_recv_to_body(recv, recv_writer));
 
     // Send side: pump from BodyReader (JS writes via sendChunk) → QUIC send.
     let (send_writer, send_reader) = make_body_channel();
     let write_handle = insert_writer(send_writer);
-    tokio::spawn(pump_send(send_reader, send));
+    tokio::spawn(pump_body_to_quic_send(send_reader, send));
 
     FfiDuplexStream {
         read_handle,
         write_handle,
     }
-}
-
-/// Pump raw bytes from a QUIC `RecvStream` into a `BodyWriter`.
-async fn pump_recv(mut recv: iroh::endpoint::RecvStream, writer: BodyWriter) {
-    loop {
-        match recv.read_chunk(READ_BUF).await {
-            Ok(Some(chunk)) => {
-                let bytes = bytes::Bytes::copy_from_slice(&chunk.bytes);
-                if writer.send_chunk(bytes).await.is_err() {
-                    break;
-                }
-            }
-            _ => break,
-        }
-    }
-    // writer drops → BodyReader sees EOF.
-}
-
-/// Pump raw bytes from a `BodyReader` into a QUIC `SendStream`.
-async fn pump_send(reader: BodyReader, mut send: iroh::endpoint::SendStream) {
-    loop {
-        match reader.next_chunk().await {
-            None => break,
-            Some(data) => {
-                if send.write_all(&data).await.is_err() {
-                    break;
-                }
-            }
-        }
-    }
-    let _ = send.finish();
 }
 
 /// Extract close code and reason from a QUIC `ConnectionError`.

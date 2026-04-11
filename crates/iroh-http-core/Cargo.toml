@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 
 [features]
 default = []
-compression = ["dep:zstd"]
+compression = ["dep:async-compression"]
 
 [dependencies]
 iroh-http-framing = { path = "../iroh-http-framing" }
@@ -21,9 +21,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
 rand = "0.9"
-zstd = { version = "0.13", optional = true, default-features = false }
+async-compression = { version = "0.4", optional = true, features = ["tokio", "zstd"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 bytes = { workspace = true }
-zstd = "0.13"
+
