@@ -43,11 +43,12 @@ fn session_slab() -> &'static Mutex<Slab<Session>> {
 }
 
 fn insert_session(session: Session) -> u32 {
-    session_slab().lock().unwrap().insert(session) as u32
+    let key = session_slab().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
+    u32::try_from(key).expect("session slab overflow")
 }
 
 fn get_conn(handle: u32) -> Result<Connection, String> {
-    let slab = session_slab().lock().unwrap();
+    let slab = session_slab().lock().unwrap_or_else(|e| e.into_inner());
     slab.get(handle as usize)
         .map(|s| s.conn.clone())
         .ok_or_else(|| format!("invalid session handle: {handle}"))
@@ -162,7 +163,7 @@ pub async fn session_accept(
 /// `close_code` is an application-level error code (maps to QUIC VarInt).
 /// `reason` is a human-readable string sent to the peer.
 pub fn session_close(session_handle: u32, close_code: u32, reason: &str) -> Result<(), String> {
-    let mut slab = session_slab().lock().unwrap();
+    let mut slab = session_slab().lock().unwrap_or_else(|e| e.into_inner());
     if !slab.contains(session_handle as usize) {
         return Err(format!("invalid session handle: {session_handle}"));
     }
@@ -188,7 +189,7 @@ pub async fn session_closed(session_handle: u32) -> Result<CloseInfo, String> {
     let conn = get_conn(session_handle)?;
     let err = conn.closed().await;
     // Connection is dead — clean up the slab entry.
-    session_slab().lock().unwrap().try_remove(session_handle as usize);
+    session_slab().lock().unwrap_or_else(|e| e.into_inner()).try_remove(session_handle as usize);
     let (close_code, reason) = parse_connection_error(&err);
     Ok(CloseInfo { close_code, reason })
 }

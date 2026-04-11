@@ -100,7 +100,7 @@ impl ConnectionPool {
         }
 
         let action = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(slot) = inner.conns.get(&key) {
                 match slot {
                     Slot::Ready(pooled) => {
@@ -134,7 +134,7 @@ impl ConnectionPool {
 
                 // Phase 3: store the result (short lock, no await).
                 {
-                    let mut inner = self.inner.lock().unwrap();
+                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     match &pooled_result {
                         Ok(pooled) => {
                             if let Some(max) = inner.max_idle {
@@ -158,7 +158,7 @@ impl ConnectionPool {
     /// Return the number of entries currently in the pool (for testing).
     #[cfg(test)]
     pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().conns.iter().filter(|(_, s)| matches!(s, Slot::Ready(_))).count()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).conns.iter().filter(|(_, s)| matches!(s, Slot::Ready(_))).count()
     }
 
     /// Remove a specific connection from the pool (e.g. after a fatal error).
@@ -168,7 +168,7 @@ impl ConnectionPool {
             node_id: *node_id,
             alpn: alpn.to_vec(),
         };
-        self.inner.lock().unwrap().conns.remove(&key);
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).conns.remove(&key);
     }
 }
 

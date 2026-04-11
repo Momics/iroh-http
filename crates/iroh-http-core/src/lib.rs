@@ -244,7 +244,13 @@ pub(crate) fn parse_node_id(s: &str) -> Result<iroh::PublicKey, String> {
 /// connect directly without DNS discovery.
 pub fn node_ticket(ep: &IrohEndpoint) -> String {
     let info = ep.node_addr();
-    serde_json::to_string(&info).unwrap_or_default()
+    match serde_json::to_string(&info) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("iroh-http: failed to serialize node ticket: {e}");
+            String::new()
+        }
+    }
 }
 
 /// Parsed node address from a ticket string, bare node ID, or JSON address info.

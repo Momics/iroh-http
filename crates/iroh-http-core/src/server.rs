@@ -20,9 +20,11 @@ use crate::{
     base32_encode,
     client::pump_body_to_stream,
     stream::{
-        insert_reader, insert_writer, make_body_channel, BodyWriter,
+        BodyReader, BodyWriter, TrailerRx,
+        insert_reader, insert_writer, make_body_channel,
         insert_trailer_sender, insert_trailer_receiver, remove_trailer_sender,
-    }, IrohEndpoint, RequestPayload,
+    },
+    IrohEndpoint, RequestPayload,
 };
 use iroh_http_framing::{parse_trailers, FramingError};
 
@@ -125,7 +127,7 @@ impl PendingGuard {
 impl Drop for PendingGuard {
     fn drop(&mut self) {
         if self.active {
-            pending_responses().lock().unwrap().remove(&self.handle);
+            pending_responses().lock().unwrap_or_else(|e| e.into_inner()).remove(&self.handle);
         }
     }
 }
@@ -235,7 +237,7 @@ where
             // Per-peer connection limit.
             let remote_id = conn.remote_id();
             {
-                let mut counts = peer_counts.lock().unwrap();
+                let mut counts = peer_counts.lock().unwrap_or_else(|e| e.into_inner());
                 let count = counts.entry(remote_id).or_insert(0);
                 if *count >= max_conns_per_peer {
                     tracing::warn!("iroh-http: peer {} exceeded connection limit ({max_conns_per_peer})", crate::base32_encode(remote_id.as_bytes()));
@@ -266,7 +268,7 @@ where
                 )
                 .await;
                 // Decrement peer count.
-                let mut counts = pc.lock().unwrap();
+                let mut counts = pc.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(c) = counts.get_mut(&remote_id) {
                     *c = c.saturating_sub(1);
                     if *c == 0 {
@@ -373,6 +375,210 @@ async fn handle_connection<F>(
     }
 }
 
+// ── Request dispatching ───────────────────────────────────────────────────────
+
+/// Returned by [`dispatch_request`] — carries the async pieces the caller
+/// needs to await and forward to [`write_response`].
+struct DispatchResult {
+    rx: oneshot::Receiver<ResponseHead>,
+    pending_guard: PendingGuard,
+    res_reader: BodyReader,
+    opt_res_trailer_rx: Option<TrailerRx>,
+    res_trailers_handle: u32,
+}
+
+/// Allocates all request/response body channels and trailer channels, spawns
+/// the recv-to-body pump task, and fires `on_request`.
+fn dispatch_request<F>(
+    recv: iroh::endpoint::RecvStream,
+    method: String,
+    path: &str,
+    own_node_id: String,
+    remote_node_id: String,
+    req_headers: Vec<(String, String)>,
+    is_bidi: bool,
+    leftover: Vec<u8>,
+    max_request_body_bytes: Option<usize>,
+    #[cfg(feature = "compression")]
+    req_content_zstd: bool,
+    on_request: std::sync::Arc<F>,
+) -> DispatchResult
+where
+    F: Fn(RequestPayload) + Send + Sync + 'static,
+{
+    // Allocate request body channel; optionally wrap with decompressor.
+    let (req_writer, req_reader) = make_body_channel();
+    #[cfg(feature = "compression")]
+    let req_reader = if req_content_zstd {
+        crate::compress::decompress_body(req_reader)
+    } else {
+        req_reader
+    };
+    let req_body_handle = insert_reader(req_reader);
+
+    // Allocate response body channel.
+    let (res_writer, res_reader) = make_body_channel();
+    let res_body_handle = insert_writer(res_writer);
+
+    // Allocate oneshot for response head.
+    let (tx, rx) = oneshot::channel::<ResponseHead>();
+    let req_handle = allocate_req_handle(tx);
+    let pending_guard = PendingGuard::new(req_handle);
+
+    // Allocate trailer channels (skipped for duplex streams — raw bytes only).
+    let (opt_req_trailer_tx, opt_res_trailer_rx, req_trailers_handle, res_trailers_handle) =
+        if !is_bidi {
+            let (rq_tx, rq_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
+            let rq_h = insert_trailer_receiver(rq_rx);
+            let (rs_tx, rs_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
+            let rs_h = insert_trailer_sender(rs_tx);
+            (Some(rq_tx), Some(rs_rx), rq_h, rs_h)
+        } else {
+            (None, None, 0u32, 0u32)
+        };
+
+    // Construct the full URL and spawn the recv pump.
+    let url = format!("httpi://{own_node_id}{path}");
+    if is_bidi {
+        tokio::spawn(pump_recv_raw_to_body(recv, req_writer, leftover));
+    } else {
+        let req_is_chunked = req_headers.iter().any(|(k, v)| {
+            k.eq_ignore_ascii_case("transfer-encoding")
+                && v.to_ascii_lowercase().contains("chunked")
+        });
+        let rq_tx = opt_req_trailer_tx.expect("non-duplex req_trailer_tx");
+        if req_is_chunked {
+            tokio::spawn(pump_recv_to_body(
+                recv, req_writer, leftover, rq_tx, max_request_body_bytes,
+            ));
+        } else {
+            tokio::spawn(pump_recv_raw_to_body_limited(
+                recv, req_writer, leftover, rq_tx,
+                max_request_body_bytes.unwrap_or(usize::MAX),
+            ));
+        }
+    }
+
+    // Notify the handler.
+    on_request(RequestPayload {
+        req_handle,
+        req_body_handle,
+        res_body_handle,
+        req_trailers_handle,
+        res_trailers_handle,
+        method,
+        url,
+        headers: req_headers,
+        remote_node_id,
+        is_bidi,
+    });
+
+    DispatchResult {
+        rx,
+        pending_guard,
+        res_reader,
+        opt_res_trailer_rx,
+        res_trailers_handle,
+    }
+}
+
+/// Encodes and writes the response head to `send`, optionally compresses the
+/// response body, then pumps it to the QUIC send stream.
+async fn write_response(
+    send: &mut iroh::endpoint::SendStream,
+    codec: &std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
+    response_head: ResponseHead,
+    is_bidi: bool,
+    res_reader: BodyReader,
+    opt_res_trailer_rx: Option<TrailerRx>,
+    res_trailers_handle: u32,
+    #[cfg(feature = "compression")]
+    client_accepts_zstd: bool,
+    #[cfg(feature = "compression")]
+    compression: Option<crate::compress::CompressionOptions>,
+) -> Result<(), String> {
+    // Determine whether to compress the response body.
+    #[cfg(feature = "compression")]
+    let compress_response = client_accepts_zstd
+        && compression.is_some()
+        && !response_head
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
+        && {
+            let min = compression.as_ref().map_or(512, |c| c.min_body_bytes);
+            let content_length: Option<usize> = response_head
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, v)| v.parse().ok());
+            match content_length {
+                Some(len) if len < min => false,
+                _ => true,
+            }
+        };
+
+    // Build final response headers, injecting Content-Encoding if compressing.
+    #[allow(unused_mut)]
+    let mut resp_headers = response_head.headers;
+    #[cfg(feature = "compression")]
+    if compress_response {
+        resp_headers.push(("content-encoding".to_string(), "zstd".to_string()));
+        resp_headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
+    }
+
+    let pairs: Vec<(&str, &str)> = resp_headers
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let res_chunked = !resp_headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
+    let mut qpack_pairs = pairs.clone();
+    if res_chunked && !is_bidi {
+        qpack_pairs.push(("transfer-encoding", "chunked"));
+    }
+
+    // Encode and write the response head.
+    let head_bytes = {
+        let mut guard = codec.lock().await;
+        guard
+            .encode_response(response_head.status, &qpack_pairs)
+            .map_err(|e| format!("qpack encode response: {e}"))?
+    };
+    send.write_all(&head_bytes)
+        .await
+        .map_err(|e| format!("write response head: {e}"))?;
+
+    // Optionally compress the response body.
+    #[cfg(feature = "compression")]
+    let res_reader = if compress_response {
+        let level = compression.as_ref().map_or(3, |c| c.level);
+        crate::compress::compress_body(res_reader, level)
+    } else {
+        res_reader
+    };
+
+    // Pump the response body.
+    if is_bidi {
+        pump_body_raw_to_stream(res_reader, send).await?;
+    } else {
+        let has_trailer_header = resp_headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("trailer"));
+        let trailer_rx_for_pump = if has_trailer_header {
+            opt_res_trailer_rx
+        } else {
+            drop(opt_res_trailer_rx);
+            remove_trailer_sender(res_trailers_handle);
+            None
+        };
+        pump_body_to_stream(res_reader, send, res_chunked, trailer_rx_for_pump).await?;
+    }
+
+    Ok(())
+}
+
 async fn handle_stream<F>(
     mut send: iroh::endpoint::SendStream,
     mut recv: iroh::endpoint::RecvStream,
@@ -393,194 +599,69 @@ where
     let (method, path, mut req_headers, leftover) =
         read_request_head_qpack(&mut recv, &codec, max_header_size).await?;
 
-    // 2. Detect duplex upgrade.
+    // 2. Detect duplex upgrade and request-side compression flags.
     let is_bidi = req_headers.iter().any(|(k, v)| {
         k.eq_ignore_ascii_case("upgrade") && v.eq_ignore_ascii_case("iroh-duplex")
     });
-
-    // Check for Content-Encoding: zstd on the incoming request body.
     #[cfg(feature = "compression")]
     let req_content_zstd = !is_bidi && req_headers.iter().any(|(k, v)| {
         k.eq_ignore_ascii_case("content-encoding") && crate::compress::is_zstd(v)
+    });
+    #[cfg(feature = "compression")]
+    let client_accepts_zstd = !is_bidi && req_headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("accept-encoding") && v.to_ascii_lowercase().contains("zstd")
     });
     #[cfg(feature = "compression")]
     if req_content_zstd {
         req_headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-encoding"));
     }
 
-    // Check whether the client accepts zstd for the response.
-    #[cfg(feature = "compression")]
-    let client_accepts_zstd = !is_bidi && req_headers.iter().any(|(k, v)| {
-        k.eq_ignore_ascii_case("accept-encoding") && v.to_ascii_lowercase().contains("zstd")
-    });
-
-    // 3. Allocate request body channel.
-    let (req_writer, req_reader) = make_body_channel();
-
-    // If the request body is zstd-encoded, interpose a decompressor.
-    #[cfg(feature = "compression")]
-    let req_reader = if req_content_zstd {
-        crate::compress::decompress_body(req_reader)
-    } else {
-        req_reader
-    };
-
-    let req_body_handle = insert_reader(req_reader);
-
-    // 4. Allocate response body channel.
-    let (res_writer, res_reader) = make_body_channel();
-    let res_body_handle = insert_writer(res_writer);
-
-    // 5. Allocate oneshot for response head.
-    let (tx, rx) = oneshot::channel::<ResponseHead>();
-    let req_handle = allocate_req_handle(tx);
-    let mut pending_guard = PendingGuard::new(req_handle);
-
-    // 6. Allocate trailer channels (skipped for duplex — raw bytes only).
-    let (opt_req_trailer_tx, opt_res_trailer_rx, req_trailers_handle, res_trailers_handle) =
-        if !is_bidi {
-            let (rq_tx, rq_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-            let rq_h = insert_trailer_receiver(rq_rx);
-
-            let (rs_tx, rs_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-            let rs_h = insert_trailer_sender(rs_tx);
-
-            (Some(rq_tx), Some(rs_rx), rq_h, rs_h)
-        } else {
-            (None, None, 0u32, 0u32)
-        };
-
-    // 7. Construct the full URL.
-    let url = format!("httpi://{own_node_id}{path}");
-
-    // 8. Spawn recv pump task.
-    if is_bidi {
-        tokio::spawn(pump_recv_raw_to_body(recv, req_writer, leftover));
-    } else {
-        // Detect whether the request body uses chunked transfer-encoding.
-        let req_is_chunked = req_headers.iter().any(|(k, v)| {
-            k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().contains("chunked")
-        });
-        let rq_tx = opt_req_trailer_tx.expect("non-duplex req_trailer_tx");
-        if req_is_chunked {
-            tokio::spawn(pump_recv_to_body(recv, req_writer, leftover, rq_tx, max_request_body_bytes));
-        } else {
-            // Raw / fixed-length body — forward bytes without chunk parsing.
-            // Still enforce body size limit.
-            tokio::spawn(pump_recv_raw_to_body_limited(recv, req_writer, leftover, rq_tx, max_request_body_bytes.unwrap_or(usize::MAX)));
-        }
-    }
-
-    // 9. Notify JS.
-    on_request(RequestPayload {
-        req_handle,
-        req_body_handle,
-        res_body_handle,
-        req_trailers_handle,
+    // 3. Allocate channels, spawn recv pump, and notify the handler.
+    let DispatchResult {
+        rx,
+        mut pending_guard,
+        res_reader,
+        opt_res_trailer_rx,
         res_trailers_handle,
-        method: method.clone(),
-        url,
-        headers: req_headers,
+    } = dispatch_request(
+        recv,
+        method,
+        &path,
+        own_node_id,
         remote_node_id,
+        req_headers,
         is_bidi,
-    });
+        leftover,
+        max_request_body_bytes,
+        #[cfg(feature = "compression")]
+        req_content_zstd,
+        on_request,
+    );
 
-    // 10. Await JS response head.
+    // 4. Await the response head.
     let response_head = rx
         .await
         .map_err(|_| "JS handler dropped without responding")?;
-    // respond() already removed the entry — prevent double-removal.
+    // respond() already removed the entry — prevent double-removal on drop.
     pending_guard.defuse();
 
-    // 11. Determine whether to compress the response body.
-    #[cfg(feature = "compression")]
-    let compress_response = client_accepts_zstd
-        && compression.is_some()
-        && !response_head
-            .headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
-        && {
-            // Skip compression if Content-Length is present and below min_body_bytes.
-            let min = compression.as_ref().map_or(512, |c| c.min_body_bytes);
-            let content_length: Option<usize> = response_head
-                .headers
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
-                .and_then(|(_, v)| v.parse().ok());
-            match content_length {
-                Some(len) if len < min => false,
-                _ => true,
-            }
-        };
-
-    // Build final response headers, injecting Content-Encoding if compressing.
-    #[allow(unused_mut)]
-    let mut resp_headers = response_head.headers;
-    #[cfg(feature = "compression")]
-    if compress_response {
-        resp_headers.push(("content-encoding".to_string(), "zstd".to_string()));
-        // Remove Content-Length since compression changes the size.
-        resp_headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
-    }
-
-    let pairs: Vec<(&str, &str)> = resp_headers
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    // Only use chunked encoding when the response does NOT carry a Content-Length.
-    // If Content-Length is set, send the raw body bytes as-is so the framing
-    // matches what the client expects from the headers.
-    let res_chunked = !resp_headers
-        .iter()
-        .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
-
-    // When chunked encoding is needed, inject Transfer-Encoding: chunked
-    // into the QPACK-encoded headers so the client decodes correctly.
-    let mut qpack_pairs = pairs.clone();
-    if res_chunked && !is_bidi {
-        qpack_pairs.push(("transfer-encoding", "chunked"));
-    }
-    let head_bytes = {
-        let mut guard = codec.lock().await;
-        guard.encode_response(response_head.status, &qpack_pairs)
-            .map_err(|e| format!("qpack encode response: {e}"))?
-    };
-    send.write_all(&head_bytes)
-        .await
-        .map_err(|e| format!("write response head: {e}"))?;
-
-    // 12. Optionally compress the response body.
-    #[cfg(feature = "compression")]
-    let res_reader = if compress_response {
-        let level = compression.as_ref().map_or(3, |c| c.level);
-        crate::compress::compress_body(res_reader, level)
-    } else {
-        res_reader
-    };
-
-    // 13. Pump response body.
-    if is_bidi {
-        // Duplex: raw bytes, no chunked encoding, no trailers.
-        pump_body_raw_to_stream(res_reader, &mut send).await?;
-    } else {
-        let has_trailer_header = resp_headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("trailer"));
-        let trailer_rx_for_pump = if has_trailer_header {
-            opt_res_trailer_rx
-        } else {
-            // Handler did not declare trailers — drop the receiver and
-            // clean up the sender from the slab so it doesn't leak.
-            drop(opt_res_trailer_rx);
-            remove_trailer_sender(res_trailers_handle);
-            None
-        };
-        pump_body_to_stream(res_reader, &mut send, res_chunked, trailer_rx_for_pump).await?;
-    }
+    // 5. Write response head + body.
+    write_response(
+        &mut send,
+        &codec,
+        response_head,
+        is_bidi,
+        res_reader,
+        opt_res_trailer_rx,
+        res_trailers_handle,
+        #[cfg(feature = "compression")]
+        client_accepts_zstd,
+        #[cfg(feature = "compression")]
+        compression,
+    )
+    .await?;
 
     send.finish().map_err(|e| format!("finish stream: {e}"))?;
-
     Ok(())
 }
 
