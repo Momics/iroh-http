@@ -578,3 +578,30 @@ pub async fn raw_connect(
         write_handle: duplex.write_handle,
     })
 }
+
+// ── Key operations ────────────────────────────────────────────────────────────
+
+/// Sign arbitrary bytes with a 32-byte Ed25519 secret key.
+/// Returns a 64-byte signature as a `Buffer`.
+#[napi]
+pub fn secret_key_sign(secret_key: Uint8Array, data: Uint8Array) -> napi::Result<Buffer> {
+    let key_bytes: [u8; 32] = secret_key.as_ref().try_into()
+        .map_err(|_| napi::Error::new(Status::InvalidArg, "secret key must be 32 bytes"))?;
+    let sig = iroh_http_core::secret_key_sign(&key_bytes, data.as_ref());
+    Ok(Buffer::from(sig.to_vec()))
+}
+
+/// Verify a 64-byte Ed25519 signature against a 32-byte public key.
+/// Returns `true` on success, `false` on failure — does not throw.
+#[napi]
+pub fn public_key_verify(public_key: Uint8Array, data: Uint8Array, signature: Uint8Array) -> bool {
+    let Ok(key_bytes) = <[u8; 32]>::try_from(public_key.as_ref()) else { return false };
+    let Ok(sig_bytes) = <[u8; 64]>::try_from(signature.as_ref()) else { return false };
+    iroh_http_core::public_key_verify(&key_bytes, data.as_ref(), &sig_bytes)
+}
+
+/// Generate a fresh Ed25519 secret key. Returns 32 raw bytes.
+#[napi]
+pub fn generate_secret_key() -> Buffer {
+    Buffer::from(iroh_http_core::generate_secret_key().to_vec())
+}

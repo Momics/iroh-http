@@ -28,6 +28,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::serve,
             commands::respond_to_request,
             commands::raw_connect,
+            commands::secret_key_sign,
+            commands::public_key_verify,
+            commands::generate_secret_key,
         ])
         .build()
 }

@@ -440,11 +440,42 @@ fn create_node<'py>(
     })
 }
 
+// ── Key operations ────────────────────────────────────────────────────────────
+
+/// Sign arbitrary bytes with a 32-byte Ed25519 secret key.
+/// Returns a 64-byte signature.
+#[pyfunction]
+fn secret_key_sign(secret_key: Vec<u8>, data: Vec<u8>) -> PyResult<Vec<u8>> {
+    let key_bytes: [u8; 32] = secret_key.try_into()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("secret key must be 32 bytes"))?;
+    Ok(iroh_http_core::secret_key_sign(&key_bytes, &data).to_vec())
+}
+
+/// Verify a 64-byte Ed25519 signature against a 32-byte public key.
+/// Returns True on success, False on failure.
+#[pyfunction]
+fn public_key_verify(public_key: Vec<u8>, data: Vec<u8>, signature: Vec<u8>) -> PyResult<bool> {
+    let key_bytes: [u8; 32] = public_key.try_into()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("public key must be 32 bytes"))?;
+    let sig_bytes: [u8; 64] = signature.try_into()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("signature must be 64 bytes"))?;
+    Ok(iroh_http_core::public_key_verify(&key_bytes, &data, &sig_bytes))
+}
+
+/// Generate a fresh Ed25519 secret key. Returns 32 raw bytes.
+#[pyfunction]
+fn generate_secret_key() -> Vec<u8> {
+    iroh_http_core::generate_secret_key().to_vec()
+}
+
 // ── Module ────────────────────────────────────────────────────────────────────
 
 #[pymodule]
 fn iroh_http_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(create_node, m)?)?;
+    m.add_function(wrap_pyfunction!(secret_key_sign, m)?)?;
+    m.add_function(wrap_pyfunction!(public_key_verify, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_secret_key, m)?)?;
     m.add_class::<IrohNode>()?;
     m.add_class::<IrohRequest>()?;
     m.add_class::<IrohResponse>()?;

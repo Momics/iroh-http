@@ -1508,6 +1508,7 @@ dependencies = [
  "iroh",
  "iroh-http-framing",
  "qpack",
+ "rand",
  "serde",
  "serde_json",
  "slab",

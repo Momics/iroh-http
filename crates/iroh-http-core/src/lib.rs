@@ -23,6 +23,30 @@ pub use client::{fetch, raw_connect, alloc_fetch_token, cancel_in_flight};
 pub use server::serve;
 pub use server::ServeHandle;
 
+// ── Key operations ───────────────────────────────────────────────────────────
+
+/// Sign arbitrary bytes with a 32-byte Ed25519 secret key.
+/// Returns a 64-byte signature.
+pub fn secret_key_sign(secret_key_bytes: &[u8; 32], data: &[u8]) -> [u8; 64] {
+    let key = iroh::SecretKey::from_bytes(secret_key_bytes);
+    key.sign(data).to_bytes()
+}
+
+/// Verify a 64-byte Ed25519 signature against a 32-byte public key.
+/// Returns `true` on success, `false` on any failure.
+pub fn public_key_verify(public_key_bytes: &[u8; 32], data: &[u8], sig_bytes: &[u8; 64]) -> bool {
+    let Ok(key) = iroh::PublicKey::from_bytes(public_key_bytes) else {
+        return false;
+    };
+    let sig = iroh::Signature::from_bytes(sig_bytes);
+    key.verify(data, &sig).is_ok()
+}
+
+/// Generate a fresh Ed25519 secret key. Returns 32 raw bytes.
+pub fn generate_secret_key() -> [u8; 32] {
+    iroh::SecretKey::generate(&mut rand::rng()).to_bytes()
+}
+
 // ── Structured error serialization ───────────────────────────────────────────
 
 /// Classify a Rust error message and return a JSON string
