@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{DiscoveryConfig, NodeOptions},
-    server::{ServeOptions, respond},
+    server::respond,
     RequestPayload,
 };
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,10 @@ pub struct CreateEndpointArgs {
     pub keylog: Option<bool>,
     pub compression_level: Option<i32>,
     pub compression_min_body_bytes: Option<usize>,
+    pub max_concurrency: Option<usize>,
+    pub max_connections_per_peer: Option<usize>,
+    pub request_timeout: Option<u64>,
+    pub max_request_body_bytes: Option<usize>,
 }
 
 /// Info returned after a successful endpoint bind.
@@ -101,6 +105,11 @@ pub async fn create_endpoint(
             proxy_url: a.proxy_url,
             proxy_from_env: a.proxy_from_env.unwrap_or(false),
             keylog: a.keylog.unwrap_or(false),
+            max_concurrency: a.max_concurrency,
+            max_connections_per_peer: a.max_connections_per_peer,
+            request_timeout_ms: a.request_timeout,
+            max_request_body_bytes: a.max_request_body_bytes,
+            drain_timeout_secs: None,
             #[cfg(feature = "compression")]
             compression: if a.compression_level.is_some() || a.compression_min_body_bytes.is_some() {
                 Some(iroh_http_core::CompressionOptions {
@@ -353,7 +362,7 @@ pub async fn serve(
 
     let handle = iroh_http_core::serve(
         ep.clone(),
-        ServeOptions { max_consecutive_errors: Some(ep.max_consecutive_errors()), ..Default::default() },
+        ep.serve_options(),
         move |payload: RequestPayload| {
             let ch = channel.clone();
             let headers: Vec<Vec<String>> = payload

@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
-    server::{respond, ServeOptions},
+    server::respond,
     stream::{
         alloc_body_writer, cancel_reader, claim_pending_reader, finish_body,
         next_chunk, next_trailer, send_chunk, send_trailers, store_pending_reader,
@@ -133,6 +133,10 @@ struct CreateEndpointPayload {
     keylog: Option<bool>,
     compression_level: Option<i32>,
     compression_min_body_bytes: Option<usize>,
+    max_concurrency: Option<usize>,
+    max_connections_per_peer: Option<usize>,
+    request_timeout: Option<u64>,
+    max_request_body_bytes: Option<usize>,
 }
 
 async fn create_endpoint(p: Value) -> Value {
@@ -172,6 +176,11 @@ async fn create_endpoint(p: Value) -> Value {
         proxy_url: args.proxy_url,
         proxy_from_env: args.proxy_from_env.unwrap_or(false),
         keylog: args.keylog.unwrap_or(false),
+        max_concurrency: args.max_concurrency,
+        max_connections_per_peer: args.max_connections_per_peer,
+        request_timeout_ms: args.request_timeout,
+        max_request_body_bytes: args.max_request_body_bytes,
+        drain_timeout_secs: None,
         #[cfg(feature = "compression")]
         compression: if args.compression_level.is_some() || args.compression_min_body_bytes.is_some() {
             Some(iroh_http_core::CompressionOptions {
@@ -468,7 +477,7 @@ async fn serve_start(p: Value) -> Value {
 
     let serve_handle = iroh_http_core::serve(
         ep.clone(),
-        ServeOptions { max_consecutive_errors: Some(ep.max_consecutive_errors()), ..Default::default() },
+        ep.serve_options(),
         move |payload: RequestPayload| {
             let q = std::sync::Arc::clone(&queue);
             let headers: Vec<Vec<String>> = payload

@@ -259,6 +259,31 @@ export interface NodeOptions {
     minBodyBytes?: number;
   };
 
+  // ── Server limits ─────────────────────────────────────────────────────────
+  /**
+   * Maximum simultaneous in-flight requests, all peers combined.
+   * @default 64
+   */
+  maxConcurrency?: number;
+
+  /**
+   * Maximum simultaneous connections from a single peer.
+   * @default 8
+   */
+  maxConnectionsPerPeer?: number;
+
+  /**
+   * Per-request timeout in milliseconds.  Set to `0` to disable.
+   * @default 60000
+   */
+  requestTimeout?: number;
+
+  /**
+   * Reject request bodies larger than this many bytes with 413.
+   * `undefined` means unlimited (default).
+   */
+  maxRequestBodyBytes?: number;
+
   // ── Mobile / background lifecycle ─────────────────────────────────────────
   /** Mobile/background lifecycle options. */
   lifecycle?: LifecycleOptions;
