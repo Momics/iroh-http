@@ -364,6 +364,29 @@ impl IrohSession {
             }
         })
     }
+
+    fn __aenter__<'py>(slf: PyRef<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = slf.session_handle;
+        let py = slf.py();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            iroh_http_core::session_ready(handle).await.map_err(py_err)?;
+            Ok(IrohSession { session_handle: handle })
+        })
+    }
+
+    fn __aexit__<'py>(
+        &self,
+        py: Python<'py>,
+        _exc_type: &Bound<'py, PyAny>,
+        _exc_val: &Bound<'py, PyAny>,
+        _exc_tb: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.session_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            iroh_http_core::session_close(handle, 0, "").map_err(py_err)?;
+            Ok(())
+        })
+    }
 }
 
 // ── IrohNode ─────────────────────────────────────────────────────────────────
@@ -553,6 +576,28 @@ impl IrohNode {
                     .collect();
                 (s.relay, s.relay_url, paths)
             }))
+        })
+    }
+
+    fn __aenter__<'py>(slf: PyRef<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        let ep = slf.ep.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            Ok(IrohNode { ep })
+        })
+    }
+
+    fn __aexit__<'py>(
+        &self,
+        py: Python<'py>,
+        _exc_type: &Bound<'py, PyAny>,
+        _exc_val: &Bound<'py, PyAny>,
+        _exc_tb: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let ep = self.ep.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            ep.close().await;
+            Ok(())
         })
     }
 }
