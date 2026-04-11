@@ -22,6 +22,7 @@ import {
   closeEndpoint,
   stopServe,
   denoAddrFns,
+  denoDiscoveryFns,
 } from "./src/adapter.ts";
 
 /**
@@ -41,6 +42,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     closeEndpoint,
     stopServe,
     denoAddrFns,
+    denoDiscoveryFns,
   );
 }
 

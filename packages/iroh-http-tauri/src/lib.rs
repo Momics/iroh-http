@@ -34,6 +34,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::secret_key_sign,
             commands::public_key_verify,
             commands::generate_secret_key,
+            commands::mdns_browse,
+            commands::mdns_next_event,
+            commands::mdns_browse_close,
+            commands::mdns_advertise,
+            commands::mdns_advertise_close,
         ])
         .build()
 }

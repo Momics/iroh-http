@@ -8,7 +8,7 @@
 export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
               NodeOptions, IrohNode, EndpointInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn,
               FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn,
-              RelayMode, IrohFetchInit, DiscoveryOptions, LifecycleOptions,
+              RelayMode, IrohFetchInit, DiscoveryOptions, MdnsOptions, LifecycleOptions,
               NodeAddrInfo, PeerDiscoveryEvent, PeerStats, PathInfo } from "./bridge.js";
 export type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
@@ -37,7 +37,7 @@ export function ticketNodeId(ticket: string): string {
   return ticket;
 }
 
-import type { Bridge, EndpointInfo, NodeOptions, IrohNode, NodeAddrInfo, PeerStats, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
+import type { Bridge, EndpointInfo, NodeOptions, IrohNode, MdnsOptions, NodeAddrInfo, PeerDiscoveryEvent, PeerStats, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
 import { makeFetch, makeConnect } from "./fetch.js";
 import { makeServe } from "./serve.js";
 import { PublicKey, SecretKey, resolveNodeId } from "./keys.js";
@@ -54,6 +54,20 @@ export interface AddrFunctions {
   peerInfo(endpointHandle: number, nodeId: string): Promise<NodeAddrInfo | null>;
   /** Per-peer connection statistics with path information. */
   peerStats(endpointHandle: number, nodeId: string): Promise<PeerStats | null>;
+}
+
+/** Platform-specific mDNS discovery functions. */
+export interface DiscoveryFunctions {
+  /** Start a browse session. Returns a browse handle. */
+  mdnsBrowse(endpointHandle: number, serviceName: string): Promise<number>;
+  /** Poll the next discovery event. Returns null when the session is closed. */
+  mdnsNextEvent(browseHandle: number): Promise<PeerDiscoveryEvent | null>;
+  /** Close a browse session. */
+  mdnsBrowseClose(browseHandle: number): void;
+  /** Start advertising. Returns an advertise handle. */
+  mdnsAdvertise(endpointHandle: number, serviceName: string): Promise<number>;
+  /** Stop advertising. */
+  mdnsAdvertiseClose(advertiseHandle: number): void;
 }
 
 /**
@@ -89,6 +103,7 @@ export function buildNode(
   closeEndpoint: (handle: number) => Promise<void>,
   stopServe: (handle: number) => void,
   addrFns?: AddrFunctions,
+  discoveryFns?: DiscoveryFunctions,
 ): IrohNode {
   let resolveClosed!: () => void;
   const closedPromise = new Promise<void>((resolve) => {
@@ -106,6 +121,57 @@ export function buildNode(
     fetch: makeFetch(bridge, info.endpointHandle, rawFetch, allocBodyWriter),
     serve: makeServe(bridge, info.endpointHandle, rawServe, info.nodeId, closedPromise, () => stopServe(info.endpointHandle)),
     createBidirectionalStream: makeConnect(bridge, info.endpointHandle, rawConnect),
+    browse(options?: MdnsOptions, signal?: AbortSignal): AsyncIterable<PeerDiscoveryEvent> {
+      if (!discoveryFns) throw new Error("browse() not supported by this platform adapter");
+      const fns = discoveryFns;
+      const handle = info.endpointHandle;
+      const svcName = options?.serviceName ?? "iroh-http";
+      return {
+        [Symbol.asyncIterator]() {
+          let browseHandle: number | null = null;
+          return {
+            async next() {
+              if (browseHandle === null) {
+                browseHandle = await fns.mdnsBrowse(handle, svcName);
+              }
+              if (signal?.aborted) {
+                fns.mdnsBrowseClose(browseHandle);
+                browseHandle = null;
+                return { done: true as const, value: undefined };
+              }
+              const event = await fns.mdnsNextEvent(browseHandle);
+              if (event === null) return { done: true as const, value: undefined };
+              return { done: false as const, value: event };
+            },
+            return() {
+              if (browseHandle !== null) {
+                fns.mdnsBrowseClose(browseHandle);
+                browseHandle = null;
+              }
+              return Promise.resolve({ done: true as const, value: undefined });
+            },
+          };
+        },
+      };
+    },
+    async advertise(options?: MdnsOptions, signal?: AbortSignal): Promise<void> {
+      if (!discoveryFns) throw new Error("advertise() not supported by this platform adapter");
+      const svcName = options?.serviceName ?? "iroh-http";
+      const advHandle = await discoveryFns.mdnsAdvertise(info.endpointHandle, svcName);
+      if (signal) {
+        return new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => {
+            discoveryFns!.mdnsAdvertiseClose(advHandle);
+            resolve();
+          }, { once: true });
+          if (signal.aborted) {
+            discoveryFns!.mdnsAdvertiseClose(advHandle);
+            resolve();
+          }
+        });
+      }
+      // No signal — advertise until the node closes.
+    },
     addr: async () => {
       if (!addrFns) throw new Error("addr() not supported by this platform adapter");
       return addrFns.nodeAddr(info.endpointHandle);

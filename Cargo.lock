@@ -1538,6 +1538,8 @@ name = "iroh-http-discovery"
 version = "0.1.0"
 dependencies = [
  "iroh",
+ "n0-future",
+ "tokio",
 ]
 
 [[package]]

@@ -19,8 +19,10 @@ use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(feature = "discovery")]
-use iroh_http_discovery;
-
+use iroh_http_discovery;#[cfg(feature = "discovery")]
+use std::sync::Arc;
+#[cfg(feature = "discovery")]
+use tokio::sync::Mutex as TokioMutex;
 use crate::serve_registry;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -109,6 +111,11 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "secretKeySign" => secret_key_sign_dispatch(p),
         "publicKeyVerify" => public_key_verify_dispatch(p),
         "generateSecretKey" => generate_secret_key_dispatch(),
+        "mdnsBrowse" => mdns_browse_dispatch(p).await,
+        "mdnsNextEvent" => mdns_next_event_dispatch(p).await,
+        "mdnsBrowseClose" => mdns_browse_close_dispatch(p),
+        "mdnsAdvertise" => mdns_advertise_dispatch(p),
+        "mdnsAdvertiseClose" => mdns_advertise_close_dispatch(p),
         _ => err(format!("unknown method: {method}")),
     }
 }
@@ -128,9 +135,6 @@ struct CreateEndpointPayload {
     channel_capacity: Option<usize>,
     max_chunk_size_bytes: Option<usize>,
     max_consecutive_errors: Option<usize>,
-    discovery_mdns: Option<bool>,
-    discovery_service_name: Option<String>,
-    discovery_advertise: Option<bool>,
     drain_timeout: Option<u64>,
     handle_ttl: Option<u64>,
     disable_networking: Option<bool>,
@@ -151,16 +155,6 @@ async fn create_endpoint(p: Value) -> Value {
         Err(e) => return err(e),
     };
 
-    let discovery = if args.discovery_mdns.unwrap_or(false) {
-        Some(iroh_http_core::endpoint::DiscoveryConfig {
-            mdns: true,
-            service_name: args.discovery_service_name.clone(),
-            advertise: args.discovery_advertise.unwrap_or(true),
-        })
-    } else {
-        None
-    };
-
     let opts = NodeOptions {
         key: args.key.and_then(|k| B64.decode(k).ok()?.try_into().ok()),
         idle_timeout_ms: args.idle_timeout,
@@ -173,7 +167,6 @@ async fn create_endpoint(p: Value) -> Value {
         channel_capacity: args.channel_capacity,
         max_chunk_size_bytes: args.max_chunk_size_bytes,
         max_consecutive_errors: args.max_consecutive_errors,
-        discovery: discovery.clone(),
         disable_networking: args.disable_networking.unwrap_or(false),
         drain_timeout_ms: args.drain_timeout,
         handle_ttl_ms: args.handle_ttl,
@@ -200,24 +193,6 @@ async fn create_endpoint(p: Value) -> Value {
     match IrohEndpoint::bind(opts).await {
         Err(e) => err(e),
         Ok(ep) => {
-            // Wire up mDNS discovery if configured.
-            #[cfg(feature = "discovery")]
-            if let Some(ref disc) = discovery {
-                if disc.mdns {
-                    if let Some(ref svc) = disc.service_name {
-                        if let Err(e) = iroh_http_discovery::add_mdns(ep.raw(), svc, disc.advertise) {
-                            return err(e);
-                        }
-                    } else {
-                        return err("discovery.serviceName is required when mdns is true");
-                    }
-                }
-            }
-            #[cfg(not(feature = "discovery"))]
-            if discovery.as_ref().map_or(false, |d| d.mdns) {
-                return err("mDNS discovery was requested but this build was compiled without the \"discovery\" feature");
-            }
-
             let node_id = ep.node_id().to_string();
             let keypair: Vec<u8> = ep.secret_key_bytes().to_vec();
             let handle = insert_endpoint(ep);
@@ -663,4 +638,130 @@ fn public_key_verify_dispatch(p: Value) -> Value {
 
 fn generate_secret_key_dispatch() -> Value {
     ok(json!(B64.encode(iroh_http_core::generate_secret_key())))
+}
+
+// ── mDNS browse / advertise ──────────────────────────────────────────────────
+
+#[cfg(feature = "discovery")]
+type BrowseHandle = Arc<TokioMutex<iroh_http_discovery::BrowseSession>>;
+
+#[cfg(feature = "discovery")]
+fn browse_slab() -> &'static Mutex<Slab<BrowseHandle>> {
+    static S: OnceLock<Mutex<Slab<BrowseHandle>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(Slab::new()))
+}
+
+#[cfg(feature = "discovery")]
+fn advertise_slab() -> &'static Mutex<Slab<iroh_http_discovery::AdvertiseSession>> {
+    static S: OnceLock<Mutex<Slab<iroh_http_discovery::AdvertiseSession>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(Slab::new()))
+}
+
+async fn mdns_browse_dispatch(p: Value) -> Value {
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    let service_name = match p["serviceName"].as_str() {
+        Some(s) => s,
+        None => return err("missing serviceName"),
+    };
+    #[cfg(feature = "discovery")]
+    {
+        let ep = match get_endpoint(handle) {
+            Some(ep) => ep,
+            None => return err(format!("invalid endpoint handle: {handle}")),
+        };
+        match iroh_http_discovery::start_browse(ep.raw(), service_name).await {
+            Err(e) => err(e),
+            Ok(session) => {
+                let h = browse_slab().lock().unwrap().insert(Arc::new(TokioMutex::new(session))) as u32;
+                ok(json!(h))
+            }
+        }
+    }
+    #[cfg(not(feature = "discovery"))]
+    err("discovery feature not enabled in this build")
+}
+
+async fn mdns_next_event_dispatch(p: Value) -> Value {
+    let handle = match p["browseHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing browseHandle"),
+    };
+    #[cfg(feature = "discovery")]
+    {
+        let session = match browse_slab().lock().unwrap().get(handle as usize).cloned() {
+            Some(s) => s,
+            None => return err(format!("invalid browse handle: {handle}")),
+        };
+        let event = session.lock().await.next_event().await;
+        match event {
+            None => ok(json!(null)),
+            Some(ev) => ok(json!({
+                "isActive": ev.is_active,
+                "nodeId": ev.node_id,
+                "addrs": ev.addrs,
+            })),
+        }
+    }
+    #[cfg(not(feature = "discovery"))]
+    err("discovery feature not enabled in this build")
+}
+
+fn mdns_browse_close_dispatch(p: Value) -> Value {
+    let handle = match p["browseHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing browseHandle"),
+    };
+    #[cfg(feature = "discovery")]
+    {
+        let mut slab = browse_slab().lock().unwrap();
+        if slab.contains(handle as usize) {
+            slab.remove(handle as usize);
+        }
+    }
+    ok(json!({}))
+}
+
+fn mdns_advertise_dispatch(p: Value) -> Value {
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    let service_name = match p["serviceName"].as_str() {
+        Some(s) => s,
+        None => return err("missing serviceName"),
+    };
+    #[cfg(feature = "discovery")]
+    {
+        let ep = match get_endpoint(handle) {
+            Some(ep) => ep,
+            None => return err(format!("invalid endpoint handle: {handle}")),
+        };
+        match iroh_http_discovery::start_advertise(ep.raw(), service_name) {
+            Err(e) => err(e),
+            Ok(session) => {
+                let h = advertise_slab().lock().unwrap().insert(session) as u32;
+                ok(json!(h))
+            }
+        }
+    }
+    #[cfg(not(feature = "discovery"))]
+    err("discovery feature not enabled in this build")
+}
+
+fn mdns_advertise_close_dispatch(p: Value) -> Value {
+    let handle = match p["advertiseHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing advertiseHandle"),
+    };
+    #[cfg(feature = "discovery")]
+    {
+        let mut slab = advertise_slab().lock().unwrap();
+        if slab.contains(handle as usize) {
+            slab.remove(handle as usize);
+        }
+    }
+    ok(json!({}))
 }

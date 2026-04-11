@@ -19,10 +19,11 @@ import type {
   RequestPayload,
   NodeOptions,
   NodeAddrInfo,
+  PeerDiscoveryEvent,
   PeerStats,
 } from "@momics/iroh-http-shared";
 import { classifyError, classifyBindError } from "@momics/iroh-http-shared";
-import type { AddrFunctions } from "@momics/iroh-http-shared";
+import type { AddrFunctions, DiscoveryFunctions } from "@momics/iroh-http-shared";
 
 // ── Platform library resolution ───────────────────────────────────────────────
 
@@ -287,23 +288,11 @@ function normaliseRelayMode(mode?: import("@momics/iroh-http-shared").RelayMode)
 
 /** Normalise DiscoveryOptions into flat fields for the Rust adapter. */
 function normaliseDiscovery(disc?: import("@momics/iroh-http-shared").DiscoveryOptions): {
-  mdns: boolean;
-  serviceName?: string;
-  advertise: boolean;
   dnsEnabled: boolean;
 } {
-  if (!disc) return { mdns: false, advertise: true, dnsEnabled: true };
+  if (!disc) return { dnsEnabled: true };
   const dnsEnabled = disc.dns !== false;
-  if (disc.mdns === true) return { mdns: true, advertise: true, dnsEnabled };
-  if (disc.mdns && typeof disc.mdns === "object") {
-    return {
-      mdns: true,
-      advertise: disc.mdns.advertise ?? true,
-      serviceName: disc.mdns.serviceName,
-      dnsEnabled,
-    };
-  }
-  return { mdns: false, advertise: true, dnsEnabled };
+  return { dnsEnabled };
 }
 
 export async function createEndpointInfo(options?: NodeOptions): Promise<EndpointInfo> {
@@ -330,9 +319,6 @@ export async function createEndpointInfo(options?: NodeOptions): Promise<Endpoin
       channelCapacity:      options?.channelCapacity ?? null,
       maxChunkSizeBytes:    options?.maxChunkSizeBytes ?? null,
       maxConsecutiveErrors: options?.maxConsecutiveErrors ?? null,
-      discoveryMdns:        discovery.mdns,
-      discoveryServiceName: discovery.serviceName ?? null,
-      discoveryAdvertise:   discovery.advertise,
       drainTimeout:         options?.drainTimeout ?? null,
       handleTtl:            options?.handleTtl ?? null,
       disableNetworking,
@@ -384,5 +370,24 @@ export const denoAddrFns: AddrFunctions = {
   },
   peerStats: async (handle, nodeId) => {
     return call<PeerStats | null>("peerStats", { endpointHandle: handle, nodeId });
+  },
+};
+
+/** Discovery functions backed by Deno FFI calls. */
+export const denoDiscoveryFns: DiscoveryFunctions = {
+  mdnsBrowse: async (handle, serviceName) => {
+    return call<number>("mdnsBrowse", { endpointHandle: handle, serviceName });
+  },
+  mdnsNextEvent: async (browseHandle) => {
+    return call<PeerDiscoveryEvent | null>("mdnsNextEvent", { browseHandle });
+  },
+  mdnsBrowseClose: (browseHandle) => {
+    call<Record<never, never>>("mdnsBrowseClose", { browseHandle }).catch(() => {});
+  },
+  mdnsAdvertise: async (handle, serviceName) => {
+    return call<number>("mdnsAdvertise", { endpointHandle: handle, serviceName });
+  },
+  mdnsAdvertiseClose: (advertiseHandle) => {
+    call<Record<never, never>>("mdnsAdvertiseClose", { advertiseHandle }).catch(() => {});
   },
 };
