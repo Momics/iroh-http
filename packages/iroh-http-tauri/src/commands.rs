@@ -52,6 +52,7 @@ pub struct CreateEndpointArgs {
     pub max_connections_per_peer: Option<usize>,
     pub request_timeout: Option<u64>,
     pub max_request_body_bytes: Option<usize>,
+    pub max_header_bytes: Option<usize>,
 }
 
 /// Info returned after a successful endpoint bind.
@@ -85,7 +86,7 @@ pub async fn create_endpoint(
             drain_timeout_ms: a.drain_timeout,
             handle_ttl_ms: a.handle_ttl,
             max_pooled_connections: None,
-            max_header_size: None,
+            max_header_size: a.max_header_bytes,
             proxy_url: a.proxy_url,
             proxy_from_env: a.proxy_from_env.unwrap_or(false),
             keylog: a.keylog.unwrap_or(false),

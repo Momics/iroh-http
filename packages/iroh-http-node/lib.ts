@@ -299,6 +299,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           maxConnectionsPerPeer: options.maxConnectionsPerPeer,
           requestTimeout: options.requestTimeout,
           maxRequestBodyBytes: options.maxRequestBodyBytes,
+          maxHeaderBytes: options.maxHeaderBytes,
         }
       : undefined
   ).catch((e: unknown) => { throw classifyBindError(e); });

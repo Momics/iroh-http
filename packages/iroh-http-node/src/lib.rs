@@ -105,6 +105,8 @@ pub struct JsNodeOptions {
     pub request_timeout: Option<f64>,
     /// Reject request bodies larger than this many bytes.  Default: unlimited.
     pub max_request_body_bytes: Option<f64>,
+    /// Maximum header block size in bytes.  Default: 65536.
+    pub max_header_bytes: Option<f64>,
 }
 
 /// Info returned after a successful `createEndpoint` call.
@@ -149,7 +151,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         drain_timeout_ms: o.drain_timeout.map(|v| v as u64),
         handle_ttl_ms: o.handle_ttl.map(|v| v as u64),
         max_pooled_connections: None,
-        max_header_size: None,
+        max_header_size: o.max_header_bytes.map(|v| v as usize),
         proxy_url: o.proxy_url,
         proxy_from_env: o.proxy_from_env.unwrap_or(false),
         keylog: o.keylog.unwrap_or(false),

@@ -273,6 +273,13 @@ export interface NodeOptions {
    */
   maxRequestBodyBytes?: number;
 
+  /**
+   * Maximum header block size in bytes.  Requests with headers exceeding
+   * this limit are rejected.
+   * @default 65536
+   */
+  maxHeaderBytes?: number;
+
   // ── Mobile / background lifecycle ─────────────────────────────────────────
   /** Mobile/background lifecycle options. */
   lifecycle?: LifecycleOptions;
