@@ -1,5 +1,5 @@
 ---
-status: skip
+status: done
 ---
 
 # iroh-http — Patch 16: Integration Test Suite
