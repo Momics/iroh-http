@@ -5,12 +5,19 @@
  * to wire their bridge implementations into the shared layer.
  */
 
-export type { Bridge, CloseOptions, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
-              NodeOptions, IrohNode, EndpointInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn,
-              FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn,
+// ── Public types ────────────────────────────────────────────────────────────
+export type { CloseOptions, NodeOptions, IrohNode, EndpointInfo,
               RelayMode, IrohFetchInit, DiscoveryOptions, MdnsOptions, LifecycleOptions,
-              NodeAddrInfo, PeerDiscoveryEvent, PeerStats, PathInfo } from "./bridge.js";
-export type { IrohSession, WebTransportBidirectionalStream, WebTransportCloseInfo, WebTransportDatagramDuplexStream, RawSessionFns } from "./session.js";
+              NodeAddrInfo, PeerDiscoveryEvent, PeerStats, PathInfo,
+              BidirectionalStream, DuplexStream } from "./bridge.js";
+export type { IrohSession, WebTransportBidirectionalStream, WebTransportCloseInfo, WebTransportDatagramDuplexStream } from "./session.js";
+export type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
+
+// ── Internal types (used by platform adapters, not end users) ───────────────
+/** @internal */ export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
+              RawServeFn, RawFetchFn, AllocBodyWriterFn,
+              FfiDuplexStream, RawConnectFn } from "./bridge.js";
+/** @internal */ export type { RawSessionFns } from "./session.js";
 export { buildSession } from "./session.js";
 export type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
