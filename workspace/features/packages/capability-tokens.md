@@ -1,31 +1,15 @@
----
-status: not-implemented
-scope: separate package — iroh-http-auth
-priority: medium
----
-
-# Feature: Capability Token System
-
-## What
+# Capability Token System
 
 A lightweight, signed capability token that controls access to resources served
-by an iroh-http node. Tokens are issued and signed by any node using its
-Ed25519 private key, and verifiable by any peer using the public key — no
-central authority required.
-
-## Why
-
-iroh-http nodes can receive connections from any node that knows their public
-key. On a public network this means anyone can connect. A capability token
-system lets a server restrict which callers can access which resources, with
-unforgeable credentials rooted in the same identity model the transport already
-uses.
+by an iroh-http node. Tokens are issued by any node using its Ed25519 private
+key and verifiable by any peer using the public key — no central authority
+required.
 
 Because the issuer's identity is cryptographically guaranteed by the transport,
-token verification is zero-round-trip — the server doesn't phone home to check
+token verification is zero-round-trip: the server doesn't phone home to check
 anything.
 
-## Proposed Token Format
+## Token format
 
 ```
 base64url( nodeId  ||  expiry_u64  ||  scope_utf8  ||  signature_64 )
@@ -47,7 +31,7 @@ Authorization: IrohToken <base64url-token>
 This reuses the standard `Authorization` header and a custom scheme — idiomatic
 HTTP, no new header names.
 
-## Proposed API
+## API
 
 ### Issuing (in `iroh-http-auth`)
 
@@ -79,7 +63,7 @@ node.serve({}, async (req) => {
 ## Dependencies
 
 - Requires `sign` / `verify` helpers on `SecretKey` / `PublicKey`
-  (see `sign-verify.md`).
+  (see [sign-verify.md](../sign-verify.md)).
 - The `iroh-http-auth` package depends on `iroh-http-shared` for key types only.
   It has no Rust component; pure TypeScript.
 
@@ -88,5 +72,10 @@ node.serve({}, async (req) => {
 - Tokens are intentionally simple — no revocation, no claims beyond scope and
   expiry. Revocation can be layered on top using a short expiry + reissuance
   pattern.
-- Multi-scope tokens, delegated issuance (signing a token with a scoped
-  sub-key), and token refresh are out of scope for the first version.
+- Multi-scope tokens, delegated issuance, and token refresh are out of scope
+  for the first version.
+
+Part of the `iroh-http-auth` package.
+
+→ Requires [sign/verify helpers](../sign-verify.md) and
+  [Patch 25](../../patches/25_patch.md).

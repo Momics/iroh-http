@@ -1,80 +1,110 @@
----
-status: implemented
-scope: core — node configuration
----
+# Peer Discovery
 
-# Feature: Peer Discovery
+Two mechanisms for discovering other iroh-http nodes:
 
-## What
+- **DNS discovery** — global, always-on. Any node that publishes its address
+  via Pkarr can be resolved by public key using standard DNS.
+- **mDNS** — local network. Nodes announce their presence on the LAN and can
+  find each other without internet connectivity, via `node.advertise()` and
+  `node.browse()`.
 
-Two mechanisms for discovering other iroh-http nodes without knowing their address in advance:
+## DNS discovery
 
-- **DNS discovery** — global reach via n0's hosted infrastructure. Any node that publishes its address via Pkarr can be found by its public key using standard DNS queries.
-- **mDNS discovery** — local network discovery. Nodes broadcast their presence on the LAN and can find each other without any internet connectivity.
-
-Both mechanisms are optional and independently configurable. They affect how quickly a cold connection to an unknown peer can be established.
-
-## Configuration
+DNS discovery is enabled by default and configured at node creation:
 
 ```ts
 await createNode({
-  // DNS discovery is enabled by default.
-  // Override the resolver URL, or disable entirely:
-  dnsDiscovery: 'https://dns.example.com',   // custom resolver
-  // dnsDiscovery: false,                     // (via discovery.dns: false)
+  // Default: true — uses n0's hosted DNS infrastructure.
+  dns: true,
 
-  discovery: {
-    // DNS discovery toggle. Default: true.
-    dns: true,
+  // Custom resolver:
+  // dns: { resolverUrl: 'https://dns.example.com' },
 
-    // mDNS local network discovery. Default: false (disabled).
-    // Pass true for defaults, or an object to customise.
-    mdns: {
-      // Advertise this node on the LAN. Default: true.
-      advertise: true,
-      // Swarm identifier — nodes with different names don't see each other.
-      // Use your app name to avoid cross-talk with other iroh-http apps.
-      serviceName: 'my-app',
-    },
-  },
+  // Disable entirely (air-gapped / embedded):
+  // dns: false,
 });
 ```
 
-## Discovery events
+When enabled, node startup automatically publishes a signed Pkarr record
+containing the node's relay URL and direct socket addresses. On `node.fetch`,
+if the peer's address isn't already known, Iroh resolves it via DNS before
+the QUIC handshake — transparently, with no extra code.
 
-When mDNS is enabled, the node emits discovery events as peers come and go on the local network:
+## `node.advertise()`
+
+Announce this node on the local network via mDNS until the signal fires:
 
 ```ts
-const node = await createNode({ discovery: { mdns: true } });
+const controller = new AbortController();
+node.advertise({ serviceName: 'my-app' }, controller.signal);
 
-const unsubscribe = node.onPeerDiscovered?.((event) => {
-  if (event.type === 'discovered') {
-    console.log('new peer on LAN:', event.nodeId, event.addrs);
+// Stop advertising:
+controller.abort();
+```
+
+Returns a `Promise<void>` that resolves when advertising stops. Calling it
+without a signal advertises until the node is closed.
+
+## `node.browse()`
+
+Discover peers on the local network as an async iterable:
+
+```ts
+for await (const event of node.browse({ serviceName: 'my-app' })) {
+  if (event.isActive) {
+    console.log('found peer:', event.nodeId, event.addrs);
   } else {
     console.log('peer left:', event.nodeId);
   }
-});
-
-// Later, stop receiving events:
-unsubscribe?.();
+}
 ```
 
-`event.type` is `"discovered"` when a peer appears and `"expired"` when it leaves or its announcement times out.
+```ts
+interface PeerDiscoveryEvent {
+  /** true = peer appeared; false = peer left or announcement timed out. */
+  isActive: boolean;
+  /** Base32-encoded public key of the peer. */
+  nodeId: string;
+  /** Known socket addresses for this peer. */
+  addrs?: string[];
+}
+```
 
-## How it works
+Cancel by passing an `AbortSignal` or by breaking from the loop — both clean
+up the underlying mDNS listener:
 
-### DNS discovery
+```ts
+const controller = new AbortController();
+for await (const event of node.browse({}, controller.signal)) { ... }
+controller.abort();
 
-iroh publishes a node's current relay URL and direct socket addresses as a [Pkarr](https://pkarr.org) record — a signed DNS packet stored under the node's public key in a DHT. On connect, if the target peer's address is not already known, the Iroh endpoint queries n0's DNS servers to resolve the key to a `NodeAddr`. This happens transparently before the QUIC handshake.
+// Or just break:
+for await (const event of node.browse({ serviceName: 'my-app' })) {
+  if (done) break;
+}
+```
 
-### mDNS
+## mDNS options
 
-The `iroh-http-discovery` crate implements Iroh's `Discovery` trait using multicast DNS. It periodically broadcasts the node's presence on the LAN and listens for announcements from other nodes. When `advertise: false`, the node listens without broadcasting — useful for scanners or clients that don't want to be reachable.
+```ts
+interface MdnsOptions {
+  /**
+   * Swarm identifier. Only nodes with the same serviceName see each other.
+   * Different applications on the same LAN should use different names.
+   * Default: 'iroh-http'.
+   */
+  serviceName?: string;
+}
+```
 
-The `serviceName` field acts as a swarm identifier: only nodes with the same service name see each other. Different applications running on the same LAN should use different names.
+`browse` and `advertise` accept `MdnsOptions` as their first argument.
+Both can run simultaneously on the same node — they are independent.
 
 ## Without discovery
 
-If both DNS and mDNS are disabled (`relay: "disabled"` and `discovery: { dns: false }`), the node operates in direct-address-only mode. Connections must be established using explicit socket addresses (via `directAddrs` in `IrohFetchInit`) or via tickets that embed address hints.
+When DNS is disabled and neither `browse` nor `advertise` is called, the node
+operates in direct-address-only mode. Connections must use explicit addresses
+(`directAddrs` in `IrohFetchInit`) or ticket strings (see [tickets](tickets.md)).
 
-This mode is appropriate for embedded targets, air-gapped networks, and integration tests.
+Appropriate for embedded targets, air-gapped networks, and integration tests.
+

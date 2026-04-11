@@ -1,9 +1,4 @@
----
-status: implemented
-scope: core — request and response extensions
----
-
-# Feature: Trailer Headers
+# Trailer Headers
 
 ## What
 

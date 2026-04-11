@@ -1,9 +1,4 @@
----
-status: implemented
-scope: core — fetch and serve
----
-
-# Feature: Streaming Bodies
+# Streaming Bodies
 
 ## What
 

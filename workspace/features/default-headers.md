@@ -1,9 +1,4 @@
----
-status: implemented (iroh-node-id); partially implemented (others)
-scope: core — fetch and serve
----
-
-# Feature: Default Headers
+# Default Headers
 
 ## What
 
@@ -34,17 +29,20 @@ When `node.fetch` sends a request, the Rust layer injects `iroh-node-id: <local-
 
 Because the header value is derived from the authenticated key, it matches the identity the server will see in its own `iroh-node-id` — both sides see the same verified identity.
 
-## Planned: additional default headers
+## Optional headers
 
-The following are not yet injected automatically but are natural candidates:
+The following headers are injected when `NodeOptions.injectHeaders` includes
+the corresponding key:
 
-| Header | Direction | Value | Status |
-|---|---|---|---|
-| `iroh-relay` | request + response | `"true"` or `"false"` — whether this connection is relayed | not implemented |
-| `iroh-rtt-ms` | response | Round-trip time in milliseconds to the responding peer | not implemented |
-| `iroh-version` | request | Library version string, for debugging | not implemented |
+| Header | Direction | Value |
+|---|---|---|
+| `iroh-relay` | request + response | `"true"` or `"false"` — whether this connection is relayed |
+| `iroh-rtt-ms` | response | Round-trip time in milliseconds to the responding peer |
 
-These would be opt-in via a `NodeOptions.injectHeaders` configuration field rather than on by default, to keep headers minimal for production use.
+These are off by default to keep production headers minimal. Enable them for
+debugging or for applications that need to adapt behaviour to connection quality
+(see [observability](observability.md) for programmatic access to the same
+data).
 
 ## What is NOT injected
 

@@ -1,180 +1,194 @@
 ---
 status: pending
+refs: features/discovery.md
 ---
 
-# iroh-http — Patch 21: Discovery Events as AsyncIterable
+# Patch 21 — Discovery: `browse()` and `advertise()` Methods
+
+Replace the `onPeerDiscovered` callback and the `discovery.mdns` node option
+with two explicit, cancellable methods: `node.browse()` and `node.advertise()`.
 
 ## Problem
 
-`node.onPeerDiscovered` is the current API for receiving mDNS local peer
-discovery events:
+`node.onPeerDiscovered` is a callback with a cleanup function — no backpressure,
+non-standard cancellation, and not composable with `async`/`await`. The
+`discovery.mdns` option in `NodeOptions` conflates "start advertising" and
+"start listening" into a single construction-time flag, making it impossible to
+start or stop mDNS dynamically.
 
-```ts
-const stop = node.onPeerDiscovered?.((event) => {
-  if (event.type === 'discovered') { ... }
-});
-stop?.();
-```
+The correct split:
+- **`browse()`** — discover others; an async iterable (continuous stream, cancellable)
+- **`advertise()`** — announce yourself; a `Promise<void>` (runs until signal fires)
 
-This is a callback with a cleanup function — the weakest possible interface for
-a continuous stream of events:
-
-- **No backpressure.** If the handler is slow, events are delivered into an
-  unbounded queue or dropped silently depending on the implementation.
-- **Non-standard cancellation.** Callers must hold a reference to `stop` and
-  remember to call it. `AbortSignal` — the platform standard — is not supported.
-- **Not composable.** Callbacks cannot participate in `async`/`await` control
-  flow, cannot be piped, and cannot be aggregated with other async sources.
-- **Optional chaining required.** The `?.` dance on every call site is a signal
-  that the interface is awkward.
-
-Peer discovery is a **continuous stream** — not a one-shot event. The correct
-WHATWG-aligned primitive is an async iterable, exactly as the old `dns-sd`
-package used for `browse()`:
-
-```ts
-for await (const service of browse({ signal })) {
-  if (service.isActive) { ... }
-}
-```
+Both mirror how the `dns-sd` package modelled multicast DNS.
 
 ## Design
 
-Replace `onPeerDiscovered` with `node.peers()` returning
-`AsyncIterable<PeerDiscoveryEvent>`:
+### `node.browse(options?, signal?)`
 
 ```ts
 interface IrohNode {
-  // Replaces onPeerDiscovered:
-  peers(signal?: AbortSignal): AsyncIterable<PeerDiscoveryEvent>;
+  browse(options?: MdnsOptions, signal?: AbortSignal): AsyncIterable<PeerDiscoveryEvent>;
 }
 
 interface PeerDiscoveryEvent {
-  /**
-   * `"discovered"` — peer appeared or updated its addresses.
-   * `"expired"`    — peer left the network or its announcement timed out.
-   */
-  type: 'discovered' | 'expired';
-  /** Base32-encoded public key of the peer. */
-  nodeId: string;
-  /** Known addresses (relay URLs and/or `ip:port`). Present on `discovered`. */
+  isActive: boolean;   // true = appeared; false = left / timed out
+  nodeId: string;      // base32 public key
   addrs?: string[];
 }
-```
 
-### Usage
-
-```ts
-const node = await createNode({ discovery: { mdns: true } });
-
-// Iterate until AbortSignal fires:
-const controller = new AbortController();
-setTimeout(() => controller.abort(), 30_000);
-
-for await (const event of node.peers(controller.signal)) {
-  if (event.type === 'discovered') {
-    console.log('peer on LAN:', event.nodeId, event.addrs);
-  } else {
-    console.log('peer left:', event.nodeId);
-  }
+interface MdnsOptions {
+  serviceName?: string;  // default: 'iroh-http'
 }
 ```
 
-Breaking from the `for await` loop also stops discovery cleanly — no separate
-cleanup call needed.
+Usage:
 
-### Cancellation
+```ts
+for await (const event of node.browse({ serviceName: 'my-app' })) {
+  if (event.isActive) { ... }
+}
+// or:
+const controller = new AbortController();
+for await (const event of node.browse({}, controller.signal)) { ... }
+controller.abort();
+```
 
-The iterable respects `AbortSignal` in two ways:
-1. If the signal is already aborted before iteration starts, the iterable
-   immediately returns (zero events, no error).
-2. If the signal fires mid-iteration, the current `yield` is interrupted and
-   the iterable returns cleanly (no `AbortError` thrown into the loop body —
-   the loop simply ends, consistent with how `AbortSignal` works with
-   `ReadableStream` async iteration).
+Breaking from the loop or firing the signal both stop the underlying mDNS
+listener with no extra cleanup call needed.
 
-### Relationship to mDNS being disabled
-
-When `discovery.mdns` is not enabled in `NodeOptions`, `node.peers()` returns
-an async iterable that immediately completes (zero events). It does not throw.
-This avoids conditional call-site guards.
-
-## Changes
-
-### `iroh-http-shared/src/bridge.ts`
-
-Remove `onPeerDiscovered` from `IrohNode`. Add:
+### `node.advertise(options?, signal?)`
 
 ```ts
 interface IrohNode {
-  peers(signal?: AbortSignal): AsyncIterable<PeerDiscoveryEvent>;
+  advertise(options?: MdnsOptions, signal?: AbortSignal): Promise<void>;
 }
 ```
 
-Remove `onPeerDiscovered` from `Bridge` (currently optional). Add an equivalent
-raw polling function to `Bridge` that the shared layer wraps into the iterable:
+Usage:
 
 ```ts
-interface Bridge {
-  // Poll for the next discovery event. Resolves null when discovery is closed.
-  nextPeerEvent(endpointHandle: number): Promise<PeerDiscoveryEvent | null>;
+const controller = new AbortController();
+void node.advertise({ serviceName: 'my-app' }, controller.signal);
+// ...
+controller.abort(); // stop announcing
+```
+
+Returns `Promise<void>` that resolves when advertising stops. Calling without a
+signal advertises until the node closes.
+
+### `NodeOptions` change
+
+Remove `discovery.mdns` from `NodeOptions`. DNS config stays, simplified:
+
+```ts
+interface NodeOptions {
+  // Before: discovery: { dns: boolean, mdns: { advertise, serviceName } }
+  // After:
+  dns?: boolean | { resolverUrl: string };  // default: true
 }
+```
+
+## Changes
+
+### `iroh-http-core/src/` — Rust
+
+Replace the `on_peer_discovered` callback with a **channel-backed queue** per
+browse session.
+
+**New file: `mdns.rs`**
+
+```rust
+pub struct BrowseSession {
+    rx: mpsc::Receiver<PeerDiscoveryEvent>,
+}
+
+impl BrowseSession {
+    /// Returns the next event, or None when the session is closed.
+    pub async fn next_event(&mut self) -> Option<PeerDiscoveryEvent> {
+        self.rx.recv().await
+    }
+}
+```
+
+Two new FFI functions (replaces callback registration):
+
+```rust
+/// Start a browse session. Returns a session handle.
+pub async fn mdns_browse(node_handle: u32, service_name: &str) -> u32
+
+/// Poll for the next discovery event. Returns null when closed.
+pub async fn mdns_next_event(browse_handle: u32) -> Option<PeerDiscoveryEvent>
+
+/// Stop a browse session (called on break / signal).
+pub fn mdns_browse_close(browse_handle: u32)
+
+/// Start advertising. Runs until the returned handle is dropped.
+pub async fn mdns_advertise(node_handle: u32, service_name: &str) -> u32
+
+/// Stop advertising.
+pub fn mdns_advertise_close(advertise_handle: u32)
 ```
 
 ### `iroh-http-shared/src/index.ts`
 
-In `buildNode`, replace the `onPeerDiscovered` wiring with:
-
 ```ts
-peers(signal?: AbortSignal): AsyncIterable<PeerDiscoveryEvent> {
+browse(options?: MdnsOptions, signal?: AbortSignal): AsyncIterable<PeerDiscoveryEvent> {
   return {
     [Symbol.asyncIterator]() {
+      let browseHandle: number | null = null;
       return {
         async next() {
-          if (signal?.aborted) return { done: true, value: undefined };
-          const event = await bridge.nextPeerEvent(info.endpointHandle);
+          if (!browseHandle) {
+            browseHandle = await bridge.mdnsBrowse(info.endpointHandle, options?.serviceName ?? 'iroh-http');
+          }
+          if (signal?.aborted) {
+            bridge.mdnsBrowseClose(browseHandle);
+            return { done: true, value: undefined };
+          }
+          const event = await bridge.mdnsNextEvent(browseHandle);
           if (event === null) return { done: true, value: undefined };
           return { done: false, value: event };
         },
         return() {
-          // Called when the consumer breaks from the loop.
+          if (browseHandle !== null) bridge.mdnsBrowseClose(browseHandle);
           return Promise.resolve({ done: true, value: undefined });
         },
       };
     },
   };
 },
+
+async advertise(options?: MdnsOptions, signal?: AbortSignal): Promise<void> {
+  const handle = await bridge.mdnsAdvertise(info.endpointHandle, options?.serviceName ?? 'iroh-http');
+  if (signal) {
+    signal.addEventListener('abort', () => bridge.mdnsAdvertiseClose(handle), { once: true });
+  }
+  // resolves when the node closes (handle invalidated)
+},
 ```
-
-`AbortSignal` is wired by checking `signal.aborted` at the top of each `next()`
-call and by passing the signal into the underlying Rust poll if the platform
-supports it.
-
-### Rust side (`iroh-http-core`, all platform bridges)
-
-The existing `on_peer_discovered` callback in the Rust serve loop is replaced
-by a **channel-backed queue**: discovery events are pushed into a
-`tokio::sync::mpsc::channel` by the mDNS loop; the FFI exposes a
-`next_peer_event(handle) -> Option<PeerDiscoveryEvent>` function that pops from
-the channel, blocking until an event arrives or the endpoint closes.
 
 ### Platform adapters
 
-Each adapter (napi, Tauri invoke, Deno FFI) exposes `nextPeerEvent` in place of
-the current callback registration.
+Wire `mdnsBrowse`, `mdnsNextEvent`, `mdnsBrowseClose`, `mdnsAdvertise`,
+`mdnsAdvertiseClose` through each adapter (napi, Deno FFI, Tauri, Python).
+
+Remove `onPeerDiscovered` from all adapters.
 
 ## Removed
 
-- `onPeerDiscovered?(callback): () => void` — removed from `IrohNode` and
-  `Bridge`.
-- The `PeerDiscoveryEvent.type` field changes from using a union of
-  `"discovered" | "expired"` to using the `isActive: boolean` shape from the
-  dns-sd package — whichever is chosen, it must be consistent with
-  `discovery.md`.
+- `onPeerDiscovered?(callback): () => void` — removed from `IrohNode` and `Bridge`
+- `NodeOptions.discovery.mdns` — removed in favour of method calls
+
+## Files
+
+- `crates/iroh-http-core/src/mdns.rs` — new browse/advertise session types
+- `crates/iroh-http-core/src/bridge.rs` — five new FFI functions
+- `packages/iroh-http-shared/src/index.ts` — `browse()`, `advertise()` methods
+- All four adapter packages — wire new FFI, remove old callback
 
 ## References
 
-- `workspace/old_references/dns-sd/src/dns_sd/browse.ts` — async iterable
-  browse pattern this patch mirrors
-- `workspace/features/discovery.md` — discovery configuration
-- `workspace/features/discovery-events.md` — rationale for this change
+- `workspace/old_references/dns-sd/src/dns_sd/browse.ts` — AsyncIterable browse pattern
+- `workspace/features/discovery.md`
+
