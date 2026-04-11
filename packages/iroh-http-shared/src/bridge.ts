@@ -8,6 +8,7 @@
 
 import type { PublicKey, SecretKey } from "./keys.js";
 import type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
+import type { IrohSession } from "./session.js";
 
 export interface Bridge {
   // ── Body streaming ─────────────────────────────────────────────────────────
@@ -372,20 +373,21 @@ export interface IrohNode {
     (options: ServeOptions & { handler: ServeHandler }): ServeHandle;
   };
   /**
-   * Open a bidirectional streaming connection to a remote node (§2).
+   * Open a session (QUIC connection) to a remote peer.
    *
-   * The peer must advertise `iroh-http/1-duplex` capability.  After the
-   * handshake both sides can read and write concurrently without waiting for
-   * the other to finish.  Mirrors `WebTransportSession.createBidirectionalStream()`.
+   * Returns an `IrohSession` that mirrors the WebTransport API:
+   * `session.createBidirectionalStream()`, `session.incomingBidirectionalStreams`,
+   * `session.close()`, `session.closed`.
+   *
+   * Sessions are pooled — calling `connect` for the same peer may reuse an
+   * existing QUIC connection.
    *
    * @param peer - Remote node's public key or base32 node ID string.
-   * @param path - Endpoint path, e.g. `"/ws/chat"`.
-   * @param init - Optional `RequestInit` for custom headers.
-   * @returns A `BidirectionalStream` with `.readable` and `.writable`.
+   * @param init - Optional configuration with `directAddrs`.
+   * @returns An `IrohSession` scoped to the remote peer.
    * @throws {IrohConnectError} If the peer is unreachable.
-   * @throws {IrohProtocolError} If the peer rejects the upgrade.
    */
-  createBidirectionalStream(peer: PublicKey | string, path: string, init?: RequestInit): Promise<BidirectionalStream>;
+  connect(peer: PublicKey | string, init?: { directAddrs?: string[] }): Promise<IrohSession>;
   /**
    * Discover peers on the local network via mDNS.
    *
@@ -546,7 +548,7 @@ export interface FfiDuplexStream {
   writeHandle: number;
 }
 
-/** Full-duplex stream returned by `node.createBidirectionalStream()`. Mirrors `WebTransportBidirectionalStream`. */
+/** Full-duplex stream returned by `session.createBidirectionalStream()`. Mirrors `WebTransportBidirectionalStream`. */
 export interface BidirectionalStream {
   /** Receive data from the server. */
   readable: ReadableStream<Uint8Array>;

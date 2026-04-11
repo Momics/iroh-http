@@ -43,6 +43,7 @@ import {
   type RawFetchFn,
   type RawServeFn,
   type RawConnectFn,
+  type RawSessionFns,
   type AllocBodyWriterFn,
   type RequestPayload,
   type AddrFunctions,
@@ -221,6 +222,33 @@ const rawConnect: RawConnectFn = async (
   } satisfies FfiDuplexStream;
 };
 
+// ── Session functions ─────────────────────────────────────────────────────────
+
+const tauriSessionFns: RawSessionFns = {
+  connect: async (endpointHandle, nodeId, directAddrs) => {
+    return invoke<number>(`${PLUGIN}|session_connect`, {
+      args: { endpointHandle, nodeId, directAddrs: directAddrs ?? null },
+    });
+  },
+  createBidiStream: async (sessionHandle) => {
+    const res = await invoke<{ readHandle: number; writeHandle: number }>(
+      `${PLUGIN}|session_create_bidi_stream`,
+      { sessionHandle },
+    );
+    return { readHandle: res.readHandle, writeHandle: res.writeHandle } satisfies FfiDuplexStream;
+  },
+  nextBidiStream: async (sessionHandle) => {
+    const res = await invoke<{ readHandle: number; writeHandle: number } | null>(
+      `${PLUGIN}|session_next_bidi_stream`,
+      { sessionHandle },
+    );
+    return res ? { readHandle: res.readHandle, writeHandle: res.writeHandle } satisfies FfiDuplexStream : null;
+  },
+  close: async (sessionHandle) => {
+    await invoke<void>(`${PLUGIN}|session_close`, { sessionHandle });
+  },
+};
+
 // ── Mobile lifecycle listener ─────────────────────────────────────────────────
 
 function installLifecycleListener(
@@ -380,6 +408,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     (handle) => { invoke(`${PLUGIN}|stop_serve`, { endpointHandle: handle }).catch(() => {}); },
     tauriAddrFns,
     tauriDiscoveryFns,
+    tauriSessionFns,
   );
 
   // Install lifecycle listener for mobile/reconnect support.

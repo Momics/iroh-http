@@ -661,6 +661,66 @@ pub async fn raw_connect(
     })
 }
 
+// ── Session ───────────────────────────────────────────────────────────────────
+
+/// Establish a session (QUIC connection) to a remote peer.
+/// Returns an opaque session handle.
+#[napi]
+pub async fn session_connect(
+    endpoint_handle: u32,
+    node_id: String,
+    direct_addrs: Option<Vec<String>>,
+) -> napi::Result<u32> {
+    let ep = get_endpoint(endpoint_handle)?;
+    let addrs = parse_direct_addrs(&direct_addrs);
+    let handle = iroh_http_core::session_connect(&ep, &node_id, addrs.as_deref())
+        .await
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    Ok(handle)
+}
+
+/// Open a new bidirectional stream on an existing session.
+#[napi(object)]
+pub struct JsSessionBidiStream {
+    pub read_handle: u32,
+    pub write_handle: u32,
+}
+
+#[napi]
+pub async fn session_create_bidi_stream(
+    session_handle: u32,
+) -> napi::Result<JsSessionBidiStream> {
+    let duplex = iroh_http_core::session_create_bidi_stream(session_handle)
+        .await
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    Ok(JsSessionBidiStream {
+        read_handle: duplex.read_handle,
+        write_handle: duplex.write_handle,
+    })
+}
+
+/// Accept the next incoming bidirectional stream on a session.
+/// Returns null when the session is closed.
+#[napi]
+pub async fn session_next_bidi_stream(
+    session_handle: u32,
+) -> napi::Result<Option<JsSessionBidiStream>> {
+    let result = iroh_http_core::session_next_bidi_stream(session_handle)
+        .await
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    Ok(result.map(|d| JsSessionBidiStream {
+        read_handle: d.read_handle,
+        write_handle: d.write_handle,
+    }))
+}
+
+/// Close a session.
+#[napi]
+pub async fn session_close_handle(session_handle: u32) -> napi::Result<()> {
+    iroh_http_core::session_close(session_handle)
+        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+}
+
 // ── Key operations ────────────────────────────────────────────────────────────
 
 /// Sign arbitrary bytes with a 32-byte Ed25519 secret key.

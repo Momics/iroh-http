@@ -24,6 +24,7 @@ import type {
 } from "@momics/iroh-http-shared";
 import { classifyError, classifyBindError } from "@momics/iroh-http-shared";
 import type { AddrFunctions, DiscoveryFunctions } from "@momics/iroh-http-shared";
+import type { RawSessionFns } from "@momics/iroh-http-shared";
 
 // ── Platform library resolution ───────────────────────────────────────────────
 
@@ -389,5 +390,35 @@ export const denoDiscoveryFns: DiscoveryFunctions = {
   },
   mdnsAdvertiseClose: (advertiseHandle) => {
     call<Record<never, never>>("mdnsAdvertiseClose", { advertiseHandle }).catch(() => {});
+  },
+};
+
+// ── Session functions ─────────────────────────────────────────────────────────
+
+export const denoSessionFns: RawSessionFns = {
+  connect: async (endpointHandle, nodeId, directAddrs) => {
+    const res = await call<{ sessionHandle: number }>("sessionConnect", {
+      endpointHandle,
+      nodeId,
+      directAddrs: directAddrs ?? null,
+    });
+    return res.sessionHandle;
+  },
+  createBidiStream: async (sessionHandle) => {
+    const res = await call<{ readHandle: number; writeHandle: number }>(
+      "sessionCreateBidiStream",
+      { sessionHandle },
+    );
+    return { readHandle: res.readHandle, writeHandle: res.writeHandle } satisfies FfiDuplexStream;
+  },
+  nextBidiStream: async (sessionHandle) => {
+    const res = await call<{ readHandle: number; writeHandle: number } | null>(
+      "sessionNextBidiStream",
+      { sessionHandle },
+    );
+    return res ? { readHandle: res.readHandle, writeHandle: res.writeHandle } satisfies FfiDuplexStream : null;
+  },
+  close: async (sessionHandle) => {
+    await call<Record<never, never>>("sessionClose", { sessionHandle });
   },
 };
