@@ -576,8 +576,9 @@ impl IrohNode {
     /// Register an `async def handler(request: IrohRequest)` and start accepting
     /// incoming requests in the background.
     ///
-    /// The handler must return a dict with keys `status` (int), `headers`
-    /// (list of `(name, value)` tuples), and `body` (bytes).
+    /// The handler may return either a `HandlerResponse` instance or a plain
+    /// dict with keys `status` (int), `headers` (list of ``(name, value)``
+    /// tuples), and `body` (bytes).
     fn serve(&self, _py: Python<'_>, handler: PyObject) -> PyResult<()> {
         let ep      = self.ep.clone();
         let handler = Arc::new(handler);

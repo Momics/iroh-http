@@ -1,6 +1,9 @@
 {
   "name": "@momics/iroh-http-shared",
   "version": "0.1.0",
+  "imports": {
+    "@scure/base": "npm:@scure/base@^1.2.6"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./middleware": "./src/middleware.ts",
