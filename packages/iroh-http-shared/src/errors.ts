@@ -8,7 +8,23 @@
 
 // ── Base class ────────────────────────────────────────────────────────────────
 
-/** Base class for all iroh-http errors. */
+/**
+ * Base class for all iroh-http errors.
+ *
+ * Every error from the Rust/FFI layer is an `IrohError` or subclass, providing
+ * a machine-readable `.code` string for programmatic handling.
+ *
+ * @example
+ * ```ts
+ * try {
+ *   await node.fetch(peer, '/api');
+ * } catch (e) {
+ *   if (e instanceof IrohError) {
+ *     console.error(`[${e.code}] ${e.message}`);
+ *   }
+ * }
+ * ```
+ */
 export class IrohError extends Error {
   /** Machine-readable error code string (e.g. `"TIMEOUT"`, `"INVALID_HANDLE"`). */
   readonly code: string;
@@ -24,7 +40,23 @@ export class IrohError extends Error {
 
 // ── Subclasses ────────────────────────────────────────────────────────────────
 
-/** Failed to bind or create an Iroh endpoint. */
+/**
+ * Failed to bind or create an Iroh endpoint.
+ *
+ * Thrown by `createNode()` when the QUIC endpoint cannot be created —
+ * for example, the UDP port is already in use or the secret key is invalid.
+ *
+ * @example
+ * ```ts
+ * try {
+ *   const node = await createNode({ bindAddr: '0.0.0.0:4433' });
+ * } catch (e) {
+ *   if (e instanceof IrohBindError) {
+ *     console.error('Bind failed:', e.code, e.message);
+ *   }
+ * }
+ * ```
+ */
 export class IrohBindError extends IrohError {
   constructor(message: string, code: string) {
     super(message, code);
@@ -33,7 +65,22 @@ export class IrohBindError extends IrohError {
   }
 }
 
-/** Failed to connect to a remote peer. */
+/**
+ * Failed to connect to a remote peer.
+ *
+ * Covers DNS resolution, timeout, connection refused, and ALPN mismatch errors.
+ *
+ * @example
+ * ```ts
+ * try {
+ *   const res = await node.fetch(peerId, '/api');
+ * } catch (e) {
+ *   if (e instanceof IrohConnectError && e.code === 'TIMEOUT') {
+ *     console.error('Peer unreachable — try again later');
+ *   }
+ * }
+ * ```
+ */
 export class IrohConnectError extends IrohError {
   constructor(message: string, code: string) {
     super(message, code);
@@ -42,7 +89,7 @@ export class IrohConnectError extends IrohError {
   }
 }
 
-/** A body read or write stream failed mid-transfer. */
+/** A body read or write stream failed mid-transfer (reset, timeout, or cancelled). */
 export class IrohStreamError extends IrohError {
   constructor(message: string, code: string) {
     super(message, code);
@@ -51,7 +98,7 @@ export class IrohStreamError extends IrohError {
   }
 }
 
-/** HTTP framing / protocol error. */
+/** HTTP framing / protocol error — the peer sent malformed headers or rejected an upgrade. */
 export class IrohProtocolError extends IrohError {
   constructor(message: string, code: string) {
     super(message, code);
@@ -60,7 +107,7 @@ export class IrohProtocolError extends IrohError {
   }
 }
 
-/** The operation was aborted via AbortSignal. */
+/** The operation was aborted via `AbortSignal`.  Mirrors the web platform `AbortError`. */
 export class IrohAbortError extends IrohError {
   constructor(message = "The operation was aborted") {
     super(message, "ABORTED");

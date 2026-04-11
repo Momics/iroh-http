@@ -156,10 +156,31 @@ export type RelayMode =
   | string
   | string[];
 
-/** Options accepted by `createNode`. */
+/**
+ * Options accepted by `createNode`.
+ *
+ * @example Basic usage — generate a new identity:
+ * ```ts
+ * const node = await createNode();
+ * console.log(node.publicKey.toString()); // base32 node ID
+ * ```
+ *
+ * @example Restore a saved identity:
+ * ```ts
+ * const node = await createNode({ key: savedKeyBytes });
+ * ```
+ *
+ * @example Custom relay + mDNS discovery:
+ * ```ts
+ * const node = await createNode({
+ *   relayMode: "https://my-relay.example.com",
+ *   discovery: { mdns: { serviceName: "my-app._iroh._udp.local" } },
+ * });
+ * ```
+ */
 export interface NodeOptions {
   // ── Identity ─────────────────────────────────────────────────────────────
-  /** 32-byte Ed25519 secret key or `SecretKey` object.  Omit to generate a new identity. */
+  /** 32-byte Ed25519 secret key or `SecretKey` object.  Omit to generate a new identity. @default undefined (new keypair) */
   key?: SecretKey | Uint8Array;
 
   // ── Connectivity ──────────────────────────────────────────────────────────
@@ -181,7 +202,7 @@ export interface NodeOptions {
    * @example `"192.168.1.5:0"`, `["0.0.0.0:0", "[::]:0"]`
    */
   bindAddr?: string | string[];
-  /** Idle connection timeout in milliseconds. */
+  /** Idle connection timeout in milliseconds. @default 60000 */
   idleTimeout?: number;
 
   // ── Discovery ─────────────────────────────────────────────────────────────
@@ -263,7 +284,30 @@ export interface IrohFetchInit extends RequestInit {
   directAddrs?: string[];
 }
 
-/** The object returned by `createNode`. */
+/**
+ * The object returned by `createNode`.
+ *
+ * @example Fetch from a peer:
+ * ```ts
+ * const node = await createNode();
+ * const res = await node.fetch(peerId, '/api/data');
+ * console.log(await res.json());
+ * ```
+ *
+ * @example Serve requests:
+ * ```ts
+ * node.serve({}, (req) => {
+ *   const peer = req.headers.get('iroh-node-id');
+ *   return Response.json({ hello: peer });
+ * });
+ * ```
+ *
+ * @example Automatic cleanup with `await using` (TC39):
+ * ```ts
+ * await using node = await createNode();
+ * // node.close() is called automatically when leaving scope.
+ * ```
+ */
 export interface IrohNode {
   /**
    * The node's public identity.
@@ -284,6 +328,13 @@ export interface IrohNode {
    *
    * Pass `directAddrs` in init to provide known socket addresses for the peer
    * (useful in tests or when addresses are already known out-of-band).
+   *
+   * @param peer - Remote node's public key or base32 node ID string.
+   * @param input - Request URL path, e.g. `"/api/data"` or `"httpi://nodeId/path"`.
+   * @param init - Standard `RequestInit` options plus iroh-specific `directAddrs`.
+   * @returns A standard `Response` with an additional `trailers` promise.
+   * @throws {IrohConnectError} If the peer is unreachable.
+   * @throws {IrohAbortError} If `init.signal` is aborted.
    */
   fetch(
     peer: PublicKey | string,
@@ -304,6 +355,13 @@ export interface IrohNode {
    * The peer must advertise `iroh-http/1-duplex` capability.  After the
    * handshake both sides can read and write concurrently without waiting for
    * the other to finish.  Mirrors `WebTransportSession.createBidirectionalStream()`.
+   *
+   * @param peer - Remote node's public key or base32 node ID string.
+   * @param path - Endpoint path, e.g. `"/ws/chat"`.
+   * @param init - Optional `RequestInit` for custom headers.
+   * @returns A `BidirectionalStream` with `.readable` and `.writable`.
+   * @throws {IrohConnectError} If the peer is unreachable.
+   * @throws {IrohProtocolError} If the peer rejects the upgrade.
    */
   createBidirectionalStream(peer: PublicKey | string, path: string, init?: RequestInit): Promise<BidirectionalStream>;
   /**

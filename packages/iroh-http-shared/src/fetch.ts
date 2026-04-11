@@ -27,6 +27,19 @@ export type FetchFn = (
  *
  * Supports `AbortSignal` via `init.signal` (§3) and populates the
  * non-standard `res.trailers` promise with response trailer headers (§4).
+ *
+ * @param bridge          Platform bridge implementation (nextChunk, sendChunk, etc.).
+ * @param endpointHandle  Slab handle returned by the low-level bind.
+ * @param rawFetch        Platform-specific raw fetch function.
+ * @param allocBodyWriter Allocates a `BodyWriter` handle for request body streaming.
+ * @returns A `fetch`-like function: `(peer, url, init?) => Promise<Response>`.
+ *
+ * @example
+ * ```ts
+ * const doFetch = makeFetch(bridge, handle, rawFetch, allocBodyWriter);
+ * const res = await doFetch(peerId, '/api/data', { method: 'POST', body: 'hi' });
+ * console.log(await res.text());
+ * ```
  */
 export function makeFetch(
   bridge: Bridge,
@@ -171,6 +184,21 @@ export function makeFetch(
  *
  * The returned `BidirectionalStream` exposes `readable` (data from server) and
  * `writable` (data to server).  Both sides are open simultaneously.
+ *
+ * @param bridge          Platform bridge implementation.
+ * @param endpointHandle  Slab handle returned by the low-level bind.
+ * @param rawConnect      Platform-specific raw duplex connect function.
+ * @returns A function: `(peer, path, init?) => Promise<BidirectionalStream>`.
+ *
+ * @throws {@link IrohConnectError} If the remote peer rejects or is unreachable.
+ *
+ * @example
+ * ```ts
+ * const connect = makeConnect(bridge, handle, rawConnect);
+ * const { readable, writable } = await connect(peerId, '/ws');
+ * const writer = writable.getWriter();
+ * await writer.write(new TextEncoder().encode('ping'));
+ * ```
  */
 export function makeConnect(
   bridge: Bridge,

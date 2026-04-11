@@ -63,6 +63,15 @@ const ED25519: EcKeyAlgorithm = { name: "Ed25519" } as unknown as EcKeyAlgorithm
  *
  * Immutable. Can be created from a base32 string or raw bytes, and can
  * be used to verify Ed25519 signatures and compare identities.
+ *
+ * @example
+ * ```ts
+ * const pk = PublicKey.fromString(nodeIdString);
+ * console.log(pk.toString()); // base32 node ID
+ * console.log(pk.bytes);      // Uint8Array(32)
+ *
+ * if (pk.equals(otherKey)) { /* same node *\/ }
+ * ```
  */
 export class PublicKey {
   readonly #bytes: Uint8Array<ArrayBuffer>;
@@ -137,6 +146,17 @@ export class PublicKey {
  *
  * Persist `toBytes()` to restore identity across restarts.
  * The associated `publicKey` is derived lazily on first access.
+ *
+ * @example Save and restore identity:
+ * ```ts
+ * // First run — generate and save:
+ * const node = await createNode();
+ * localStorage.setItem('key', btoa(String.fromCharCode(...node.secretKey.toBytes())));
+ *
+ * // Subsequent runs — restore:
+ * const raw = Uint8Array.from(atob(localStorage.getItem('key')!), c => c.charCodeAt(0));
+ * const node2 = await createNode({ key: raw });
+ * ```
  */
 export class SecretKey {
   readonly #bytes: Uint8Array<ArrayBuffer>;
