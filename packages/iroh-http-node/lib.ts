@@ -30,6 +30,7 @@ import {
   rawServe as napiRawServe,
   rawRespond as napiRawRespond,
   rawConnect as napiRawConnect,
+  stopServe as napiStopServe,
   nodeAddr as napiNodeAddr,
   homeRelay as napiHomeRelay,
   peerInfo as napiPeerInfo,
@@ -268,6 +269,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawConnect,
     allocBodyWriter,
     (handle) => closeEndpoint(handle),
+    (handle) => napiStopServe(handle),
     addrFns,
   );
 }

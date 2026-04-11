@@ -359,6 +359,10 @@ export async function closeEndpoint(handle: number): Promise<void> {
   await call<Record<never, never>>("closeEndpoint", { endpointHandle: handle });
 }
 
+export function stopServe(handle: number): void {
+  call<Record<never, never>>("stopServe", { endpointHandle: handle }).catch(() => {});
+}
+
 // ── Address introspection ──────────────────────────────────────────────────────
 
 export const denoAddrFns: AddrFunctions = {

@@ -321,6 +321,16 @@ impl IrohEndpoint {
         *self.inner.serve_handle.lock().unwrap() = Some(handle);
     }
 
+    /// Signal the serve loop to stop accepting new connections.
+    ///
+    /// Returns immediately — does NOT close the endpoint or drain in-flight
+    /// requests.  The handle is preserved so `close()` can still drain later.
+    pub fn stop_serve(&self) {
+        if let Some(h) = self.inner.serve_handle.lock().unwrap().as_ref() {
+            h.shutdown();
+        }
+    }
+
     pub fn raw(&self) -> &Endpoint {
         &self.inner.ep
     }

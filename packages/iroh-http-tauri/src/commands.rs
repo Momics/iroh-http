@@ -392,6 +392,15 @@ pub async fn serve(
     Ok(())
 }
 
+/// Stop the serve loop for the given endpoint (graceful shutdown).
+#[command]
+pub fn stop_serve(endpoint_handle: u32) -> Result<(), String> {
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
+    ep.stop_serve();
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RespondArgs {
