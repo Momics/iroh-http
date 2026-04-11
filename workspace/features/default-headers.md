@@ -1,0 +1,72 @@
+---
+status: implemented (iroh-node-id); partially implemented (others)
+scope: core — fetch and serve
+---
+
+# Feature: Default Headers
+
+## What
+
+iroh-http automatically injects and manages certain HTTP headers on every request and response. These carry metadata derived from the underlying QUIC connection — information the application layer cannot forge, modify, or omit.
+
+## Injected headers
+
+### `iroh-node-id` (request header, server-side)
+
+Every incoming `Request` delivered to a `serve` handler carries an `iroh-node-id` header containing the **verified public key** of the sending peer.
+
+```ts
+node.serve({}, (req) => {
+  const peerId = req.headers.get('iroh-node-id');
+  // peerId is the base32-encoded Ed25519 public key of the caller.
+  // It is cryptographically guaranteed by the QUIC connection — not spoofable.
+  return Response.json({ peer: peerId });
+});
+```
+
+This header is injected by the Rust layer from the authenticated connection identity. The remote cannot set or spoof it — it is stripped from the wire before the handler sees the request, then re-injected from the verified connection state. A handler can rely on `iroh-node-id` for access control without any additional authentication step.
+
+The value is the same string returned by `node.publicKey.toString()` on the sending node.
+
+### `iroh-node-id` (request header, client-side)
+
+When `node.fetch` sends a request, the Rust layer injects `iroh-node-id: <local-node-id>` into the outgoing headers. The server can use this to know who is calling without the client having to set it manually.
+
+Because the header value is derived from the authenticated key, it matches the identity the server will see in its own `iroh-node-id` — both sides see the same verified identity.
+
+## Planned: additional default headers
+
+The following are not yet injected automatically but are natural candidates:
+
+| Header | Direction | Value | Status |
+|---|---|---|---|
+| `iroh-relay` | request + response | `"true"` or `"false"` — whether this connection is relayed | not implemented |
+| `iroh-rtt-ms` | response | Round-trip time in milliseconds to the responding peer | not implemented |
+| `iroh-version` | request | Library version string, for debugging | not implemented |
+
+These would be opt-in via a `NodeOptions.injectHeaders` configuration field rather than on by default, to keep headers minimal for production use.
+
+## What is NOT injected
+
+- `Host` — iroh-http is not a host-based protocol. The peer is identified by public key, not by a domain name.
+- `User-Agent` — not injected by default. Callers can add it via `init.headers` if needed.
+- `Content-Type` — never assumed. Callers must set it explicitly when sending structured bodies.
+- `Authorization` — never touched. Callers manage their own auth (see `capability-tokens.md`).
+
+## Security note
+
+Because `iroh-node-id` is unforgeable, it is correct and safe to use it as the basis for access control decisions:
+
+```ts
+const ALLOWED = new Set(['abc123...', 'def456...']);
+
+node.serve({}, (req) => {
+  const peer = req.headers.get('iroh-node-id')!;
+  if (!ALLOWED.has(peer)) {
+    return new Response('Forbidden', { status: 403 });
+  }
+  return handleRequest(req);
+});
+```
+
+No HMAC, no token, no session cookie needed — the transport layer already did the authentication.
