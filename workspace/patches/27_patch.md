@@ -1,5 +1,5 @@
 ---
-status: pending
+status: implemented
 refs: features/webtransport.md
 ---
 

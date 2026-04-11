@@ -157,6 +157,33 @@ struct IrohBidiStream {
     write_handle: u32,
 }
 
+// ── IrohUniStream ───────────────────────────────────────────────────────────
+
+/// A unidirectional (send-only) byte stream.
+///
+/// Use `write(data)` to send and `close()` when done.
+#[pyclass]
+struct IrohUniStream {
+    write_handle: u32,
+}
+
+#[pymethods]
+impl IrohUniStream {
+    /// Write bytes to the stream.
+    fn write<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.write_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            send_chunk(handle, Bytes::from(data)).await.map_err(py_err)?;
+            Ok(())
+        })
+    }
+
+    /// Close (finish) the write side of the stream.
+    fn close(&self) -> PyResult<()> {
+        finish_body(self.write_handle).map_err(py_err)
+    }
+}
+
 #[pymethods]
 impl IrohBidiStream {
     /// Write bytes to the stream.
@@ -229,11 +256,52 @@ impl IrohSession {
         })
     }
 
-    /// Close this session.
-    fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    /// Open a new unidirectional (send-only) stream on this session.
+    fn create_unidirectional_stream<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let handle = self.session_handle;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            iroh_http_core::session_close(handle).map_err(py_err)?;
+            let write_handle = iroh_http_core::session_create_uni_stream(handle)
+                .await
+                .map_err(py_err)?;
+            Ok(IrohUniStream { write_handle })
+        })
+    }
+
+    /// Send a datagram on this session.
+    fn send_datagram<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.session_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            iroh_http_core::session_send_datagram(handle, &data).map_err(py_err)?;
+            Ok(())
+        })
+    }
+
+    /// Receive the next datagram. Returns None when the session closes.
+    fn recv_datagram<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.session_handle;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            match iroh_http_core::session_recv_datagram(handle).await.map_err(py_err)? {
+                None => Ok(Python::with_gil(|py| py.None())),
+                Some(b) => Python::with_gil(|py| {
+                    Ok(PyBytes::new_bound(py, &b).into_any().unbind())
+                }),
+            }
+        })
+    }
+
+    /// Get the maximum datagram payload size, or None if unsupported.
+    #[getter]
+    fn max_datagram_size(&self) -> PyResult<Option<usize>> {
+        iroh_http_core::session_max_datagram_size(self.session_handle).map_err(py_err)
+    }
+
+    /// Close this session with an optional close code and reason.
+    #[pyo3(signature = (close_code=0, reason=""))]
+    fn close<'py>(&self, py: Python<'py>, close_code: u32, reason: &str) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.session_handle;
+        let reason = reason.to_owned();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            iroh_http_core::session_close(handle, close_code, &reason).map_err(py_err)?;
             Ok(())
         })
     }
@@ -623,5 +691,6 @@ fn iroh_http_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IrohResponse>()?;
     m.add_class::<IrohSession>()?;
     m.add_class::<IrohBidiStream>()?;
+    m.add_class::<IrohUniStream>()?;
     Ok(())
 }

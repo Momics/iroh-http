@@ -43,6 +43,12 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::session_create_bidi_stream,
             commands::session_next_bidi_stream,
             commands::session_close,
+            commands::session_closed,
+            commands::session_create_uni_stream,
+            commands::session_next_uni_stream,
+            commands::session_send_datagram,
+            commands::session_recv_datagram,
+            commands::session_max_datagram_size,
         ])
         .build()
 }

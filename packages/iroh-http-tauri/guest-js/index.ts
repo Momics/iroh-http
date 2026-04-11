@@ -244,8 +244,32 @@ const tauriSessionFns: RawSessionFns = {
     );
     return res ? { readHandle: res.readHandle, writeHandle: res.writeHandle } satisfies FfiDuplexStream : null;
   },
-  close: async (sessionHandle) => {
-    await invoke<void>(`${PLUGIN}|session_close`, { sessionHandle });
+  createUniStream: async (sessionHandle) => {
+    return invoke<number>(`${PLUGIN}|session_create_uni_stream`, { sessionHandle });
+  },
+  nextUniStream: async (sessionHandle) => {
+    return invoke<number | null>(`${PLUGIN}|session_next_uni_stream`, { sessionHandle });
+  },
+  sendDatagram: async (sessionHandle, data) => {
+    const b64 = btoa(String.fromCharCode(...data));
+    await invoke<void>(`${PLUGIN}|session_send_datagram`, { sessionHandle, data: b64 });
+  },
+  recvDatagram: async (sessionHandle) => {
+    const res = await invoke<string | null>(`${PLUGIN}|session_recv_datagram`, { sessionHandle });
+    if (res === null) return null;
+    const bin = atob(res);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  },
+  maxDatagramSize: async (sessionHandle) => {
+    return invoke<number | null>(`${PLUGIN}|session_max_datagram_size`, { sessionHandle });
+  },
+  closed: async (sessionHandle) => {
+    return invoke<{ closeCode: number; reason: string }>(`${PLUGIN}|session_closed`, { sessionHandle });
+  },
+  close: async (sessionHandle, closeCode?, reason?) => {
+    await invoke<void>(`${PLUGIN}|session_close`, { sessionHandle, closeCode, reason });
   },
 };
 

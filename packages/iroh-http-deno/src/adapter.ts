@@ -418,7 +418,32 @@ export const denoSessionFns: RawSessionFns = {
     );
     return res ? { readHandle: res.readHandle, writeHandle: res.writeHandle } satisfies FfiDuplexStream : null;
   },
-  close: async (sessionHandle) => {
-    await call<Record<never, never>>("sessionClose", { sessionHandle });
+  createUniStream: async (sessionHandle) => {
+    const res = await call<{ writeHandle: number }>("sessionCreateUniStream", { sessionHandle });
+    return res.writeHandle;
+  },
+  nextUniStream: async (sessionHandle) => {
+    const res = await call<{ readHandle: number } | null>("sessionNextUniStream", { sessionHandle });
+    return res ? res.readHandle : null;
+  },
+  sendDatagram: async (sessionHandle, data) => {
+    await call<Record<never, never>>("sessionSendDatagram", {
+      sessionHandle,
+      data: encodeBase64(data),
+    });
+  },
+  recvDatagram: async (sessionHandle) => {
+    const res = await call<{ data: string } | null>("sessionRecvDatagram", { sessionHandle });
+    return res ? decodeBase64(res.data) : null;
+  },
+  maxDatagramSize: async (sessionHandle) => {
+    const res = await call<{ maxDatagramSize: number | null }>("sessionMaxDatagramSize", { sessionHandle });
+    return res.maxDatagramSize;
+  },
+  closed: async (sessionHandle) => {
+    return call<{ closeCode: number; reason: string }>("sessionClosed", { sessionHandle });
+  },
+  close: async (sessionHandle, closeCode?, reason?) => {
+    await call<Record<never, never>>("sessionClose", { sessionHandle, closeCode, reason });
   },
 };
