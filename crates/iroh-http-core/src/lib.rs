@@ -112,19 +112,6 @@ fn classify_error_code(msg: &str) -> &'static str {
     }
 }
 
-/// Flat request struct that crosses the FFI boundary.
-#[derive(Debug, Clone)]
-pub struct FfiRequest {
-    /// HTTP method, e.g. "GET".
-    pub method: String,
-    /// Full URL, e.g. `httpi://<node-id>/path`.
-    pub url: String,
-    /// Request headers (iroh-node-id already stripped by framing layer).
-    pub headers: Vec<(String, String)>,
-    /// Authenticated remote peer identity from the QUIC connection.
-    pub remote_node_id: String,
-}
-
 /// Flat response-head struct that crosses the FFI boundary.
 #[derive(Debug, Clone)]
 pub struct FfiResponse {
@@ -233,6 +220,18 @@ pub(crate) fn parse_node_id(s: &str) -> Result<iroh::PublicKey, String> {
         .try_into()
         .map_err(|_| "node-id must be 32 bytes".to_string())?;
     iroh::PublicKey::from_bytes(&arr).map_err(|e| e.to_string())
+}
+
+/// Parse a list of `"ip:port"` strings into `SocketAddr` values.
+///
+/// Invalid entries are silently ignored (best-effort parser for direct address
+/// lists supplied by language bindings).
+pub fn parse_direct_addrs(addrs: &Option<Vec<String>>) -> Option<Vec<std::net::SocketAddr>> {
+    addrs.as_ref().map(|v| {
+        v.iter()
+            .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
+            .collect()
+    })
 }
 
 // ── Node tickets ──────────────────────────────────────────────────────────────

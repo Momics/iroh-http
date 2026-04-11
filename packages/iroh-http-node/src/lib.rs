@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
+    parse_direct_addrs,
     server::respond,
     stream::{
         alloc_body_writer, claim_pending_reader, finish_body,
@@ -29,16 +30,6 @@ use slab::Slab;
 
 #[cfg(feature = "discovery")]
 use tokio::sync::Mutex as TokioMutex;
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn parse_direct_addrs(addrs: &Option<Vec<String>>) -> Option<Vec<std::net::SocketAddr>> {
-    addrs.as_ref().map(|v| {
-        v.iter()
-            .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
-            .collect()
-    })
-}
 
 // ── Endpoint slab ─────────────────────────────────────────────────────────────
 

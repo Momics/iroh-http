@@ -163,8 +163,8 @@ export type RelayMode =
  * ```ts
  * const node = await createNode({
  *   relayMode: "https://my-relay.example.com",
- *   discovery: { mdns: { serviceName: "my-app._iroh._udp.local" } },
  * });
+ * // Use node.browse() / node.advertise() for mDNS peer discovery.
  * ```
  */
 export interface NodeOptions {

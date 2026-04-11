@@ -5,7 +5,8 @@
   "tasks": {
     "build":       "deno run --allow-run --allow-env --allow-read --allow-write scripts/build-native.mts",
     "build:debug": "deno run --allow-run --allow-env --allow-read --allow-write scripts/build-native.mts --debug",
-    "build:all":   "deno run --allow-run --allow-env --allow-read --allow-write scripts/build-all.mts"
+    "build:all":   "deno run --allow-run --allow-env --allow-read --allow-write scripts/build-all.mts",
+    "test":        "deno test --allow-read --allow-ffi test/smoke.ts"
   },
   "publish": {
     "include": ["mod.ts", "src/", "lib/"]

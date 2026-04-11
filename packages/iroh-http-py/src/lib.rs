@@ -626,16 +626,17 @@ impl IrohNode {
         {
             let ep = self.ep.clone();
             let svc = service_name.to_string();
-            pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let _py_unused = (); // suppress unused-variable warning in non-mdns builds
+            return pyo3_async_runtimes::tokio::future_into_py(py, async move {
                 let session = iroh_http_discovery::start_browse(ep.raw(), &svc)
                     .await
                     .map_err(py_err)?;
                 Ok(IrohBrowseSession { inner: tokio::sync::Mutex::new(session) })
-            })
+            });
         }
         #[cfg(not(feature = "mdns"))]
         {
-            let _ = service_name;
+            let _ = (py, service_name);
             Err(py_err("iroh-http-py compiled without the 'mdns' feature"))
         }
     }

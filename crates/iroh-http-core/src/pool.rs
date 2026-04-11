@@ -161,16 +161,6 @@ impl ConnectionPool {
     pub fn len(&self) -> usize {
         self.inner.lock().unwrap_or_else(|e| e.into_inner()).conns.iter().filter(|(_, s)| matches!(s, Slot::Ready(_, _))).count()
     }
-
-    /// Remove a specific connection from the pool (e.g. after a fatal error).
-    #[allow(dead_code)]
-    pub fn remove(&self, node_id: &PublicKey, alpn: &[u8]) {
-        let key = PoolKey {
-            node_id: *node_id,
-            alpn: alpn.to_vec(),
-        };
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).conns.remove(&key);
-    }
 }
 
 /// Wait for an in-flight connection attempt to complete.
