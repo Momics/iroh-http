@@ -28,7 +28,7 @@ use iroh_http_framing::{parse_trailers, FramingError};
 
 const READ_BUF: usize = 16 * 1024;
 const DEFAULT_CONCURRENCY: usize = 64;
-const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 60;
+const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
 const DEFAULT_MAX_CONNECTIONS_PER_PEER: usize = 8;
 const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
 
@@ -40,9 +40,9 @@ pub struct ServeOptions {
     /// Number of consecutive accept errors before the loop gives up.
     /// `None` uses the default (5).
     pub max_consecutive_errors: Option<usize>,
-    /// Per-request timeout in seconds.  `None` disables the timeout.
-    /// Default: 60.
-    pub request_timeout_secs: Option<u64>,
+    /// Per-request timeout in milliseconds.  `None` disables the timeout.
+    /// Default: 60000 (60 seconds).
+    pub request_timeout_ms: Option<u64>,
     /// Maximum number of connections from a single peer.  Default: 8.
     pub max_connections_per_peer: Option<usize>,
     /// Maximum request body size in bytes.  `None` means unlimited.
@@ -104,6 +104,32 @@ fn pending_responses() -> &'static Mutex<HashMap<u32, oneshot::Sender<ResponseHe
     S.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Drop guard that removes a `pending_responses` entry if the serving task
+/// is cancelled (timeout) or hits an error before `respond()` is called.
+/// Call `.defuse()` after `rx.await` succeeds to prevent cleanup.
+struct PendingGuard {
+    handle: u32,
+    active: bool,
+}
+
+impl PendingGuard {
+    fn new(handle: u32) -> Self {
+        Self { handle, active: true }
+    }
+    /// Prevent the guard from removing the entry on drop.
+    fn defuse(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for PendingGuard {
+    fn drop(&mut self) {
+        if self.active {
+            pending_responses().lock().unwrap().remove(&self.handle);
+        }
+    }
+}
+
 /// Called from the napi/tauri layer when JS has decided on the response head.
 ///
 /// Wakes the waiting Rust task so it can write the status line + headers to
@@ -140,9 +166,9 @@ where
     let max = options.max_concurrency.unwrap_or(DEFAULT_CONCURRENCY);
     let max_errors = options.max_consecutive_errors.unwrap_or(5);
     let request_timeout = options
-        .request_timeout_secs
-        .map(std::time::Duration::from_secs)
-        .unwrap_or(std::time::Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS));
+        .request_timeout_ms
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(std::time::Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS));
     let max_conns_per_peer = options
         .max_connections_per_peer
         .unwrap_or(DEFAULT_MAX_CONNECTIONS_PER_PEER);
@@ -408,6 +434,7 @@ where
     // 5. Allocate oneshot for response head.
     let (tx, rx) = oneshot::channel::<ResponseHead>();
     let req_handle = allocate_req_handle(tx);
+    let mut pending_guard = PendingGuard::new(req_handle);
 
     // 6. Allocate trailer channels (skipped for duplex — raw bytes only).
     let (opt_req_trailer_tx, opt_res_trailer_rx, req_trailers_handle, res_trailers_handle) =
@@ -430,8 +457,18 @@ where
     if is_bidi {
         tokio::spawn(pump_recv_raw_to_body(recv, req_writer, leftover));
     } else {
+        // Detect whether the request body uses chunked transfer-encoding.
+        let req_is_chunked = req_headers.iter().any(|(k, v)| {
+            k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().contains("chunked")
+        });
         let rq_tx = opt_req_trailer_tx.expect("non-duplex req_trailer_tx");
-        tokio::spawn(pump_recv_to_body(recv, req_writer, leftover, rq_tx, max_request_body_bytes));
+        if req_is_chunked {
+            tokio::spawn(pump_recv_to_body(recv, req_writer, leftover, rq_tx, max_request_body_bytes));
+        } else {
+            // Raw / fixed-length body — forward bytes without chunk parsing.
+            // Still enforce body size limit.
+            tokio::spawn(pump_recv_raw_to_body_limited(recv, req_writer, leftover, rq_tx, max_request_body_bytes.unwrap_or(usize::MAX)));
+        }
     }
 
     // 9. Notify JS.
@@ -452,6 +489,8 @@ where
     let response_head = rx
         .await
         .map_err(|_| "JS handler dropped without responding")?;
+    // respond() already removed the entry — prevent double-removal.
+    pending_guard.defuse();
 
     // 11. Determine whether to compress the response body.
     #[cfg(feature = "compression")]
@@ -460,7 +499,20 @@ where
         && !response_head
             .headers
             .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"));
+            .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
+        && {
+            // Skip compression if Content-Length is present and below min_body_bytes.
+            let min = compression.as_ref().map_or(512, |c| c.min_body_bytes);
+            let content_length: Option<usize> = response_head
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, v)| v.parse().ok());
+            match content_length {
+                Some(len) if len < min => false,
+                _ => true,
+            }
+        };
 
     // Build final response headers, injecting Content-Encoding if compressing.
     #[allow(unused_mut)]
@@ -674,6 +726,50 @@ async fn pump_recv_raw_to_body(
             _ => break,
         }
     }
+}
+
+/// Pump raw (non-chunked) bytes from a `RecvStream` into a `BodyWriter`, enforcing
+/// a maximum body size.  Used for non-duplex requests that lack `Transfer-Encoding:
+/// chunked`.  Drops the `trailer_tx` on completion so the trailer reader resolves.
+async fn pump_recv_raw_to_body_limited(
+    mut recv: iroh::endpoint::RecvStream,
+    writer: BodyWriter,
+    already_read: Vec<u8>,
+    _trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
+    max_bytes: usize,
+) {
+    let mut total = 0usize;
+
+    if !already_read.is_empty() {
+        total += already_read.len();
+        if total > max_bytes {
+            tracing::warn!("iroh-http: raw body exceeds {max_bytes} byte limit");
+            return;
+        }
+        let data = Bytes::copy_from_slice(&already_read);
+        if writer.send_chunk(data).await.is_err() {
+            return;
+        }
+    }
+
+    loop {
+        match recv.read_chunk(READ_BUF).await {
+            Ok(Some(chunk)) => {
+                total += chunk.bytes.len();
+                if total > max_bytes {
+                    tracing::warn!("iroh-http: raw body exceeds {max_bytes} byte limit");
+                    break;
+                }
+                let data = Bytes::copy_from_slice(&chunk.bytes);
+                if writer.send_chunk(data).await.is_err() {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    // _trailer_tx drops here → trailer reader resolves with `RecvError`
+    // (no trailers for raw bodies).
 }
 
 /// Pump raw bytes from a `BodyReader` channel to a `SendStream` without chunked encoding.

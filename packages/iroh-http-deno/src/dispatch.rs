@@ -216,11 +216,16 @@ async fn close_endpoint(p: Value) -> Value {
         Some(h) => h as u32,
         None => return err("missing endpointHandle"),
     };
+    let force = p["force"].as_bool().unwrap_or(false);
     serve_registry::remove(handle);
     match remove_endpoint(handle) {
         None => err(format!("invalid endpoint handle: {handle}")),
         Some(ep) => {
-            ep.close().await;
+            if force {
+                ep.close_force().await;
+            } else {
+                ep.close().await;
+            }
             ok(json!({}))
         }
     }

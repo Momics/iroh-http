@@ -455,9 +455,15 @@ export interface IrohNode {
    */
   peerStats(peer: PublicKey | string): Promise<PeerStats | null>;
   /** Close the endpoint and release resources. */
-  close(): Promise<void>;
+  close(options?: CloseOptions): Promise<void>;
   /** Enables `await using node = await createNode()` (TC39 explicit resource management). */
   [Symbol.asyncDispose](): Promise<void>;
+}
+
+/** Options for closing an endpoint. */
+export interface CloseOptions {
+  /** If `true`, abort immediately without draining in-flight requests. */
+  force?: boolean;
 }
 
 /** Result of the low-level `createEndpoint` FFI call. */

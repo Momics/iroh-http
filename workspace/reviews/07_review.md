@@ -151,21 +151,9 @@ what to borrow from standards and what to build itself.
   - This is the single biggest Rust quality problem — global mutable state is
     antithetical to Rust's ownership model
 
-- [ ] **Error classification via string matching**
-  - `classify_error_code()` in `lib.rs` does
-    `.to_lowercase().contains("timeout")` on error messages
-  - `session.rs` does `msg.contains("closed") || msg.contains("reset")`
-  - These break silently when upstream `iroh` changes its error message text
-  - Fix: match on error types, not messages. `iroh` errors implement
-    `std::error::Error` with typed variants — use `downcast_ref::<>()` or
-    exhaustive pattern matching
+- [x] **Error classification via string matching** ✅ FIXED — session.rs now uses typed `ConnectionError` variant matching via `is_connection_closed()` helper. `classify_error_code()` in lib.rs left as-is (inherently string-based, operates on arbitrary error messages)
 
-- [ ] **Duplicated pump functions**
-  - `client.rs` has `pump_duplex_recv` / `pump_duplex_send`
-  - `session.rs` has `pump_recv` / `pump_send`
-  - These are nearly identical (~30 lines each)
-  - Fix: extract into a shared `fn pump_bidi(recv, writer) + pump_bidi_send(reader, send)`
-    in `stream.rs`
+- [x] **Duplicated pump functions** ✅ FIXED — extracted `pump_quic_recv_to_body()` and `pump_body_to_quic_send()` into `stream.rs`, replaced 4 duplicate functions in `session.rs` and `client.rs`
 
 - [ ] **`.lock().unwrap()` on ~20 mutex operations**
   - Standard Rust practice but means any panic in a slab operation poisons the

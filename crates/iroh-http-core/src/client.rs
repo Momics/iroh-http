@@ -530,12 +530,12 @@ pub async fn raw_connect(
     // Receive side: pump data from server into a BodyReader channel.
     let (server_write, server_read) = make_body_channel();
     let read_handle = insert_reader(server_read);
-    tokio::spawn(pump_duplex_recv(recv, server_write));
+    tokio::spawn(pump_quic_recv_to_body(recv, server_write));
 
     // Send side: pump data from a BodyWriter channel to the server.
     let (client_write, client_read) = make_body_channel();
     let write_handle = insert_writer(client_write);
-    tokio::spawn(pump_duplex_send(client_read, send));
+    tokio::spawn(pump_body_to_quic_send(client_read, send));
 
     Ok(FfiDuplexStream {
         read_handle,
@@ -543,33 +543,5 @@ pub async fn raw_connect(
     })
 }
 
-/// Pump raw bytes from a `RecvStream` into a `BodyWriter` (duplex receive side).
-async fn pump_duplex_recv(mut recv: iroh::endpoint::RecvStream, writer: BodyWriter) {
-    loop {
-        match recv.read_chunk(READ_BUF).await {
-            Ok(Some(chunk)) => {
-                let bytes = bytes::Bytes::copy_from_slice(&chunk.bytes);
-                if writer.send_chunk(bytes).await.is_err() {
-                    break;
-                }
-            }
-            _ => break,
-        }
-    }
-    // writer drops → BodyReader sees EOF.
-}
-
-/// Pump raw bytes from a `BodyReader` into a `SendStream` (duplex send side).
-async fn pump_duplex_send(reader: BodyReader, mut send: iroh::endpoint::SendStream) {
-    loop {
-        match reader.next_chunk().await {
-            None => break,
-            Some(data) => {
-                if send.write_all(&data).await.is_err() {
-                    break;
-                }
-            }
-        }
-    }
-    let _ = send.finish();
-}
+// Duplex recv/send use the shared pump helpers from stream.rs.
+use crate::stream::{pump_quic_recv_to_body, pump_body_to_quic_send};

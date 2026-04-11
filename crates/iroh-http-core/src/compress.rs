@@ -2,9 +2,19 @@
 //!
 //! Only compiled when the `compression` feature is enabled.
 //! Operates on body channels: spawns a background task that reads from one
-//! channel, transforms the data, and writes to another.
+//! channel, transforms the data incrementally (streaming), and writes to
+//! another.  No full-body buffering — each chunk is processed as it arrives.
+//!
+//! Uses `async-compression` for true async streaming — data flows through the
+//! compressor/decompressor as individual chunks arrive, with bounded memory.
 
-use bytes::Bytes;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+
+use bytes::{Buf, Bytes};
+use tokio::io::AsyncReadExt;
+use tokio::sync::mpsc;
 use crate::stream::{BodyReader, BodyWriter, make_body_channel};
 
 /// Options for body compression.
@@ -13,8 +23,6 @@ pub struct CompressionOptions {
     /// zstd compression level (1–22). Default: 3.
     pub level: i32,
     /// Do not compress bodies smaller than this many bytes. Default: 512.
-    /// Only applied when `Content-Length` is known; streaming bodies are always
-    /// compressed.
     pub min_body_bytes: usize,
 }
 
@@ -35,10 +43,64 @@ pub fn is_zstd(value: &str) -> bool {
     value.eq_ignore_ascii_case("zstd")
 }
 
+// ── AsyncRead adapter ────────────────────────────────────────────────────────
+
+/// Wraps the mpsc receiver from a `BodyReader` as a `tokio::io::AsyncRead`.
+/// Uses `poll_recv` directly — no stream conversion crate needed.
+struct BodyAsyncRead {
+    rx: mpsc::Receiver<Bytes>,
+    remaining: Bytes,
+}
+
+impl BodyAsyncRead {
+    /// Consume a `BodyReader` and extract the underlying receiver.
+    /// Panics if the `BodyReader`'s `Arc` has been cloned elsewhere (it should
+    /// not be when handed to compression).
+    fn new(reader: BodyReader) -> Self {
+        let mutex = Arc::try_unwrap(reader.rx)
+            .expect("BodyReader passed to compression must not be shared");
+        Self {
+            rx: mutex.into_inner(),
+            remaining: Bytes::new(),
+        }
+    }
+}
+
+impl tokio::io::AsyncRead for BodyAsyncRead {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        // Drain leftover bytes from a previous partial read.
+        if !self.remaining.is_empty() {
+            let n = std::cmp::min(buf.remaining(), self.remaining.len());
+            buf.put_slice(&self.remaining[..n]);
+            self.remaining.advance(n);
+            return Poll::Ready(Ok(()));
+        }
+
+        // Poll the channel for the next chunk.
+        match self.rx.poll_recv(cx) {
+            Poll::Ready(Some(chunk)) => {
+                let n = std::cmp::min(buf.remaining(), chunk.len());
+                buf.put_slice(&chunk[..n]);
+                if n < chunk.len() {
+                    self.remaining = chunk.slice(n..);
+                }
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(None) => Poll::Ready(Ok(())), // EOF
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
 // ── Decompression ────────────────────────────────────────────────────────────
 
 /// Spawn a task that reads compressed chunks from `input`, decompresses them
-/// with streaming zstd, and delivers decompressed chunks to the returned reader.
+/// incrementally with streaming zstd, and delivers decompressed chunks to the
+/// returned reader.  No full-body buffering.
 pub fn decompress_body(input: BodyReader) -> BodyReader {
     let (writer, reader) = make_body_channel();
     tokio::spawn(decompress_task(input, writer));
@@ -49,47 +111,22 @@ async fn decompress_task(input: BodyReader, writer: BodyWriter) {
     if let Err(e) = decompress_loop(input, &writer).await {
         tracing::warn!("iroh-http: zstd decompress error: {e}");
     }
-    // writer drops here → reader sees EOF
 }
 
 async fn decompress_loop(input: BodyReader, writer: &BodyWriter) -> Result<(), String> {
-    let mut decompressor = zstd::bulk::Decompressor::new()
-        .map_err(|e| format!("zstd init: {e}"))?;
-    // Accumulate all compressed bytes, then decompress in one shot per chunk.
-    // For streaming, we buffer the entire compressed input (which is bounded
-    // by the body size) and do a single bulk decompression.
-    let mut compressed = Vec::new();
+    let async_read = BodyAsyncRead::new(input);
+    let buf_read = tokio::io::BufReader::new(async_read);
+    let mut decoder = async_compression::tokio::bufread::ZstdDecoder::new(buf_read);
 
-    while let Some(chunk) = input.next_chunk().await {
-        compressed.extend_from_slice(&chunk);
-    }
-
-    if compressed.is_empty() {
-        return Ok(());
-    }
-
-    // Bulk decompress — try increasingly larger output buffers.
-    let mut cap = compressed.len() * 4;
-    let decompressed = loop {
-        match decompressor.decompress(&compressed, cap) {
-            Ok(data) => break data,
-            Err(e) => {
-                // If the buffer was too small, double and retry.
-                if cap < 256 * 1024 * 1024 {
-                    cap *= 2;
-                    continue;
-                }
-                return Err(format!("zstd decompress: {e}"));
-            }
+    let mut out_buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = decoder.read(&mut out_buf).await
+            .map_err(|e| format!("zstd decompress: {e}"))?;
+        if n == 0 {
+            break;
         }
-    };
-
-    if !decompressed.is_empty() {
-        // Send in reasonably sized chunks.
-        for chunk in decompressed.chunks(64 * 1024) {
-            if writer.send_chunk(Bytes::copy_from_slice(chunk)).await.is_err() {
-                return Ok(());
-            }
+        if writer.send_chunk(Bytes::copy_from_slice(&out_buf[..n])).await.is_err() {
+            return Ok(());
         }
     }
 
@@ -98,8 +135,9 @@ async fn decompress_loop(input: BodyReader, writer: &BodyWriter) -> Result<(), S
 
 // ── Compression ──────────────────────────────────────────────────────────────
 
-/// Spawn a task that reads plain chunks from `input`, compresses them with
-/// zstd at the given level, and delivers compressed chunks to the returned reader.
+/// Spawn a task that reads plain chunks from `input`, compresses them
+/// incrementally with streaming zstd, and delivers compressed chunks to the
+/// returned reader.  No full-body buffering.
 pub fn compress_body(input: BodyReader, level: i32) -> BodyReader {
     let (writer, reader) = make_body_channel();
     tokio::spawn(compress_task(input, writer, level));
@@ -110,7 +148,6 @@ async fn compress_task(input: BodyReader, writer: BodyWriter, level: i32) {
     if let Err(e) = compress_loop(input, &writer, level).await {
         tracing::warn!("iroh-http: zstd compress error: {e}");
     }
-    // writer drops here → reader sees EOF
 }
 
 async fn compress_loop(
@@ -118,23 +155,19 @@ async fn compress_loop(
     writer: &BodyWriter,
     level: i32,
 ) -> Result<(), String> {
-    // Accumulate all plaintext, then compress in bulk.
-    let mut plain = Vec::new();
+    let async_read = BodyAsyncRead::new(input);
+    let buf_read = tokio::io::BufReader::new(async_read);
+    let quality = async_compression::Level::Precise(level);
+    let mut encoder = async_compression::tokio::bufread::ZstdEncoder::with_quality(buf_read, quality);
 
-    while let Some(chunk) = input.next_chunk().await {
-        plain.extend_from_slice(&chunk);
-    }
-
-    if plain.is_empty() {
-        return Ok(());
-    }
-
-    let compressed = zstd::bulk::compress(&plain, level)
-        .map_err(|e| format!("zstd compress: {e}"))?;
-
-    // Send in reasonably sized chunks.
-    for chunk in compressed.chunks(64 * 1024) {
-        if writer.send_chunk(Bytes::copy_from_slice(chunk)).await.is_err() {
+    let mut out_buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = encoder.read(&mut out_buf).await
+            .map_err(|e| format!("zstd compress: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        if writer.send_chunk(Bytes::copy_from_slice(&out_buf[..n])).await.is_err() {
             return Ok(());
         }
     }

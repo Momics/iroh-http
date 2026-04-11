@@ -268,7 +268,7 @@ impl IrohEndpoint {
         crate::server::ServeOptions {
             max_concurrency: self.inner.max_concurrency,
             max_consecutive_errors: Some(self.inner.max_consecutive_errors),
-            request_timeout_secs: self.inner.request_timeout_ms.map(|ms| ms / 1000),
+            request_timeout_ms: self.inner.request_timeout_ms,
             max_connections_per_peer: self.inner.max_connections_per_peer,
             max_request_body_bytes: self.inner.max_request_body_bytes,
             drain_timeout_secs: self.inner.drain_timeout_secs,

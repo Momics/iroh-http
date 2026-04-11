@@ -428,7 +428,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawServe,
     rawConnect,
     allocBodyWriter,
-    (handle) => invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: handle }),
+    (handle, force?) => invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: handle, force: force ?? null }),
     (handle) => { invoke(`${PLUGIN}|stop_serve`, { endpointHandle: handle }).catch(() => {}); },
     tauriAddrFns,
     tauriDiscoveryFns,
