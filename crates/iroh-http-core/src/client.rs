@@ -5,16 +5,17 @@ use std::sync::Arc;
 use bytes::Bytes;
 use iroh::endpoint::Connection;
 
-
 use crate::{
     base32_encode, parse_node_addr,
-    stream::{BodyReader, BodyWriter, make_body_channel, insert_reader, insert_writer,
-             compose_handle, decompose_handle},
-    FfiResponse, FfiDuplexStream, IrohEndpoint, ALPN, ALPN_DUPLEX,
+    stream::{
+        compose_handle, decompose_handle, insert_reader, insert_writer, make_body_channel,
+        BodyReader, BodyWriter,
+    },
+    FfiDuplexStream, FfiResponse, IrohEndpoint, ALPN, ALPN_DUPLEX,
 };
 use iroh_http_framing::{
-    encode_chunk, terminal_chunk,
-    terminal_chunk_start, serialize_trailers, parse_trailers, FramingError,
+    encode_chunk, parse_trailers, serialize_trailers, terminal_chunk, terminal_chunk_start,
+    FramingError,
 };
 
 const READ_BUF: usize = 16 * 1024;
@@ -28,9 +29,15 @@ const READ_BUF: usize = 16 * 1024;
 /// is automatically removed from the map when the fetch completes.
 pub fn alloc_fetch_token() -> u32 {
     let slabs = crate::stream::global_slabs();
-    let id = slabs.next_fetch_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let id = slabs
+        .next_fetch_id
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let notify = Arc::new(tokio::sync::Notify::new());
-    slabs.fetch_cancel.lock().unwrap_or_else(|e| e.into_inner()).insert(id, notify);
+    slabs
+        .fetch_cancel
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id, notify);
     compose_handle(0, id)
 }
 
@@ -39,7 +46,12 @@ pub fn alloc_fetch_token() -> u32 {
 pub fn cancel_in_flight(token: u32) {
     let (ep_idx, id) = decompose_handle(token);
     if let Some(slabs) = crate::stream::get_slabs(ep_idx) {
-        if let Some(notify) = slabs.fetch_cancel.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
+        if let Some(notify) = slabs
+            .fetch_cancel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+        {
             notify.notify_one();
         }
     }
@@ -54,6 +66,7 @@ pub fn cancel_in_flight(token: u32) {
 /// `alloc_fetch_token()`.  When `cancel_in_flight(token)` is called from
 /// another thread/task while this future is running, the fetch is dropped
 /// and the underlying QUIC streams are reset.
+#[allow(clippy::too_many_arguments)]
 pub async fn fetch(
     endpoint: &IrohEndpoint,
     remote_node_id: &str,
@@ -67,8 +80,13 @@ pub async fn fetch(
     // Retrieve the cancellation Notify for this token, if any.
     let cancel_notify = fetch_token.and_then(|token| {
         let (ep_idx, id) = decompose_handle(token);
-        crate::stream::get_slabs(ep_idx)
-            .and_then(|s| s.fetch_cancel.lock().unwrap_or_else(|e| e.into_inner()).get(&id).cloned())
+        crate::stream::get_slabs(ep_idx).and_then(|s| {
+            s.fetch_cancel
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&id)
+                .cloned()
+        })
     });
     let ep_idx = endpoint.inner.endpoint_idx;
 
@@ -148,13 +166,18 @@ pub async fn fetch(
     if let Some(token) = fetch_token {
         let (ep_idx_t, id) = decompose_handle(token);
         if let Some(slabs) = crate::stream::get_slabs(ep_idx_t) {
-            slabs.fetch_cancel.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+            slabs
+                .fetch_cancel
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&id);
         }
     }
 
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn do_request(
     ep_idx: u32,
     conn: Connection,
@@ -165,17 +188,17 @@ async fn do_request(
     codec: std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
     max_header_size: usize,
 ) -> Result<FfiResponse, String> {
-    let (mut send, mut recv) = conn
-        .open_bi()
-        .await
-        .map_err(|e| format!("open_bi: {e}"))?;
+    let (mut send, mut recv) = conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
 
     // Derive path from URL.
     let path = extract_path(url);
     let has_body = req_body_reader.is_some();
 
     // Build header list for serialisation (convert owned pairs to borrowed refs).
-    let pairs: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let pairs: Vec<(&str, &str)> = headers
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     // Use chunked encoding only when the caller did not supply a Content-Length.
     // When Content-Length is present, send raw bytes so the framing matches.
     let has_content_len = pairs
@@ -192,7 +215,8 @@ async fn do_request(
     }
     let head_bytes = {
         let mut guard = codec.lock().await;
-        guard.encode_request(method, &path, &qpack_pairs)
+        guard
+            .encode_request(method, &path, &qpack_pairs)
             .map_err(|e| format!("qpack encode: {e}"))?
     };
 
@@ -219,9 +243,9 @@ async fn do_request(
 
     // Detect Content-Encoding: zstd and prepare to decompress.
     #[cfg(feature = "compression")]
-    let content_encoding_zstd = resp_headers.iter().any(|(k, v)| {
-        k.eq_ignore_ascii_case("content-encoding") && crate::compress::is_zstd(v)
-    });
+    let content_encoding_zstd = resp_headers
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("content-encoding") && crate::compress::is_zstd(v));
     #[cfg(feature = "compression")]
     if content_encoding_zstd {
         resp_headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-encoding"));
@@ -237,7 +261,13 @@ async fn do_request(
     let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
     let trailer_handle = crate::stream::insert_trailer_receiver(ep_idx, trailer_rx);
 
-    tokio::spawn(pump_stream_to_body(recv, res_writer, consumed, trailer_tx, resp_is_chunked));
+    tokio::spawn(pump_stream_to_body(
+        recv,
+        res_writer,
+        consumed,
+        trailer_tx,
+        resp_is_chunked,
+    ));
 
     // If the response was zstd-compressed, interpose a decompression channel
     // so JS receives plain bytes.
@@ -414,7 +444,10 @@ async fn read_head_qpack(
         }
 
         if buf.len() > max_header_size {
-            return Err(format!("response head too large ({} bytes, limit {max_header_size})", buf.len()));
+            return Err(format!(
+                "response head too large ({} bytes, limit {max_header_size})",
+                buf.len()
+            ));
         }
 
         let mut guard = codec.lock().await;
@@ -501,7 +534,8 @@ pub async fn raw_connect(
         })
         .await?;
 
-    let (mut send, mut recv) = pooled.conn
+    let (mut send, mut recv) = pooled
+        .conn
         .open_bi()
         .await
         .map_err(|e| format!("open_bi: {e}"))?;
@@ -516,7 +550,8 @@ pub async fn raw_connect(
 
     let head_bytes = {
         let mut guard = pooled.codec.lock().await;
-        guard.encode_request("CONNECT", path, &all_headers)
+        guard
+            .encode_request("CONNECT", path, &all_headers)
             .map_err(|e| format!("qpack encode: {e}"))?
     };
 
@@ -526,9 +561,12 @@ pub async fn raw_connect(
 
     // Await the 101 Switching Protocols response.
     let max_header_size = endpoint.max_header_size();
-    let (status, _headers, _leftover) = read_head_qpack(&mut recv, &pooled.codec, max_header_size).await?;
+    let (status, _headers, _leftover) =
+        read_head_qpack(&mut recv, &pooled.codec, max_header_size).await?;
     if status != 101 {
-        return Err(format!("server rejected duplex connection: expected 101, got {status}"));
+        return Err(format!(
+            "server rejected duplex connection: expected 101, got {status}"
+        ));
     }
 
     // Receive side: pump data from server into a BodyReader channel.
@@ -549,4 +587,4 @@ pub async fn raw_connect(
 }
 
 // Duplex recv/send use the shared pump helpers from stream.rs.
-use crate::stream::{pump_quic_recv_to_body, pump_body_to_quic_send};
+use crate::stream::{pump_body_to_quic_send, pump_quic_recv_to_body};

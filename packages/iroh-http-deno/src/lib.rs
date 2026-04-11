@@ -8,8 +8,8 @@
 mod dispatch;
 mod serve_registry;
 
-use std::sync::OnceLock;
 use iroh_http_core::stream::next_chunk;
+use std::sync::OnceLock;
 
 /// Global multi-threaded Tokio runtime.  Initialised once on the first FFI call.
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
@@ -38,7 +38,13 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
 ///
 /// This symbol is declared `nonblocking: true` in the Deno `dlopen` call, so
 /// it is invoked on the Deno thread pool and returns a `Promise<i32>`.
+///
+/// # Safety
+/// `method_ptr`, `payload_ptr`, and `out_ptr` must be valid for the lengths
+/// provided and must not overlap. Null pointers are only valid when the
+/// corresponding length is 0.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn iroh_http_call(
     method_ptr: *const u8,
     method_len: usize,
@@ -91,6 +97,10 @@ pub extern "C" fn iroh_http_call(
 /// - `n < 0`  — `|n|` bytes required; caller must retry with a larger buffer.
 ///
 /// This symbol is declared `nonblocking: true` in the Deno `dlopen` call.
+///
+/// # Safety
+/// `out_ptr` must be valid for `out_cap` bytes and must not alias any other
+/// active reference for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iroh_http_next_chunk(
     handle: u32,

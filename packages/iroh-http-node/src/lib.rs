@@ -14,9 +14,8 @@ use iroh_http_core::{
     parse_direct_addrs,
     server::respond,
     stream::{
-        alloc_body_writer, claim_pending_reader, finish_body,
-        next_chunk, send_chunk, store_pending_reader,
-        cancel_reader, next_trailer, send_trailers,
+        alloc_body_writer, cancel_reader, claim_pending_reader, finish_body, next_chunk,
+        next_trailer, send_chunk, send_trailers, store_pending_reader,
     },
     RequestPayload,
 };
@@ -44,9 +43,12 @@ fn insert_endpoint(ep: IrohEndpoint) -> u32 {
 
 fn get_endpoint(handle: u32) -> napi::Result<IrohEndpoint> {
     let slab = endpoint_slab().lock().unwrap();
-    slab.get(handle as usize)
-        .cloned()
-        .ok_or_else(|| napi::Error::new(Status::InvalidArg, iroh_http_core::classify_error_json(format!("invalid endpoint handle: {handle}"))))
+    slab.get(handle as usize).cloned().ok_or_else(|| {
+        napi::Error::new(
+            Status::InvalidArg,
+            iroh_http_core::classify_error_json(format!("invalid endpoint handle: {handle}")),
+        )
+    })
 }
 
 // ── Discovery slabs ───────────────────────────────────────────────────────────
@@ -119,55 +121,71 @@ pub struct JsEndpointInfo {
 /// all-default configuration or supply a `JsNodeOptions` to customise.
 #[napi]
 pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsEndpointInfo> {
-    let opts = options.map(|o| -> napi::Result<NodeOptions> { Ok(NodeOptions {
-        key: match o.key {
-            Some(k) => {
-                let slice = k.as_ref();
-                let arr: [u8; 32] = slice.try_into().map_err(|_| {
-                    napi::Error::new(Status::InvalidArg, format!("secret key must be exactly 32 bytes, got {}", slice.len()))
-                })?;
-                Some(arr)
-            }
-            None => None,
-        },
-        idle_timeout_ms: o.idle_timeout.map(|t| t as u64),
-        relay_mode: o.relay_mode,
-        relays: o.relays.unwrap_or_default(),
-        bind_addrs: o.bind_addrs.unwrap_or_default(),
-        dns_discovery: o.dns_discovery,
-        dns_discovery_enabled: o.dns_discovery_enabled.unwrap_or(true),
-        capabilities: Vec::new(),
-        channel_capacity: o.channel_capacity.map(|v| v as usize),
-        max_chunk_size_bytes: o.max_chunk_size_bytes.map(|v| v as usize),
-        max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
-        disable_networking: o.disable_networking.unwrap_or(false),
-        drain_timeout_ms: o.drain_timeout.map(|v| v as u64),
-        handle_ttl_ms: o.handle_ttl.map(|v| v as u64),
-        max_pooled_connections: o.max_pooled_connections.map(|v| v as usize),
-        pool_idle_timeout_ms: o.pool_idle_timeout_ms.map(|v| v as u64),
-        max_header_size: o.max_header_bytes.map(|v| v as usize),
-        proxy_url: o.proxy_url,
-        proxy_from_env: o.proxy_from_env.unwrap_or(false),
-        keylog: o.keylog.unwrap_or(false),
-        max_concurrency: o.max_concurrency.map(|v| v as usize),
-        max_connections_per_peer: o.max_connections_per_peer.map(|v| v as usize),
-        request_timeout_ms: o.request_timeout.map(|v| v as u64),
-        max_request_body_bytes: o.max_request_body_bytes.map(|v| v as usize),
-        drain_timeout_secs: None,
-        #[cfg(feature = "compression")]
-        compression: if o.compression_level.is_some() || o.compression_min_body_bytes.is_some() {
-            Some(iroh_http_core::CompressionOptions {
-                level: o.compression_level.unwrap_or(3),
-                min_body_bytes: o.compression_min_body_bytes.map(|v| v as usize).unwrap_or(512),
+    let opts = options
+        .map(|o| -> napi::Result<NodeOptions> {
+            Ok(NodeOptions {
+                key: match o.key {
+                    Some(k) => {
+                        let slice = k.as_ref();
+                        let arr: [u8; 32] = slice.try_into().map_err(|_| {
+                            napi::Error::new(
+                                Status::InvalidArg,
+                                format!("secret key must be exactly 32 bytes, got {}", slice.len()),
+                            )
+                        })?;
+                        Some(arr)
+                    }
+                    None => None,
+                },
+                idle_timeout_ms: o.idle_timeout.map(|t| t as u64),
+                relay_mode: o.relay_mode,
+                relays: o.relays.unwrap_or_default(),
+                bind_addrs: o.bind_addrs.unwrap_or_default(),
+                dns_discovery: o.dns_discovery,
+                dns_discovery_enabled: o.dns_discovery_enabled.unwrap_or(true),
+                capabilities: Vec::new(),
+                channel_capacity: o.channel_capacity.map(|v| v as usize),
+                max_chunk_size_bytes: o.max_chunk_size_bytes.map(|v| v as usize),
+                max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
+                disable_networking: o.disable_networking.unwrap_or(false),
+                drain_timeout_ms: o.drain_timeout.map(|v| v as u64),
+                handle_ttl_ms: o.handle_ttl.map(|v| v as u64),
+                max_pooled_connections: o.max_pooled_connections.map(|v| v as usize),
+                pool_idle_timeout_ms: o.pool_idle_timeout_ms.map(|v| v as u64),
+                max_header_size: o.max_header_bytes.map(|v| v as usize),
+                proxy_url: o.proxy_url,
+                proxy_from_env: o.proxy_from_env.unwrap_or(false),
+                keylog: o.keylog.unwrap_or(false),
+                max_concurrency: o.max_concurrency.map(|v| v as usize),
+                max_connections_per_peer: o.max_connections_per_peer.map(|v| v as usize),
+                request_timeout_ms: o.request_timeout.map(|v| v as u64),
+                max_request_body_bytes: o.max_request_body_bytes.map(|v| v as usize),
+                drain_timeout_secs: None,
+                #[cfg(feature = "compression")]
+                compression: if o.compression_level.is_some()
+                    || o.compression_min_body_bytes.is_some()
+                {
+                    Some(iroh_http_core::CompressionOptions {
+                        level: o.compression_level.unwrap_or(3),
+                        min_body_bytes: o
+                            .compression_min_body_bytes
+                            .map(|v| v as usize)
+                            .unwrap_or(512),
+                    })
+                } else {
+                    None
+                },
             })
-        } else {
-            None
-        },
-    }) }).transpose()?.unwrap_or_default();
+        })
+        .transpose()?
+        .unwrap_or_default();
 
-    let ep = IrohEndpoint::bind(opts)
-        .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    let ep = IrohEndpoint::bind(opts).await.map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })?;
 
     let node_id = ep.node_id().to_string();
     let keypair = ep.secret_key_bytes().to_vec();
@@ -189,7 +207,10 @@ pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> napi::
     let ep = {
         let mut slab = endpoint_slab().lock().unwrap();
         if !slab.contains(endpoint_handle as usize) {
-            return Err(napi::Error::new(Status::InvalidArg, iroh_http_core::classify_error_json("invalid endpoint handle")));
+            return Err(napi::Error::new(
+                Status::InvalidArg,
+                iroh_http_core::classify_error_json("invalid endpoint handle"),
+            ));
         }
         slab.remove(endpoint_handle as usize)
     };
@@ -222,17 +243,26 @@ pub async fn mdns_browse(endpoint_handle: u32, service_name: String) -> napi::Re
     let ep = get_endpoint(endpoint_handle)?;
     let session = iroh_http_discovery::start_browse(ep.raw(), &service_name)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
-    let handle = browse_slab().lock().unwrap().insert(Arc::new(TokioMutex::new(session))) as u32;
+        .map_err(|e| {
+            napi::Error::new(
+                Status::GenericFailure,
+                iroh_http_core::classify_error_json(e),
+            )
+        })?;
+    let handle = browse_slab()
+        .lock()
+        .unwrap()
+        .insert(Arc::new(TokioMutex::new(session))) as u32;
     Ok(handle)
 }
 
 #[napi]
 #[cfg(not(feature = "discovery"))]
 pub async fn mdns_browse(_endpoint_handle: u32, _service_name: String) -> napi::Result<u32> {
-    Err(napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(
-        "discovery feature not enabled in this build"
-    )))
+    Err(napi::Error::new(
+        Status::GenericFailure,
+        iroh_http_core::classify_error_json("discovery feature not enabled in this build"),
+    ))
 }
 
 /// Poll the next discovery event from a browse session.
@@ -241,9 +271,18 @@ pub async fn mdns_browse(_endpoint_handle: u32, _service_name: String) -> napi::
 #[cfg(feature = "discovery")]
 pub async fn mdns_next_event(browse_handle: u32) -> napi::Result<Option<JsPeerDiscoveryEvent>> {
     let session = {
-        browse_slab().lock().unwrap().get(browse_handle as usize).cloned()
-    }.ok_or_else(|| napi::Error::new(Status::InvalidArg,
-        iroh_http_core::classify_error_json(format!("invalid browse handle: {browse_handle}"))))?;
+        browse_slab()
+            .lock()
+            .unwrap()
+            .get(browse_handle as usize)
+            .cloned()
+    }
+    .ok_or_else(|| {
+        napi::Error::new(
+            Status::InvalidArg,
+            iroh_http_core::classify_error_json(format!("invalid browse handle: {browse_handle}")),
+        )
+    })?;
     let event = session.lock().await.next_event().await;
     Ok(event.map(|ev| JsPeerDiscoveryEvent {
         is_active: ev.is_active,
@@ -255,9 +294,10 @@ pub async fn mdns_next_event(browse_handle: u32) -> napi::Result<Option<JsPeerDi
 #[napi]
 #[cfg(not(feature = "discovery"))]
 pub async fn mdns_next_event(_browse_handle: u32) -> napi::Result<Option<JsPeerDiscoveryEvent>> {
-    Err(napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(
-        "discovery feature not enabled in this build"
-    )))
+    Err(napi::Error::new(
+        Status::GenericFailure,
+        iroh_http_core::classify_error_json("discovery feature not enabled in this build"),
+    ))
 }
 
 /// Close a browse session, stopping mDNS discovery.
@@ -280,8 +320,12 @@ pub fn mdns_browse_close(_browse_handle: u32) {}
 #[cfg(feature = "discovery")]
 pub fn mdns_advertise(endpoint_handle: u32, service_name: String) -> napi::Result<u32> {
     let ep = get_endpoint(endpoint_handle)?;
-    let session = iroh_http_discovery::start_advertise(ep.raw(), &service_name)
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    let session = iroh_http_discovery::start_advertise(ep.raw(), &service_name).map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })?;
     let handle = advertise_slab().lock().unwrap().insert(session) as u32;
     Ok(handle)
 }
@@ -289,9 +333,10 @@ pub fn mdns_advertise(endpoint_handle: u32, service_name: String) -> napi::Resul
 #[napi]
 #[cfg(not(feature = "discovery"))]
 pub fn mdns_advertise(_endpoint_handle: u32, _service_name: String) -> napi::Result<u32> {
-    Err(napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(
-        "discovery feature not enabled in this build"
-    )))
+    Err(napi::Error::new(
+        Status::GenericFailure,
+        iroh_http_core::classify_error_json("discovery feature not enabled in this build"),
+    ))
 }
 
 /// Stop advertising this node on the local network.
@@ -337,7 +382,10 @@ pub struct JsPeerStats {
 pub fn node_addr(endpoint_handle: u32) -> napi::Result<JsNodeAddrInfo> {
     let ep = get_endpoint(endpoint_handle)?;
     let info = ep.node_addr();
-    Ok(JsNodeAddrInfo { id: info.id, addrs: info.addrs })
+    Ok(JsNodeAddrInfo {
+        id: info.id,
+        addrs: info.addrs,
+    })
 }
 
 /// Generate a ticket string for the given endpoint.
@@ -359,23 +407,36 @@ pub fn home_relay(endpoint_handle: u32) -> napi::Result<Option<String>> {
 
 /// Known addresses for a remote peer, or null if unknown.
 #[napi]
-pub async fn peer_info(endpoint_handle: u32, node_id: String) -> napi::Result<Option<JsNodeAddrInfo>> {
+pub async fn peer_info(
+    endpoint_handle: u32,
+    node_id: String,
+) -> napi::Result<Option<JsNodeAddrInfo>> {
     let ep = get_endpoint(endpoint_handle)?;
-    Ok(ep.peer_info(&node_id).await.map(|info| JsNodeAddrInfo { id: info.id, addrs: info.addrs }))
+    Ok(ep.peer_info(&node_id).await.map(|info| JsNodeAddrInfo {
+        id: info.id,
+        addrs: info.addrs,
+    }))
 }
 
 /// Per-peer connection statistics with path information.
 #[napi]
-pub async fn peer_stats(endpoint_handle: u32, node_id: String) -> napi::Result<Option<JsPeerStats>> {
+pub async fn peer_stats(
+    endpoint_handle: u32,
+    node_id: String,
+) -> napi::Result<Option<JsPeerStats>> {
     let ep = get_endpoint(endpoint_handle)?;
     Ok(ep.peer_stats(&node_id).await.map(|s| JsPeerStats {
         relay: s.relay,
         relay_url: s.relay_url,
-        paths: s.paths.into_iter().map(|p| JsPathInfo {
-            relay: p.relay,
-            addr: p.addr,
-            active: p.active,
-        }).collect(),
+        paths: s
+            .paths
+            .into_iter()
+            .map(|p| JsPathInfo {
+                relay: p.relay,
+                addr: p.addr,
+                active: p.active,
+            })
+            .collect(),
     }))
 }
 
@@ -386,9 +447,12 @@ pub async fn peer_stats(endpoint_handle: u32, node_id: String) -> napi::Result<O
 /// Returns `null` at EOF. The handle is automatically cleaned up after EOF.
 #[napi]
 pub async fn js_next_chunk(handle: u32) -> napi::Result<Option<Buffer>> {
-    let chunk = next_chunk(handle)
-        .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    let chunk = next_chunk(handle).await.map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })?;
     Ok(chunk.map(|b| Buffer::from(b.to_vec())))
 }
 
@@ -398,9 +462,12 @@ pub async fn js_next_chunk(handle: u32) -> napi::Result<Option<Buffer>> {
 #[napi]
 pub async fn js_send_chunk(handle: u32, chunk: Uint8Array) -> napi::Result<()> {
     let bytes = Bytes::from(chunk.to_vec());
-    send_chunk(handle, bytes)
-        .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+    send_chunk(handle, bytes).await.map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })
 }
 
 /// Signal end-of-body by dropping the writer.
@@ -408,7 +475,12 @@ pub async fn js_send_chunk(handle: u32, chunk: Uint8Array) -> napi::Result<()> {
 /// The paired `BodyReader` will return `null` on its next `nextChunk` call.
 #[napi]
 pub fn js_finish_body(handle: u32) -> napi::Result<()> {
-    finish_body(handle).map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+    finish_body(handle).map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })
 }
 
 /// Cancel a body reader, causing any pending `nextChunk` to return null.
@@ -422,9 +494,12 @@ pub fn js_cancel_request(handle: u32) {
 /// Returns `null` if no trailers were sent.
 #[napi]
 pub async fn js_next_trailer(handle: u32) -> napi::Result<Option<Vec<Vec<String>>>> {
-    let trailers = next_trailer(handle)
-        .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    let trailers = next_trailer(handle).await.map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })?;
     Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
 }
 
@@ -433,9 +508,20 @@ pub async fn js_next_trailer(handle: u32) -> napi::Result<Option<Vec<Vec<String>
 pub fn js_send_trailers(handle: u32, trailers: Vec<Vec<String>>) -> napi::Result<()> {
     let pairs: Vec<(String, String)> = trailers
         .into_iter()
-        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+        .filter_map(|p| {
+            if p.len() == 2 {
+                Some((p[0].clone(), p[1].clone()))
+            } else {
+                None
+            }
+        })
         .collect();
-    send_trailers(handle, pairs).map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+    send_trailers(handle, pairs).map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })
 }
 
 /// Allocate a body writer handle for streaming request bodies.
@@ -488,6 +574,7 @@ pub struct JsFfiResponse {
 ///
 /// Low-level function — the shared TS layer wraps this in `makeFetch`.
 #[napi]
+#[allow(clippy::too_many_arguments)]
 pub async fn raw_fetch(
     endpoint_handle: u32,
     node_id: String,
@@ -513,17 +600,27 @@ pub async fn raw_fetch(
 
     let req_body_reader = req_body_handle.and_then(claim_pending_reader);
 
-    let addrs = parse_direct_addrs(&direct_addrs)
-        .map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
-    let res = iroh_http_core::fetch(&ep, &node_id, &url, &method, &pairs, req_body_reader, Some(fetch_token), addrs.as_deref())
-        .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    let addrs =
+        parse_direct_addrs(&direct_addrs).map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
+    let res = iroh_http_core::fetch(
+        &ep,
+        &node_id,
+        &url,
+        &method,
+        &pairs,
+        req_body_reader,
+        Some(fetch_token),
+        addrs.as_deref(),
+    )
+    .await
+    .map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })?;
 
-    let resp_headers: Vec<Vec<String>> = res
-        .headers
-        .into_iter()
-        .map(|(k, v)| vec![k, v])
-        .collect();
+    let resp_headers: Vec<Vec<String>> = res.headers.into_iter().map(|(k, v)| vec![k, v]).collect();
 
     Ok(JsFfiResponse {
         status: res.status as u32,
@@ -543,11 +640,7 @@ pub async fn raw_fetch(
 /// support awaiting Promise return values from ThreadsafeFunction callbacks),
 /// so JS must call `rawRespond` explicitly after computing the response head.
 #[napi]
-pub fn raw_respond(
-    req_handle: u32,
-    status: u32,
-    headers: Vec<Vec<String>>,
-) -> napi::Result<()> {
+pub fn raw_respond(req_handle: u32, status: u32, headers: Vec<Vec<String>>) -> napi::Result<()> {
     let header_pairs: Vec<(String, String)> = headers
         .into_iter()
         .filter_map(|p| {
@@ -563,10 +656,7 @@ pub fn raw_respond(
 }
 
 #[napi]
-pub fn raw_serve(
-    endpoint_handle: u32,
-    handler: JsFunction,
-) -> napi::Result<()> {
+pub fn raw_serve(endpoint_handle: u32, handler: JsFunction) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
 
     type CallArgs = RequestPayload;
@@ -581,8 +671,14 @@ pub fn raw_serve(
             obj.set("reqHandle", env.create_uint32(p.req_handle)?)?;
             obj.set("reqBodyHandle", env.create_uint32(p.req_body_handle)?)?;
             obj.set("resBodyHandle", env.create_uint32(p.res_body_handle)?)?;
-            obj.set("reqTrailersHandle", env.create_uint32(p.req_trailers_handle)?)?;
-            obj.set("resTrailersHandle", env.create_uint32(p.res_trailers_handle)?)?;
+            obj.set(
+                "reqTrailersHandle",
+                env.create_uint32(p.req_trailers_handle)?,
+            )?;
+            obj.set(
+                "resTrailersHandle",
+                env.create_uint32(p.res_trailers_handle)?,
+            )?;
             obj.set("isBidi", env.get_boolean(p.is_bidi)?)?;
             obj.set("method", env.create_string(&p.method)?)?;
             obj.set("url", env.create_string(&p.url)?)?;
@@ -608,7 +704,10 @@ pub fn raw_serve(
         move |payload: RequestPayload| {
             let tsfn = Arc::clone(&tsfn);
             // Fire-and-forget: JS calls rawRespond explicitly.
-            tsfn.call(payload, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
+            tsfn.call(
+                payload,
+                napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+            );
         },
     );
     ep.set_serve_handle(handle);
@@ -627,7 +726,6 @@ pub fn stop_serve(endpoint_handle: u32) -> napi::Result<()> {
     ep.stop_serve();
     Ok(())
 }
-
 
 // ── rawConnect ────────────────────────────────────────────────────────────────
 
@@ -652,12 +750,23 @@ pub async fn raw_connect(
 
     let pairs: Vec<(String, String)> = headers
         .into_iter()
-        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+        .filter_map(|p| {
+            if p.len() == 2 {
+                Some((p[0].clone(), p[1].clone()))
+            } else {
+                None
+            }
+        })
         .collect();
 
     let duplex = iroh_http_core::raw_connect(&ep, &node_id, &path, &pairs)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+        .map_err(|e| {
+            napi::Error::new(
+                Status::GenericFailure,
+                iroh_http_core::classify_error_json(e),
+            )
+        })?;
 
     Ok(JsFfiDuplexStream {
         read_handle: duplex.read_handle,
@@ -676,11 +785,16 @@ pub async fn session_connect(
     direct_addrs: Option<Vec<String>>,
 ) -> napi::Result<u32> {
     let ep = get_endpoint(endpoint_handle)?;
-    let addrs = parse_direct_addrs(&direct_addrs)
-        .map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
+    let addrs =
+        parse_direct_addrs(&direct_addrs).map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
     let handle = iroh_http_core::session_connect(&ep, &node_id, addrs.as_deref())
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+        .map_err(|e| {
+            napi::Error::new(
+                Status::GenericFailure,
+                iroh_http_core::classify_error_json(e),
+            )
+        })?;
     Ok(handle)
 }
 
@@ -692,12 +806,15 @@ pub struct JsSessionBidiStream {
 }
 
 #[napi]
-pub async fn session_create_bidi_stream(
-    session_handle: u32,
-) -> napi::Result<JsSessionBidiStream> {
+pub async fn session_create_bidi_stream(session_handle: u32) -> napi::Result<JsSessionBidiStream> {
     let duplex = iroh_http_core::session_create_bidi_stream(session_handle)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+        .map_err(|e| {
+            napi::Error::new(
+                Status::GenericFailure,
+                iroh_http_core::classify_error_json(e),
+            )
+        })?;
     Ok(JsSessionBidiStream {
         read_handle: duplex.read_handle,
         write_handle: duplex.write_handle,
@@ -712,7 +829,12 @@ pub async fn session_next_bidi_stream(
 ) -> napi::Result<Option<JsSessionBidiStream>> {
     let result = iroh_http_core::session_next_bidi_stream(session_handle)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+        .map_err(|e| {
+            napi::Error::new(
+                Status::GenericFailure,
+                iroh_http_core::classify_error_json(e),
+            )
+        })?;
     Ok(result.map(|d| JsSessionBidiStream {
         read_handle: d.read_handle,
         write_handle: d.write_handle,
@@ -721,9 +843,22 @@ pub async fn session_next_bidi_stream(
 
 /// Close a session.
 #[napi]
-pub async fn session_close_handle(session_handle: u32, close_code: Option<u32>, reason: Option<String>) -> napi::Result<()> {
-    iroh_http_core::session_close(session_handle, close_code.unwrap_or(0), reason.as_deref().unwrap_or(""))
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+pub async fn session_close_handle(
+    session_handle: u32,
+    close_code: Option<u32>,
+    reason: Option<String>,
+) -> napi::Result<()> {
+    iroh_http_core::session_close(
+        session_handle,
+        close_code.unwrap_or(0),
+        reason.as_deref().unwrap_or(""),
+    )
+    .map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })
 }
 
 /// Wait for a session to close. Returns close info { closeCode, reason }.
@@ -737,7 +872,12 @@ pub struct JsCloseInfo {
 pub async fn session_closed(session_handle: u32) -> napi::Result<JsCloseInfo> {
     let info = iroh_http_core::session_closed(session_handle)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+        .map_err(|e| {
+            napi::Error::new(
+                Status::GenericFailure,
+                iroh_http_core::classify_error_json(e),
+            )
+        })?;
     Ok(JsCloseInfo {
         close_code: info.close_code,
         reason: info.reason,
@@ -750,7 +890,12 @@ pub async fn session_closed(session_handle: u32) -> napi::Result<JsCloseInfo> {
 pub async fn session_create_uni_stream(session_handle: u32) -> napi::Result<u32> {
     iroh_http_core::session_create_uni_stream(session_handle)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+        .map_err(|e| {
+            napi::Error::new(
+                Status::GenericFailure,
+                iroh_http_core::classify_error_json(e),
+            )
+        })
 }
 
 /// Accept the next incoming unidirectional stream on a session.
@@ -759,14 +904,23 @@ pub async fn session_create_uni_stream(session_handle: u32) -> napi::Result<u32>
 pub async fn session_next_uni_stream(session_handle: u32) -> napi::Result<Option<u32>> {
     iroh_http_core::session_next_uni_stream(session_handle)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+        .map_err(|e| {
+            napi::Error::new(
+                Status::GenericFailure,
+                iroh_http_core::classify_error_json(e),
+            )
+        })
 }
 
 /// Send a datagram on a session.
 #[napi]
 pub async fn session_send_datagram(session_handle: u32, data: Uint8Array) -> napi::Result<()> {
-    iroh_http_core::session_send_datagram(session_handle, data.as_ref())
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))
+    iroh_http_core::session_send_datagram(session_handle, data.as_ref()).map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })
 }
 
 /// Receive the next datagram on a session. Returns null when the session closes.
@@ -774,16 +928,25 @@ pub async fn session_send_datagram(session_handle: u32, data: Uint8Array) -> nap
 pub async fn session_recv_datagram(session_handle: u32) -> napi::Result<Option<Buffer>> {
     let result = iroh_http_core::session_recv_datagram(session_handle)
         .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
-    Ok(result.map(|d| Buffer::from(d)))
+        .map_err(|e| {
+            napi::Error::new(
+                Status::GenericFailure,
+                iroh_http_core::classify_error_json(e),
+            )
+        })?;
+    Ok(result.map(Buffer::from))
 }
 
 /// Get the maximum datagram payload size for a session.
 /// Returns null if datagrams are not supported.
 #[napi]
 pub fn session_max_datagram_size(session_handle: u32) -> napi::Result<Option<u32>> {
-    let result = iroh_http_core::session_max_datagram_size(session_handle)
-        .map_err(|e| napi::Error::new(Status::GenericFailure, iroh_http_core::classify_error_json(e)))?;
+    let result = iroh_http_core::session_max_datagram_size(session_handle).map_err(|e| {
+        napi::Error::new(
+            Status::GenericFailure,
+            iroh_http_core::classify_error_json(e),
+        )
+    })?;
     Ok(result.map(|s| s as u32))
 }
 
@@ -793,7 +956,9 @@ pub fn session_max_datagram_size(session_handle: u32) -> napi::Result<Option<u32
 /// Returns a 64-byte signature as a `Buffer`.
 #[napi]
 pub fn secret_key_sign(secret_key: Uint8Array, data: Uint8Array) -> napi::Result<Buffer> {
-    let key_bytes: [u8; 32] = secret_key.as_ref().try_into()
+    let key_bytes: [u8; 32] = secret_key
+        .as_ref()
+        .try_into()
         .map_err(|_| napi::Error::new(Status::InvalidArg, "secret key must be 32 bytes"))?;
     let sig = iroh_http_core::secret_key_sign(&key_bytes, data.as_ref());
     Ok(Buffer::from(sig.to_vec()))
@@ -803,8 +968,12 @@ pub fn secret_key_sign(secret_key: Uint8Array, data: Uint8Array) -> napi::Result
 /// Returns `true` on success, `false` on failure — does not throw.
 #[napi]
 pub fn public_key_verify(public_key: Uint8Array, data: Uint8Array, signature: Uint8Array) -> bool {
-    let Ok(key_bytes) = <[u8; 32]>::try_from(public_key.as_ref()) else { return false };
-    let Ok(sig_bytes) = <[u8; 64]>::try_from(signature.as_ref()) else { return false };
+    let Ok(key_bytes) = <[u8; 32]>::try_from(public_key.as_ref()) else {
+        return false;
+    };
+    let Ok(sig_bytes) = <[u8; 64]>::try_from(signature.as_ref()) else {
+        return false;
+    };
     iroh_http_core::public_key_verify(&key_bytes, data.as_ref(), &sig_bytes)
 }
 

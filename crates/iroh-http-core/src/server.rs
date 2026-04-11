@@ -7,10 +7,7 @@
 //!   3. Calls the JS-supplied callback via a `oneshot`-based request registry.
 //!   4. Writes the response head, then pumps the response body.
 
-use std::{
-    collections::HashMap,
-    sync::Mutex,
-};
+use std::{collections::HashMap, sync::Mutex};
 
 use bytes::Bytes;
 use iroh::endpoint::Connection;
@@ -20,10 +17,9 @@ use crate::{
     base32_encode,
     client::pump_body_to_stream,
     stream::{
-        BodyReader, BodyWriter, TrailerRx,
-        insert_reader, insert_writer, make_body_channel,
-        insert_trailer_sender, insert_trailer_receiver, remove_trailer_sender,
-        ResponseHeadEntry, get_slabs, decompose_handle, compose_handle,
+        compose_handle, decompose_handle, get_slabs, insert_reader, insert_trailer_receiver,
+        insert_trailer_sender, insert_writer, make_body_channel, remove_trailer_sender, BodyReader,
+        BodyWriter, ResponseHeadEntry, TrailerRx,
     },
     IrohEndpoint, RequestPayload,
 };
@@ -108,7 +104,11 @@ struct PendingGuard {
 
 impl PendingGuard {
     fn new(ep_idx: u32, id: u32) -> Self {
-        Self { ep_idx, id, active: true }
+        Self {
+            ep_idx,
+            id,
+            active: true,
+        }
     }
     /// Prevent the guard from removing the entry on drop.
     fn defuse(&mut self) {
@@ -120,7 +120,11 @@ impl Drop for PendingGuard {
     fn drop(&mut self) {
         if self.active {
             if let Some(slabs) = get_slabs(self.ep_idx) {
-                slabs.response_head.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.id);
+                slabs
+                    .response_head
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&self.id);
             }
         }
     }
@@ -132,9 +136,11 @@ impl Drop for PendingGuard {
 /// the QUIC stream and start pumping the response body.
 pub fn respond(req_handle: u32, status: u16, headers: Vec<(String, String)>) -> Result<(), String> {
     let (ep_idx, id) = decompose_handle(req_handle);
-    let slabs = get_slabs(ep_idx)
-        .ok_or_else(|| format!("unknown req_handle: {req_handle}"))?;
-    let sender = slabs.response_head.lock().unwrap_or_else(|e| e.into_inner())
+    let slabs = get_slabs(ep_idx).ok_or_else(|| format!("unknown req_handle: {req_handle}"))?;
+    let sender = slabs
+        .response_head
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .remove(&id)
         .ok_or_else(|| format!("unknown req_handle: {req_handle}"))?;
     sender
@@ -152,11 +158,7 @@ pub fn respond(req_handle: u32, status: u16, headers: Vec<(String, String)>) -> 
 ///
 /// Returns a [`ServeHandle`] that can be used to gracefully shut down the
 /// serve loop.  Dropping the handle lets the loop run indefinitely.
-pub fn serve<F>(
-    endpoint: IrohEndpoint,
-    options: ServeOptions,
-    on_request: F,
-) -> ServeHandle
+pub fn serve<F>(endpoint: IrohEndpoint, options: ServeOptions, on_request: F) -> ServeHandle
 where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
@@ -174,7 +176,9 @@ where
     #[cfg(feature = "compression")]
     let compression = endpoint.compression().cloned();
     let drain_timeout = std::time::Duration::from_secs(
-        options.drain_timeout_secs.unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS),
+        options
+            .drain_timeout_secs
+            .unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS),
     );
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max));
     let on_request = std::sync::Arc::new(on_request);
@@ -236,7 +240,10 @@ where
                 let mut counts = peer_counts.lock().unwrap_or_else(|e| e.into_inner());
                 let count = counts.entry(remote_id).or_insert(0);
                 if *count >= max_conns_per_peer {
-                    tracing::warn!("iroh-http: peer {} exceeded connection limit ({max_conns_per_peer})", crate::base32_encode(remote_id.as_bytes()));
+                    tracing::warn!(
+                        "iroh-http: peer {} exceeded connection limit ({max_conns_per_peer})",
+                        crate::base32_encode(remote_id.as_bytes())
+                    );
                     conn.close(0u32.into(), b"too many connections");
                     continue;
                 }
@@ -277,11 +284,8 @@ where
 
         // Drain: wait for all in-flight requests to finish (all permits returned).
         // acquire_many(max) succeeds only when every permit is free.
-        let drain_result = tokio::time::timeout(
-            drain_dur,
-            drain_sem.acquire_many(drain_max as u32),
-        )
-        .await;
+        let drain_result =
+            tokio::time::timeout(drain_dur, drain_sem.acquire_many(drain_max as u32)).await;
         match drain_result {
             Ok(Ok(_permits)) => {
                 tracing::info!("iroh-http: all in-flight requests drained");
@@ -305,6 +309,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection<F>(
     ep_idx: u32,
     conn: Connection,
@@ -314,8 +319,7 @@ async fn handle_connection<F>(
     request_timeout: std::time::Duration,
     max_header_size: usize,
     max_request_body_bytes: Option<usize>,
-    #[cfg(feature = "compression")]
-    compression: Option<crate::compress::CompressionOptions>,
+    #[cfg(feature = "compression")] compression: Option<crate::compress::CompressionOptions>,
 ) where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
@@ -388,6 +392,7 @@ struct DispatchResult {
 
 /// Allocates all request/response body channels and trailer channels, spawns
 /// the recv-to-body pump task, and fires `on_request`.
+#[allow(clippy::too_many_arguments)]
 fn dispatch_request<F>(
     ep_idx: u32,
     recv: iroh::endpoint::RecvStream,
@@ -399,8 +404,7 @@ fn dispatch_request<F>(
     is_bidi: bool,
     leftover: Vec<u8>,
     max_request_body_bytes: Option<usize>,
-    #[cfg(feature = "compression")]
-    req_content_zstd: bool,
+    #[cfg(feature = "compression")] req_content_zstd: bool,
     on_request: std::sync::Arc<F>,
 ) -> DispatchResult
 where
@@ -449,11 +453,18 @@ where
         let rq_tx = opt_req_trailer_tx.expect("non-duplex req_trailer_tx");
         if req_is_chunked {
             tokio::spawn(pump_recv_to_body(
-                recv, req_writer, leftover, rq_tx, max_request_body_bytes,
+                recv,
+                req_writer,
+                leftover,
+                rq_tx,
+                max_request_body_bytes,
             ));
         } else {
             tokio::spawn(pump_recv_raw_to_body_limited(
-                recv, req_writer, leftover, rq_tx,
+                recv,
+                req_writer,
+                leftover,
+                rq_tx,
                 max_request_body_bytes.unwrap_or(usize::MAX),
             ));
         }
@@ -492,10 +503,8 @@ async fn write_response(
     res_reader: BodyReader,
     opt_res_trailer_rx: Option<TrailerRx>,
     res_trailers_handle: u32,
-    #[cfg(feature = "compression")]
-    client_accepts_zstd: bool,
-    #[cfg(feature = "compression")]
-    compression: Option<crate::compress::CompressionOptions>,
+    #[cfg(feature = "compression")] client_accepts_zstd: bool,
+    #[cfg(feature = "compression")] compression: Option<crate::compress::CompressionOptions>,
 ) -> Result<(), String> {
     // Determine whether to compress the response body.
     #[cfg(feature = "compression")]
@@ -579,6 +588,7 @@ async fn write_response(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_stream<F>(
     ep_idx: u32,
     mut send: iroh::endpoint::SendStream,
@@ -589,8 +599,7 @@ async fn handle_stream<F>(
     codec: std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
     max_header_size: usize,
     max_request_body_bytes: Option<usize>,
-    #[cfg(feature = "compression")]
-    compression: Option<crate::compress::CompressionOptions>,
+    #[cfg(feature = "compression")] compression: Option<crate::compress::CompressionOptions>,
 ) -> Result<(), String>
 where
     F: Fn(RequestPayload) + Send + Sync + 'static,
@@ -601,17 +610,19 @@ where
         read_request_head_qpack(&mut recv, &codec, max_header_size).await?;
 
     // 2. Detect duplex upgrade and request-side compression flags.
-    let is_bidi = req_headers.iter().any(|(k, v)| {
-        k.eq_ignore_ascii_case("upgrade") && v.eq_ignore_ascii_case("iroh-duplex")
-    });
+    let is_bidi = req_headers
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("upgrade") && v.eq_ignore_ascii_case("iroh-duplex"));
     #[cfg(feature = "compression")]
-    let req_content_zstd = !is_bidi && req_headers.iter().any(|(k, v)| {
-        k.eq_ignore_ascii_case("content-encoding") && crate::compress::is_zstd(v)
-    });
+    let req_content_zstd = !is_bidi
+        && req_headers.iter().any(|(k, v)| {
+            k.eq_ignore_ascii_case("content-encoding") && crate::compress::is_zstd(v)
+        });
     #[cfg(feature = "compression")]
-    let client_accepts_zstd = !is_bidi && req_headers.iter().any(|(k, v)| {
-        k.eq_ignore_ascii_case("accept-encoding") && v.to_ascii_lowercase().contains("zstd")
-    });
+    let client_accepts_zstd = !is_bidi
+        && req_headers.iter().any(|(k, v)| {
+            k.eq_ignore_ascii_case("accept-encoding") && v.to_ascii_lowercase().contains("zstd")
+        });
     #[cfg(feature = "compression")]
     if req_content_zstd {
         req_headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-encoding"));
@@ -671,8 +682,14 @@ where
 
 fn allocate_req_handle(ep_idx: u32, sender: oneshot::Sender<ResponseHeadEntry>) -> u32 {
     let slabs = get_slabs(ep_idx).expect("endpoint not registered");
-    let id = slabs.next_req_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    slabs.response_head.lock().unwrap_or_else(|e| e.into_inner()).insert(id, sender);
+    let id = slabs
+        .next_req_id
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    slabs
+        .response_head
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id, sender);
     compose_handle(ep_idx, id)
 }
 
@@ -703,7 +720,10 @@ async fn read_request_head_qpack(
         }
 
         if buf.len() > max_header_size {
-            return Err(format!("request head too large ({} bytes, limit {max_header_size})", buf.len()));
+            return Err(format!(
+                "request head too large ({} bytes, limit {max_header_size})",
+                buf.len()
+            ));
         }
 
         let mut guard = codec.lock().await;
@@ -752,7 +772,9 @@ async fn pump_recv_to_body(
                     total_body_bytes += size;
                     if let Some(limit) = max_body_bytes {
                         if total_body_bytes > limit {
-                            tracing::warn!("iroh-http: request body exceeded {limit} bytes, resetting stream");
+                            tracing::warn!(
+                                "iroh-http: request body exceeded {limit} bytes, resetting stream"
+                            );
                             let _ = recv.stop(0u32.into());
                             return;
                         }
@@ -793,15 +815,10 @@ async fn pump_recv_raw_to_body(
             return;
         }
     }
-    loop {
-        match recv.read_chunk(READ_BUF).await {
-            Ok(Some(chunk)) => {
-                let data = Bytes::copy_from_slice(&chunk.bytes);
-                if writer.send_chunk(data).await.is_err() {
-                    break;
-                }
-            }
-            _ => break,
+    while let Ok(Some(chunk)) = recv.read_chunk(READ_BUF).await {
+        let data = Bytes::copy_from_slice(&chunk.bytes);
+        if writer.send_chunk(data).await.is_err() {
+            break;
         }
     }
 }
@@ -830,20 +847,15 @@ async fn pump_recv_raw_to_body_limited(
         }
     }
 
-    loop {
-        match recv.read_chunk(READ_BUF).await {
-            Ok(Some(chunk)) => {
-                total += chunk.bytes.len();
-                if total > max_bytes {
-                    tracing::warn!("iroh-http: raw body exceeds {max_bytes} byte limit");
-                    break;
-                }
-                let data = Bytes::copy_from_slice(&chunk.bytes);
-                if writer.send_chunk(data).await.is_err() {
-                    break;
-                }
-            }
-            _ => break,
+    while let Ok(Some(chunk)) = recv.read_chunk(READ_BUF).await {
+        total += chunk.bytes.len();
+        if total > max_bytes {
+            tracing::warn!("iroh-http: raw body exceeds {max_bytes} byte limit");
+            break;
+        }
+        let data = Bytes::copy_from_slice(&chunk.bytes);
+        if writer.send_chunk(data).await.is_err() {
+            break;
         }
     }
     // _trailer_tx drops here → trailer reader resolves with `RecvError`

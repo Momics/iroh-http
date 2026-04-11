@@ -13,7 +13,7 @@
 //!   - Response: `:status`
 
 use bytes::BufMut;
-use qpack::{HeaderField, encode_stateless, decode_stateless};
+use qpack::{decode_stateless, encode_stateless, HeaderField};
 
 /// Maximum decoded header size accepted by `decode_stateless` (256 KB).
 const MAX_HEADER_SIZE: u64 = 256 * 1024;
@@ -32,10 +32,7 @@ fn encode_request_stateless(
 }
 
 /// Encode a response head (status, headers) into the wire format.
-fn encode_response_stateless(
-    status: u16,
-    headers: &[(&str, &str)],
-) -> Result<Vec<u8>, String> {
+fn encode_response_stateless(status: u16, headers: &[(&str, &str)]) -> Result<Vec<u8>, String> {
     let fields = build_response_fields(status, headers);
     encode_fields_to_wire(&fields)
 }
@@ -43,6 +40,7 @@ fn encode_response_stateless(
 /// Decode a request head from the wire format.
 ///
 /// Returns `(method, path, headers, bytes_consumed)`.
+#[allow(clippy::type_complexity)]
 fn decode_request_stateless(
     buf: &[u8],
 ) -> Result<(String, String, Vec<(String, String)>, usize), DecodeError> {
@@ -69,6 +67,7 @@ fn decode_request_stateless(
 /// Decode a response head from the wire format.
 ///
 /// Returns `(status, headers, bytes_consumed)`.
+#[allow(clippy::type_complexity)]
 fn decode_response_stateless(
     buf: &[u8],
 ) -> Result<(u16, Vec<(String, String)>, usize), DecodeError> {
@@ -136,6 +135,7 @@ impl QpackCodec {
     }
 
     /// Decode a request head.
+    #[allow(clippy::type_complexity)]
     pub fn decode_request(
         &mut self,
         buf: &[u8],
@@ -144,6 +144,7 @@ impl QpackCodec {
     }
 
     /// Decode a response head.
+    #[allow(clippy::type_complexity)]
     pub fn decode_response(
         &mut self,
         buf: &[u8],
@@ -246,14 +247,19 @@ mod tests {
         let headers = [("content-type", "application/json"), ("x-custom", "hello")];
         let wire = encode_request_stateless("POST", "/api/data", &headers).unwrap();
 
-        let (method, path, decoded_headers, consumed) =
-            decode_request_stateless(&wire).unwrap();
+        let (method, path, decoded_headers, consumed) = decode_request_stateless(&wire).unwrap();
         assert_eq!(method, "POST");
         assert_eq!(path, "/api/data");
         assert_eq!(consumed, wire.len());
         assert_eq!(decoded_headers.len(), 2);
-        assert_eq!(decoded_headers[0], ("content-type".to_string(), "application/json".to_string()));
-        assert_eq!(decoded_headers[1], ("x-custom".to_string(), "hello".to_string()));
+        assert_eq!(
+            decoded_headers[0],
+            ("content-type".to_string(), "application/json".to_string())
+        );
+        assert_eq!(
+            decoded_headers[1],
+            ("x-custom".to_string(), "hello".to_string())
+        );
     }
 
     #[test]
@@ -261,12 +267,14 @@ mod tests {
         let headers = [("content-type", "text/plain"), ("x-req-id", "42")];
         let wire = encode_response_stateless(200, &headers).unwrap();
 
-        let (status, decoded_headers, consumed) =
-            decode_response_stateless(&wire).unwrap();
+        let (status, decoded_headers, consumed) = decode_response_stateless(&wire).unwrap();
         assert_eq!(status, 200);
         assert_eq!(consumed, wire.len());
         assert_eq!(decoded_headers.len(), 2);
-        assert_eq!(decoded_headers[0], ("content-type".to_string(), "text/plain".to_string()));
+        assert_eq!(
+            decoded_headers[0],
+            ("content-type".to_string(), "text/plain".to_string())
+        );
     }
 
     #[test]
@@ -297,7 +305,9 @@ mod tests {
     fn stateful_request_roundtrip() {
         let mut codec = QpackCodec::new();
         let headers = [("accept", "text/html")];
-        let wire = codec.encode_request("GET", "/index.html", &headers).unwrap();
+        let wire = codec
+            .encode_request("GET", "/index.html", &headers)
+            .unwrap();
 
         let mut decoder_codec = QpackCodec::new();
         let (method, path, decoded_headers, consumed) =
@@ -305,7 +315,10 @@ mod tests {
         assert_eq!(method, "GET");
         assert_eq!(path, "/index.html");
         assert_eq!(consumed, wire.len());
-        assert_eq!(decoded_headers, vec![("accept".to_string(), "text/html".to_string())]);
+        assert_eq!(
+            decoded_headers,
+            vec![("accept".to_string(), "text/html".to_string())]
+        );
     }
 
     #[test]
@@ -315,11 +328,13 @@ mod tests {
         let wire = codec.encode_response(404, &headers).unwrap();
 
         let mut decoder_codec = QpackCodec::new();
-        let (status, decoded_headers, consumed) =
-            decoder_codec.decode_response(&wire).unwrap();
+        let (status, decoded_headers, consumed) = decoder_codec.decode_response(&wire).unwrap();
         assert_eq!(status, 404);
         assert_eq!(consumed, wire.len());
-        assert_eq!(decoded_headers, vec![("server".to_string(), "iroh".to_string())]);
+        assert_eq!(
+            decoded_headers,
+            vec![("server".to_string(), "iroh".to_string())]
+        );
     }
 
     #[test]

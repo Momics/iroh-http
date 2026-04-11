@@ -110,9 +110,7 @@ impl ConnectionPool {
             if let Some(slot) = inner.conns.get_mut(&key) {
                 match slot {
                     Slot::Ready(pooled, last_used) => {
-                        let timed_out = self
-                            .idle_timeout
-                            .is_some_and(|d| last_used.elapsed() > d);
+                        let timed_out = self.idle_timeout.is_some_and(|d| last_used.elapsed() > d);
                         if timed_out || pooled.conn.close_reason().is_some() {
                             inner.conns.remove(&key);
                             let (tx, rx) = tokio::sync::watch::channel(None);
@@ -140,7 +138,7 @@ impl ConnectionPool {
                 // Phase 2: perform the actual QUIC handshake (no lock held).
                 let result = connect_fn().await;
 
-                let pooled_result = result.map(|conn| PooledConnection::new(conn));
+                let pooled_result = result.map(PooledConnection::new);
 
                 // Phase 3: store the result (short lock, no await).
                 {
@@ -150,7 +148,10 @@ impl ConnectionPool {
                             if let Some(max) = inner.max_idle {
                                 evict_if_needed(&mut inner.conns, max);
                             }
-                            inner.conns.insert(key, Slot::Ready(pooled.clone(), std::time::Instant::now()));
+                            inner.conns.insert(
+                                key,
+                                Slot::Ready(pooled.clone(), std::time::Instant::now()),
+                            );
                         }
                         Err(_) => {
                             inner.conns.remove(&key);
@@ -168,7 +169,13 @@ impl ConnectionPool {
     /// Return the number of entries currently in the pool (for testing).
     #[cfg(test)]
     pub fn len(&self) -> usize {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).conns.iter().filter(|(_, s)| matches!(s, Slot::Ready(_, _))).count()
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .conns
+            .iter()
+            .filter(|(_, s)| matches!(s, Slot::Ready(_, _)))
+            .count()
     }
 }
 
@@ -177,7 +184,9 @@ async fn wait_for_connection(
     rx: &mut tokio::sync::watch::Receiver<Option<Result<PooledConnection, String>>>,
 ) -> Result<PooledConnection, String> {
     loop {
-        rx.changed().await.map_err(|_| "connection attempt dropped".to_string())?;
+        rx.changed()
+            .await
+            .map_err(|_| "connection attempt dropped".to_string())?;
         let val = rx.borrow().clone();
         if let Some(result) = val {
             return result;
@@ -188,7 +197,10 @@ async fn wait_for_connection(
 /// If the pool has more than `max` Ready entries, remove the oldest ones.
 fn evict_if_needed(conns: &mut HashMap<PoolKey, Slot>, max: usize) {
     // Count ready connections.
-    let ready_count = conns.values().filter(|s| matches!(s, Slot::Ready(_, _))).count();
+    let ready_count = conns
+        .values()
+        .filter(|s| matches!(s, Slot::Ready(_, _)))
+        .count();
     if ready_count < max {
         return;
     }
@@ -204,7 +216,12 @@ fn evict_if_needed(conns: &mut HashMap<PoolKey, Slot>, max: usize) {
         conns.remove(&k);
     }
     // If still over limit, evict the least-recently-used ready entry.
-    while conns.values().filter(|s| matches!(s, Slot::Ready(_, _))).count() >= max {
+    while conns
+        .values()
+        .filter(|s| matches!(s, Slot::Ready(_, _)))
+        .count()
+        >= max
+    {
         if let Some(key) = conns
             .iter()
             .filter_map(|(k, s)| match s {

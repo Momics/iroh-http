@@ -4,28 +4,33 @@
 //! streams.  Nothing in here knows about JavaScript.
 
 pub mod client;
+#[cfg(feature = "compression")]
+pub mod compress;
 pub mod endpoint;
 pub(crate) mod pool;
 pub(crate) mod qpack_bridge;
 pub mod server;
 pub mod session;
 pub mod stream;
-#[cfg(feature = "compression")]
-pub mod compress;
 
-pub use endpoint::{IrohEndpoint, NodeOptions, NodeAddrInfo, PeerStats, PathInfo, parse_direct_addrs};
+pub use client::{alloc_fetch_token, cancel_in_flight, fetch, raw_connect};
 #[cfg(feature = "compression")]
 pub use compress::CompressionOptions;
-pub use stream::{
-    alloc_body_writer, next_chunk, send_chunk, finish_body, cancel_reader,
-    next_trailer, send_trailers, BodyReader,
+pub use endpoint::{
+    parse_direct_addrs, IrohEndpoint, NodeAddrInfo, NodeOptions, PathInfo, PeerStats,
 };
-pub use client::{fetch, raw_connect, alloc_fetch_token, cancel_in_flight};
-pub use session::{session_connect, session_create_bidi_stream, session_next_bidi_stream, session_close, session_accept, session_remote_id,
-                  session_ready, session_closed, session_create_uni_stream, session_next_uni_stream,
-                  session_send_datagram, session_recv_datagram, session_max_datagram_size, CloseInfo};
 pub use server::serve;
 pub use server::ServeHandle;
+pub use session::{
+    session_accept, session_close, session_closed, session_connect, session_create_bidi_stream,
+    session_create_uni_stream, session_max_datagram_size, session_next_bidi_stream,
+    session_next_uni_stream, session_ready, session_recv_datagram, session_remote_id,
+    session_send_datagram, CloseInfo,
+};
+pub use stream::{
+    alloc_body_writer, cancel_reader, finish_body, next_chunk, next_trailer, send_chunk,
+    send_trailers, BodyReader,
+};
 
 // ── Node tickets ─────────────────────────────────────────────────────────────
 // (defined below, re-exported here at the top for easy discovery)
@@ -95,11 +100,15 @@ fn classify_error_code(msg: &str) -> &'static str {
         "READER_DROPPED"
     } else if m.contains("stream reset") {
         "STREAM_RESET"
-    } else if m.contains("connection") && (m.contains("refused") || m.contains("reset") || m.contains("closed")) {
+    } else if m.contains("connection")
+        && (m.contains("refused") || m.contains("reset") || m.contains("closed"))
+        || m.contains("connect")
+    {
         "REFUSED"
-    } else if m.contains("connect") {
-        "REFUSED"
-    } else if (m.contains("invalid") && m.contains("key")) || m.contains("key bytes") || m.contains("wrong length") {
+    } else if (m.contains("invalid") && m.contains("key"))
+        || m.contains("key bytes")
+        || m.contains("wrong length")
+    {
         "INVALID_KEY"
     } else if m.contains("bind") || m.contains("endpoint") {
         "ENDPOINT_FAILURE"

@@ -2,11 +2,9 @@
 
 use bytes::Bytes;
 use iroh_http_core::{
-    IrohEndpoint, NodeOptions,
-    session_connect, session_accept, session_close, session_closed,
-    session_create_uni_stream, session_next_uni_stream,
-    session_send_datagram, session_recv_datagram, session_max_datagram_size,
-    next_chunk, send_chunk, finish_body,
+    finish_body, next_chunk, send_chunk, session_accept, session_close, session_closed,
+    session_connect, session_create_uni_stream, session_max_datagram_size, session_next_uni_stream,
+    session_recv_datagram, session_send_datagram, IrohEndpoint, NodeOptions,
 };
 
 /// Create a pair of locally-connected endpoints (relay disabled).
@@ -53,7 +51,9 @@ async fn session_uni_stream_send_recv() {
     let session_a = session_connect(&a_ep, &b_id, Some(&b_addrs)).await.unwrap();
     let write_handle = session_create_uni_stream(session_a).await.unwrap();
 
-    send_chunk(write_handle, Bytes::from_static(b"uni-hello")).await.unwrap();
+    send_chunk(write_handle, Bytes::from_static(b"uni-hello"))
+        .await
+        .unwrap();
     finish_body(write_handle).unwrap();
 
     let (session_b, data) = b_handle.await.unwrap();
@@ -90,14 +90,19 @@ async fn session_multiple_uni_streams() {
     for i in 0..3u8 {
         let write_handle = session_create_uni_stream(session_a).await.unwrap();
         let msg = format!("msg-{i}");
-        send_chunk(write_handle, Bytes::from(msg.into_bytes())).await.unwrap();
+        send_chunk(write_handle, Bytes::from(msg.into_bytes()))
+            .await
+            .unwrap();
         finish_body(write_handle).unwrap();
     }
 
     let (session_b, messages) = b_handle.await.unwrap();
     // Order might vary, so just check we got all 3.
     assert_eq!(messages.len(), 3);
-    let mut sorted: Vec<String> = messages.iter().map(|m| String::from_utf8(m.clone()).unwrap()).collect();
+    let mut sorted: Vec<String> = messages
+        .iter()
+        .map(|m| String::from_utf8(m.clone()).unwrap())
+        .collect();
     sorted.sort();
     assert_eq!(sorted, vec!["msg-0", "msg-1", "msg-2"]);
 

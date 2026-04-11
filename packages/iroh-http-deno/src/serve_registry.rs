@@ -44,11 +44,7 @@ pub fn register(endpoint_handle: u32) -> std::sync::Arc<ServeQueue> {
 
 /// Retrieve the queue for an endpoint (used by `nextRequest`).
 pub fn get(endpoint_handle: u32) -> Option<std::sync::Arc<ServeQueue>> {
-    registry()
-        .lock()
-        .unwrap()
-        .get(&endpoint_handle)
-        .cloned()
+    registry().lock().unwrap().get(&endpoint_handle).cloned()
 }
 
 /// Remove and drop the queue for an endpoint (called on `closeEndpoint`).
