@@ -1,30 +1,21 @@
 ---
-status: discussion
+status: open
 ---
 
 # Patch 29 — `NodeOptions` Developer Experience Improvements
 
-Findings from a DX review of `createNode()` options in `packages/iroh-http-shared/src/bridge.ts`.
-No code changes yet — this patch captures the problems and proposed resolutions.
+DX review of `createNode()` options in `packages/iroh-http-shared/src/bridge.ts`.
+All five changes are approved and ready to implement.
 
 ---
 
-## Problem 1 — `discovery` and `dnsDiscovery` are split across two top-level keys
+## Change 1 — Merge `dnsDiscovery` and `discovery` into a single key
 
-### Current
+**Problem.** DNS on/off lives under `discovery.dns` but the DNS server URL override
+is a separate top-level field `dnsDiscovery`. The split leaks an internal distinction
+that has no place at the API surface.
 
-```ts
-dnsDiscovery?: string;           // top-level: custom DNS server URL
-discovery?: DiscoveryOptions;    // nested: { dns?: boolean }
-```
-
-Developers have to know that DNS-discovery-on/off lives under `discovery.dns`
-but the server URL override lives at the top level as `dnsDiscovery`. The split
-leaks an internal distinction that doesn't belong at the API surface.
-
-### Proposed
-
-Remove `dnsDiscovery` as a standalone key and absorb it into `discovery`:
+**Action.** Remove `dnsDiscovery` as a top-level key. Absorb it into `discovery`:
 
 ```ts
 discovery?: {
@@ -33,163 +24,154 @@ discovery?: {
 };
 ```
 
-- `dns: true` — on with n0 defaults (same as today's default)
-- `dns: false` — disabled (same as `dns: false` today)
+Semantics:
+
+- `dns: true` — on with n0 defaults (current default behaviour)
+- `dns: false` — disabled
 - `dns: { serverUrl: "https://…" }` — custom server (replaces `dnsDiscovery`)
-- `mdns: true` — on with default service name `"iroh-http"`
+- `mdns: true` — on, service name `"iroh-http"`
 - `mdns: { serviceName: "my-app" }` — on with custom name
 
-`DiscoveryOptions` and `MdnsOptions` become internal types; only the merged
-shape is public in `NodeOptions`.
+`DiscoveryOptions` and `MdnsOptions` become internal types and are no longer
+exported. The merged shape is the only public surface.
 
-Migration: keep `dnsDiscovery` and the old `discovery.dns: boolean` form
-as deprecated aliases during one release cycle.
+**Migration.** Keep `dnsDiscovery` and the old `discovery.dns: boolean` form as
+`@deprecated` aliases for one release cycle. Log a console warning when the old
+forms are used.
 
 ---
 
-## Problem 2 — Streaming/internal knobs scattered at the top level
+## Change 2 — Move internal knobs under `advanced`
 
-### Current (top-level fields)
+**Problem.** Five implementation-level fields pollute the top-level autocomplete
+alongside user-facing fields like `key` and `relayMode`:
 
-- `channelCapacity` — capacity in chunks of each body channel
-- `maxChunkSizeBytes` — maximum byte length of a single chunk
-- `drainTimeout` — ms to wait for a slow body reader before dropping
-- `handleTtl` — TTL for slab handle entries
+- `channelCapacity` — internal body channel backpressure
+- `maxChunkSizeBytes` — chunk split threshold
+- `drainTimeout` — slow reader eviction window
+- `handleTtl` — slab handle TTL (references Rust internals directly in the name)
+- `maxConsecutiveErrors` — serve loop circuit breaker
 
-These appear at the same level as user-facing fields like `key` and `relayMode`,
-polluting autocomplete for developers who will never need them.
+No developer tuning a relay URL or passing a key should be scrolling past these.
 
-`handleTtl` is particularly opaque — "slab handle entries" is an implementation
-detail that only makes sense if you know the Rust internals.
-
-### Proposed
-
-Move all four under an `advanced` (or `streaming`) nested key:
+**Action.** Delete all five from the top level of `NodeOptions` and add them under
+an `advanced` key with richer JSDoc:
 
 ```ts
 advanced?: {
-  /** Capacity (in chunks) of each body channel.
-   *  Raise this if your handler reads the request body slowly and you see
-   *  stalls; lower it to cap memory under high concurrency.  Default: 32. */
+  /**
+   * Controls backpressure between the Rust pump and your JS handler.
+   * If your handler reads the request body slowly, the channel fills up and
+   * the Rust sender pauses. Raise this to reduce stalls under slow consumers;
+   * lower it to tighten memory use under high concurrency. Default: 32.
+   */
   channelCapacity?: number;
-  /** Maximum byte length of a single chunk.  Larger chunks are split into
-   *  multiple channel messages.  Default: 65536 (64 KB). */
+  /**
+   * Maximum byte length of a single chunk. Larger payloads are split into
+   * multiple channel messages. Default: 65536 (64 KB).
+   */
   maxChunkSizeBytes?: number;
-  /** Milliseconds to wait for a slow body reader to consume a chunk before
-   *  the connection is dropped.  Default: 30 000. */
+  /**
+   * Milliseconds to wait for a slow body reader to consume a chunk before
+   * the connection is dropped. Default: 30 000.
+   */
   drainTimeout?: number;
-  /** TTL in milliseconds for internal handle-table entries.  Set to 0 to
-   *  disable periodic sweeping.  Incorrect values can cause premature handle
-   *  invalidation or unbounded memory growth.  Default: 300 000. */
+  /**
+   * TTL in milliseconds for internal handle-table entries. Set to 0 to
+   * disable periodic sweeping. Incorrect values can cause premature handle
+   * invalidation or unbounded memory growth. Default: 300 000.
+   */
   handleTtl?: number;
+  /**
+   * Number of consecutive accept errors before the serve loop gives up.
+   * Increase if you see spurious shutdowns under adversarial load. Default: 5.
+   */
+  maxConsecutiveErrors?: number;
 };
 ```
 
-This makes the top-level completion list clean for 95% of users while keeping
-the knobs accessible for the 5% who need them.
+Note: the JSDoc for `channelCapacity` implicitly resolves the old Problem 3
+(weak "why" comment). No separate change needed.
 
 ---
 
-## Problem 3 — `channelCapacity` JSDoc lacks the "why"
+## Change 3 — Rename `lifecycle` to `reconnect`
 
-### Current
+**Problem.** `lifecycle?: LifecycleOptions` with its "mobile/background" JSDoc
+makes Node.js and desktop developers think this doesn't apply to them. It does.
+The `autoReconnect` field name also front-loads "auto" in a way that hides the
+paired `maxRetries` setting.
 
-> "Capacity (in chunks) of each body channel. Default: 32."
-
-Tells you the unit, not the reason. Developers don't know whether to increase
-or decrease it, or what symptom indicates they should touch it.
-
-### Proposed JSDoc addition
-
-> "Controls backpressure between the Rust pump and your JS handler. If your
-> handler reads the request body slowly, the channel fills up and the Rust
-> sender pauses. Raising this value uses more memory but reduces stalls under
-> slow consumers. Lowering it tightens memory use under high concurrency.
-> Default: 32."
-
-This is addressed by the `advanced` block above, which already includes the
-richer comment.
-
----
-
-## Problem 4 — `lifecycle` is labeled "mobile/background", confusing for Node.js users
-
-### Current
-
-```ts
-/** Mobile/background lifecycle options. */
-lifecycle?: LifecycleOptions;
-
-export interface LifecycleOptions {
-  /** Automatically reconnect if the endpoint goes dead.  Default: false. */
-  autoReconnect?: boolean;
-  /** Maximum reconnect attempts before marking the node dead.  Default: 3. */
-  maxRetries?: number;
-}
-```
-
-The content (`autoReconnect`, `maxRetries`) is useful on any platform. But the
-"mobile/background" framing makes Node.js and desktop developers feel this
-doesn't apply to them — it does.
-
-### Proposed
-
-Two options (pick one):
-
-**Option A** — rename the key to `reconnect`:
+**Action.** Delete `lifecycle` and `LifecycleOptions`. Replace with:
 
 ```ts
 reconnect?: {
-  /** Automatically reconnect if the QUIC endpoint becomes unreachable.
-   *  Default: false. */
+  /**
+   * Automatically reconnect if the QUIC endpoint becomes unreachable.
+   * On mobile, this also handles app-backgrounding/suspend cycles.
+   * Default: false.
+   */
   auto?: boolean;
-  /** Maximum reconnect attempts before marking the node as permanently dead.
-   *  Default: 3. */
+  /**
+   * Maximum reconnect attempts before marking the node as permanently dead.
+   * Default: 3.
+   */
   maxRetries?: number;
 };
 ```
 
-**Option B** — keep `lifecycle` but rewrite the comment to be platform-neutral:
+Keep `lifecycle` as a `@deprecated` alias for one release cycle.
+
+---
+
+## Change 4 — Clarify `idleTimeout` scope in JSDoc
+
+**Problem.** "Idle connection timeout in milliseconds" is ambiguous for a QUIC
+transport — idle can mean different things at the connection level vs. the stream
+level.
+
+**Action.** Replace the current JSDoc:
 
 ```ts
-/** Options for automatic reconnection when the endpoint becomes unreachable.
- *  On mobile, this also handles app-backgrounding/suspend cycles. */
-lifecycle?: LifecycleOptions;
+/** Idle connection timeout in milliseconds. @default 60000 */
+idleTimeout?: number;
 ```
 
-Option A is cleaner for the API surface; Option B is a smaller diff.
+with:
+
+```ts
+/**
+ * QUIC connection-level idle timeout in milliseconds. If no new streams are
+ * opened within this window, the connection closes. Does not affect the
+ * lifetime of individual in-progress streams. Default: 60 000.
+ */
+idleTimeout?: number;
+```
 
 ---
 
-## Problem 5 — `idleTimeout` is missing connection-vs-stream context
+## Implementation checklist
 
-### Current
+### `packages/iroh-http-shared/src/bridge.ts`
 
-> "Idle connection timeout in milliseconds. Default: 60000."
+- [ ] Replace `DiscoveryOptions` + `MdnsOptions` + `dnsDiscovery` with merged `discovery` shape
+- [ ] Add `@deprecated` overloads for `dnsDiscovery` and `discovery.dns: boolean`
+- [ ] Move `channelCapacity`, `maxChunkSizeBytes`, `drainTimeout`, `handleTtl`, `maxConsecutiveErrors` under `advanced`
+- [ ] Delete `LifecycleOptions`; replace `lifecycle` with `reconnect`; add `@deprecated lifecycle` alias
+- [ ] Update `idleTimeout` JSDoc
 
-For a QUIC transport, "idle" can mean different things at the connection level
-vs. the stream level. The comment should clarify:
+### Rust FFI flattening (must stay in sync across all three platforms)
 
-> "QUIC connection-level idle timeout in milliseconds. If no new streams are
-> opened within this window, the connection closes. Default: 60 000."
+The TypeScript `advanced.*` and `reconnect.*` nests must be flattened back to
+the existing flat Rust struct fields before crossing the FFI boundary. This is
+the most error-prone part of this patch — a field left unmapped will silently
+use the Rust default with no warning.
 
----
+- [ ] `packages/iroh-http-node/src/lib.rs` — flatten `advanced.*` → existing flat `NodeOpts` fields; rename `lifecycle` → `reconnect`
+- [ ] `packages/iroh-http-deno/src/` — same flattening
+- [ ] `packages/iroh-http-tauri/src/` — same flattening
+- [ ] `packages/iroh-http-py/src/` — rename `lifecycle` → `reconnect`; flatten `advanced`
 
-## Summary of proposed changes
+### Generated types
 
-| Item | Change |
-|---|---|
-| `dnsDiscovery` + `discovery.dns` | Merge into `discovery: { dns?: boolean \| { serverUrl? }, mdns?: boolean \| { serviceName? } }` |
-| `channelCapacity`, `maxChunkSizeBytes`, `drainTimeout`, `handleTtl` | Move under `advanced?: { … }` with richer JSDoc |
-| `lifecycle` / "mobile/background" | Rename to `reconnect` or neutralise the comment |
-| `idleTimeout` | Clarify it is connection-level in the JSDoc |
-| `handleTtl` | Add explicit warning about incorrect values in JSDoc |
-
-Files affected (when implemented):
-
-- `packages/iroh-http-shared/src/bridge.ts` — `NodeOptions`, `DiscoveryOptions`, `LifecycleOptions`
-- `packages/iroh-http-node/index.d.ts` — auto-generated; driven by Rust changes
-- `packages/iroh-http-node/src/lib.rs` — flatten `advanced.*` back to flat struct for FFI
-- `packages/iroh-http-deno/src/` — same flattening
-- `packages/iroh-http-tauri/src/` — same flattening
-- `packages/iroh-http-py/src/` — Python bindings reflect the same field rename
+- [ ] `packages/iroh-http-node/index.d.ts` — verify generated types match the new `NodeOptions` shape after Rust changes
