@@ -12,7 +12,7 @@ pub mod stream;
 #[cfg(feature = "compression")]
 pub mod compress;
 
-pub use endpoint::{IrohEndpoint, NodeOptions, NodeAddrInfo, DiscoveryConfig};
+pub use endpoint::{IrohEndpoint, NodeOptions, NodeAddrInfo, DiscoveryConfig, PeerStats, PathInfo};
 #[cfg(feature = "compression")]
 pub use compress::CompressionOptions;
 pub use stream::{

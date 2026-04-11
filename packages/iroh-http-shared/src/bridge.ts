@@ -435,6 +435,13 @@ export interface IrohNode {
    * Known addresses for a remote peer, or `null` if unknown.
    */
   peerInfo(peer: PublicKey | string): Promise<NodeAddrInfo | null>;
+  /**
+   * Per-peer connection statistics with path information.
+   *
+   * Returns `null` if the peer is not known to this endpoint.
+   * Use this to determine whether a connection is relayed or direct.
+   */
+  peerStats(peer: PublicKey | string): Promise<PeerStats | null>;
   /** Close the endpoint and release resources. */
   close(): Promise<void>;
   /** Enables `await using node = await createNode()` (TC39 explicit resource management). */
@@ -457,6 +464,32 @@ export interface NodeAddrInfo {
   id: string;
   /** Relay URLs and/or `ip:port` direct addresses. */
   addrs: string[];
+}
+
+// ── Observability types ──────────────────────────────────────────────────────
+
+/**
+ * Per-peer connection statistics.
+ */
+export interface PeerStats {
+  /** Whether the active path goes through a relay server. */
+  relay: boolean;
+  /** Active relay URL, or `null` if using a direct path. */
+  relayUrl: string | null;
+  /** All known paths to this peer. */
+  paths: PathInfo[];
+}
+
+/**
+ * Network path information for a single transport address.
+ */
+export interface PathInfo {
+  /** Whether this path goes through a relay server. */
+  relay: boolean;
+  /** The relay URL (if relay) or `ip:port` (if direct). */
+  addr: string;
+  /** Whether this is the currently active path. */
+  active: boolean;
 }
 
 /**

@@ -9,7 +9,7 @@ export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
               NodeOptions, IrohNode, EndpointInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn,
               FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn,
               RelayMode, IrohFetchInit, DiscoveryOptions, LifecycleOptions,
-              NodeAddrInfo, PeerDiscoveryEvent } from "./bridge.js";
+              NodeAddrInfo, PeerDiscoveryEvent, PeerStats, PathInfo } from "./bridge.js";
 export type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
 export { makeFetch, makeConnect } from "./fetch.js";
@@ -37,7 +37,7 @@ export function ticketNodeId(ticket: string): string {
   return ticket;
 }
 
-import type { Bridge, EndpointInfo, NodeOptions, IrohNode, NodeAddrInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
+import type { Bridge, EndpointInfo, NodeOptions, IrohNode, NodeAddrInfo, PeerStats, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
 import { makeFetch, makeConnect } from "./fetch.js";
 import { makeServe } from "./serve.js";
 import { PublicKey, SecretKey, resolveNodeId } from "./keys.js";
@@ -52,6 +52,8 @@ export interface AddrFunctions {
   homeRelay(endpointHandle: number): Promise<string | null>;
   /** Known addresses for a remote peer, or null if unknown. */
   peerInfo(endpointHandle: number, nodeId: string): Promise<NodeAddrInfo | null>;
+  /** Per-peer connection statistics with path information. */
+  peerStats(endpointHandle: number, nodeId: string): Promise<PeerStats | null>;
 }
 
 /**
@@ -120,6 +122,11 @@ export function buildNode(
       if (!addrFns) return null;
       const nodeId = resolveNodeId(peer);
       return addrFns.peerInfo(info.endpointHandle, nodeId);
+    },
+    peerStats: async (peer: PublicKey | string) => {
+      if (!addrFns) return null;
+      const nodeId = resolveNodeId(peer);
+      return addrFns.peerStats(info.endpointHandle, nodeId);
     },
     closed: closedPromise,
     close: async () => {

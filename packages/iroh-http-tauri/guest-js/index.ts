@@ -47,6 +47,7 @@ import {
   type RequestPayload,
   type AddrFunctions,
   type NodeAddrInfo,
+  type PeerStats,
   type RelayMode,
   type DiscoveryOptions,
   classifyBindError,
@@ -300,6 +301,9 @@ const tauriAddrFns: AddrFunctions = {
   },
   peerInfo: async (handle, nodeId) => {
     return invoke<NodeAddrInfo | null>(`${PLUGIN}|peer_info`, { endpointHandle: handle, nodeId });
+  },
+  peerStats: async (handle, nodeId) => {
+    return invoke<PeerStats | null>(`${PLUGIN}|peer_stats`, { endpointHandle: handle, nodeId });
   },
 };
 

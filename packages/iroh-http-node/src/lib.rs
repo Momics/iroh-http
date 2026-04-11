@@ -284,6 +284,20 @@ pub struct JsNodeAddrInfo {
     pub addrs: Vec<String>,
 }
 
+#[napi(object)]
+pub struct JsPathInfo {
+    pub relay: bool,
+    pub addr: String,
+    pub active: bool,
+}
+
+#[napi(object)]
+pub struct JsPeerStats {
+    pub relay: bool,
+    pub relay_url: Option<String>,
+    pub paths: Vec<JsPathInfo>,
+}
+
 /// Full node address: node ID + relay URL(s) + direct socket addresses.
 #[napi]
 pub fn node_addr(endpoint_handle: u32) -> napi::Result<JsNodeAddrInfo> {
@@ -314,6 +328,21 @@ pub fn home_relay(endpoint_handle: u32) -> napi::Result<Option<String>> {
 pub async fn peer_info(endpoint_handle: u32, node_id: String) -> napi::Result<Option<JsNodeAddrInfo>> {
     let ep = get_endpoint(endpoint_handle)?;
     Ok(ep.peer_info(&node_id).await.map(|info| JsNodeAddrInfo { id: info.id, addrs: info.addrs }))
+}
+
+/// Per-peer connection statistics with path information.
+#[napi]
+pub async fn peer_stats(endpoint_handle: u32, node_id: String) -> napi::Result<Option<JsPeerStats>> {
+    let ep = get_endpoint(endpoint_handle)?;
+    Ok(ep.peer_stats(&node_id).await.map(|s| JsPeerStats {
+        relay: s.relay,
+        relay_url: s.relay_url,
+        paths: s.paths.into_iter().map(|p| JsPathInfo {
+            relay: p.relay,
+            addr: p.addr,
+            active: p.active,
+        }).collect(),
+    }))
 }
 
 // ── Body streaming ────────────────────────────────────────────────────────────

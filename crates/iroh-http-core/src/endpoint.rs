@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use iroh::{Endpoint, RelayMode, SecretKey};
 use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
-use iroh::endpoint::{IdleTimeout, QuicTransportConfig};
+use iroh::endpoint::{IdleTimeout, QuicTransportConfig, TransportAddrUsage};
 use serde::{Deserialize, Serialize};
 
 use crate::{ALPN, ALPN_DUPLEX, ALPN_TRAILERS, ALPN_FULL};
@@ -394,6 +394,50 @@ impl IrohEndpoint {
         }
         Some(NodeAddrInfo { id, addrs })
     }
+
+    /// Per-peer connection statistics.
+    ///
+    /// Returns path information for each known transport address, including
+    /// whether each path is via a relay or direct, and which is active.
+    pub async fn peer_stats(&self, node_id_b32: &str) -> Option<PeerStats> {
+        let bytes = crate::base32_decode(node_id_b32).ok()?;
+        let arr: [u8; 32] = bytes.try_into().ok()?;
+        let pk = iroh::PublicKey::from_bytes(&arr).ok()?;
+        let info = self.inner.ep.remote_info(pk).await?;
+
+        let mut paths = Vec::new();
+        let mut has_active_relay = false;
+        let mut active_relay_url: Option<String> = None;
+
+        for a in info.addrs() {
+            let is_relay = a.addr().is_relay();
+            let is_active = matches!(a.usage(), TransportAddrUsage::Active);
+
+            let addr_str = match a.addr() {
+                iroh::TransportAddr::Ip(sock) => sock.to_string(),
+                iroh::TransportAddr::Relay(url) => {
+                    if is_active {
+                        has_active_relay = true;
+                        active_relay_url = Some(url.to_string());
+                    }
+                    url.to_string()
+                }
+                other => format!("{:?}", other),
+            };
+
+            paths.push(PathInfo {
+                relay: is_relay,
+                addr: addr_str,
+                active: is_active,
+            });
+        }
+
+        Some(PeerStats {
+            relay: has_active_relay,
+            relay_url: active_relay_url,
+            paths,
+        })
+    }
 }
 
 // ── Bind-error classification ────────────────────────────────────────────────
@@ -420,4 +464,28 @@ pub struct NodeAddrInfo {
     pub id: String,
     /// Relay URLs and/or `ip:port` direct addresses.
     pub addrs: Vec<String>,
+}
+
+// ── Observability types ──────────────────────────────────────────────────────
+
+/// Per-peer connection statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerStats {
+    /// Whether the peer is connected via a relay server (vs direct).
+    pub relay: bool,
+    /// Active relay URL, if any.
+    pub relay_url: Option<String>,
+    /// All known paths to this peer.
+    pub paths: Vec<PathInfo>,
+}
+
+/// Network path information for a single transport address.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathInfo {
+    /// Whether this path goes through a relay server.
+    pub relay: bool,
+    /// The relay URL (if relay) or `ip:port` (if direct).
+    pub addr: String,
+    /// Whether this is the currently selected/active path.
+    pub active: bool,
 }

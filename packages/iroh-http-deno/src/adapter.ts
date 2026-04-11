@@ -19,6 +19,7 @@ import type {
   RequestPayload,
   NodeOptions,
   NodeAddrInfo,
+  PeerStats,
 } from "@momics/iroh-http-shared";
 import { classifyError, classifyBindError } from "@momics/iroh-http-shared";
 import type { AddrFunctions } from "@momics/iroh-http-shared";
@@ -380,5 +381,8 @@ export const denoAddrFns: AddrFunctions = {
   peerInfo: async (handle, nodeId) => {
     const res = await call<NodeAddrInfo | null>("peerInfo", { endpointHandle: handle, nodeId });
     return res;
+  },
+  peerStats: async (handle, nodeId) => {
+    return call<PeerStats | null>("peerStats", { endpointHandle: handle, nodeId });
   },
 };
