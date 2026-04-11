@@ -57,7 +57,33 @@ remove it.
 
 ---
 
-## 3. Protect by default
+## 3. Primitives, not policies
+
+The core library does what only the core can do: operations that must happen
+inside the Rust layer — stream interception, protocol negotiation, transport
+security. Everything else is a policy decision that belongs to the application
+or an ecosystem package.
+
+Caching strategies, token formats, group membership, rate limiting rules —
+these all depend on context the library cannot know. Attempting to own them
+produces a bloated core and forces every user to pay for decisions that only
+some users need.
+
+The test: could a developer implement this correctly in a handler or a
+middleware, using only what the library already exposes? If yes, it does not
+belong in core.
+
+**How to apply this:**
+- If a feature requires intercepting bytes before they cross the FFI boundary
+  (compression, framing, trailers), it belongs in core.
+- If a feature is pure logic on top of things a handler already has access to
+  (headers, peer identity, request/response), it belongs outside core.
+- Ecosystem packages are the right place for policies. Core provides the
+  primitives they build on.
+
+---
+
+## 4. Protect by default
 
 In a peer-to-peer network, any node can connect to any other node. The
 developer cannot control who their peers are. The library must be safe
@@ -85,7 +111,7 @@ writing any defensive code?
 
 ---
 
-## 4. Standards inform, they don't constrain
+## 5. Standards inform, they don't constrain
 
 This is a new protocol on new transport. We are not bound by backward
 compatibility with any existing HTTP stack. This is a deliberate freedom.
@@ -113,7 +139,7 @@ which may or may not look like what legacy protocols do.
 
 ---
 
-## 5. Every platform is a first-class citizen
+## 6. Every platform is a first-class citizen
 
 Each platform target — whether it runs on a server, in a browser context, on
 a phone, or on a microcontroller — deserves an API designed for that
@@ -137,7 +163,7 @@ it.
 
 ---
 
-## 6. Test what matters, test it honestly
+## 7. Test what matters, test it honestly
 
 If a feature isn't tested end-to-end — two real nodes exchanging real data
 over real QUIC connections — it doesn't work. Unit tests verify components;
@@ -156,7 +182,7 @@ the tests are right.
 
 ---
 
-## 7. Document for the tooltip
+## 8. Document for the tooltip
 
 A developer should be able to use this library entirely from IDE
 autocompletion and inline documentation, without opening a browser or reading

@@ -1,5 +1,8 @@
 # Capability Token System
 
+> **Ecosystem package** (`iroh-http-auth`) — not part of iroh-http core.
+> Built on top of the [sign/verify primitives](../sign-verify.md) that core provides.
+
 A lightweight, signed capability token that controls access to resources served
 by an iroh-http node. Tokens are issued by any node using its Ed25519 private
 key and verifiable by any peer using the public key — no central authority
