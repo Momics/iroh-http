@@ -9,6 +9,29 @@ date: 2026-04-11
 This review intentionally focuses on **new findings** not already covered in
 `04_review.md` (guideline/API audit) and `05_review.md` (patch/features audit).
 
+## Tracker (Resolved vs Unresolved)
+
+Last checked: **2026-04-11**
+
+| ID | Finding (short) | Priority | Status |
+|---|---|---|---|
+| R6-01 | Server request-body parser always assumes chunked framing | P0 | UNRESOLVED |
+| R6-02 | `pending_responses` leak risk on timeout/cancel paths | P0 | UNRESOLVED |
+| R6-03 | Session handles not isolated (shared underlying connection) | P1 | UNRESOLVED |
+| R6-04 | Session slab leak after remote-side closure | P1 | UNRESOLVED |
+| R6-05 | Timeout ms→secs truncation to zero + doc mismatch | P1 | UNRESOLVED |
+| R6-06 | Invalid key material handling is silently permissive | P1 | UNRESOLVED |
+| R6-07 | Stream backpressure config is global mutable state | P2 | UNRESOLVED |
+| R6-08 | Slab sweep task can be spawned repeatedly | P2 | UNRESOLVED |
+| R6-09 | Pool eviction policy is not LRU | P2 | UNRESOLVED |
+| R6-10 | Error envelope implementation fragility | P2 | UNRESOLVED |
+| R6-11 | Invalid direct addresses are silently dropped | P2 | UNRESOLVED |
+
+Status conventions:
+- `RESOLVED`: fixed and verified in code/tests.
+- `PARTIAL`: some fixes landed, follow-up still required.
+- `UNRESOLVED`: no fix merged yet.
+
 ## Overlap Check
 
 The following items from 04/05 were re-validated and are **not duplicated** here:
