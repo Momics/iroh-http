@@ -118,10 +118,7 @@ No issues found. All limits working at Rust level.
 - [x] `proxyUrl` / `proxyFromEnv` in `NodeOptions`
 - [x] `node.peerInfo(peer)` returns `NodeAddr | null`
 - [x] `node.peerStats(peer)` returns `PeerStats | null`
-- [ ] **P2 — DNS discovery URL override not applied**
-  - `NodeOptions.dns_discovery` field exists
-  - `bind()` always uses `n0_dns()` defaults — custom URL is stored but never
-    used in endpoint construction
+- [x] **P2 — DNS discovery URL override not applied** ✅ FIXED — custom URL now used in bind()
 - [ ] **P2 — mDNS `serviceName` filtering**
   - `MdnsOptions.serviceName` accepted by `browse()`/`advertise()` but needs
     verification that the iroh mDNS implementation actually filters by it
@@ -136,12 +133,8 @@ No issues found. All limits working at Rust level.
 - [x] `@param` / `@returns` / `@throws` annotations
 - [x] Error classes documented with usage examples
 - [x] Rust `///` doc comments on public items in `iroh-http-core`
-- [ ] **P2 — Python `create_node()` docstring is stale**
-  - Only documents 4 of 16 parameters
-  - Missing: proxy, compression, all server limits, lifecycle options
-- [ ] **P2 — No `.pyi` type stubs for Python**
-  - `py.typed` marker exists but no actual stub files
-  - IDE users (Pylance, mypy) get no parameter signatures for native types
+- [x] **P2 — Python `create_node()` docstring is stale** ✅ FIXED — all 16 params documented
+- [x] **P2 — No `.pyi` type stubs for Python** ✅ FIXED — full stubs generated
 - [ ] **P2 — Rust napi doc comments not verified**
   - napi-rs copies `///` comments into generated `.d.ts`
   - Since `index.d.ts` is stale (see below), these comments are not reaching
@@ -281,11 +274,7 @@ No issues found.
 - [x] `requestTimeout` in JS `NodeOptions` → Rust
 - [x] `maxRequestBodyBytes` in JS `NodeOptions` → Rust
 - [x] All four JS adapters wire these to `ServeOptions`
-- [ ] **P2 — `maxHeaderBytes` not exposed in TypeScript `NodeOptions`**
-  - Rust has `max_header_size` (64 KB default) and enforces it
-  - Feature spec lists it as one of the five server limits
-  - JS surface has no way to configure it — always uses default
-  - Fix: add `maxHeaderBytes?: number` to `NodeOptions` in `bridge.ts`
+- [x] **P2 — `maxHeaderBytes` not exposed in TypeScript `NodeOptions`** ✅ FIXED — wired through all adapters
 - [ ] **P1 — No integration tests for server limit enforcement**
   - No test for 413 when body exceeds `maxRequestBodyBytes`
   - No test for 408 when request exceeds timeout
@@ -317,7 +306,7 @@ No issues found.
 - [x] mDNS via `browse()` / `advertise()` with `AbortSignal`
 - [x] `PeerDiscoveryEvent` with `isActive`, `nodeId`, `addrs`
 - ❌ **Python: no mDNS at all**
-- ⚠️ **Custom DNS resolver URL stored but not applied**
+- ✅ **Custom DNS resolver URL applied** ✅ FIXED
 
 ### observability.md ✅
 
@@ -335,7 +324,7 @@ No issues found.
 
 - [x] All five limits implemented in Rust
 - [x] Four of five exposed in JS NodeOptions
-- ❌ **`maxHeaderBytes` not in JS surface**
+- ✅ **`maxHeaderBytes` exposed in JS** ✅ FIXED
 - ❌ **No tests for enforcement behavior**
 
 ### sign-verify.md ⚠️
@@ -407,17 +396,17 @@ No issues found.
 | No `session.ready` or `session.closed` on `IrohSession` | **P1** ✅ FIXED |
 | No incoming uni stream receive (`next_uni_stream`) | **P1** ✅ FIXED |
 | No mDNS `browse()` / `advertise()` — discovery crate not wired | **P1** |
-| `create_node()` docstring stale (4 of 16 params documented) | P2 |
-| No `.pyi` type stubs | P2 |
-| No `__aenter__` / `__aexit__` on resource classes | P2 |
+| `create_node()` docstring stale (4 of 16 params documented) | P2 ✅ FIXED |
+| No `.pyi` type stubs | P2 ✅ FIXED |
+| No `__aenter__` / `__aexit__` on resource classes | P2 ✅ FIXED |
 
 ### 4. Guideline Compliance (from review 04)
 
 | Issue | Priority |
 |-------|----------|
-| Public JS API leaks FFI types (`FfiRequest`, `FfiResponse`, `RequestPayload`) | P2 |
+| Public JS API leaks FFI types (`FfiRequest`, `FfiResponse`, `RequestPayload`) | P2 ✅ FIXED |
 | Custom error hierarchy vs DOMException-first (guideline §1) | P2 |
-| Tauri import path (`"iroh-http-shared"` vs `"@momics/iroh-http-shared"`) | P3 |
+| Tauri import path (`"iroh-http-shared"` vs `"@momics/iroh-http-shared"`) | P3 ✅ FIXED |
 | Custom base32 codec in both Rust and TS (vs using a crate/package) | P3 |
 
 ---
@@ -455,15 +444,14 @@ No issues found.
 
 ### P2 — Fix before open-source
 
-- [ ] **Expose `maxHeaderBytes`** in TypeScript `NodeOptions`
-- [ ] **Apply custom DNS resolver URL** — `NodeOptions.dns_discovery` field is stored
-  but never used in `bind()`
-- [ ] **Update Python `create_node()` docstring** — document all 16 parameters
-- [ ] **Generate `.pyi` type stubs** for Python package
-- [ ] **Add `__aenter__` / `__aexit__`** to Python `IrohNode` and `IrohSession`
-- [ ] **Create Node.js smoke test** (`packages/iroh-http-node/test/smoke.mjs`)
-- [ ] **Remove FFI type leakage** from `iroh-http-shared` public exports
-- [ ] **Fix Tauri import path** to use `@momics/iroh-http-shared` consistently
+- [x] **Expose `maxHeaderBytes`** in TypeScript `NodeOptions` ✅ DONE — wired through all 3 JS adapters
+- [x] **Apply custom DNS resolver URL** ✅ DONE — `dns_discovery` URL now used to create `PkarrPublisher` and `DnsAddressLookup`
+- [x] **Update Python `create_node()` docstring** ✅ DONE — all 16 parameters documented
+- [x] **Generate `.pyi` type stubs** for Python package ✅ DONE — full type signatures for all classes/methods
+- [x] **Add `__aenter__` / `__aexit__`** to Python `IrohNode` and `IrohSession` ✅ DONE
+- [x] **Create Node.js smoke test** (`packages/iroh-http-node/test/smoke.mjs`) ✅ DONE — passing
+- [x] **Remove FFI type leakage** from `iroh-http-shared` public exports ✅ DONE — marked `@internal`
+- [x] **Fix Tauri import path** to use `@momics/iroh-http-shared` consistently ✅ DONE
 
 ### P3 — Nice-to-have
 
