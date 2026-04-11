@@ -198,6 +198,42 @@ async function rendezvous(
 }
 ```
 
+## Failure modes
+
+- **Introducer offline when you try to connect**: the introduction contains
+  the subject's ticket (addresses + node ID). You can connect to the subject
+  directly — the introducer is not needed after delivery.
+- **Stale ticket**: tickets encode direct addresses that may have changed.
+  If the connection fails, resolve via mDNS or relay using just the node ID
+  extracted from the ticket.
+- **Forged introduction**: a malicious peer intercepts and replaces the
+  introduction payload. The signature check (`verifyIntroduction`) on the
+  recipient side catches this — a bad signature is rejected, not trusted.
+- **Trust chain growing unbounded**: if you automatically accept introductions
+  from anyone you know, an adversary who compromises one peer can introduce
+  themselves to your entire network. Apply `trustForIntroduced()` decay and
+  set a maximum chain depth.
+
+## Threat model
+
+**Protects against:**
+- Fake introductions (each link is signed by the actual key holder)
+- An attacker impersonating a known peer to make an introduction
+  (iroh-node-id on the connection is the introducer's verified key)
+
+**Does not protect against:**
+- A compromised introducer making legitimate-looking introductions to
+  adversaries — the signature is valid, but the introducee is malicious.
+  Trust decay limits the blast radius.
+- Social engineering outside the protocol — someone asking Alice to introduce
+  them under false pretences.
+
+## When not to use this pattern
+
+If your peer set is closed and fully known in advance (a fixed list of
+devices), introductions add no value. They matter when the peer graph is
+open-ended and grows organically through social relationships.
+
 ## See also
 
 - [Proximity trust](proximity-trust.md) — extend introduced peers a trust

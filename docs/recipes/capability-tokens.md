@@ -116,6 +116,41 @@ middleware.
 - Revocation requires short expiry + reissuance. There is no revocation list
   in this pattern.
 
+## Failure modes
+
+- **Clock skew between issuer and verifier**: if the clocks differ by more
+  than the token lifetime the token will appear expired. Use short expiry
+  (≤5 min) and let clients re-request; or include an `issuedAt` field and
+  accept tokens within a ±30 s window of the server's clock.
+- **Token interception**: a token presented over iroh is already encrypted
+  by the QUIC layer. Between systems (e.g. a token shared via QR code), treat
+  it like a password — it grants access to anyone who holds it.
+- **Scope mismatch false positives**: the scope check is a path prefix
+  (`startsWith`). A token for `/api` allows `/api-admin`. Use trailing slashes
+  or exact-match for sensitive paths: scope `/api/` not `/api`.
+
+## Threat model
+
+**Protects against:**
+- Unauthenticated access (token required, signature verified)
+- Token forgery (Ed25519 — computationally infeasible without the secret key)
+- Expired tokens (expiry field enforced on every request)
+
+**Does not protect against:**
+- Token theft — a valid, unexpired token grants access regardless of who
+  holds it. Combine with `iroh-node-id` header check to bind a token to a
+  specific peer.
+- Revocation before expiry — there is no revocation list. Use short expiry
+  (≤15 min) for sensitive operations. For immediate revocation, rotate
+  the issuing secret key (see [key-rotation.md](key-rotation.md)).
+
+## When not to use this pattern
+
+If the only clients are peers you already trust by node ID (you know exactly
+who they are and the QUIC layer proves it), tokens add friction for no
+security gain. Use tokens when you need scope or expiry control on top of
+identity, or when you want to issue access to a peer you haven't met yet.
+
 ## Dependencies
 
 Requires [sign/verify helpers](../features/sign-verify.md) (Patch 25).

@@ -178,3 +178,41 @@ await startDiscoverySync(node, ac.signal);
   discovers you via mDNS. For mixed LAN/relay environments with unknown
   peers, add [proximity trust](proximity-trust.md) or
   [capability tokens](capability-tokens.md).
+
+## Failure modes
+
+- **Conflicting concurrent edits**: two peers edit the same document while
+  offline from each other. Last-write-wins by version number means one edit
+  silently overwrites the other. If data loss is unacceptable, use a CRDT
+  (`body` field as Yjs or Automerge state) or surface conflicts to the user.
+- **mDNS not available**: managed WiFi networks (hotels, offices) sometimes
+  block multicast. LAN discovery fails silently; WAN peers reachable via
+  relay still work. Design UX to degrade gracefully: sync when available,
+  show last-synced time otherwise.
+- **Clock skew**: version timestamps are wall-clock milliseconds. A peer
+  with a wrong clock can win every LWW conflict. Use a monotonic version
+  counter (integer), not a timestamp, for correctness.
+- **Manifest explosion**: with thousands of documents the manifest `GET`
+  becomes large. Paginate or use a Merkle summary (root hash of all
+  (id, version) pairs) for cheap diff detection.
+
+## Threat model
+
+**Protects against:**
+- Passive eavesdropping on sync data (iroh QUIC is encrypted)
+- A peer on the WAN modifying your data in transit (QUIC integrity)
+
+**Does not protect against:**
+- A malicious peer on your LAN injecting false document versions — mDNS
+  provides reachability, not identity trust. Add capability tokens or
+  proximity trust if LAN peers are not all trusted.
+- A peer replaying an old PUT after you've already advanced the version —
+  mitigate by checking version strictly greater-than, not greater-than-or-equal.
+
+## When not to use this pattern
+
+If all your devices reliably share a cloud sync service (iCloud, Dropbox,
+Google Drive) and you're happy with their trust model, this pattern adds
+complexity for little gain. Local-first sync pays off when: you need offline
+first, you don't want a third party to have your data, or you need LAN-speed
+sync without cloud latency.
