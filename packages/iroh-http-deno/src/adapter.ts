@@ -18,8 +18,10 @@ import type {
   AllocBodyWriterFn,
   RequestPayload,
   NodeOptions,
+  NodeAddrInfo,
 } from "@momics/iroh-http-shared";
 import { classifyError, classifyBindError } from "@momics/iroh-http-shared";
+import type { AddrFunctions } from "@momics/iroh-http-shared";
 
 // ── Platform library resolution ───────────────────────────────────────────────
 
@@ -83,6 +85,7 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
     "nextTrailer", "sendTrailers", "rawFetch", "rawConnect",
     "serveStart", "nextRequest", "respond", "allocBodyWriter",
     "createEndpoint", "closeEndpoint", "allocFetchToken", "cancelInFlight",
+    "nodeAddr", "homeRelay", "peerInfo",
   ].map(m => [m, enc.encode(m)])
 );
 
@@ -268,9 +271,49 @@ export const allocBodyWriter: AllocBodyWriterFn = () =>
 
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 
+/** Normalise `relayMode` into flat fields for the Rust adapter. */
+function normaliseRelayMode(mode?: import("@momics/iroh-http-shared").RelayMode): {
+  relayMode: string | undefined;
+  relays: string[] | null;
+  disableNetworking: boolean;
+} {
+  if (mode === "disabled") return { relayMode: "disabled", relays: [], disableNetworking: true };
+  if (mode === "default" || mode === undefined) return { relayMode: undefined, relays: null, disableNetworking: false };
+  if (mode === "staging") return { relayMode: "staging", relays: null, disableNetworking: false };
+  if (Array.isArray(mode)) return { relayMode: "custom", relays: mode, disableNetworking: false };
+  return { relayMode: "custom", relays: [mode], disableNetworking: false };
+}
+
+/** Normalise DiscoveryOptions into flat fields for the Rust adapter. */
+function normaliseDiscovery(disc?: import("@momics/iroh-http-shared").DiscoveryOptions): {
+  mdns: boolean;
+  serviceName?: string;
+  advertise: boolean;
+  dnsEnabled: boolean;
+} {
+  if (!disc) return { mdns: false, advertise: true, dnsEnabled: true };
+  const dnsEnabled = disc.dns !== false;
+  if (disc.mdns === true) return { mdns: true, advertise: true, dnsEnabled };
+  if (disc.mdns && typeof disc.mdns === "object") {
+    return {
+      mdns: true,
+      advertise: disc.mdns.advertise ?? true,
+      serviceName: disc.mdns.serviceName,
+      dnsEnabled,
+    };
+  }
+  return { mdns: false, advertise: true, dnsEnabled };
+}
+
 export async function createEndpointInfo(options?: NodeOptions): Promise<EndpointInfo> {
   const keyBytes: string | null = options?.key
     ? encodeBase64(options.key instanceof Uint8Array ? options.key : options.key.toBytes())
+    : null;
+
+  const { relayMode, relays, disableNetworking } = normaliseRelayMode(options?.relayMode);
+  const discovery = normaliseDiscovery(options?.discovery);
+  const bindAddrs = options?.bindAddr
+    ? (Array.isArray(options.bindAddr) ? options.bindAddr : [options.bindAddr])
     : null;
 
   const res = await call<{ endpointHandle: number; nodeId: string; keypair: number[] }>(
@@ -278,16 +321,23 @@ export async function createEndpointInfo(options?: NodeOptions): Promise<Endpoin
     {
       key:                  keyBytes,
       idleTimeout:          options?.idleTimeout ?? null,
-      relays:               options?.relays ?? null,
+      relayMode:            relayMode ?? null,
+      relays:               relays ?? null,
+      bindAddrs,
       dnsDiscovery:         options?.dnsDiscovery ?? null,
+      dnsDiscoveryEnabled:  discovery.dnsEnabled,
       channelCapacity:      options?.channelCapacity ?? null,
       maxChunkSizeBytes:    options?.maxChunkSizeBytes ?? null,
       maxConsecutiveErrors: options?.maxConsecutiveErrors ?? null,
-      discoveryMdns:        options?.discovery?.mdns ?? null,
-      discoveryServiceName: options?.discovery?.serviceName ?? null,
-      discoveryAdvertise:   options?.discovery?.advertise ?? null,
+      discoveryMdns:        discovery.mdns,
+      discoveryServiceName: discovery.serviceName ?? null,
+      discoveryAdvertise:   discovery.advertise,
       drainTimeout:         options?.drainTimeout ?? null,
       handleTtl:            options?.handleTtl ?? null,
+      disableNetworking,
+      proxyUrl:             options?.proxyUrl ?? null,
+      proxyFromEnv:         options?.proxyFromEnv ?? null,
+      keylog:               options?.keylog ?? null,
     },
   ).catch((e: unknown) => { throw classifyBindError(e); });
   return {
@@ -300,3 +350,20 @@ export async function createEndpointInfo(options?: NodeOptions): Promise<Endpoin
 export async function closeEndpoint(handle: number): Promise<void> {
   await call<Record<never, never>>("closeEndpoint", { endpointHandle: handle });
 }
+
+// ── Address introspection ──────────────────────────────────────────────────────
+
+export const denoAddrFns: AddrFunctions = {
+  nodeAddr: async (handle) => {
+    const res = await call<NodeAddrInfo>("nodeAddr", { endpointHandle: handle });
+    return res;
+  },
+  homeRelay: async (handle) => {
+    const res = await call<string | null>("homeRelay", { endpointHandle: handle });
+    return res;
+  },
+  peerInfo: async (handle, nodeId) => {
+    const res = await call<NodeAddrInfo | null>("peerInfo", { endpointHandle: handle, nodeId });
+    return res;
+  },
+};

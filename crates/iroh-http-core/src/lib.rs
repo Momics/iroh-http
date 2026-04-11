@@ -10,7 +10,7 @@ pub(crate) mod qpack_bridge;
 pub mod server;
 pub mod stream;
 
-pub use endpoint::{IrohEndpoint, NodeOptions};
+pub use endpoint::{IrohEndpoint, NodeOptions, NodeAddrInfo, DiscoveryConfig};
 pub use stream::{
     alloc_body_writer, next_chunk, send_chunk, finish_body, cancel_reader,
     next_trailer, send_trailers, BodyReader,

@@ -19,6 +19,7 @@ import {
   allocBodyWriter,
   createEndpointInfo,
   closeEndpoint,
+  denoAddrFns,
 } from "./src/adapter.ts";
 
 /**
@@ -36,6 +37,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawConnect,
     allocBodyWriter,
     closeEndpoint,
+    denoAddrFns,
   );
 }
 

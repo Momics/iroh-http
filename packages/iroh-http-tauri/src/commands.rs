@@ -29,8 +29,11 @@ fn parse_direct_addrs(addrs: &Option<Vec<String>>) -> Option<Vec<std::net::Socke
 pub struct CreateEndpointArgs {
     pub key: Option<String>,
     pub idle_timeout: Option<u64>,
+    pub relay_mode: Option<String>,
     pub relays: Option<Vec<String>>,
+    pub bind_addrs: Option<Vec<String>>,
     pub dns_discovery: Option<String>,
+    pub dns_discovery_enabled: Option<bool>,
     pub channel_capacity: Option<usize>,
     pub max_chunk_size_bytes: Option<usize>,
     pub max_consecutive_errors: Option<usize>,
@@ -40,6 +43,9 @@ pub struct CreateEndpointArgs {
     pub drain_timeout: Option<u64>,
     pub handle_ttl: Option<u64>,
     pub disable_networking: Option<bool>,
+    pub proxy_url: Option<String>,
+    pub proxy_from_env: Option<bool>,
+    pub keylog: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -70,8 +76,11 @@ pub async fn create_endpoint(
         .map(|a| NodeOptions {
             key: a.key.and_then(|k| B64.decode(k).ok()?.try_into().ok()),
             idle_timeout_ms: a.idle_timeout,
+            relay_mode: a.relay_mode,
             relays: a.relays.unwrap_or_default(),
+            bind_addrs: a.bind_addrs.unwrap_or_default(),
             dns_discovery: a.dns_discovery,
+            dns_discovery_enabled: a.dns_discovery_enabled.unwrap_or(true),
             capabilities: Vec::new(),
             channel_capacity: a.channel_capacity,
             max_chunk_size_bytes: a.max_chunk_size_bytes,
@@ -81,6 +90,10 @@ pub async fn create_endpoint(
             drain_timeout_ms: a.drain_timeout,
             handle_ttl_ms: a.handle_ttl,
             max_pooled_connections: None,
+            max_header_size: None,
+            proxy_url: a.proxy_url,
+            proxy_from_env: a.proxy_from_env.unwrap_or(false),
+            keylog: a.keylog.unwrap_or(false),
         })
         .unwrap_or_default();
 
@@ -135,6 +148,40 @@ pub async fn ping(endpoint_handle: u32) -> Result<bool, String> {
     // If the endpoint exists, it's alive.
     let _ = ep.raw().id();
     Ok(true)
+}
+
+// ── Address introspection ─────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeAddrPayload {
+    pub id: String,
+    pub addrs: Vec<String>,
+}
+
+/// Full node address: node ID + relay URL(s) + direct socket addresses.
+#[command]
+pub fn node_addr(endpoint_handle: u32) -> Result<NodeAddrPayload, String> {
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
+    let info = ep.node_addr();
+    Ok(NodeAddrPayload { id: info.id, addrs: info.addrs })
+}
+
+/// Home relay URL, or null if not connected to a relay.
+#[command]
+pub fn home_relay(endpoint_handle: u32) -> Result<Option<String>, String> {
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
+    Ok(ep.home_relay())
+}
+
+/// Known addresses for a remote peer, or null if unknown.
+#[command]
+pub async fn peer_info(endpoint_handle: u32, node_id: String) -> Result<Option<NodeAddrPayload>, String> {
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
+    Ok(ep.peer_info(&node_id).await.map(|info| NodeAddrPayload { id: info.id, addrs: info.addrs }))
 }
 
 // ── Bridge methods ────────────────────────────────────────────────────────────

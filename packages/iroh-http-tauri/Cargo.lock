@@ -2375,9 +2375,12 @@ dependencies = [
  "iroh",
  "iroh-http-framing",
  "qpack",
+ "serde",
+ "serde_json",
  "slab",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

@@ -5,6 +5,7 @@ use std::time::Duration;
 use iroh::{Endpoint, RelayMode, SecretKey};
 use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
 use iroh::endpoint::{IdleTimeout, QuicTransportConfig};
+use serde::{Deserialize, Serialize};
 
 use crate::{ALPN, ALPN_DUPLEX, ALPN_TRAILERS, ALPN_FULL};
 use crate::pool::ConnectionPool;
@@ -24,29 +25,49 @@ pub struct DiscoveryConfig {
 /// Configuration passed to [`IrohEndpoint::bind`].
 #[derive(Debug, Default, Clone)]
 pub struct NodeOptions {
+    // ── Identity ────────────────────────────────────────────────────────────
     /// 32-byte Ed25519 secret key.  Generate a fresh one when `None`.
     pub key: Option<[u8; 32]>,
+
+    // ── Connectivity ────────────────────────────────────────────────────────
+    /// Relay server mode.  `"default"` uses n0's public relays, `"staging"` uses
+    /// the canary relay, `"disabled"` disables relay entirely, and `"custom"` uses
+    /// only the URLs in [`relays`](Self::relays).  Default: `"default"`.
+    pub relay_mode: Option<String>,
+    /// Custom relay server URLs.  Only used when `relay_mode` is `"custom"`.
+    pub relays: Vec<String>,
+    /// UDP socket addresses to bind.  Empty means OS-assigned (`"0.0.0.0:0"`).
+    pub bind_addrs: Vec<String>,
     /// Milliseconds before an idle QUIC connection is cleaned up.
     pub idle_timeout_ms: Option<u64>,
-    /// Custom relay server URLs.  Uses Iroh's default public relays when empty.
-    pub relays: Vec<String>,
+
+    // ── Discovery ───────────────────────────────────────────────────────────
     /// DNS discovery server URL override.  Uses n0 DNS defaults when `None`.
     pub dns_discovery: Option<String>,
+    /// Whether to enable DNS discovery.  Default: true.
+    pub dns_discovery_enabled: bool,
+    /// Local peer discovery configuration.
+    pub discovery: Option<DiscoveryConfig>,
+
+    // ── Capabilities ────────────────────────────────────────────────────────
     /// Capabilities to advertise via ALPN.  When empty, all supported capabilities
     /// are advertised in preference order: `iroh-http/1-full`, `-duplex`,
     /// `-trailers`, `iroh-http/1`.
     pub capabilities: Vec<String>,
+
+    // ── Power-user options ──────────────────────────────────────────────────
+    /// HTTP proxy URL for relay traffic.  For corporate networks.
+    pub proxy_url: Option<String>,
+    /// Read `HTTP_PROXY` / `HTTPS_PROXY` env vars for proxy config.
+    pub proxy_from_env: bool,
+    /// Write TLS session keys to `$SSLKEYLOGFILE`.  Dev/debug only.
+    pub keylog: bool,
     /// Capacity (in chunks) of each body channel.  Default: 32.
-    /// Increase for large fast producers; decrease to tighten backpressure.
     pub channel_capacity: Option<usize>,
-    /// Maximum byte length of a single chunk in `send_chunk`.
-    /// Chunks larger than this are silently split internally.
-    /// Default: 65536 (64 KB).
+    /// Maximum byte length of a single chunk in `send_chunk`.  Default: 65536.
     pub max_chunk_size_bytes: Option<usize>,
     /// Number of consecutive accept errors before the serve loop gives up.  Default: 5.
     pub max_consecutive_errors: Option<usize>,
-    /// Local peer discovery configuration.
-    pub discovery: Option<DiscoveryConfig>,
     /// Disable relay servers and DNS discovery entirely.
     /// Useful for in-process tests where endpoints connect via direct addresses.
     pub disable_networking: bool,
@@ -57,10 +78,9 @@ pub struct NodeOptions {
     /// every 60 s.  `0` disables sweeping.  Default: 300 000 (5 min).
     pub handle_ttl_ms: Option<u64>,
     /// Maximum number of idle connections to keep in the pool.
-    /// `None` means no limit (rely on Iroh's idle timeout for cleanup).
     pub max_pooled_connections: Option<usize>,
     /// Maximum byte size of a QPACK-encoded request or response head.
-    /// Peers sending heads larger than this are rejected.  Default: 65536 (64 KB).
+    /// Default: 65536 (64 KB).
     pub max_header_size: Option<usize>,
 }
 
@@ -92,15 +112,24 @@ impl IrohEndpoint {
     pub async fn bind(opts: NodeOptions) -> Result<Self, String> {
         let relay_mode = if opts.disable_networking {
             RelayMode::Disabled
-        } else if opts.relays.is_empty() {
-            RelayMode::Default
         } else {
-            let urls = opts
-                .relays
-                .iter()
-                .map(|u| u.parse::<iroh::RelayUrl>().map_err(|e| e.to_string()))
-                .collect::<Result<Vec<_>, _>>()?;
-            RelayMode::custom(urls)
+            match opts.relay_mode.as_deref() {
+                None | Some("default") => RelayMode::Default,
+                Some("staging") => RelayMode::Staging,
+                Some("disabled") => RelayMode::Disabled,
+                Some("custom") => {
+                    if opts.relays.is_empty() {
+                        return Err("relay_mode \"custom\" requires at least one URL in `relays`".into());
+                    }
+                    let urls = opts
+                        .relays
+                        .iter()
+                        .map(|u| u.parse::<iroh::RelayUrl>().map_err(|e| e.to_string()))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    RelayMode::custom(urls)
+                }
+                Some(other) => return Err(format!("unknown relay_mode: {other}")),
+            }
         };
 
         let alpns: Vec<Vec<u8>> = if opts.capabilities.is_empty() {
@@ -127,7 +156,8 @@ impl IrohEndpoint {
         let mut builder = Endpoint::empty_builder(relay_mode)
             .alpns(alpns);
 
-        if !opts.disable_networking {
+        // DNS discovery (enabled by default unless disable_networking).
+        if !opts.disable_networking && opts.dns_discovery_enabled {
             builder = builder
                 .address_lookup(PkarrPublisher::n0_dns())
                 .address_lookup(DnsAddressLookup::n0_dns());
@@ -146,7 +176,29 @@ impl IrohEndpoint {
             builder = builder.transport_config(transport);
         }
 
-        let ep = builder.bind().await.map_err(|e| e.to_string())?;
+        // Bind address(es).
+        for addr_str in &opts.bind_addrs {
+            let sock: std::net::SocketAddr = addr_str
+                .parse()
+                .map_err(|e| format!("invalid bind address \"{addr_str}\": {e}"))?;
+            builder = builder.bind_addr(sock)
+                .map_err(|e| format!("bind address \"{addr_str}\": {e}"))?;
+        }
+
+        // Proxy configuration.
+        if let Some(ref proxy) = opts.proxy_url {
+            let url: url::Url = proxy.parse().map_err(|e| format!("invalid proxy URL: {e}"))?;
+            builder = builder.proxy_url(url);
+        } else if opts.proxy_from_env {
+            builder = builder.proxy_from_env();
+        }
+
+        // TLS keylog for Wireshark debugging.
+        if opts.keylog {
+            builder = builder.keylog(true);
+        }
+
+        let ep = builder.bind().await.map_err(classify_bind_error)?;
 
         // Apply backpressure config for all future channel allocations.
         crate::stream::configure_backpressure(
@@ -233,4 +285,69 @@ impl IrohEndpoint {
     pub fn bound_sockets(&self) -> Vec<std::net::SocketAddr> {
         self.inner.ep.bound_sockets()
     }
+
+    /// Full node address: node ID + relay URL(s) + direct socket addresses.
+    pub fn node_addr(&self) -> NodeAddrInfo {
+        let addr = self.inner.ep.addr();
+        let mut addrs = Vec::new();
+        for relay in addr.relay_urls() {
+            addrs.push(relay.to_string());
+        }
+        for da in addr.ip_addrs() {
+            addrs.push(da.to_string());
+        }
+        NodeAddrInfo {
+            id: self.inner.node_id_str.clone(),
+            addrs,
+        }
+    }
+
+    /// Home relay URL, or `None` if not connected to a relay.
+    pub fn home_relay(&self) -> Option<String> {
+        self.inner.ep.addr().relay_urls().next().map(|u| u.to_string())
+    }
+
+    /// Known addresses for a remote peer, or `None` if not in the endpoint's cache.
+    pub async fn peer_info(&self, node_id_b32: &str) -> Option<NodeAddrInfo> {
+        let bytes = crate::base32_decode(node_id_b32).ok()?;
+        let arr: [u8; 32] = bytes.try_into().ok()?;
+        let pk = iroh::PublicKey::from_bytes(&arr).ok()?;
+        let info = self.inner.ep.remote_info(pk).await?;
+        let id = crate::base32_encode(info.id().as_bytes());
+        let mut addrs = Vec::new();
+        for a in info.addrs() {
+            match a.addr() {
+                iroh::TransportAddr::Ip(sock) => addrs.push(sock.to_string()),
+                iroh::TransportAddr::Relay(url) => addrs.push(url.to_string()),
+                other => addrs.push(format!("{:?}", other)),
+            }
+        }
+        Some(NodeAddrInfo { id, addrs })
+    }
+}
+
+// ── Bind-error classification ────────────────────────────────────────────────
+
+/// Classify a bind error into a prefixed string for the JS error mapper.
+fn classify_bind_error(e: impl std::fmt::Display) -> String {
+    let msg = e.to_string();
+    let lower = msg.to_lowercase();
+    if lower.contains("address") && lower.contains("in use") {
+        format!("ADDRESS_IN_USE: {msg}")
+    } else if lower.contains("permission") || lower.contains("access denied") {
+        format!("PERMISSION_DENIED: {msg}")
+    } else {
+        format!("UNKNOWN: {msg}")
+    }
+}
+
+// ── NodeAddr info ────────────────────────────────────────────────────────────
+
+/// Serialisable node address: node ID + relay and direct addresses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeAddrInfo {
+    /// Base32-encoded public key.
+    pub id: String,
+    /// Relay URLs and/or `ip:port` direct addresses.
+    pub addrs: Vec<String>,
 }

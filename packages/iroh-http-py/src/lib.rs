@@ -264,6 +264,27 @@ impl IrohNode {
             Ok(())
         })
     }
+
+    /// Full node address: node ID + relay URL(s) + direct socket addresses.
+    /// Returns a dict with `id` (str) and `addrs` (list of str).
+    fn addr(&self) -> (String, Vec<String>) {
+        let info = self.ep.node_addr();
+        (info.id, info.addrs)
+    }
+
+    /// Home relay URL, or None if not connected to a relay.
+    fn home_relay(&self) -> Option<String> {
+        self.ep.home_relay()
+    }
+
+    /// Known addresses for a remote peer, or None if unknown.
+    /// Returns a tuple of (node_id, addrs) if found.
+    fn peer_info<'py>(&self, py: Python<'py>, node_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let ep = self.ep.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            Ok(ep.peer_info(&node_id).await.map(|info| (info.id, info.addrs)))
+        })
+    }
 }
 
 // ── Serve request handler ─────────────────────────────────────────────────────
@@ -355,7 +376,7 @@ fn send_500(req_handle: u32, res_body_handle: u32) {
 ///   relays       — list of custom relay server URL strings.
 ///   dns_discovery — custom DNS discovery server URL.
 #[pyfunction]
-#[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false))]
+#[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false, relay_mode=None, bind_addrs=None, proxy_url=None, proxy_from_env=false, keylog=false))]
 fn create_node<'py>(
     py: Python<'py>,
     key: Option<Vec<u8>>,
@@ -363,13 +384,21 @@ fn create_node<'py>(
     relays: Option<Vec<String>>,
     dns_discovery: Option<String>,
     disable_networking: bool,
+    relay_mode: Option<String>,
+    bind_addrs: Option<Vec<String>>,
+    proxy_url: Option<String>,
+    proxy_from_env: bool,
+    keylog: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let opts = NodeOptions {
             key:                    key.and_then(|k| k.try_into().ok()),
             idle_timeout_ms:        idle_timeout,
+            relay_mode,
             relays:                 relays.unwrap_or_default(),
+            bind_addrs:             bind_addrs.unwrap_or_default(),
             dns_discovery,
+            dns_discovery_enabled:  true,
             capabilities:           Vec::new(),
             channel_capacity:       None,
             max_chunk_size_bytes:   None,
@@ -379,6 +408,10 @@ fn create_node<'py>(
             drain_timeout_ms:       None,
             handle_ttl_ms:          None,
             max_pooled_connections: None,
+            max_header_size:        None,
+            proxy_url,
+            proxy_from_env,
+            keylog,
         };
         let ep = IrohEndpoint::bind(opts).await.map_err(py_err)?;
         Ok(IrohNode { ep })
