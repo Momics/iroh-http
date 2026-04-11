@@ -236,7 +236,7 @@ export function buildSession(
 
     [Symbol.asyncDispose]() {
       session.close();
-      return closedPromise;
+      return closedPromise.then(() => {});
     },
   };
 

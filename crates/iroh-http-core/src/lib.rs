@@ -13,7 +13,7 @@ pub mod stream;
 #[cfg(feature = "compression")]
 pub mod compress;
 
-pub use endpoint::{IrohEndpoint, NodeOptions, NodeAddrInfo, PeerStats, PathInfo};
+pub use endpoint::{IrohEndpoint, NodeOptions, NodeAddrInfo, PeerStats, PathInfo, parse_direct_addrs};
 #[cfg(feature = "compression")]
 pub use compress::CompressionOptions;
 pub use stream::{
@@ -67,14 +67,10 @@ pub fn generate_secret_key() -> [u8; 32] {
 pub fn classify_error_json(e: impl std::fmt::Display) -> String {
     let msg = e.to_string();
     let code = classify_error_code(&msg);
-    // Minimal JSON string escaping — only sequences that are structurally
-    // significant inside a JSON string value.
-    let escaped = msg
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r");
-    format!("{{\"code\":\"{code}\",\"message\":\"{escaped}\"}}")
+    // Use serde_json for correct serialisation — handles all control
+    // characters, Unicode escapes, and special sequences automatically.
+    let json_msg = serde_json::Value::String(msg);
+    format!("{{\"code\":\"{code}\",\"message\":{json_msg}}}")
 }
 
 fn classify_error_code(msg: &str) -> &'static str {
@@ -172,45 +168,19 @@ pub const ALPN_TRAILERS: &[u8] = b"iroh-http/1-trailers";
 /// ALPN for base + bidirectional + trailers + cancellation.
 pub const ALPN_FULL: &[u8] = b"iroh-http/1-full";
 
-/// Encode 32 raw bytes as lowercase base32 (no padding).
+/// Encode bytes as lowercase RFC 4648 base32 (no padding).
+///
+/// Uses the maintained [`base32`] crate with the `Rfc4648Lower { padding: false }`
+/// alphabet, which matches iroh's node-ID format exactly.
 pub fn base32_encode(bytes: &[u8]) -> String {
-    const BASE32: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
-    let mut result = String::new();
-    let mut bits: u32 = 0;
-    let mut value: u32 = 0;
-    for &byte in bytes {
-        value = (value << 8) | byte as u32;
-        bits += 8;
-        while bits >= 5 {
-            bits -= 5;
-            result.push(BASE32[((value >> bits) & 0x1f) as usize] as char);
-        }
-    }
-    if bits > 0 {
-        result.push(BASE32[((value << (5 - bits)) & 0x1f) as usize] as char);
-    }
-    result
+    base32::encode(base32::Alphabet::Rfc4648Lower { padding: false }, bytes)
 }
 
-/// Decode a lowercase base32 string (no padding) to bytes.
+/// Decode an RFC 4648 base32 string (no padding, case-insensitive) to bytes.
 pub(crate) fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
-    const BASE32: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
-    let mut bytes = Vec::new();
-    let mut bits: u32 = 0;
-    let mut value: u32 = 0;
-    for c in s.chars() {
-        let v = BASE32
-            .iter()
-            .position(|&b| b as char == c.to_ascii_lowercase())
-            .ok_or_else(|| format!("invalid base32 char: {c}"))? as u32;
-        value = (value << 5) | v;
-        bits += 5;
-        if bits >= 8 {
-            bits -= 8;
-            bytes.push((value >> bits) as u8);
-        }
-    }
-    Ok(bytes)
+    // The crate's Rfc4648Lower decoder is case-insensitive.
+    base32::decode(base32::Alphabet::Rfc4648Lower { padding: false }, s)
+        .ok_or_else(|| format!("invalid base32 string: {s}"))
 }
 
 /// Parse a base32 node-id string into an `iroh::PublicKey`.
@@ -220,18 +190,6 @@ pub(crate) fn parse_node_id(s: &str) -> Result<iroh::PublicKey, String> {
         .try_into()
         .map_err(|_| "node-id must be 32 bytes".to_string())?;
     iroh::PublicKey::from_bytes(&arr).map_err(|e| e.to_string())
-}
-
-/// Parse a list of `"ip:port"` strings into `SocketAddr` values.
-///
-/// Invalid entries are silently ignored (best-effort parser for direct address
-/// lists supplied by language bindings).
-pub fn parse_direct_addrs(addrs: &Option<Vec<String>>) -> Option<Vec<std::net::SocketAddr>> {
-    addrs.as_ref().map(|v| {
-        v.iter()
-            .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
-            .collect()
-    })
 }
 
 // ── Node tickets ──────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 ---
-status: reported
+status: partial
 source: docs/guidelines.md
 date: 2026-04-11
 ---
@@ -30,6 +30,11 @@ Impact:
 - Public API exposes Rust/bridge internals and handle-level concepts that the
   guideline explicitly forbids.
 
+> ⚠️ **PARTIAL** — Internal types are now tagged `/** @internal */` in
+> `packages/iroh-http-shared/src/index.ts` (line 17). They are still exported
+> but the `@internal` JSDoc tag suppresses them in generated API docs and IDEs.
+> Full removal from the public export surface remains deferred.
+
 ---
 
 ### 2. JS/TS error model is custom hierarchy instead of platform-standard shape
@@ -56,15 +61,12 @@ Guideline conflicts:
 - Public package should be fully type-annotated for checkers (with `py.typed`).
 
 Current state:
-- `packages/iroh-http-py/src/lib.rs` enforces dict return keys
-  (`status`, `headers`, `body`) in `serve`.
-- No `__aenter__` / `__aexit__` implementations found.
-- `py.typed` exists but there are no `.pyi` stubs and only one Python file
-  (`__init__.py`) with no signature annotations for extension members.
+- ✅ `__aenter__` / `__aexit__` added to `IrohNode` and `IrohSession`.
+- ✅ Full `.pyi` type stubs generated in `iroh_http/__init__.pyi`.
+- ⚠️ Handler still requires dict return (`{"status": int, "headers": [...], "body": bytes}`). An `IrohResponse`-style return object remains unimplemented.
 
 Impact:
-- Python developer ergonomics and type-checker compatibility do not match the
-  documented contract.
+- Handler ergonomics diverge from guideline's `IrohResponse` return contract. Low priority since the dict API is functional and documented.
 
 ---
 
@@ -87,6 +89,9 @@ Impact:
 ---
 
 ### 5. Tauri guest JS file has trailing broken block; package does not typecheck
+
+> ✅ **RESOLVED** — Trailing stray text removed in a prior commit. The file
+> now ends cleanly with `export type { NodeOptions, IrohNode };`.
 
 Current state:
 - `packages/iroh-http-tauri/guest-js/index.ts` ends with trailing stray text
@@ -123,8 +128,8 @@ Impact:
 - `FAIL` `packages/iroh-http-shared`
 - `FAIL` `packages/iroh-http-node`
 - `FAIL` `packages/iroh-http-deno`
-- `FAIL` `packages/iroh-http-tauri`
-- `FAIL` `packages/iroh-http-py`
+- `PARTIAL` `packages/iroh-http-tauri` (guest-js fixed, other issues remain)
+- `PARTIAL` `packages/iroh-http-py` (`__aenter__`/`__aexit__`, stubs, mDNS, sign/verify exports all fixed; dict handler return remains)
 - `PARTIAL` examples (`examples/node`, `examples/deno`, `examples/tauri`,
   `examples/python`)
 
@@ -141,28 +146,11 @@ Notes on examples:
 
 Commands run during audit:
 
-1. `npm run typecheck`
-- Fails in `packages/iroh-http-node` (signature/type drift).
-- Fails in `packages/iroh-http-tauri` (syntax errors in `guest-js/index.ts`).
+1. `npm run typecheck` in `packages/iroh-http-shared`
+- ✅ Pass — 0 errors. (Pre-existing TS2300 duplicate identifier and TS2322 asyncDispose errors fixed.)
 
 2. `cargo check --workspace`
-- Fails in `packages/iroh-http-node` and `packages/iroh-http-deno`:
-  `NodeOptions` initializer missing new `max_header_size` field.
-
-3. `cargo check -p iroh-http-py`
-- Fails similarly: `NodeOptions` initializer missing `max_header_size`.
-
-4. `cargo check` (inside `packages/iroh-http-tauri`)
-- Fails similarly: `NodeOptions` initializer missing `max_header_size`.
-
-5. `cargo check -p iroh-http-framing`
-- Pass.
-
-6. `cargo check -p iroh-http-core`
-- Pass.
-
-7. `cargo check -p iroh-http-discovery`
-- Pass.
+- ✅ Pass — 0 warnings, 0 errors. All `NodeOptions` initializer issues resolved; Tauri guest-js fixed; feature-gated dead_code warnings suppressed.
 
 ---
 

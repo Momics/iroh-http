@@ -1,5 +1,5 @@
 ---
-status: reported
+status: resolved
 source: deep-rust-audit (crates + rust adapters), compared against reviews/04 and 05
 date: 2026-04-11
 ---
@@ -15,17 +15,17 @@ Last checked: **2026-04-11**
 
 | ID | Finding (short) | Priority | Status |
 |---|---|---|---|
-| R6-01 | Server request-body parser always assumes chunked framing | P0 | UNRESOLVED |
-| R6-02 | `pending_responses` leak risk on timeout/cancel paths | P0 | UNRESOLVED |
-| R6-03 | Session handles not isolated (shared underlying connection) | P1 | UNRESOLVED |
-| R6-04 | Session slab leak after remote-side closure | P1 | UNRESOLVED |
-| R6-05 | Timeout ms→secs truncation to zero + doc mismatch | P1 | UNRESOLVED |
-| R6-06 | Invalid key material handling is silently permissive | P1 | UNRESOLVED |
-| R6-07 | Stream backpressure config is global mutable state | P2 | UNRESOLVED |
-| R6-08 | Slab sweep task can be spawned repeatedly | P2 | UNRESOLVED |
-| R6-09 | Pool eviction policy is not LRU | P2 | UNRESOLVED |
-| R6-10 | Error envelope implementation fragility | P2 | UNRESOLVED |
-| R6-11 | Invalid direct addresses are silently dropped | P2 | UNRESOLVED |
+| R6-01 | Server request-body parser always assumes chunked framing | P0 | RESOLVED |
+| R6-02 | `pending_responses` leak risk on timeout/cancel paths | P0 | RESOLVED |
+| R6-03 | Session handles not isolated (shared underlying connection) | P1 | RESOLVED |
+| R6-04 | Session slab leak after remote-side closure | P1 | RESOLVED |
+| R6-05 | Timeout ms→secs truncation to zero + doc mismatch | P1 | RESOLVED |
+| R6-06 | Invalid key material handling is silently permissive | P1 | RESOLVED |
+| R6-07 | Stream backpressure config is global mutable state | P2 | RESOLVED |
+| R6-08 | Slab sweep task can be spawned repeatedly | P2 | RESOLVED |
+| R6-09 | Pool eviction policy is not LRU | P2 | RESOLVED |
+| R6-10 | Error envelope implementation fragility | P2 | RESOLVED |
+| R6-11 | Invalid direct addresses are silently dropped | P2 | RESOLVED |
 
 Status conventions:
 - `RESOLVED`: fixed and verified in code/tests.
@@ -45,6 +45,12 @@ The following items from 04/05 were re-validated and are **not duplicated** here
 ## Net-New Findings
 
 ### 1) P0 — Server request-body parser always assumes chunked framing
+
+> ✅ **RESOLVED** — `dispatch_request` now inspects `Transfer-Encoding` and
+> routes chunked requests through `pump_recv_to_body` (chunk-parsing) and
+> raw/fixed-length requests through `pump_recv_raw_to_body_limited` (byte-limit
+> enforced, no chunk parsing). Fixed in `refactor: Rust quality improvements
+> batch` (ce24f81).
 
 **Files:**
 - `crates/iroh-http-core/src/server.rs:433`
@@ -66,6 +72,12 @@ Impacts:
 
 ### 2) P0 — `pending_responses` can leak on timeout/cancel paths
 
+> ✅ **RESOLVED** — `PendingGuard` RAII drop guard added in `dispatch_request`.
+> The guard removes the map entry on drop if the task is cancelled or errors
+> before `respond()` is called. `.defuse()` is called after `rx.await` succeeds
+> to prevent double-removal. Fixed in `refactor: Rust quality improvements
+> batch` (ce24f81).
+
 **Files:**
 - `crates/iroh-http-core/src/server.rs:102`
 - `crates/iroh-http-core/src/server.rs:111`
@@ -81,6 +93,12 @@ and lookup overhead.
 
 ### 3) P1 — Session handles are not isolated; one close can terminate sibling handles
 
+> ✅ **RESOLVED** — `session_connect` no longer uses the shared connection pool.
+> Each call now dials a fresh dedicated QUIC connection so that `session_close`
+> (which sends CONNECTION_CLOSE) can never affect sibling session handles.
+> Fetch operations continue to use the pool. Fixed in
+> `fix(session): R6-03 — each session_connect gets a dedicated QUIC connection`.
+
 **Files:**
 - `crates/iroh-http-core/src/session.rs:82`
 - `crates/iroh-http-core/src/session.rs:92`
@@ -95,6 +113,11 @@ This is surprising API behavior for a session abstraction.
 
 ### 4) P1 — Session slab entries can leak after remote-side closure
 
+> ✅ **RESOLVED** — `session_closed()` now calls `try_remove` on the slab
+> after `conn.closed().await` returns, freeing the handle regardless of whether
+> explicit `session_close()` was also called. Fixed in `refactor: Rust quality
+> improvements batch` (ce24f81).
+
 **Files:**
 - `crates/iroh-http-core/src/session.rs:188`
 - `crates/iroh-http-core/src/session.rs:167`
@@ -104,6 +127,13 @@ Only explicit `session_close()` removes slab entries. Remote-initiated closure
 therefore leaves stale handles unless caller also invokes explicit close.
 
 ### 5) P1 — Timeout unit conversion truncates sub-second values to zero
+
+> ✅ **RESOLVED** — `request_timeout_ms` is now converted with
+> `Duration::from_millis` everywhere (not integer division by 1000).
+> Sub-millisecond values are not relevant since the field is in whole ms.
+> Doc comment updated: `None` now correctly documents the 60 000 ms default
+> and `Some(0)` as the explicit disable path. Fixed in `fix: R6-05 doc +
+> R6-06 strict key validation`.
 
 **Files:**
 - `crates/iroh-http-core/src/endpoint.rs:271`
@@ -117,6 +147,12 @@ Also, `ServeOptions` docs claim `None` disables timeout, while runtime applies
 a 60s default when not provided.
 
 ### 6) P1 — Invalid key material handling is silently permissive across adapters
+
+> ✅ **RESOLVED** — Tauri and Deno now fail-fast on invalid key material.
+> Tauri: closure returns `Result<NodeOptions, String>` propagated with
+> `.transpose()?`. Deno: early-return match blocks. Node and Python were
+> already correct (`try_into().map_err(...)?`). Fixed in `fix: R6-05 doc +
+> R6-06 strict key validation`.
 
 **Files:**
 - `packages/iroh-http-node/src/lib.rs:128`
@@ -133,6 +169,12 @@ This can silently change node identity instead of failing fast.
 
 ### 7) P2 — Stream backpressure config is global mutable state across all endpoints
 
+> ✅ **RESOLVED** — `configure_backpressure()` is now idempotent via a
+> `BACKPRESSURE_CONFIGURED` `AtomicBool`. Only the first call (first endpoint
+> bind) takes effect; subsequent calls are no-ops, preventing a second endpoint
+> from clobbering channel settings for an already-running endpoint. Fixed in
+> `fix: R6-07, R6-08, R6-10, R6-11`.
+
 **Files:**
 - `crates/iroh-http-core/src/stream.rs:31`
 - `crates/iroh-http-core/src/stream.rs:40`
@@ -143,6 +185,10 @@ change channel behavior for already-running endpoints in the same process.
 
 ### 8) P2 — Slab sweep task can be spawned repeatedly (one per bind)
 
+> ✅ **RESOLVED** — `start_slab_sweep()` is now guarded by a `SWEEP_STARTED`
+> `AtomicBool`. The first call spawns the sweep task; all subsequent calls
+> return immediately. Fixed in `fix: R6-07, R6-08, R6-10, R6-11`.
+
 **Files:**
 - `crates/iroh-http-core/src/stream.rs:322`
 - `crates/iroh-http-core/src/endpoint.rs:230`
@@ -152,6 +198,11 @@ task. Multi-endpoint processes can accumulate duplicate sweepers and duplicate
 log emissions.
 
 ### 9) P2 — Connection pool eviction policy is not LRU
+
+> ✅ **RESOLVED** — `Slot::Ready` now carries a `std::time::Instant` timestamp
+> updated on every cache hit. `evict_if_needed` uses `min_by_key` on the
+> timestamp to evict the oldest idle connection. Fixed in
+> `fix(pool): LRU eviction` (f75be1d).
 
 **Files:**
 - `crates/iroh-http-core/src/pool.rs:188`
@@ -164,6 +215,10 @@ This makes cache behavior non-deterministic and can evict hot connections.
 
 ### 10) P2 — Error envelope implementation has fragility points
 
+> ✅ **RESOLVED** — `classify_error_json` now uses `serde_json::Value::String`
+> to serialise the message, which handles all control characters, null bytes,
+> and Unicode escapes correctly. Fixed in `fix: R6-07, R6-08, R6-10, R6-11`.
+
 **Files:**
 - `crates/iroh-http-core/src/lib.rs:67`
 - `crates/iroh-http-core/src/lib.rs:70`
@@ -175,6 +230,11 @@ This is brittle versus serializer-based encoding. Catch-all is currently
 which can cause classification drift at platform boundaries.
 
 ### 11) P2 — Address parsing silently drops invalid direct addresses
+
+> ✅ **RESOLVED** — `parse_direct_addrs` now returns
+> `Result<Option<Vec<SocketAddr>>, String>`. Invalid address strings return
+> an `Err` instead of being silently dropped. All three binding crates
+> propagate the error to callers. Fixed in `fix: R6-07, R6-08, R6-10, R6-11`.
 
 **Files:**
 - `packages/iroh-http-node/src/lib.rs:35`

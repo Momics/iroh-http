@@ -9,6 +9,16 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./middleware": {
+      "import": "./dist/middleware.js",
+      "require": "./dist/middleware.js",
+      "types": "./dist/middleware.d.ts"
+    },
+    "./adapter": {
+      "import": "./dist/adapter.js",
+      "require": "./dist/adapter.js",
+      "types": "./dist/adapter.d.ts"
     }
   },
   "scripts": {

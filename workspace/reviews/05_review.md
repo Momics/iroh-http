@@ -1,5 +1,5 @@
 ---
-status: reported
+status: partial
 source: patches/12-28, features/*, guidelines.md
 date: 2026-04-11
 ---
@@ -101,10 +101,10 @@ No issues found. All limits working at Rust level.
   - [x] Body exceeds limit ✅ `body_exceeds_limit_resets_stream`
   - [x] Request timeout fires ✅ `request_timeout_fires`
   - [x] Concurrency exceeded/queued ✅ `serve_concurrency_limit`
-- [ ] **P2 — No platform smoke tests**
-  - No `packages/iroh-http-node/test/smoke.mjs`
-  - No Python tests at all
-  - No Deno test script
+- [x] **P2 — No platform smoke tests** ✅ FIXED
+  - ✅ `packages/iroh-http-node/test/smoke.mjs` (Node.js)
+  - ✅ `packages/iroh-http-py/tests/` — pytest suite (test_node, test_session, test_crypto, test_mdns)
+  - ✅ `packages/iroh-http-deno/test/smoke.ts` (`deno task test`)
 
 ---
 
@@ -119,9 +119,7 @@ No issues found. All limits working at Rust level.
 - [x] `node.peerInfo(peer)` returns `NodeAddr | null`
 - [x] `node.peerStats(peer)` returns `PeerStats | null`
 - [x] **P2 — DNS discovery URL override not applied** ✅ FIXED — custom URL now used in bind()
-- [ ] **P2 — mDNS `serviceName` filtering**
-  - `MdnsOptions.serviceName` accepted by `browse()`/`advertise()` but needs
-    verification that the iroh mDNS implementation actually filters by it
+- [x] **P2 — mDNS `serviceName` filtering** ✅ VERIFIED — `service_name` is passed to the iroh mDNS builder via `.service_name()` in `crates/iroh-http-discovery/src/lib.rs` (lines 102 and 143). Filtering is handled natively by the iroh library.
 
 ---
 
@@ -135,10 +133,7 @@ No issues found. All limits working at Rust level.
 - [x] Rust `///` doc comments on public items in `iroh-http-core`
 - [x] **P2 — Python `create_node()` docstring is stale** ✅ FIXED — all 16 params documented
 - [x] **P2 — No `.pyi` type stubs for Python** ✅ FIXED — full stubs generated
-- [ ] **P2 — Rust napi doc comments not verified**
-  - napi-rs copies `///` comments into generated `.d.ts`
-  - Since `index.d.ts` is stale (see below), these comments are not reaching
-    npm consumers
+- [x] **P2 — Rust napi doc comments** — N/A. The codebase switched from a committed `index.d.ts` (napi-generated) to `lib.ts` (TypeScript source) compiled to `lib.d.ts` via `tsc`. Doc comments are now written directly in `lib.ts` and reach consumers via the TypeScript compiler.
 
 ---
 
@@ -169,13 +164,7 @@ No issues found. All limits working at Rust level.
   - This is the single most critical implementation bug — it turns a streaming
     transport into a buffering one for any compressed traffic
 - [x] **P1 — `min_body_bytes` threshold is never enforced** ✅ FIXED — Content-Length checked against threshold in server.rs compression decision logic
-- [ ] **P3 — Compression design: node-level config is correct**
-  - Node-level on/off + level + threshold is the right granularity
-  - Per-request override adds complexity with no P2P benefit (both sides run
-    this library)
-  - Developers can disable per-request by setting `Content-Encoding` explicitly
-    (the library already respects this and skips auto-compression)
-  - Current API surface is well-designed — just needs the implementation fixed
+- [x] **P3 — Compression design: node-level config is correct** ✅ CONFIRMED — node-level on/off + level + threshold is the right granularity. Implementation is now streaming (P0 fix). API surface well-designed and no changes needed.
 
 ---
 
@@ -203,10 +192,7 @@ No issues found. Matches Deno.serve patterns well.
 - [x] Rust: `BrowseSession` + `AdvertiseSession` in `iroh-http-discovery`
 - [x] Wired in Node, Deno, Tauri adapters
 - [x] **P1 — Python has no browse/advertise** ✅ FIXED — `iroh-http-discovery` added as optional dep (mdns feature). `IrohBrowseSession` PyO3 class with `__aiter__`/`__anext__` async iteration. `browse()` and `advertise()` methods on `IrohNode`. Degrades gracefully without mdns feature.
-- [ ] **P2 — `NodeOptions.discovery.mdns` removal**
-  - Patch 21 says to remove `discovery.mdns` from `NodeOptions`
-  - Need to verify this was actually removed from all adapters and not just
-    shadowed by the new methods
+- [x] **P2 — `NodeOptions.discovery.mdns` removal** ✅ VERIFIED — `DiscoveryOptions` in `packages/iroh-http-shared/src/bridge.ts` contains only `dns?: boolean`. There is no `mdns` field. mDNS config lives exclusively in `MdnsOptions` on `browse()`/`advertise()`. Correctly separated.
 
 ---
 
@@ -297,12 +283,12 @@ No issues found.
 - [x] `iroh-node-id` stripped on parse, re-injected from QUIC state
 - [x] Unforgeable identity header
 
-### discovery.md ⚠️
+### discovery.md ✅
 
 - [x] DNS discovery enabled by default
 - [x] mDNS via `browse()` / `advertise()` with `AbortSignal`
 - [x] `PeerDiscoveryEvent` with `isActive`, `nodeId`, `addrs`
-- ❌ **Python: no mDNS at all**
+- ✅ **Python: mDNS browse/advertise** ✅ FIXED — `IrohBrowseSession` class, `browse(service_name)` and `advertise(service_name)` on `IrohNode`. Added in `feat: add Python mDNS browse/advertise support` (8f6c15c).
 - ✅ **Custom DNS resolver URL applied** ✅ FIXED
 
 ### observability.md ✅
@@ -314,15 +300,14 @@ No issues found.
 ### rate-limiting.md ⚠️
 
 - [x] Rust-level `maxConnectionsPerPeer` enforced
-- ❌ **No TS middleware (`rateLimit()`) — spec describes token bucket + compose**
-- This may be intentionally deferred — it's a higher-level concern
+- ✅ **TS middleware `rateLimit()` + `compose()`** ✅ FIXED — implemented in `packages/iroh-http-shared/src/middleware.ts` (token-bucket per peer, `forPeer` override, 429/403 responses, `compose()` left-to-right). Exported as `iroh-http-shared/middleware` subpath.
 
-### server-limits.md ⚠️
+### server-limits.md ✅
 
 - [x] All five limits implemented in Rust
 - [x] Four of five exposed in JS NodeOptions
 - ✅ **`maxHeaderBytes` exposed in JS** ✅ FIXED
-- ❌ **No tests for enforcement behavior**
+- ✅ **Tests for enforcement behavior** ✅ FIXED — `body_exceeds_limit_resets_stream`, `request_timeout_fires`, `serve_concurrency_limit` all passing.
 
 ### sign-verify.md ⚠️
 
@@ -367,23 +352,18 @@ No issues found.
 
 | Item | Status | Priority |
 |------|--------|----------|
-| `cargo test --workspace` in CI | ❌ Not run | **P0** |
-| 85+ Rust tests exist but only run locally | ⚠️ | — |
-| Node.js smoke test | ❌ Not created | P2 |
-| Python tests | ❌ None exist | P2 |
-| Deno test script | ❌ Not created | P2 |
-| 6 of 12 Patch 16 tests missing | ⚠️ | P1 |
-| Server limits tests | ❌ None | P1 |
+| `cargo test --workspace` in CI | ✅ Added to ci.yml | ~~P0~~ |
+| Node.js smoke test | ✅ `packages/iroh-http-node/test/smoke.mjs` | ~~P2~~ |
+| Python tests | ✅ `packages/iroh-http-py/tests/` (test_node, test_session, test_crypto, test_mdns) | ~~P2~~ |
+| Deno test script | ✅ `packages/iroh-http-deno/test/smoke.ts` (`deno task test`) | ~~P2~~ |
+| 6 of 12 Patch 16 tests missing | ✅ All added | ~~P1~~ |
+| Server limits tests | ✅ Added | ~~P1~~ |
 
 ### 2. Stale Build Artifacts
 
 | Item | Status | Priority |
 |------|--------|----------|
-| `iroh-http-node/index.d.ts` (napi-generated) | ❌ Severely stale — missing sessions, addr, discovery, correct arity | **P0** |
-| Missing: all session FFI types | ❌ | — |
-| Missing: `rawFetch` has 7 params (should be 8) | ❌ | — |
-| Missing: `JsNodeOptions` fields (14+ missing) | ❌ | — |
-| Fix: run `napi build --platform` to regenerate | — | — |
+| `iroh-http-node/index.d.ts` (napi-generated) | N/A — codebase now uses `lib.ts` + tsc → `lib.d.ts`. `index.d.ts` is a build artifact not committed to git. | ~~P0~~ |
 
 ### 3. Python Parity Gaps
 
@@ -392,7 +372,7 @@ No issues found.
 | `secret_key_sign`, `public_key_verify`, `generate_secret_key` not in `__all__` | **P1** ✅ FIXED |
 | No `session.ready` or `session.closed` on `IrohSession` | **P1** ✅ FIXED |
 | No incoming uni stream receive (`next_uni_stream`) | **P1** ✅ FIXED |
-| No mDNS `browse()` / `advertise()` — discovery crate not wired | **P1** |
+| No mDNS `browse()` / `advertise()` | ~~P1~~ ✅ FIXED |
 | `create_node()` docstring stale (4 of 16 params documented) | P2 ✅ FIXED |
 | No `.pyi` type stubs | P2 ✅ FIXED |
 | No `__aenter__` / `__aexit__` on resource classes | P2 ✅ FIXED |
@@ -414,8 +394,7 @@ No issues found.
 
 - [x] **Add `cargo test --workspace` to CI** (`ci.yml` `rust-check` job) ✅ DONE
 - [x] **Streaming zstd** — replaced with `async-compression` `ZstdEncoder`/`ZstdDecoder` ✅ DONE
-- [ ] **Regenerate `index.d.ts`** for `iroh-http-node` via `napi build --platform`.
-  Current file is dangerously out of sync with actual napi exports
+- [x] **`index.d.ts` concern resolved** — codebase switched to `lib.ts` + TypeScript compilation → `lib.d.ts`. `index.d.ts` is no longer committed; it is a transient build artifact regenerated by `napi build`.
 
 ### P1 — Fix before release
 
@@ -444,12 +423,12 @@ No issues found.
 - [x] **Add `__aenter__` / `__aexit__`** to Python `IrohNode` and `IrohSession` ✅ DONE
 - [x] **Create Node.js smoke test** (`packages/iroh-http-node/test/smoke.mjs`) ✅ DONE — passing
 - [x] **Remove FFI type leakage** from `iroh-http-shared` public exports ✅ DONE — marked `@internal`
-- [x] **Fix Tauri import path** to use `@momics/iroh-http-shared` consistently ✅ DONE
+- [x] **Create Python test suite** (`packages/iroh-http-py/tests/`) ✅ DONE — test_node, test_session, test_crypto, test_mdns; pytest-asyncio; pyproject.toml updated with dev deps
 
 ### P3 — Nice-to-have
 
 - [ ] QPACK Phase 2 (dynamic table) — deferred by design, revisit with profiling data
-- [ ] Rate-limiting middleware (`rateLimit()`, `compose()`) — may be a separate package
+- [x] Rate-limiting middleware (`rateLimit()`, `compose()`) ✅ DONE — `packages/iroh-http-shared/src/middleware.ts`; exposed as `iroh-http-shared/middleware` subpath export
 - [ ] `pathChanges(nodeId)` async iterable (observability feature spec)
 - [ ] Replace custom base32 implementations with maintained crate/package
 - [ ] Per-connection idle timeout in pool (currently relies on max_idle count only)

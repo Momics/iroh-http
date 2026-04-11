@@ -66,6 +66,10 @@ pub struct NodeOptions {
     pub handle_ttl_ms: Option<u64>,
     /// Maximum number of idle connections to keep in the pool.
     pub max_pooled_connections: Option<usize>,
+    /// Milliseconds a pooled connection may remain idle before being evicted.
+    /// `None` (default) keeps connections indefinitely (until closed or the pool
+    /// reaches `max_pooled_connections`).
+    pub pool_idle_timeout_ms: Option<u64>,
     /// Maximum byte size of a QPACK-encoded request or response head.
     /// Default: 65536 (64 KB).
     pub max_header_size: Option<usize>,
@@ -119,6 +123,11 @@ pub(crate) struct EndpointInner {
     pub max_request_body_bytes: Option<usize>,
     /// Drain timeout in seconds for graceful shutdown.
     pub drain_timeout_secs: Option<u64>,
+    /// Per-endpoint slab set for all streams/sessions/requests.
+    pub endpoint_idx: u32,
+    /// Slab set owned by this endpoint (kept alive for the endpoint's lifetime).
+    #[allow(dead_code)]
+    pub slabs: std::sync::Arc<crate::stream::SlabSet>,
     /// Active serve handle, if `serve()` has been called.
     pub serve_handle: std::sync::Mutex<Option<ServeHandle>>,
     /// Body compression options, if the feature is enabled.
@@ -240,18 +249,27 @@ impl IrohEndpoint {
 
         let node_id_str = crate::base32_encode(ep.id().as_bytes());
 
+        let endpoint_idx = crate::stream::alloc_endpoint_idx();
+        let slabs = std::sync::Arc::new(crate::stream::SlabSet::new());
+        crate::stream::register_endpoint(endpoint_idx, slabs.clone());
+
         Ok(Self {
             inner: Arc::new(EndpointInner {
                 ep,
                 node_id_str,
                 max_consecutive_errors: opts.max_consecutive_errors.unwrap_or(5),
-                pool: ConnectionPool::new(opts.max_pooled_connections),
+                pool: ConnectionPool::new(
+                    opts.max_pooled_connections,
+                    opts.pool_idle_timeout_ms.map(std::time::Duration::from_millis),
+                ),
                 max_header_size: opts.max_header_size.unwrap_or(64 * 1024),
                 max_concurrency: opts.max_concurrency,
                 max_connections_per_peer: opts.max_connections_per_peer,
                 request_timeout_ms: opts.request_timeout_ms,
                 max_request_body_bytes: opts.max_request_body_bytes,
                 drain_timeout_secs: opts.drain_timeout_secs,
+                endpoint_idx,
+                slabs,
                 serve_handle: std::sync::Mutex::new(None),
                 #[cfg(feature = "compression")]
                 compression: opts.compression,
@@ -295,6 +313,7 @@ impl IrohEndpoint {
     ///
     /// If no serve loop is running, closes the endpoint immediately.
     pub async fn close(&self) {
+        crate::stream::unregister_endpoint(self.inner.endpoint_idx);
         let handle = self.inner.serve_handle.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(h) = handle {
             h.drain().await;
@@ -305,6 +324,7 @@ impl IrohEndpoint {
     /// Immediate close: abort the serve loop and close the endpoint with
     /// no drain period.
     pub async fn close_force(&self) {
+        crate::stream::unregister_endpoint(self.inner.endpoint_idx);
         let handle = self.inner.serve_handle.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(h) = handle {
             h.abort();
@@ -484,4 +504,25 @@ pub struct PathInfo {
     pub addr: String,
     /// Whether this is the currently selected/active path.
     pub active: bool,
+}
+
+/// Parse an optional list of socket address strings into `SocketAddr` values.
+///
+/// Returns `Err` if any string cannot be parsed as a `host:port` address so
+/// that callers can surface misconfiguration rather than silently ignoring it.
+pub fn parse_direct_addrs(
+    addrs: &Option<Vec<String>>,
+) -> Result<Option<Vec<std::net::SocketAddr>>, String> {
+    match addrs {
+        None => Ok(None),
+        Some(v) => {
+            let mut out = Vec::with_capacity(v.len());
+            for s in v {
+                let addr = s.parse::<std::net::SocketAddr>()
+                    .map_err(|e| format!("invalid direct address {s:?}: {e}"))?;
+                out.push(addr);
+            }
+            Ok(Some(out))
+        }
+    }
 }

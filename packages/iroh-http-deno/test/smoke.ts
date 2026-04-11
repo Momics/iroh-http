@@ -1,38 +1,180 @@
 /**
  * Smoke test — verifies the native addon loads and basic operations work.
  *
- * Run: deno run --allow-read --allow-ffi test/smoke.ts
+ * Run (after `deno task build`):
+ *   deno test --allow-read --allow-ffi test/smoke.ts
  *
- * Note: the native library must be built first (`deno task build`).
+ * Or as a plain script:
+ *   deno run --allow-read --allow-ffi test/smoke.ts
  */
 
+import { assertEquals, assertExists, assertInstanceOf, assert } from "jsr:@std/assert@^1";
 import { createNode } from "../mod.ts";
-import { assertEquals, assertExists, assertGreater } from "jsr:@std/assert@^1";
+import { secretKeySign, publicKeyVerify, generateSecretKey } from "../mod.ts";
 
-Deno.test("smoke: createNode, nodeId, close", async () => {
-  const node = await createNode({ relayMode: "disabled" });
+// ── Node creation ──────────────────────────────────────────────────────────────
 
-  assertExists(node.nodeId, "nodeId should be a non-empty string");
-  assertGreater(node.nodeId.length, 10, "nodeId should be base32-encoded");
-  console.log(`   nodeId = ${node.nodeId}`);
+Deno.test("createNode — nodeId is a non-empty base32 string", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    assertExists(node.nodeId, "nodeId must exist");
+    assert(node.nodeId.length > 10, `nodeId too short: ${node.nodeId}`);
+    console.log(`  nodeId = ${node.nodeId}`);
+  } finally {
+    await node.close();
+  }
+});
 
-  const kp = node.keypair;
-  assertEquals(kp instanceof Uint8Array, true, "keypair should be Uint8Array");
-  assertEquals(kp.length, 32, "keypair should be 32 bytes");
+Deno.test("createNode — keypair is a 32-byte Uint8Array", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    assertInstanceOf(node.keypair, Uint8Array, "keypair must be Uint8Array");
+    assertEquals(node.keypair.length, 32, "keypair must be 32 bytes");
+  } finally {
+    await node.close();
+  }
+});
 
-  assertExists(node.publicKey, "publicKey should exist");
-  assertEquals(
-    node.publicKey.toString(),
-    node.nodeId,
-    "publicKey.toString() should match nodeId",
+Deno.test("createNode — same key bytes produce same nodeId", async () => {
+  const key = new Uint8Array(32).fill(0xab);
+  const n1 = await createNode({ key, disableNetworking: true });
+  const n2 = await createNode({ key, disableNetworking: true });
+  try {
+    assertEquals(n1.nodeId, n2.nodeId, "deterministic key must yield deterministic nodeId");
+  } finally {
+    await n1.close();
+    await n2.close();
+  }
+});
+
+Deno.test("createNode — ticket() returns a non-trivial string", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    const ticket = await node.ticket();
+    assert(typeof ticket === "string" && ticket.length > 20, "ticket must be a substantial string");
+  } finally {
+    await node.close();
+  }
+});
+
+Deno.test("createNode — addr() returns id and address array", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    const info = await node.addr();
+    assertExists(info.id, "addr must have id");
+    assert(Array.isArray(info.addrs), "addr.addrs must be an array");
+  } finally {
+    await node.close();
+  }
+});
+
+// ── Cryptography ───────────────────────────────────────────────────────────────
+
+Deno.test("generateSecretKey — returns 32 bytes", async () => {
+  const key = await generateSecretKey();
+  assertInstanceOf(key, Uint8Array);
+  assertEquals(key.length, 32);
+});
+
+Deno.test("generateSecretKey — successive calls differ", async () => {
+  const k1 = await generateSecretKey();
+  const k2 = await generateSecretKey();
+  assert(
+    !k1.every((b: number, i: number) => b === k2[i]),
+    "Two generated keys must differ",
   );
+});
 
-  assertExists(node.secretKey, "secretKey should exist");
-  assertEquals(
-    node.secretKey.toBytes().length,
-    32,
-    "secretKey should be 32 bytes",
-  );
+Deno.test("secretKeySign — returns 64-byte signature", async () => {
+  const key = await generateSecretKey();
+  const sig = await secretKeySign(key, new TextEncoder().encode("hello"));
+  assertInstanceOf(sig, Uint8Array);
+  assertEquals(sig.length, 64);
+});
 
-  await node.close();
+Deno.test("secretKeySign — deterministic for same key + message", async () => {
+  const key = await generateSecretKey();
+  const msg = new TextEncoder().encode("deterministic");
+  const s1 = await secretKeySign(key, msg);
+  const s2 = await secretKeySign(key, msg);
+  assertEquals(s1, s2);
+});
+
+Deno.test("publicKeyVerify — valid signature passes", async () => {
+  const key = await generateSecretKey();
+  const node = await createNode({ key, disableNetworking: true });
+  const msg = new TextEncoder().encode("test message");
+  const sig = await secretKeySign(key, msg);
+
+  const pubBytes = node.publicKey.bytes;
+  try {
+    assert(await publicKeyVerify(pubBytes, msg, sig), "Valid signature must verify");
+    const tampered = new Uint8Array(sig);
+    tampered[0] ^= 0xff;
+    assert(!(await publicKeyVerify(pubBytes, msg, tampered)), "Tampered signature must fail");
+  } finally {
+    await node.close();
+  }
+});
+
+// ── Serve / fetch round-trip ───────────────────────────────────────────────────
+
+Deno.test("serve + fetch — basic round-trip", async () => {
+  const server = await createNode();
+  const client = await createNode();
+
+  try {
+    const info = await server.addr();
+    const serverId = info.id;
+    const serverAddrs = info.addrs;
+
+    const ac = new AbortController();
+    const handle = server.serve({ signal: ac.signal }, (_req: Request) =>
+      new Response("hello from deno", { status: 200 }),
+    );
+
+    const resp = await client.fetch(serverId, "https://example.com/", {
+      directAddrs: serverAddrs,
+    });
+    assertEquals(resp.status, 200);
+    const text = await resp.text();
+    assertEquals(text, "hello from deno");
+
+    ac.abort();
+    await handle.finished;
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+Deno.test("serve + fetch — POST with body", async () => {
+  const server = await createNode();
+  const client = await createNode();
+
+  try {
+    const info = await server.addr();
+    const serverId = info.id;
+    const serverAddrs = info.addrs;
+
+    const ac = new AbortController();
+    const handle = server.serve({ signal: ac.signal }, async (req: Request) => {
+      const body = await req.text();
+      return new Response(body.toUpperCase(), { status: 201 });
+    });
+
+    const resp = await client.fetch(serverId, "https://example.com/echo", {
+      method: "POST",
+      body: "ping",
+      directAddrs: serverAddrs,
+    });
+    assertEquals(resp.status, 201);
+    assertEquals(await resp.text(), "PING");
+
+    ac.abort();
+    await handle.finished;
+  } finally {
+    await server.close();
+    await client.close();
+  }
 });

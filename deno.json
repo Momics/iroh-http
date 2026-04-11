@@ -1,0 +1,7 @@
+{
+  "workspace": [
+    "packages/iroh-http-shared",
+    "packages/iroh-http-deno"
+  ],
+  "unstable": ["sloppy-imports"]
+}

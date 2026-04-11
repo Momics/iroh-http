@@ -230,6 +230,17 @@ export interface NodeOptions {
   drainTimeout?: number;
   /** TTL in milliseconds for slab handle entries.  `0` disables sweeping.  Default: 300 000. */
   handleTtl?: number;
+  /**
+   * Maximum number of idle QUIC connections to keep in the pool.
+   * `undefined` means unlimited.
+   */
+  maxPooledConnections?: number;
+  /**
+   * Milliseconds a pooled connection may remain idle before being evicted and
+   * a fresh handshake is forced on next use.  `undefined` (default) keeps
+   * connections indefinitely (until the pool fills or they close).
+   */
+  poolIdleTimeoutMs?: number;
 
   // ── Compression ───────────────────────────────────────────────────────────
   /**
@@ -283,6 +294,14 @@ export interface NodeOptions {
   // ── Mobile / background lifecycle ─────────────────────────────────────────
   /** Mobile/background lifecycle options. */
   lifecycle?: LifecycleOptions;
+
+  // ── Testing / CI ──────────────────────────────────────────────────────────
+  /**
+   * Bind to local addresses only; no relay, no DNS discovery.
+   * Use for tests and offline development.
+   * @default false
+   */
+  disableNetworking?: boolean;
 }
 
 /**
@@ -461,6 +480,21 @@ export interface IrohNode {
    * Use this to determine whether a connection is relayed or direct.
    */
   peerStats(peer: PublicKey | string): Promise<PeerStats | null>;
+  /**
+   * Async iterable that yields a `PathInfo` each time the active network
+   * path to `peer` changes (e.g. from relay to direct, or between addresses).
+   *
+   * The stream polls `peerStats` at `pollIntervalMs` intervals (default 500 ms)
+   * and only yields when the selected path differs from the previous one.
+   * Break the `for await` loop to stop watching.
+   *
+   * ```ts
+   * for await (const path of node.pathChanges(peerId)) {
+   *   console.log(path.relay ? `via relay ${path.addr}` : `direct ${path.addr}`);
+   * }
+   * ```
+   */
+  pathChanges(peer: PublicKey | string, pollIntervalMs?: number): AsyncIterable<PathInfo>;
   /** Close the endpoint and release resources. */
   close(options?: CloseOptions): Promise<void>;
   /** Enables `await using node = await createNode()` (TC39 explicit resource management). */

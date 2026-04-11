@@ -14,12 +14,9 @@ export type { IrohSession, WebTransportBidirectionalStream, WebTransportCloseInf
 export type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
 
 // ── Internal types (used by platform adapters, not end users) ───────────────
-/** @internal */ export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
-              RawServeFn, RawFetchFn, AllocBodyWriterFn,
-              FfiDuplexStream, RawConnectFn } from "./bridge.js";
-/** @internal */ export type { RawSessionFns } from "./session.js";
+// Adapter packages import these from "@momics/iroh-http-shared/adapter" instead.
+// Bridge is kept here for use by buildNode() below.
 export { buildSession } from "./session.js";
-export type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
 export { makeFetch, makeConnect } from "./fetch.js";
 export { makeServe } from "./serve.js";
@@ -46,7 +43,7 @@ export function ticketNodeId(ticket: string): string {
   return ticket;
 }
 
-import type { Bridge, CloseOptions, EndpointInfo, NodeOptions, IrohNode, MdnsOptions, NodeAddrInfo, PeerDiscoveryEvent, PeerStats, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
+import type { Bridge, CloseOptions, EndpointInfo, NodeOptions, IrohNode, MdnsOptions, NodeAddrInfo, PeerDiscoveryEvent, PeerStats, PathInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
 import type { RawSessionFns, WebTransportCloseInfo } from "./session.js";
 import { buildSession } from "./session.js";
 import { makeFetch, makeConnect } from "./fetch.js";
@@ -214,6 +211,69 @@ export function buildNode(
       if (!addrFns) return null;
       const nodeId = resolveNodeId(peer);
       return addrFns.peerStats(info.endpointHandle, nodeId);
+    },
+    pathChanges(peer: PublicKey | string, pollIntervalMs = 500): AsyncIterable<PathInfo> {
+      const nodeId = resolveNodeId(peer);
+      const endpointHandle = info.endpointHandle;
+      return {
+        [Symbol.asyncIterator]() {
+          let stopped = false;
+          let lastPath: string | null = null;
+          let timeoutId: ReturnType<typeof setTimeout> | null = null;
+          let wakeResolve: (() => void) | null = null;
+
+          // Schedule a wake-up after pollIntervalMs.
+          function scheduleWake() {
+            timeoutId = setTimeout(() => {
+              timeoutId = null;
+              const r = wakeResolve;
+              wakeResolve = null;
+              r?.();
+            }, pollIntervalMs);
+          }
+
+          function cancelWake() {
+            if (timeoutId !== null) { clearTimeout(timeoutId); timeoutId = null; }
+            const r = wakeResolve;
+            wakeResolve = null;
+            r?.();
+          }
+
+          return {
+            async next(): Promise<IteratorResult<PathInfo>> {
+              while (!stopped) {
+                const stats = addrFns
+                  ? await addrFns.peerStats(endpointHandle, nodeId)
+                  : null;
+
+                if (stats) {
+                  const selected = stats.paths.find(p => p.active);
+                  if (selected) {
+                    const key = `${selected.relay}:${selected.addr}`;
+                    if (key !== lastPath) {
+                      lastPath = key;
+                      scheduleWake();
+                      return { done: false as const, value: selected };
+                    }
+                  }
+                }
+
+                // Wait for the next poll interval.
+                await new Promise<void>(resolve => {
+                  wakeResolve = resolve;
+                  scheduleWake();
+                });
+              }
+              return { done: true as const, value: undefined };
+            },
+            return(): Promise<IteratorResult<PathInfo>> {
+              stopped = true;
+              cancelWake();
+              return Promise.resolve({ done: true as const, value: undefined });
+            },
+          };
+        },
+      };
     },
     closed: closedPromise,
     close: async (options?) => {

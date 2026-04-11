@@ -18,6 +18,16 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]
+
 [tool.maturin]
 module-name     = "iroh_http.iroh_http_py"
 python-packages = ["iroh_http"]

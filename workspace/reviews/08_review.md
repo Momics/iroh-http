@@ -17,18 +17,18 @@ Backwards-compatibility is not a concern — nothing has been released.
 
 | ID | Finding (short) | Priority | Status |
 |----|-----------------|----------|--------|
-| R8-01 | `serialize_request_head` / `parse_request_head` never called outside framing | P1 | UNRESOLVED |
-| R8-02 | `serialize_response_head` / `parse_response_head` never called outside framing | P1 | UNRESOLVED |
-| R8-03 | `httparse` dependency only needed by items R8-01/R8-02 | P1 | UNRESOLVED |
-| R8-04 | ALPN constants duplicated between `iroh-http-framing` and `iroh-http-core` | P2 | UNRESOLVED |
-| R8-05 | `reason_phrase()` never imported by any crate outside framing | P2 | UNRESOLVED |
-| R8-06 | `FfiRequest` struct defined but never constructed in any binding | P2 | UNRESOLVED |
-| R8-07 | `session_ready()` is a no-op never called by any binding | P2 | UNRESOLVED |
-| R8-08 | `ConnectionPool::remove()` suppressed with `#[allow(dead_code)]` | P2 | UNRESOLVED |
-| R8-09 | Stateless QPACK helpers are `pub` inside a `pub(crate)` module but only called within the same file | P3 | UNRESOLVED |
-| R8-10 | `add_mdns()` in `iroh-http-discovery` is not called by any binding | P2 | UNRESOLVED |
-| R8-11 | `mobile_mdns.rs` is an orphaned stub file — not declared with `mod` in `lib.rs` | P1 | UNRESOLVED |
-| R8-12 | `parse_direct_addrs()` copy-pasted identically in three binding crates | P3 | UNRESOLVED |
+| R8-01 | `serialize_request_head` / `parse_request_head` never called outside framing | P1 | RESOLVED |
+| R8-02 | `serialize_response_head` / `parse_response_head` never called outside framing | P1 | RESOLVED |
+| R8-03 | `httparse` dependency only needed by items R8-01/R8-02 | P1 | RESOLVED |
+| R8-04 | ALPN constants duplicated between `iroh-http-framing` and `iroh-http-core` | P2 | RESOLVED |
+| R8-05 | `reason_phrase()` never imported by any crate outside framing | P2 | RESOLVED |
+| R8-06 | `FfiRequest` struct defined but never constructed in any binding | P2 | RESOLVED |
+| R8-07 | `session_ready()` is a no-op never called by any binding | P2 | INVALID — called by `iroh-http-py` (added after this review) |
+| R8-08 | `ConnectionPool::remove()` suppressed with `#[allow(dead_code)]` | P2 | RESOLVED |
+| R8-09 | Stateless QPACK helpers are `pub` inside a `pub(crate)` module but only called within the same file | P3 | RESOLVED |
+| R8-10 | `add_mdns()` in `iroh-http-discovery` is not called by any binding | P2 | RESOLVED |
+| R8-11 | `mobile_mdns.rs` is an orphaned stub file — not declared with `mod` in `lib.rs` | P1 | RESOLVED — file was not present on disk |
+| R8-12 | `parse_direct_addrs()` copy-pasted identically in three binding crates | P3 | RESOLVED |
 
 Status conventions: `RESOLVED` / `PARTIAL` / `UNRESOLVED`
 

@@ -7,8 +7,14 @@
 
 import { resolve, dirname, fromFileUrl } from "@std/path";
 import type {
-  Bridge,
   EndpointInfo,
+  NodeOptions,
+  NodeAddrInfo,
+  PeerDiscoveryEvent,
+  PeerStats,
+} from "@momics/iroh-http-shared";
+import type {
+  Bridge,
   FfiResponse,
   FfiResponseHead,
   FfiDuplexStream,
@@ -17,14 +23,10 @@ import type {
   RawConnectFn,
   AllocBodyWriterFn,
   RequestPayload,
-  NodeOptions,
-  NodeAddrInfo,
-  PeerDiscoveryEvent,
-  PeerStats,
-} from "@momics/iroh-http-shared";
+  RawSessionFns,
+} from "@momics/iroh-http-shared/adapter";
 import { classifyError, classifyBindError } from "@momics/iroh-http-shared";
 import type { AddrFunctions, DiscoveryFunctions } from "@momics/iroh-http-shared";
-import type { RawSessionFns } from "@momics/iroh-http-shared";
 
 // ── Platform library resolution ───────────────────────────────────────────────
 
@@ -98,20 +100,25 @@ const chunkBuf = new Uint8Array(65536);
 async function call<T>(method: string, payload: unknown): Promise<T> {
   const methodBuf  = METHOD_BUFS[method] ?? enc.encode(method);
   const payloadBuf = enc.encode(JSON.stringify(payload));
+  // Deno's FFI types require Uint8Array<ArrayBuffer>; TextEncoder returns
+  // Uint8Array<ArrayBufferLike>. The backing store is always a plain ArrayBuffer
+  // in practice — cast to satisfy the stricter type.
+  const mb = methodBuf  as Uint8Array<ArrayBuffer>;
+  const pb = payloadBuf as Uint8Array<ArrayBuffer>;
 
   let n = await lib.symbols.iroh_http_call(
-    methodBuf,  BigInt(methodBuf.byteLength),
-    payloadBuf, BigInt(payloadBuf.byteLength),
-    outBuf,     BigInt(outBuf.byteLength),
+    mb,     BigInt(mb.byteLength),
+    pb,     BigInt(pb.byteLength),
+    outBuf, BigInt(outBuf.byteLength),
   ) as number;
 
   if (n < 0) {
     // Output buffer too small; grow permanently and retry once.
     outBuf = new Uint8Array(-n);
     n = await lib.symbols.iroh_http_call(
-      methodBuf,  BigInt(methodBuf.byteLength),
-      payloadBuf, BigInt(payloadBuf.byteLength),
-      outBuf,     BigInt(outBuf.byteLength),
+      mb,     BigInt(mb.byteLength),
+      pb,     BigInt(pb.byteLength),
+      outBuf, BigInt(outBuf.byteLength),
     ) as number;
   }
 
@@ -178,6 +185,7 @@ export const rawFetch: RawFetchFn = async (
   headers: [string, string][],
   reqBodyHandle: number | null,
   fetchToken: number,
+  directAddrs: string[] | null,
 ) => {
   const res = await call<{
     status: number;
@@ -193,6 +201,7 @@ export const rawFetch: RawFetchFn = async (
     headers,
     reqBodyHandle: reqBodyHandle ?? null,
     fetchToken,
+    directAddrs: directAddrs ?? null,
   });
   return {
     status:         res.status,
@@ -322,6 +331,8 @@ export async function createEndpointInfo(options?: NodeOptions): Promise<Endpoin
       maxConsecutiveErrors: options?.maxConsecutiveErrors ?? null,
       drainTimeout:         options?.drainTimeout ?? null,
       handleTtl:            options?.handleTtl ?? null,
+      maxPooledConnections: options?.maxPooledConnections ?? null,
+      poolIdleTimeoutMs:    options?.poolIdleTimeoutMs ?? null,
       disableNetworking,
       proxyUrl:             options?.proxyUrl ?? null,
       proxyFromEnv:         options?.proxyFromEnv ?? null,
@@ -448,3 +459,44 @@ export const denoSessionFns: RawSessionFns = {
     await call<Record<never, never>>("sessionClose", { sessionHandle, closeCode, reason });
   },
 };
+
+// ── Cryptography ───────────────────────────────────────────────────────────────
+
+/**
+ * Sign `data` with a 32-byte Ed25519 secret key.
+ * Returns a 64-byte signature.
+ */
+export async function secretKeySign(secretKey: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  const b64 = await call<string>("secretKeySign", {
+    secretKey: encodeBase64(secretKey),
+    data:      encodeBase64(data),
+  });
+  return decodeBase64(b64);
+}
+
+/**
+ * Verify an Ed25519 signature.
+ * @param publicKey  32-byte Ed25519 public key.
+ * @param data       Original message bytes.
+ * @param signature  64-byte signature to verify.
+ * @returns `true` if the signature is valid.
+ */
+export async function publicKeyVerify(
+  publicKey: Uint8Array,
+  data: Uint8Array,
+  signature: Uint8Array,
+): Promise<boolean> {
+  return call<boolean>("publicKeyVerify", {
+    publicKey: encodeBase64(publicKey),
+    data:      encodeBase64(data),
+    signature: encodeBase64(signature),
+  });
+}
+
+/**
+ * Generate a fresh random 32-byte Ed25519 secret key.
+ */
+export async function generateSecretKey(): Promise<Uint8Array> {
+  const b64 = await call<string>("generateSecretKey", {});
+  return decodeBase64(b64);
+}

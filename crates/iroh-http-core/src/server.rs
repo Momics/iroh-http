@@ -9,7 +9,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{Mutex, OnceLock},
+    sync::Mutex,
 };
 
 use bytes::Bytes;
@@ -23,6 +23,7 @@ use crate::{
         BodyReader, BodyWriter, TrailerRx,
         insert_reader, insert_writer, make_body_channel,
         insert_trailer_sender, insert_trailer_receiver, remove_trailer_sender,
+        ResponseHeadEntry, get_slabs, decompose_handle, compose_handle,
     },
     IrohEndpoint, RequestPayload,
 };
@@ -42,8 +43,8 @@ pub struct ServeOptions {
     /// Number of consecutive accept errors before the loop gives up.
     /// `None` uses the default (5).
     pub max_consecutive_errors: Option<usize>,
-    /// Per-request timeout in milliseconds.  `None` disables the timeout.
-    /// Default: 60000 (60 seconds).
+    /// Per-request timeout in milliseconds.  `None` uses the default (60 000 ms).
+    /// Pass `Some(0)` to disable the timeout entirely.
     pub request_timeout_ms: Option<u64>,
     /// Maximum number of connections from a single peer.  Default: 8.
     pub max_connections_per_peer: Option<usize>,
@@ -96,27 +97,18 @@ impl ServeHandle {
 
 // ── Pending response head registry ───────────────────────────────────────────
 
-struct ResponseHead {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-}
-
-fn pending_responses() -> &'static Mutex<HashMap<u32, oneshot::Sender<ResponseHead>>> {
-    static S: OnceLock<Mutex<HashMap<u32, oneshot::Sender<ResponseHead>>>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Drop guard that removes a `pending_responses` entry if the serving task
+/// Drop guard that removes a `response_head` entry if the serving task
 /// is cancelled (timeout) or hits an error before `respond()` is called.
 /// Call `.defuse()` after `rx.await` succeeds to prevent cleanup.
 struct PendingGuard {
-    handle: u32,
+    ep_idx: u32,
+    id: u32,
     active: bool,
 }
 
 impl PendingGuard {
-    fn new(handle: u32) -> Self {
-        Self { handle, active: true }
+    fn new(ep_idx: u32, id: u32) -> Self {
+        Self { ep_idx, id, active: true }
     }
     /// Prevent the guard from removing the entry on drop.
     fn defuse(&mut self) {
@@ -127,7 +119,9 @@ impl PendingGuard {
 impl Drop for PendingGuard {
     fn drop(&mut self) {
         if self.active {
-            pending_responses().lock().unwrap_or_else(|e| e.into_inner()).remove(&self.handle);
+            if let Some(slabs) = get_slabs(self.ep_idx) {
+                slabs.response_head.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.id);
+            }
         }
     }
 }
@@ -137,13 +131,14 @@ impl Drop for PendingGuard {
 /// Wakes the waiting Rust task so it can write the status line + headers to
 /// the QUIC stream and start pumping the response body.
 pub fn respond(req_handle: u32, status: u16, headers: Vec<(String, String)>) -> Result<(), String> {
-    let sender = pending_responses()
-        .lock()
-        .unwrap()
-        .remove(&req_handle)
+    let (ep_idx, id) = decompose_handle(req_handle);
+    let slabs = get_slabs(ep_idx)
+        .ok_or_else(|| format!("unknown req_handle: {req_handle}"))?;
+    let sender = slabs.response_head.lock().unwrap_or_else(|e| e.into_inner())
+        .remove(&id)
         .ok_or_else(|| format!("unknown req_handle: {req_handle}"))?;
     sender
-        .send(ResponseHead { status, headers })
+        .send(ResponseHeadEntry { status, headers })
         .map_err(|_| "serve task dropped before respond".to_string())
 }
 
@@ -183,6 +178,7 @@ where
     );
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max));
     let on_request = std::sync::Arc::new(on_request);
+    let ep_idx = endpoint.inner.endpoint_idx;
 
     // Per-peer active connection counts.
     let peer_counts: std::sync::Arc<Mutex<HashMap<iroh::PublicKey, usize>>> =
@@ -256,6 +252,7 @@ where
 
             tokio::spawn(async move {
                 handle_connection(
+                    ep_idx,
                     conn,
                     sem,
                     on_req,
@@ -309,6 +306,7 @@ where
 }
 
 async fn handle_connection<F>(
+    ep_idx: u32,
     conn: Connection,
     semaphore: std::sync::Arc<tokio::sync::Semaphore>,
     on_request: std::sync::Arc<F>,
@@ -348,6 +346,7 @@ async fn handle_connection<F>(
         tokio::spawn(async move {
             let _permit = permit; // held for duration of request
             let fut = handle_stream(
+                ep_idx,
                 send,
                 recv,
                 on_req,
@@ -380,7 +379,7 @@ async fn handle_connection<F>(
 /// Returned by [`dispatch_request`] — carries the async pieces the caller
 /// needs to await and forward to [`write_response`].
 struct DispatchResult {
-    rx: oneshot::Receiver<ResponseHead>,
+    rx: oneshot::Receiver<ResponseHeadEntry>,
     pending_guard: PendingGuard,
     res_reader: BodyReader,
     opt_res_trailer_rx: Option<TrailerRx>,
@@ -390,6 +389,7 @@ struct DispatchResult {
 /// Allocates all request/response body channels and trailer channels, spawns
 /// the recv-to-body pump task, and fires `on_request`.
 fn dispatch_request<F>(
+    ep_idx: u32,
     recv: iroh::endpoint::RecvStream,
     method: String,
     path: &str,
@@ -414,24 +414,24 @@ where
     } else {
         req_reader
     };
-    let req_body_handle = insert_reader(req_reader);
+    let req_body_handle = insert_reader(ep_idx, req_reader);
 
     // Allocate response body channel.
     let (res_writer, res_reader) = make_body_channel();
-    let res_body_handle = insert_writer(res_writer);
+    let res_body_handle = insert_writer(ep_idx, res_writer);
 
     // Allocate oneshot for response head.
-    let (tx, rx) = oneshot::channel::<ResponseHead>();
-    let req_handle = allocate_req_handle(tx);
-    let pending_guard = PendingGuard::new(req_handle);
+    let (tx, rx) = oneshot::channel::<ResponseHeadEntry>();
+    let req_handle = allocate_req_handle(ep_idx, tx);
+    let pending_guard = PendingGuard::new(ep_idx, decompose_handle(req_handle).1);
 
     // Allocate trailer channels (skipped for duplex streams — raw bytes only).
     let (opt_req_trailer_tx, opt_res_trailer_rx, req_trailers_handle, res_trailers_handle) =
         if !is_bidi {
             let (rq_tx, rq_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-            let rq_h = insert_trailer_receiver(rq_rx);
+            let rq_h = insert_trailer_receiver(ep_idx, rq_rx);
             let (rs_tx, rs_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-            let rs_h = insert_trailer_sender(rs_tx);
+            let rs_h = insert_trailer_sender(ep_idx, rs_tx);
             (Some(rq_tx), Some(rs_rx), rq_h, rs_h)
         } else {
             (None, None, 0u32, 0u32)
@@ -487,7 +487,7 @@ where
 async fn write_response(
     send: &mut iroh::endpoint::SendStream,
     codec: &std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
-    response_head: ResponseHead,
+    response_head: ResponseHeadEntry,
     is_bidi: bool,
     res_reader: BodyReader,
     opt_res_trailer_rx: Option<TrailerRx>,
@@ -580,6 +580,7 @@ async fn write_response(
 }
 
 async fn handle_stream<F>(
+    ep_idx: u32,
     mut send: iroh::endpoint::SendStream,
     mut recv: iroh::endpoint::RecvStream,
     on_request: std::sync::Arc<F>,
@@ -624,6 +625,7 @@ where
         opt_res_trailer_rx,
         res_trailers_handle,
     } = dispatch_request(
+        ep_idx,
         recv,
         method,
         &path,
@@ -667,16 +669,11 @@ where
 
 // ── Helper: allocate a req_handle ─────────────────────────────────────────────
 
-static NEXT_REQ_HANDLE: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(1);
-
-fn allocate_req_handle(sender: oneshot::Sender<ResponseHead>) -> u32 {
-    let handle = NEXT_REQ_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    pending_responses()
-        .lock()
-        .unwrap()
-        .insert(handle, sender);
-    handle
+fn allocate_req_handle(ep_idx: u32, sender: oneshot::Sender<ResponseHeadEntry>) -> u32 {
+    let slabs = get_slabs(ep_idx).expect("endpoint not registered");
+    let id = slabs.next_req_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    slabs.response_head.lock().unwrap_or_else(|e| e.into_inner()).insert(id, sender);
+    compose_handle(ep_idx, id)
 }
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────

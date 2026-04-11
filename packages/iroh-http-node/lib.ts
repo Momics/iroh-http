@@ -57,22 +57,24 @@ import {
   buildNode,
   type AddrFunctions,
   type DiscoveryFunctions,
-  type Bridge,
-  type RawFetchFn,
-  type RawServeFn,
-  type RawConnectFn,
-  type RawSessionFns,
-  type AllocBodyWriterFn,
   type NodeOptions,
   type IrohNode,
   type NodeAddrInfo,
-  type FfiResponse,
-  type FfiDuplexStream,
-  type RequestPayload,
-  type FfiResponseHead,
   classifyBindError,
   type SecretKey,
 } from "@momics/iroh-http-shared";
+import type {
+  Bridge,
+  RawFetchFn,
+  RawServeFn,
+  RawConnectFn,
+  RawSessionFns,
+  AllocBodyWriterFn,
+  FfiResponse,
+  FfiDuplexStream,
+  RequestPayload,
+  FfiResponseHead,
+} from "@momics/iroh-http-shared/adapter";
 
 // ── Bridge implementation ─────────────────────────────────────────────────────
 
@@ -239,19 +241,19 @@ const nodeSessionFns: RawSessionFns = {
     const ffi = await napiSessionNextBidiStream(sessionHandle);
     return ffi ? { readHandle: ffi.readHandle, writeHandle: ffi.writeHandle } satisfies FfiDuplexStream : null;
   },
-  createUniStream: async (sessionHandle) => napiSessionCreateUniStream(sessionHandle),
-  nextUniStream: async (sessionHandle) => napiSessionNextUniStream(sessionHandle) ?? null,
-  sendDatagram: async (sessionHandle, data) => napiSessionSendDatagram(sessionHandle, data),
-  recvDatagram: async (sessionHandle) => {
+  createUniStream: async (sessionHandle: number) => napiSessionCreateUniStream(sessionHandle),
+  nextUniStream: async (sessionHandle: number) => napiSessionNextUniStream(sessionHandle) ?? null,
+  sendDatagram: async (sessionHandle: number, data: Uint8Array) => napiSessionSendDatagram(sessionHandle, data),
+  recvDatagram: async (sessionHandle: number) => {
     const buf = await napiSessionRecvDatagram(sessionHandle);
     return buf ? new Uint8Array(buf) : null;
   },
-  maxDatagramSize: async (sessionHandle) => napiSessionMaxDatagramSize(sessionHandle) ?? null,
-  closed: async (sessionHandle) => {
+  maxDatagramSize: async (sessionHandle: number) => napiSessionMaxDatagramSize(sessionHandle) ?? null,
+  closed: async (sessionHandle: number) => {
     const info = await napiSessionClosed(sessionHandle);
     return { closeCode: info.closeCode, reason: info.reason };
   },
-  close: async (sessionHandle, closeCode?, reason?) => napiSessionClose(sessionHandle, closeCode, reason),
+  close: async (sessionHandle: number, closeCode?: number, reason?: string) => napiSessionClose(sessionHandle, closeCode, reason),
 };
 
 /**
@@ -285,6 +287,8 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           maxConsecutiveErrors: options.maxConsecutiveErrors,
           drainTimeout: options.drainTimeout,
           handleTtl: options.handleTtl,
+          maxPooledConnections: options.maxPooledConnections,
+          poolIdleTimeoutMs: options.poolIdleTimeoutMs,
           disableNetworking,
           proxyUrl: options.proxyUrl,
           proxyFromEnv: options.proxyFromEnv,
@@ -315,8 +319,8 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawServe,
     rawConnect,
     allocBodyWriter,
-    (handle, force?) => closeEndpoint(handle, force ?? null),
-    (handle) => napiStopServe(handle),
+    (handle: number, force?: boolean) => closeEndpoint(handle, force ?? null),
+    (handle: number) => napiStopServe(handle),
     addrFns,
     discoveryFns,
     nodeSessionFns,
