@@ -1,68 +1,39 @@
----
-status: not-implemented
-scope: core
-priority: high
----
+# Node Tickets
 
-# Feature: Node Tickets
+A `NodeTicket` is a compact, shareable string that encodes a node's full
+`NodeAddr` — its public key, current relay URL, and any known direct socket
+addresses. Sharing a ticket lets a peer attempt a direct connection immediately
+rather than going through a relay round-trip first.
 
-## What
+Tickets are the natural share format for iroh-http nodes: URL-safe, QR-codeable,
+and copy-pasteable into any app.
 
-A `NodeTicket` is a compact, shareable string encoding of a full `NodeAddr` —
-the node's public key, its current relay URL, and any known direct socket
-addresses. Iroh's Rust layer (`iroh::NodeTicket`) already implements this
-format; the feature is purely an exposure gap.
-
-## Why
-
-Currently a peer can only be addressed by node ID alone. The node ID is stable
-but carries no routing hints, so the QUIC layer must contact the relay server
-to discover the peer's current addresses before opening a connection. This adds
-at least one relay round-trip to every cold connection.
-
-A ticket embeds the full current address so the connecting peer can attempt a
-direct connection immediately, falling back to the relay only if the direct
-addresses are stale.
-
-Tickets are also the natural share format: a user can copy a ticket string and
-paste it into another app, email it, or encode it as a QR code. The public key
-alone is unwieldy and gives no routing hint.
-
-## Proposed API
+## API
 
 ```ts
-// On IrohNode:
-ticket(): Promise<string>
-```
+// Generate a ticket for this node:
+const ticket: string = await node.ticket();
 
-A ticket string encodes to a URL-safe base32 / bech32 representation that
-Iroh's existing tooling can decode.
-
-On the connect side, `createNode` (or a helper) accepts a ticket as an
-alternative to a bare node ID:
-
-```ts
-// Helper to extract the node ID from a ticket (no I/O, purely encoding):
+// Extract the node ID from a ticket (no I/O, purely encoding):
 import { ticketNodeId } from 'iroh-http-shared';
-const peerId = ticketNodeId(ticketStr);
+const peerId = ticketNodeId(ticket);
 
-// Fetch using the full ticket as routing hint:
-await node.fetch(ticketStr, '/api/data');
-// fetch() already accepts NodeAddr; tickets are one serialisation of NodeAddr.
+// Fetch using a ticket — routing hints are used automatically:
+await node.fetch(ticket, '/api/data');
 ```
 
-## Rust side
+`node.fetch` accepts any `NodeAddr`-compatible value wherever a peer is
+expected: bare node ID string, `NodeAddr` object, or ticket string.
 
-`iroh::NodeTicket::new(node_addr)` and `NodeTicket::to_string()` are already
-available. `IrohEndpoint::node_addr()` already exists in the Rust bridge as of
-Patch 17. The only work is:
+## Format
 
-1. Add `node_ticket() -> String` to `IrohEndpoint` (one line).
-2. Expose it via the napi / Tauri / Deno FFI bindings.
-3. Accept a ticket string wherever a node ID string is accepted
-   (`parse_node_id` extended to call `NodeTicket::from_str` as a fallback).
+Tickets encode to Iroh's standard URL-safe base32/bech32 representation and
+are compatible with all Iroh tooling. A ticket string is stable for as long as
+the node's relay URL and direct addresses remain current; stale tickets still
+work via fallback DNS discovery using the embedded public key.
 
 ## References
 
 - [Iroh ticket concepts](https://docs.iroh.computer/concepts/tickets)
-- `iroh::NodeTicket` in the `iroh` crate
+
+→ [Patch 26](../patches/26_patch.md)

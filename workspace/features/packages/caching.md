@@ -1,29 +1,14 @@
----
-status: not-implemented
-scope: pattern / middleware — no core changes required
-priority: low
----
+# Signed Response Caching
 
-# Feature: Signed Response Caching
-
-## What
-
-A caching pattern — and optional middleware package — that makes
-cache invalidation tractable in a P2P context by anchoring cache validity to
-the sender's cryptographic identity rather than a trusted CDN.
-
-## Why
-
-HTTP caching on the public web relies on trusting the CDN or origin server to
-correctly set `Cache-Control`, `ETag`, and `Last-Modified` headers. With iroh-
-http, the sender's identity is unforgeable at the transport level. This means:
+A caching pattern — and optional middleware package — that makes cache
+invalidation tractable in a P2P context by anchoring cache validity to the
+sender's cryptographic identity rather than a trusted CDN. Because the
+sender's identity is unforgeable at the transport level:
 
 - A receiver can cache a response and later revalidate it against the original
-  node — not a proxy — with cryptographic certainty that the content hasn't
-  been tampered with.
-- A node can sign its response bodies with a version identifier. Peers can
-  store the signature alongside the cached bytes and verify authenticity before
-  serving from cache.
+  node with cryptographic certainty that the content hasn't been tampered with.
+- A node can sign its response bodies. Peers store the signature alongside the
+  cached bytes and verify authenticity before serving from cache.
 - Cache poisoning is impossible: a malicious intermediary cannot produce a
   valid signature for a resource it did not originate.
 
@@ -76,3 +61,8 @@ node.serve({}, signedCache(secretKey, async (req) => {
   and include it as a trailer.
 - This does not address cache storage — storage is entirely the caller's
   concern (in-memory `Map`, `localStorage`, a proper cache API).
+
+Part of the `iroh-http-cache` package.
+
+→ Requires [sign/verify helpers](../sign-verify.md) and
+  [Patch 25](../../patches/25_patch.md).

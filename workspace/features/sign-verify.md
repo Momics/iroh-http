@@ -1,55 +1,32 @@
----
-status: not-implemented
-scope: core — key types
-priority: high
----
+# Sign / Verify
 
-# Feature: Sign / Verify Helpers on Key Types
+`SecretKey` and `PublicKey` expose sign and verify operations directly. Combined
+with the transport's peer authentication, these are the building blocks for
+signed responses, capability tokens, and caching patterns.
 
-## What
-
-Expose `sign` and `verify` operations as first-class methods on the `SecretKey`
-and `PublicKey` types already present in `iroh-http-shared`.
-
-## Why
-
-The transport already authenticates the peer's identity cryptographically —
-the connection _is_ proof of identity. But higher-level features (caching,
-capability tokens, signed responses) need a byte-level primitive to attach
-proofs to arbitrary data outside of a live connection.
-
-The signing primitive is also the building block for every other
-cryptographic feature in this ecosystem. Not exposing it forces consumers to
-bring a separate Ed25519 library and manually wire it to the Iroh key bytes —
-fragile and unnecessary.
-
-## Proposed API
+## API
 
 ```ts
-// SecretKey
-sign(data: Uint8Array): Uint8Array
-// PublicKey
-verify(data: Uint8Array, signature: Uint8Array): boolean
+// Sign arbitrary bytes with a secret key:
+const sig: Uint8Array = secretKey.sign(data);
+
+// Verify a signature against a public key:
+const ok: boolean = publicKey.verify(data, sig);
+
+// Generate a fresh key without starting a node:
+const key = SecretKey.generate();
 ```
 
-Both are synchronous — Ed25519 sign/verify is fast and non-blocking by nature.
-No `Promise` wrapper needed.
+Both `sign` and `verify` are synchronous — Ed25519 is fast and non-blocking.
 
-`SecretKey.generate()` should also be added here: a static factory that
-generates a fresh key without creating a full node.
+## Types
 
-## Rust side
+Signatures are 64-byte `Uint8Array` values. `PublicKey.verify` returns
+`boolean` — it does not throw on an invalid signature.
 
-`iroh::SecretKey::sign(&self, msg: &[u8]) -> Signature` and
-`iroh::PublicKey::verify(&self, msg: &[u8], sig: &Signature) -> Result<()>`
-are already available in the `iroh` crate. Exposure through napi / FFI is
-straightforward.
+## See also
 
-## Notes
+- [Capability tokens](packages/capability-tokens.md) — uses sign/verify for token issuance
+- [Signed response caching](packages/caching.md) — uses sign/verify for cache validity
 
-- Signatures are 64-byte Ed25519 signatures. Expose as `Uint8Array`, not
-  a custom type.
-- `PublicKey.verify` returns `boolean` (not throws) to keep usage ergonomic
-  in JS. The Rust `Err` case maps to `false`.
-- This feature is a prerequisite for capability tokens (see `capability-tokens.md`)
-  and the caching pattern (see `caching.md`).
+→ [Patch 25](../patches/25_patch.md)

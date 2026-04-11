@@ -1,81 +1,89 @@
----
-status: not-implemented
-scope: core — serve option
-priority: medium
----
-
-# Feature: Per-Peer Rate Limiting
-
-## What
+# Per-Peer Rate Limiting
 
 A token-bucket rate limiter applied per connected peer identity in the serve
-accept loop. Each peer gets its own bucket; the bucket is keyed on the peer's
-verified public key, which is unforgeable at the transport level.
+accept loop. Each peer gets its own bucket keyed on its verified public key —
+unforgeable at the transport level, surviving IP changes and relay hops.
 
-## Why
+Rate limiting is a `ServeOptions` concern — it applies to the serve handler,
+not the node as a whole.
 
-In a P2P network, any node that knows your public key can connect and send
-requests. Without a rate limit, a single misbehaving or compromised peer can
-exhaust server resources — connection slots, CPU, body channel memory — and
-crowd out legitimate peers.
-
-Standard IP-based rate limiting is insufficient in a P2P context because peers
-can change IP addresses. Keying on node identity is strictly stronger: the
-key is cryptographically tied to a specific node, and rate limits survive IP
-changes, NAT traversal, and relay hops.
-
-## Proposed API
+## API
 
 ```ts
-// In NodeOptions / ServeOptions:
-rateLimit?: {
-  /**
-   * Maximum number of requests per second per peer.
-   * Uses a token-bucket algorithm: `burst` tokens are available immediately;
-   * they refill at `requestsPerSecond` per second.
-   */
+node.serve({
+  rateLimit: {
+    /** Default rate applied to all peers not matched by forPeer. */
+    requestsPerSecond: 10,
+    /**
+     * Maximum burst size. Defaults to requestsPerSecond.
+     * A burst of 20 allows 20 requests at once even at a low average rate.
+     */
+    burst: 20,
+    /**
+     * Per-peer override. Return a rate config to replace the default,
+     * 'unlimited' to exempt this peer, or 'block' to reject all requests.
+     * Return null (or omit) to use the default rate.
+     */
+    forPeer: (nodeId: string) => RateConfig | 'unlimited' | 'block' | null,
+  },
+}, handler);
+```
+
+```ts
+type RateConfig = {
   requestsPerSecond: number;
-  /**
-   * Maximum burst size. Defaults to `requestsPerSecond`.
-   * A burst of 10 allows 10 simultaneous requests even at a low average rate.
-   */
   burst?: number;
-}
+};
+```
+
+### Examples
+
+```ts
+// Tiered rates based on a known allowlist:
+const PREMIUM = new Set(['abc123...', 'def456...']);
+
+node.serve({
+  rateLimit: {
+    requestsPerSecond: 5,
+    forPeer: (nodeId) => {
+      if (PREMIUM.has(nodeId)) return { requestsPerSecond: 100 };
+      return null; // use default
+    },
+  },
+}, handler);
+
+// Block specific peers:
+const BLOCKLIST = new Set(['bad123...']);
+
+node.serve({
+  rateLimit: {
+    requestsPerSecond: 10,
+    forPeer: (nodeId) => BLOCKLIST.has(nodeId) ? 'block' : null,
+  },
+}, handler);
+
+// Exempt internal nodes from rate limiting:
+node.serve({
+  rateLimit: {
+    requestsPerSecond: 10,
+    forPeer: (nodeId) => INTERNAL_NODES.has(nodeId) ? 'unlimited' : null,
+  },
+}, handler);
 ```
 
 When a peer exceeds its rate limit, the server responds with `429 Too Many
-Requests` and a `Retry-After` header indicating when the next token will
-be available. The connection is not dropped — only the request is rejected.
-
-## Rust side
-
-The token bucket lives in the server accept loop (`server.rs`), keyed on the
-`PublicKey` of the incoming connection (available immediately on accept).
-
-A simple thread-safe bucket map:
-
-```rust
-struct RateLimiter {
-    buckets: Mutex<HashMap<PublicKey, TokenBucket>>,
-    config: RateLimitConfig,
-}
-```
-
-`TokenBucket` tracks `tokens: f64` and `last_refill: Instant`. On each
-request, subtract one token; refill proportionally to elapsed time since last
-check. If `tokens < 1.0`, reject.
-
-No external crate is needed; the algorithm is a dozen lines of Rust.
+Requests` and a `Retry-After` header. The connection is not dropped — only the
+request is rejected.
 
 ## Notes
 
-- Rate limits are **per connection** in the current pool design (one connection
-  per node). If the pool allows multiple connections per node in the future,
-  the bucket key must remain `PublicKey`, not connection handle.
-- Limits apply only to the serve path. The `fetch` (client) path is not
-  rate-limited — the remote server controls that.
-- Per-peer limits are separate from the existing `max_concurrency` setting,
-  which caps total concurrent in-flight requests regardless of source.
-- Persistent rate limit state across reconnections (e.g. to punish a peer that
-  kept hammering and reconnected) is a possible future extension but out of
-  scope here.
+- `forPeer` is synchronous. Pre-load any per-peer config into a `Map` or
+  `Set` before starting the serve loop.
+- Rate limits are keyed on `PublicKey` regardless of how many connections a
+  peer opens. Multiple connections from the same peer share one bucket.
+- `rateLimit` and `maxConcurrency` are orthogonal: `rateLimit` rejects bursts;
+  `maxConcurrency` caps total simultaneous in-flight requests.
+- Persistent rate limit state across reconnections is a possible future
+  extension.
+
+→ [Patch 24](../patches/24_patch.md)
