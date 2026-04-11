@@ -39,6 +39,11 @@ from .iroh_http_py import (  # noqa: F401
     generate_secret_key,
 )
 
+try:
+    from .iroh_http_py import IrohBrowseSession  # noqa: F401
+except ImportError:
+    pass  # mdns feature not enabled
+
 __all__ = [
     "create_node",
     "IrohNode",
@@ -50,4 +55,5 @@ __all__ = [
     "secret_key_sign",
     "public_key_verify",
     "generate_secret_key",
+    "IrohBrowseSession",
 ]

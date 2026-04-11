@@ -230,9 +230,43 @@ impl IrohBidiStream {
     }
 }
 
-// ── IrohSession ──────────────────────────────────────────────────────────────
+// ── IrohBrowseSession ────────────────────────────────────────────────────────
 
-/// A session (QUIC connection) to a single remote peer.
+/// An active mDNS browse session.
+///
+/// Use `async for event in session:` to iterate over discovery events.
+/// Each event is a dict with keys `is_active` (bool), `node_id` (str), `addrs` (list of str).
+#[cfg(feature = "mdns")]
+#[pyclass]
+struct IrohBrowseSession {
+    inner: tokio::sync::Mutex<iroh_http_discovery::BrowseSession>,
+}
+
+#[cfg(feature = "mdns")]
+#[pymethods]
+impl IrohBrowseSession {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> { slf }
+
+    fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let ptr = self as *const IrohBrowseSession as usize;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            // SAFETY: IrohBrowseSession is held on the Python heap for its lifetime.
+            let session = unsafe { &*(ptr as *const IrohBrowseSession) };
+            match session.inner.lock().await.next_event().await {
+                None => Err(pyo3::exceptions::PyStopAsyncIteration::new_err(())),
+                Some(ev) => Python::with_gil(|py| {
+                    let dict = pyo3::types::PyDict::new_bound(py);
+                    dict.set_item("is_active", ev.is_active)?;
+                    dict.set_item("node_id", &ev.node_id)?;
+                    dict.set_item("addrs", ev.addrs)?;
+                    Ok(dict.into_any().unbind())
+                }),
+            }
+        })
+    }
+}
+
+// ── IrohSession ──────────────────────────────────────────────────────────────
 ///
 /// Use `create_bidirectional_stream()` to open streams.
 #[pyclass]
@@ -579,6 +613,54 @@ impl IrohNode {
         })
     }
 
+    /// Start discovering peers on the local network via mDNS.
+    ///
+    /// Returns an async iterable `IrohBrowseSession`.  Iterate over it with
+    /// `async for event in node.browse():`.  Each event is a dict with
+    /// `is_active` (bool), `node_id` (str), `addrs` (list of str).
+    ///
+    /// Raises `RuntimeError` if the `mdns` feature is not enabled.
+    #[pyo3(signature = (service_name="iroh-http"))]
+    fn browse<'py>(&self, py: Python<'py>, service_name: &str) -> PyResult<Bound<'py, PyAny>> {
+        #[cfg(feature = "mdns")]
+        {
+            let ep = self.ep.clone();
+            let svc = service_name.to_string();
+            pyo3_async_runtimes::tokio::future_into_py(py, async move {
+                let session = iroh_http_discovery::start_browse(ep.raw(), &svc)
+                    .await
+                    .map_err(py_err)?;
+                Ok(IrohBrowseSession { inner: tokio::sync::Mutex::new(session) })
+            })
+        }
+        #[cfg(not(feature = "mdns"))]
+        {
+            let _ = service_name;
+            Err(py_err("iroh-http-py compiled without the 'mdns' feature"))
+        }
+    }
+
+    /// Advertise this node on the local network via mDNS until `stop()` is called.
+    ///
+    /// Returns immediately.  The advertisement continues in the background until
+    /// `node.stop_advertise()` is called or the node is closed.
+    ///
+    /// Raises `RuntimeError` if the `mdns` feature is not enabled.
+    #[pyo3(signature = (service_name="iroh-http"))]
+    fn advertise(&self, service_name: &str) -> PyResult<()> {
+        #[cfg(feature = "mdns")]
+        {
+            iroh_http_discovery::start_advertise(self.ep.raw(), service_name)
+                .map(|_session| ()) // session kept alive by the endpoint's address_lookup
+                .map_err(py_err)
+        }
+        #[cfg(not(feature = "mdns"))]
+        {
+            let _ = service_name;
+            Err(py_err("iroh-http-py compiled without the 'mdns' feature"))
+        }
+    }
+
     fn __aenter__<'py>(slf: PyRef<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
         let py = slf.py();
         let ep = slf.ep.clone();
@@ -601,8 +683,6 @@ impl IrohNode {
         })
     }
 }
-
-// ── Serve request handler ─────────────────────────────────────────────────────
 
 async fn handle_request(handler: Arc<PyObject>, payload: iroh_http_core::RequestPayload) {
     let req_handle    = payload.req_handle;
@@ -816,5 +896,7 @@ fn iroh_http_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IrohSession>()?;
     m.add_class::<IrohBidiStream>()?;
     m.add_class::<IrohUniStream>()?;
+    #[cfg(feature = "mdns")]
+    m.add_class::<IrohBrowseSession>()?;
     Ok(())
 }
