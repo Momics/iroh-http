@@ -131,6 +131,8 @@ struct CreateEndpointPayload {
     proxy_url: Option<String>,
     proxy_from_env: Option<bool>,
     keylog: Option<bool>,
+    compression_level: Option<i32>,
+    compression_min_body_bytes: Option<usize>,
 }
 
 async fn create_endpoint(p: Value) -> Value {
@@ -170,6 +172,15 @@ async fn create_endpoint(p: Value) -> Value {
         proxy_url: args.proxy_url,
         proxy_from_env: args.proxy_from_env.unwrap_or(false),
         keylog: args.keylog.unwrap_or(false),
+        #[cfg(feature = "compression")]
+        compression: if args.compression_level.is_some() || args.compression_min_body_bytes.is_some() {
+            Some(iroh_http_core::CompressionOptions {
+                level: args.compression_level.unwrap_or(3),
+                min_body_bytes: args.compression_min_body_bytes.unwrap_or(512),
+            })
+        } else {
+            None
+        },
     };
     match IrohEndpoint::bind(opts).await {
         Err(e) => err(e),

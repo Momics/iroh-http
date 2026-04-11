@@ -94,6 +94,8 @@ pub struct JsNodeOptions {
     pub proxy_url: Option<String>,
     pub proxy_from_env: Option<bool>,
     pub keylog: Option<bool>,
+    pub compression_level: Option<i32>,
+    pub compression_min_body_bytes: Option<u32>,
 }
 
 #[napi(object)]
@@ -138,6 +140,15 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         proxy_url: o.proxy_url,
         proxy_from_env: o.proxy_from_env.unwrap_or(false),
         keylog: o.keylog.unwrap_or(false),
+        #[cfg(feature = "compression")]
+        compression: if o.compression_level.is_some() || o.compression_min_body_bytes.is_some() {
+            Some(iroh_http_core::CompressionOptions {
+                level: o.compression_level.unwrap_or(3),
+                min_body_bytes: o.compression_min_body_bytes.map(|v| v as usize).unwrap_or(512),
+            })
+        } else {
+            None
+        },
     }).unwrap_or_default();
 
     let ep = IrohEndpoint::bind(opts)

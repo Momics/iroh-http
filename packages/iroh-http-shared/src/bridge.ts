@@ -221,6 +221,23 @@ export interface NodeOptions {
   /** TTL in milliseconds for slab handle entries.  `0` disables sweeping.  Default: 300 000. */
   handleTtl?: number;
 
+  // ── Compression ───────────────────────────────────────────────────────────
+  /**
+   * Enable zstd body compression.
+   *
+   * - `true` — enable with default settings (level 3, 512 B threshold).
+   * - `false` or omitted — no compression (default).
+   * - Object — enable with custom settings.
+   *
+   * Requires the Rust `compression` feature to be compiled in.
+   */
+  compression?: boolean | {
+    /** zstd compression level 1–22.  Default: 3. */
+    level?: number;
+    /** Skip compression for bodies smaller than this many bytes.  Default: 512. */
+    minBodyBytes?: number;
+  };
+
   // ── Mobile / background lifecycle ─────────────────────────────────────────
   /** Mobile/background lifecycle options. */
   lifecycle?: LifecycleOptions;

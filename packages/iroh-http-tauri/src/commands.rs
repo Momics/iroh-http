@@ -46,6 +46,8 @@ pub struct CreateEndpointArgs {
     pub proxy_url: Option<String>,
     pub proxy_from_env: Option<bool>,
     pub keylog: Option<bool>,
+    pub compression_level: Option<i32>,
+    pub compression_min_body_bytes: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -94,6 +96,15 @@ pub async fn create_endpoint(
             proxy_url: a.proxy_url,
             proxy_from_env: a.proxy_from_env.unwrap_or(false),
             keylog: a.keylog.unwrap_or(false),
+            #[cfg(feature = "compression")]
+            compression: if a.compression_level.is_some() || a.compression_min_body_bytes.is_some() {
+                Some(iroh_http_core::CompressionOptions {
+                    level: a.compression_level.unwrap_or(3),
+                    min_body_bytes: a.compression_min_body_bytes.unwrap_or(512),
+                })
+            } else {
+                None
+            },
         })
         .unwrap_or_default();
 

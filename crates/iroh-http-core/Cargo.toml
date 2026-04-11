@@ -5,6 +5,10 @@ edition = "2021"
 description = "Iroh QUIC endpoint, HTTP framing, fetch/serve with FFI-friendly types"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = []
+compression = ["dep:zstd"]
+
 [dependencies]
 iroh-http-framing = { path = "../iroh-http-framing" }
 iroh = { workspace = true }
@@ -16,7 +20,9 @@ qpack = "0.1.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
+zstd = { version = "0.13", optional = true, default-features = false }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 bytes = { workspace = true }
+zstd = "0.13"

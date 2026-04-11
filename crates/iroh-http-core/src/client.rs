@@ -98,11 +98,33 @@ pub async fn fetch(
     let codec = pooled.codec.clone();
     let max_header_size = endpoint.max_header_size();
 
+    // Inject Accept-Encoding: zstd when compression is enabled.
+    #[cfg(feature = "compression")]
+    let owned_headers;
+    #[allow(unused_mut)]
+    let mut final_headers: &[(String, String)] = headers;
+    #[cfg(feature = "compression")]
+    if endpoint.compression().is_some()
+        && !headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("accept-encoding"))
+    {
+        owned_headers = {
+            let mut h = headers.to_vec();
+            h.push((
+                "accept-encoding".to_string(),
+                crate::compress::ACCEPT_ENCODING.to_string(),
+            ));
+            h
+        };
+        final_headers = &owned_headers;
+    }
+
     let result = do_request(
         conn,
         url,
         method,
-        headers,
+        final_headers,
         req_body_reader,
         codec,
         max_header_size,
@@ -182,8 +204,19 @@ async fn do_request(
     }
 
     // Read and parse the response head.
-    let (status, resp_headers, consumed) =
+    #[allow(unused_mut)]
+    let (status, mut resp_headers, consumed) =
         read_head_qpack(&mut recv, &codec, max_header_size).await?;
+
+    // Detect Content-Encoding: zstd and prepare to decompress.
+    #[cfg(feature = "compression")]
+    let content_encoding_zstd = resp_headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("content-encoding") && crate::compress::is_zstd(v)
+    });
+    #[cfg(feature = "compression")]
+    if content_encoding_zstd {
+        resp_headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-encoding"));
+    }
 
     let resp_is_chunked = resp_headers.iter().any(|(k, v)| {
         k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().contains("chunked")
@@ -196,6 +229,15 @@ async fn do_request(
     let trailer_handle = crate::stream::insert_trailer_receiver(trailer_rx);
 
     tokio::spawn(pump_stream_to_body(recv, res_writer, consumed, trailer_tx, resp_is_chunked));
+
+    // If the response was zstd-compressed, interpose a decompression channel
+    // so JS receives plain bytes.
+    #[cfg(feature = "compression")]
+    let res_reader = if content_encoding_zstd {
+        crate::compress::decompress_body(res_reader)
+    } else {
+        res_reader
+    };
 
     let body_handle = insert_reader(res_reader);
 

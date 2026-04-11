@@ -242,6 +242,12 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           proxyUrl: options.proxyUrl,
           proxyFromEnv: options.proxyFromEnv,
           keylog: options.keylog,
+          compressionLevel: typeof options.compression === "object"
+            ? options.compression.level
+            : options.compression ? 3 : undefined,
+          compressionMinBodyBytes: typeof options.compression === "object"
+            ? options.compression.minBodyBytes
+            : undefined,
         }
       : undefined
   ).catch((e: unknown) => { throw classifyBindError(e); });

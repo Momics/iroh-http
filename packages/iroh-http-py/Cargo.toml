@@ -9,6 +9,10 @@ license = "MIT OR Apache-2.0"
 name = "iroh_http_py"
 crate-type = ["cdylib"]
 
+[features]
+default = []
+compression = ["iroh-http-core/compression"]
+
 [dependencies]
 iroh-http-core = { path = "../../crates/iroh-http-core" }
 pyo3            = { version = "0.22", features = ["extension-module", "abi3-py39"] }

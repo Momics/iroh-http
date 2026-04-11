@@ -340,6 +340,10 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           proxyUrl: options.proxyUrl ?? null,
           proxyFromEnv: options.proxyFromEnv ?? null,
           keylog: options.keylog ?? null,
+          compressionLevel: typeof options.compression === "object"
+            ? options.compression.level ?? null : options.compression ? 3 : null,
+          compressionMinBodyBytes: typeof options.compression === "object"
+            ? options.compression.minBodyBytes ?? null : null,
         }
       : null,
   }).catch((e: unknown) => { throw classifyBindError(e); });

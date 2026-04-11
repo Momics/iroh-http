@@ -5,157 +5,165 @@ refs: features/rate-limiting.md
 
 # Patch 24 — Per-Peer Rate Limiting
 
-Add a token-bucket rate limiter in the serve accept loop, as described in
-[rate-limiting.md](../features/rate-limiting.md).
+Two-layer rate limiting as described in
+[rate-limiting.md](../features/rate-limiting.md):
 
-Rate limiting lives in `ServeOptions`, not `NodeOptions`, because it is a
-server-side concern and different serve handlers on the same node may have
-different limits.
+1. **`ServeOptions.maxConnectionsPerPeer`** — Rust-level hard cap before JS runs.
+2. **`rateLimit()` middleware** — pure TypeScript token-bucket, composable.
 
 ## Problem
 
-Any node that knows a peer's public key can connect and send unlimited requests.
-IP-based rate limiting is insufficient because peers can change addresses.
-Identity-based keying — on `PublicKey`, not IP — survives relay hops and
-address changes.
+Any node that knows a peer's public key can connect and hammer the serve loop.
+The JS event loop must be protected before middleware gets a chance to run
+(`maxConnectionsPerPeer`), and then sophisticated per-peer logic is best
+expressed in TypeScript where it can be tested, composed, and maintained
+without touching native code.
 
 ## Changes
 
-### 1. Rust — `crates/iroh-http-core/src/`
+### 1. Rust — `ServeOptions.maxConnectionsPerPeer`
 
-**New file: `rate_limit.rs`**
+**`crates/iroh-http-core/src/server.rs`** — track a `HashMap<PublicKey, u32>`
+of active connection counts in the accept loop. On each new connection, check
+before upgrading:
 
 ```rust
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::Instant;
-use iroh::PublicKey;
-
-pub struct RateConfig {
-    pub requests_per_second: f64,
-    pub burst: f64,
-}
-
-// Serialisable decision returned to the JS layer for forPeer overrides.
-pub enum PeerRateDecision {
-    Config(RateConfig),
-    Unlimited,
-    Block,
-    Default,
-}
-
-struct TokenBucket {
-    tokens: f64,
-    last_refill: Instant,
-}
-
-impl TokenBucket {
-    fn new(burst: f64) -> Self {
-        Self { tokens: burst, last_refill: Instant::now() }
-    }
-
-    fn try_consume(&mut self, cfg: &RateConfig) -> bool {
-        let elapsed = self.last_refill.elapsed().as_secs_f64();
-        self.tokens = (self.tokens + elapsed * cfg.requests_per_second).min(cfg.burst);
-        self.last_refill = Instant::now();
-        if self.tokens >= 1.0 { self.tokens -= 1.0; true } else { false }
-    }
-
-    fn next_token_secs(&self, cfg: &RateConfig) -> f64 {
-        (1.0 - self.tokens) / cfg.requests_per_second
-    }
-}
-
-pub struct RateLimiter {
-    buckets: Mutex<HashMap<PublicKey, TokenBucket>>,
-    default: RateConfig,
-}
-
-impl RateLimiter {
-    pub fn new(default: RateConfig) -> Self {
-        Self { buckets: Mutex::new(HashMap::new()), default }
-    }
-
-    /// Returns Ok(()) or Err(retry_after_secs).
-    /// `peer_config` is the JS-resolved per-peer decision.
-    pub fn check(&self, peer: &PublicKey, peer_decision: PeerRateDecision) -> Result<(), f64> {
-        match peer_decision {
-            PeerRateDecision::Unlimited => return Ok(()),
-            PeerRateDecision::Block => return Err(f64::INFINITY),
-            _ => {}
-        }
-        let cfg = match peer_decision {
-            PeerRateDecision::Config(c) => c,
-            _ => &self.default,  // Default
-        };
-        let mut buckets = self.buckets.lock().unwrap();
-        let bucket = buckets.entry(*peer).or_insert_with(|| TokenBucket::new(cfg.burst));
-        if bucket.try_consume(cfg) { Ok(()) } else { Err(bucket.next_token_secs(cfg)) }
+if let Some(limit) = options.max_connections_per_peer {
+    let count = *active_per_peer.get(&peer_key).unwrap_or(&0);
+    if count >= limit {
+        // send 429, close connection
+        return;
     }
 }
 ```
 
-**`server.rs`** — before dispatching each request:
+No token bucket, no timing — just a counter. Decrement on disconnect.
 
-1. Call the JS `forPeer` callback (via bridge) with the peer's node ID to get
-   the `PeerRateDecision`.
-2. Call `rate_limiter.check(peer, decision)`.
-3. On `Err(retry_after)`, return:
-   ```
-   HTTP/1.1 429 Too Many Requests
-   Retry-After: <ceil(retry_after) as integer>
-   Content-Length: 0
-   ```
+**`NodeOptions` / `ServeOptions` — Rust:**
 
-When `retry_after` is `INFINITY` (blocked peer), return `403 Forbidden` instead
-of `429` — the peer is not expected to retry.
+```rust
+pub struct ServeOptions {
+    pub max_concurrency: Option<u32>,          // existing
+    pub max_connections_per_peer: Option<u32>, // new
+}
+```
 
-### 2. TypeScript — `packages/iroh-http-shared/src/index.ts`
+**TypeScript:**
 
 ```ts
 interface ServeOptions {
-  rateLimit?: {
-    /** Default rate applied to all peers. */
-    requestsPerSecond: number;
-    /** Maximum burst. Defaults to requestsPerSecond. */
-    burst?: number;
-    /**
-     * Per-peer override. Called once per request with the peer's node ID.
-     * Return a RateConfig to override the default, 'unlimited' to exempt,
-     * or 'block' to reject with 403. Return null to use the default.
-     */
-    forPeer?: (nodeId: string) => RateConfig | 'unlimited' | 'block' | null | undefined;
-  };
+  maxConcurrency?: number;
+  maxConnectionsPerPeer?: number;  // new
 }
-
-type RateConfig = { requestsPerSecond: number; burst?: number };
 ```
 
-The `forPeer` callback is synchronous. Pre-load any per-peer config into a
-`Map` or `Set` before calling `node.serve`.
+### 2. TypeScript — `rateLimit()` middleware
 
-### 3. Platform adapters
+**New file: `packages/iroh-http-shared/src/middleware/rate-limit.ts`**
 
-Pass `rateLimit.requestsPerSecond`, `rateLimit.burst`, and a JS callback handle
-for `forPeer` from `ServeOptions` to the Rust serve loop. The Rust side calls
-back into JS to resolve per-peer decisions.
+```ts
+type Handler = (req: Request) => Response | Promise<Response>;
+type RateConfig = { requestsPerSecond: number; burst?: number };
 
-Remove `rateLimit` from `NodeOptions` if it was previously added there.
+interface RateLimitOptions {
+  requestsPerSecond: number;
+  burst?: number;
+  forPeer?: (nodeId: string) => RateConfig | 'unlimited' | 'block' | null | undefined;
+}
+
+interface TokenBucket {
+  tokens: number;
+  lastRefill: number;  // Date.now() ms
+}
+
+export function rateLimit(options: RateLimitOptions): (handler: Handler) => Handler {
+  const buckets = new Map<string, TokenBucket>();
+  const defaultConfig: RateConfig = {
+    requestsPerSecond: options.requestsPerSecond,
+    burst: options.burst ?? options.requestsPerSecond,
+  };
+
+  return (handler) => (req) => {
+    const nodeId = req.headers.get('iroh-node-id') ?? '';
+    const decision = options.forPeer?.(nodeId) ?? null;
+
+    if (decision === 'block') {
+      return new Response('Forbidden', { status: 403 });
+    }
+    if (decision === 'unlimited') {
+      return handler(req);
+    }
+
+    const cfg = (decision as RateConfig | null) ?? defaultConfig;
+    const now = Date.now();
+    let bucket = buckets.get(nodeId);
+    if (!bucket) {
+      bucket = { tokens: cfg.burst ?? cfg.requestsPerSecond, lastRefill: now };
+      buckets.set(nodeId, bucket);
+    }
+
+    const elapsed = (now - bucket.lastRefill) / 1000;
+    bucket.tokens = Math.min(
+      cfg.burst ?? cfg.requestsPerSecond,
+      bucket.tokens + elapsed * cfg.requestsPerSecond,
+    );
+    bucket.lastRefill = now;
+
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1;
+      return handler(req);
+    }
+
+    const retryAfter = Math.ceil((1 - bucket.tokens) / cfg.requestsPerSecond);
+    return new Response('Too Many Requests', {
+      status: 429,
+      headers: { 'Retry-After': String(retryAfter) },
+    });
+  };
+}
+```
+
+### 3. `compose()` helper
+
+**New file: `packages/iroh-http-shared/src/middleware/compose.ts`**
+
+```ts
+type Middleware = (handler: Handler) => Handler;
+
+export function compose(...fns: [...Middleware[], Handler]): Handler {
+  const handler = fns[fns.length - 1] as Handler;
+  const middlewares = fns.slice(0, -1) as Middleware[];
+  return middlewares.reduceRight((h, m) => m(h), handler);
+}
+```
+
+### 4. Barrel export
+
+```ts
+// packages/iroh-http-shared/src/middleware/index.ts
+export { rateLimit } from './rate-limit.ts';
+export { compose } from './compose.ts';
+```
 
 ## Files
 
-- `crates/iroh-http-core/src/rate_limit.rs` — new file
-- `crates/iroh-http-core/src/server.rs` — call rate limiter on each request
-- `packages/iroh-http-shared/src/index.ts` — `ServeOptions.rateLimit` + `RateConfig` type
-- All four adapter packages — pass `ServeOptions.rateLimit` through to Rust
+- `crates/iroh-http-core/src/server.rs` — `maxConnectionsPerPeer` counter
+- `packages/iroh-http-shared/src/index.ts` — `ServeOptions.maxConnectionsPerPeer`
+- `packages/iroh-http-shared/src/middleware/rate-limit.ts` — new
+- `packages/iroh-http-shared/src/middleware/compose.ts` — new
+- `packages/iroh-http-shared/src/middleware/index.ts` — barrel export
+- All four adapter packages — pass `maxConnectionsPerPeer` through `ServeOptions`
 
 ## Notes
 
-- Buckets are keyed on `PublicKey`. Multiple connections from the same peer
-  share one bucket.
-- Bucket eviction: a periodic sweep removes entries where `tokens >= burst`
-  (fully refilled; no recent activity from that peer).
-- `rateLimit` and `maxConcurrency` are orthogonal. Use both for defence in depth.
+- `rateLimit` has no native component — it reads `iroh-node-id`, which is
+  already injected by the Rust layer on every request.
+- The `compose` helper is also the right home for future middlewares:
+  auth token verification, logging, CORS headers, etc.
+- `rateLimit` and `maxConnectionsPerPeer` are complementary: the hard cap
+  protects the event loop; the middleware manages request cadence for
+  already-connected peers.
+
 
 
 Add a token-bucket rate limiter keyed on peer `PublicKey` in the serve accept
