@@ -295,7 +295,7 @@ impl IrohEndpoint {
     ///
     /// If no serve loop is running, closes the endpoint immediately.
     pub async fn close(&self) {
-        let handle = self.inner.serve_handle.lock().unwrap().take();
+        let handle = self.inner.serve_handle.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(h) = handle {
             h.drain().await;
         }
@@ -305,7 +305,7 @@ impl IrohEndpoint {
     /// Immediate close: abort the serve loop and close the endpoint with
     /// no drain period.
     pub async fn close_force(&self) {
-        let handle = self.inner.serve_handle.lock().unwrap().take();
+        let handle = self.inner.serve_handle.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(h) = handle {
             h.abort();
         }
@@ -314,7 +314,7 @@ impl IrohEndpoint {
 
     /// Store a serve handle so that `close()` can drain it.
     pub fn set_serve_handle(&self, handle: ServeHandle) {
-        *self.inner.serve_handle.lock().unwrap() = Some(handle);
+        *self.inner.serve_handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
     }
 
     /// Signal the serve loop to stop accepting new connections.
@@ -322,7 +322,7 @@ impl IrohEndpoint {
     /// Returns immediately — does NOT close the endpoint or drain in-flight
     /// requests.  The handle is preserved so `close()` can still drain later.
     pub fn stop_serve(&self) {
-        if let Some(h) = self.inner.serve_handle.lock().unwrap().as_ref() {
+        if let Some(h) = self.inner.serve_handle.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             h.shutdown();
         }
     }

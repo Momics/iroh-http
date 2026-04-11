@@ -37,14 +37,14 @@ fn in_flight_map() -> &'static Mutex<HashMap<u32, Arc<tokio::sync::Notify>>> {
 pub fn alloc_fetch_token() -> u32 {
     let id = NEXT_FETCH_TOKEN.fetch_add(1, Ordering::Relaxed);
     let notify = Arc::new(tokio::sync::Notify::new());
-    in_flight_map().lock().unwrap().insert(id, notify);
+    in_flight_map().lock().unwrap_or_else(|e| e.into_inner()).insert(id, notify);
     id
 }
 
 /// Signal an in-flight fetch to abort.  Safe to call after the fetch has
 /// already completed — it is a no-op in that case.
 pub fn cancel_in_flight(token_id: u32) {
-    if let Some(notify) = in_flight_map().lock().unwrap().get(&token_id) {
+    if let Some(notify) = in_flight_map().lock().unwrap_or_else(|e| e.into_inner()).get(&token_id) {
         notify.notify_one();
     }
 }
@@ -70,7 +70,7 @@ pub async fn fetch(
 ) -> Result<FfiResponse, String> {
     // Retrieve the cancellation Notify for this token, if any.
     let cancel_notify = fetch_token.and_then(|id| {
-        in_flight_map().lock().unwrap().get(&id).cloned()
+        in_flight_map().lock().unwrap_or_else(|e| e.into_inner()).get(&id).cloned()
     });
 
     let parsed = parse_node_addr(remote_node_id)?;
@@ -146,7 +146,7 @@ pub async fn fetch(
 
     // Clean up the token regardless of outcome.
     if let Some(id) = fetch_token {
-        in_flight_map().lock().unwrap().remove(&id);
+        in_flight_map().lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
     }
 
     out

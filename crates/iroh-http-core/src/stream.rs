@@ -131,12 +131,14 @@ fn pending_readers() -> &'static Mutex<HashMap<u32, BodyReader>> {
 
 /// Insert a `BodyReader` into the global slab and return its handle.
 pub fn insert_reader(reader: BodyReader) -> u32 {
-    reader_slab().lock().unwrap().insert(TimestampedEntry::new(reader)) as u32
+    let key = reader_slab().lock().unwrap_or_else(|e| e.into_inner()).insert(TimestampedEntry::new(reader));
+    u32::try_from(key).expect("reader slab overflow")
 }
 
 /// Insert a `BodyWriter` into the global slab and return its handle.
 pub fn insert_writer(writer: BodyWriter) -> u32 {
-    writer_slab().lock().unwrap().insert(TimestampedEntry::new(writer)) as u32
+    let key = writer_slab().lock().unwrap_or_else(|e| e.into_inner()).insert(TimestampedEntry::new(writer));
+    u32::try_from(key).expect("writer slab overflow")
 }
 
 /// Allocate a `(writer_handle, reader)` pair.
@@ -160,7 +162,7 @@ pub fn store_pending_reader(writer_handle: u32, reader: BodyReader) {
 /// Claim the reader that was paired with `writer_handle`.
 /// Returns `None` if already claimed or never stored.
 pub fn claim_pending_reader(writer_handle: u32) -> Option<BodyReader> {
-    pending_readers().lock().unwrap().remove(&writer_handle)
+    pending_readers().lock().unwrap_or_else(|e| e.into_inner()).remove(&writer_handle)
 }
 
 // ── Bridge methods (nextChunk / sendChunk / finishBody) ───────────────────────
@@ -173,7 +175,7 @@ pub fn claim_pending_reader(writer_handle: u32) -> Option<BodyReader> {
 pub async fn next_chunk(handle: u32) -> Result<Option<Bytes>, String> {
     // Clone the Arc — allows awaiting without holding the slab mutex.
     let rx_arc = {
-        let slab = reader_slab().lock().unwrap();
+        let slab = reader_slab().lock().unwrap_or_else(|e| e.into_inner());
         slab.get(handle as usize)
             .ok_or_else(|| format!("invalid reader handle: {handle}"))?
             .inner
@@ -185,7 +187,7 @@ pub async fn next_chunk(handle: u32) -> Result<Option<Bytes>, String> {
 
     // Clean up on EOF so the slab slot is reused promptly.
     if chunk.is_none() {
-        let mut slab = reader_slab().lock().unwrap();
+        let mut slab = reader_slab().lock().unwrap_or_else(|e| e.into_inner());
         if slab.contains(handle as usize) {
             slab.remove(handle as usize);
         }
@@ -201,7 +203,7 @@ pub async fn next_chunk(handle: u32) -> Result<Option<Bytes>, String> {
 pub async fn send_chunk(handle: u32, chunk: Bytes) -> Result<(), String> {
     // Clone the Sender (cheap) and release the lock before awaiting.
     let tx = {
-        let slab = writer_slab().lock().unwrap();
+        let slab = writer_slab().lock().unwrap_or_else(|e| e.into_inner());
         slab.get(handle as usize)
             .ok_or_else(|| format!("invalid writer handle: {handle}"))?
             .inner
@@ -233,7 +235,7 @@ pub async fn send_chunk(handle: u32, chunk: Bytes) -> Result<(), String> {
 ///
 /// The associated `BodyReader` will return `None` on its next poll.
 pub fn finish_body(handle: u32) -> Result<(), String> {
-    let mut slab = writer_slab().lock().unwrap();
+    let mut slab = writer_slab().lock().unwrap_or_else(|e| e.into_inner());
     if !slab.contains(handle as usize) {
         return Err(format!("invalid writer handle: {handle}"));
     }
@@ -246,7 +248,7 @@ pub fn finish_body(handle: u32) -> Result<(), String> {
 /// Drop a body reader from the global slab, causing any pending `nextChunk`
 /// to return an error and signalling EOF on a cancelled fetch.
 pub fn cancel_reader(handle: u32) {
-    let mut slab = reader_slab().lock().unwrap();
+    let mut slab = reader_slab().lock().unwrap_or_else(|e| e.into_inner());
     if slab.contains(handle as usize) {
         slab.remove(handle as usize);
     }
@@ -255,7 +257,7 @@ pub fn cancel_reader(handle: u32) {
 // ── §4 Trailer slabs ──────────────────────────────────────────────────────────
 
 type TrailerTx = tokio::sync::oneshot::Sender<Vec<(String, String)>>;
-type TrailerRx = tokio::sync::oneshot::Receiver<Vec<(String, String)>>;
+pub(crate) type TrailerRx = tokio::sync::oneshot::Receiver<Vec<(String, String)>>;
 
 fn trailer_tx_slab() -> &'static Mutex<Slab<TimestampedEntry<TrailerTx>>> {
     static S: OnceLock<Mutex<Slab<TimestampedEntry<TrailerTx>>>> = OnceLock::new();
@@ -269,12 +271,14 @@ fn trailer_rx_slab() -> &'static Mutex<Slab<TimestampedEntry<TrailerRx>>> {
 
 /// Insert a trailer oneshot **sender** into the global slab and return its handle.
 pub(crate) fn insert_trailer_sender(tx: TrailerTx) -> u32 {
-    trailer_tx_slab().lock().unwrap().insert(TimestampedEntry::new(tx)) as u32
+    let key = trailer_tx_slab().lock().unwrap_or_else(|e| e.into_inner()).insert(TimestampedEntry::new(tx));
+    u32::try_from(key).expect("trailer_tx slab overflow")
 }
 
 /// Insert a trailer oneshot **receiver** into the global slab and return its handle.
 pub(crate) fn insert_trailer_receiver(rx: TrailerRx) -> u32 {
-    trailer_rx_slab().lock().unwrap().insert(TimestampedEntry::new(rx)) as u32
+    let key = trailer_rx_slab().lock().unwrap_or_else(|e| e.into_inner()).insert(TimestampedEntry::new(rx));
+    u32::try_from(key).expect("trailer_rx slab overflow")
 }
 
 /// Remove (drop) a trailer sender from the slab without sending.
@@ -282,7 +286,7 @@ pub(crate) fn insert_trailer_receiver(rx: TrailerRx) -> u32 {
 /// This causes the corresponding receiver to resolve with `Err`,
 /// which `pump_body_to_stream` handles via `unwrap_or_default()`.
 pub(crate) fn remove_trailer_sender(handle: u32) {
-    let mut slab = trailer_tx_slab().lock().unwrap();
+    let mut slab = trailer_tx_slab().lock().unwrap_or_else(|e| e.into_inner());
     if slab.contains(handle as usize) {
         slab.remove(handle as usize);
     }
@@ -291,7 +295,7 @@ pub(crate) fn remove_trailer_sender(handle: u32) {
 /// Deliver trailers from the JS side to the waiting Rust pump task.
 pub fn send_trailers(handle: u32, trailers: Vec<(String, String)>) -> Result<(), String> {
     let tx = {
-        let mut slab = trailer_tx_slab().lock().unwrap();
+        let mut slab = trailer_tx_slab().lock().unwrap_or_else(|e| e.into_inner());
         if !slab.contains(handle as usize) {
             return Err(format!("invalid trailer sender handle: {handle}"));
         }
@@ -303,7 +307,7 @@ pub fn send_trailers(handle: u32, trailers: Vec<(String, String)>) -> Result<(),
 /// Await and retrieve trailers produced by the Rust pump task.
 pub async fn next_trailer(handle: u32) -> Result<Option<Vec<(String, String)>>, String> {
     let rx = {
-        let mut slab = trailer_rx_slab().lock().unwrap();
+        let mut slab = trailer_rx_slab().lock().unwrap_or_else(|e| e.into_inner());
         if !slab.contains(handle as usize) {
             return Err(format!("invalid trailer receiver handle: {handle}"));
         }
@@ -338,50 +342,50 @@ pub fn start_slab_sweep(ttl_ms: u64) {
 }
 
 fn sweep_reader_slab(ttl: Duration) {
-    let mut s = reader_slab().lock().unwrap();
+    let mut s = reader_slab().lock().unwrap_or_else(|e| e.into_inner());
     let expired: Vec<usize> = s.iter()
         .filter(|(_, e)| e.is_expired(ttl))
         .map(|(k, _)| k)
         .collect();
     if !expired.is_empty() {
         for key in &expired { s.remove(*key); }
-        eprintln!("[iroh-http] swept {} expired reader entries (ttl={ttl:?})", expired.len());
+        tracing::debug!("[iroh-http] swept {} expired reader entries (ttl={ttl:?})", expired.len());
     }
 }
 
 fn sweep_writer_slab(ttl: Duration) {
-    let mut s = writer_slab().lock().unwrap();
+    let mut s = writer_slab().lock().unwrap_or_else(|e| e.into_inner());
     let expired: Vec<usize> = s.iter()
         .filter(|(_, e)| e.is_expired(ttl))
         .map(|(k, _)| k)
         .collect();
     if !expired.is_empty() {
         for key in &expired { s.remove(*key); }
-        eprintln!("[iroh-http] swept {} expired writer entries (ttl={ttl:?})", expired.len());
+        tracing::debug!("[iroh-http] swept {} expired writer entries (ttl={ttl:?})", expired.len());
     }
 }
 
 fn sweep_trailer_tx_slab(ttl: Duration) {
-    let mut s = trailer_tx_slab().lock().unwrap();
+    let mut s = trailer_tx_slab().lock().unwrap_or_else(|e| e.into_inner());
     let expired: Vec<usize> = s.iter()
         .filter(|(_, e)| e.is_expired(ttl))
         .map(|(k, _)| k)
         .collect();
     if !expired.is_empty() {
         for key in &expired { s.remove(*key); }
-        eprintln!("[iroh-http] swept {} expired trailer_tx entries (ttl={ttl:?})", expired.len());
+        tracing::debug!("[iroh-http] swept {} expired trailer_tx entries (ttl={ttl:?})", expired.len());
     }
 }
 
 fn sweep_trailer_rx_slab(ttl: Duration) {
-    let mut s = trailer_rx_slab().lock().unwrap();
+    let mut s = trailer_rx_slab().lock().unwrap_or_else(|e| e.into_inner());
     let expired: Vec<usize> = s.iter()
         .filter(|(_, e)| e.is_expired(ttl))
         .map(|(k, _)| k)
         .collect();
     if !expired.is_empty() {
         for key in &expired { s.remove(*key); }
-        eprintln!("[iroh-http] swept {} expired trailer_rx entries (ttl={ttl:?})", expired.len());
+        tracing::debug!("[iroh-http] swept {} expired trailer_rx entries (ttl={ttl:?})", expired.len());
     }
 }
 

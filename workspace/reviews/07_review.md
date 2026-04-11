@@ -155,34 +155,17 @@ what to borrow from standards and what to build itself.
 
 - [x] **Duplicated pump functions** ✅ FIXED — extracted `pump_quic_recv_to_body()` and `pump_body_to_quic_send()` into `stream.rs`, replaced 4 duplicate functions in `session.rs` and `client.rs`
 
-- [ ] **`.lock().unwrap()` on ~20 mutex operations**
-  - Standard Rust practice but means any panic in a slab operation poisons the
-    mutex and cascades across all operations
-  - In a server handling hostile peers, a panic in one request handler kills the
-    mutex for all future requests
-  - Fix: use `.lock().unwrap_or_else(|e| e.into_inner())` to recover from
-    poisoning, or use `parking_lot::Mutex` which doesn't poison
+- [x] **`.lock().unwrap()` on ~20 mutex operations** ✅ FIXED — all 36 `.lock().unwrap()` calls across `stream.rs`, `session.rs`, `client.rs`, `server.rs`, `pool.rs`, and `endpoint.rs` replaced with `.lock().unwrap_or_else(|e| e.into_inner())`. Prevents cascading failures if a thread panics while holding a slab mutex.
 
-- [ ] **`handle_stream()` is ~160 lines**
-  - Does: parse head → allocate channels → check compression → call callback →
-    await response → encode head → check compression → pump body
-  - Should be split into smaller functions with clear responsibility boundaries
+- [x] **`handle_stream()` is ~160 lines** ✅ FIXED — extracted into three focused functions: `dispatch_request()` (allocates channels, spawns recv pump, calls handler), `write_response()` (encodes response head, pumps body), and a trimmed ~50-line `handle_stream()` that coordinates the two phases. Added `DispatchResult` struct to transfer ownership between phases.
 
 ### P2 — Quality improvements
 
-- [ ] **Slab handle `as u32` cast**
-  - `slab::Slab` uses `usize` keys, cast to `u32` with no overflow check
-  - In practice slab sizes are small, but a `TryFrom` with error would be
-    defensive
-  - Fix: `u32::try_from(key).expect("slab overflow")`
+- [x] **Slab handle `as u32` cast** ✅ FIXED — all 6 slab insert sites changed from `as u32` to `u32::try_from(key).expect("slab overflow")` (stream.rs ×4, session.rs ×1, lib.rs ×1). Will panic early with a clear message if counts ever exceed u32::MAX.
 
-- [ ] **`eprintln!` in sweep task**
-  - `stream.rs` uses `eprintln!` for GC logging instead of `tracing`
-  - Inconsistent with rest of codebase
+- [x] **`eprintln!` in sweep task** ✅ FIXED — all 4 `eprintln!` calls in the sweep tasks (`sweep_reader_slab`, `sweep_writer_slab`, `sweep_trailer_tx_slab`, `sweep_trailer_rx_slab`) replaced with `tracing::debug!`.
 
-- [ ] **`node_ticket()` swallows serialization errors**
-  - `serde_json::to_string(&info).unwrap_or_default()` returns empty string on
-    failure instead of propagating the error
+- [x] **`node_ticket()` swallows serialization errors** ✅ FIXED — `unwrap_or_default()` replaced with explicit `match`: on `Err` logs `tracing::warn!` with the error and returns `String::new()`. Error is now observable in logs.
 
 - [ ] **No LRU eviction in connection pool**
   - Pool evicts the first `Ready` connection found via iterator, not least
