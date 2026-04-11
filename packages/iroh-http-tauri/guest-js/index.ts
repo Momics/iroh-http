@@ -344,6 +344,10 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
             ? options.compression.level ?? null : options.compression ? 3 : null,
           compressionMinBodyBytes: typeof options.compression === "object"
             ? options.compression.minBodyBytes ?? null : null,
+          maxConcurrency: options.maxConcurrency ?? null,
+          maxConnectionsPerPeer: options.maxConnectionsPerPeer ?? null,
+          requestTimeout: options.requestTimeout ?? null,
+          maxRequestBodyBytes: options.maxRequestBodyBytes ?? null,
         }
       : null,
   }).catch((e: unknown) => { throw classifyBindError(e); });

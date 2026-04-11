@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions, DiscoveryConfig},
-    server::{ServeOptions, respond},
+    server::respond,
     stream::{
         alloc_body_writer, claim_pending_reader, finish_body,
         next_chunk, send_chunk, store_pending_reader,
@@ -99,6 +99,14 @@ pub struct JsNodeOptions {
     pub keylog: Option<bool>,
     pub compression_level: Option<i32>,
     pub compression_min_body_bytes: Option<u32>,
+    /// Maximum simultaneous in-flight requests.  Default: 64.
+    pub max_concurrency: Option<u32>,
+    /// Maximum connections from a single peer.  Default: 8.
+    pub max_connections_per_peer: Option<u32>,
+    /// Per-request timeout in milliseconds.  Default: 60 000.  0 = disabled.
+    pub request_timeout: Option<f64>,
+    /// Reject request bodies larger than this many bytes.  Default: unlimited.
+    pub max_request_body_bytes: Option<f64>,
 }
 
 /// Info returned after a successful `createEndpoint` call.
@@ -151,6 +159,11 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         proxy_url: o.proxy_url,
         proxy_from_env: o.proxy_from_env.unwrap_or(false),
         keylog: o.keylog.unwrap_or(false),
+        max_concurrency: o.max_concurrency.map(|v| v as usize),
+        max_connections_per_peer: o.max_connections_per_peer.map(|v| v as usize),
+        request_timeout_ms: o.request_timeout.map(|v| v as u64),
+        max_request_body_bytes: o.max_request_body_bytes.map(|v| v as usize),
+        drain_timeout_secs: None,
         #[cfg(feature = "compression")]
         compression: if o.compression_level.is_some() || o.compression_min_body_bytes.is_some() {
             Some(iroh_http_core::CompressionOptions {
@@ -517,7 +530,7 @@ pub fn raw_serve(
 
     let handle = iroh_http_core::serve(
         ep.clone(),
-        ServeOptions { max_consecutive_errors: Some(ep.max_consecutive_errors()), ..Default::default() },
+        ep.serve_options(),
         move |payload: RequestPayload| {
             let tsfn = Arc::clone(&tsfn);
             // Fire-and-forget: JS calls rawRespond explicitly.

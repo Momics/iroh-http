@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use iroh_http_core::{
-    server::{respond, ServeOptions},
+    server::respond,
     stream::{finish_body, next_chunk, send_chunk, make_body_channel},
     IrohEndpoint, NodeOptions,
 };
@@ -232,7 +232,7 @@ impl IrohNode {
 
         let handle = iroh_http_core::serve(
             ep.clone(),
-            ServeOptions::default(),
+            ep.serve_options(),
             move |payload| {
                 let tx = tx.clone();
                 // `on_request` is synchronous; spawn to avoid blocking the accept task.
@@ -376,7 +376,7 @@ fn send_500(req_handle: u32, res_body_handle: u32) {
 ///   relays       — list of custom relay server URL strings.
 ///   dns_discovery — custom DNS discovery server URL.
 #[pyfunction]
-#[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false, relay_mode=None, bind_addrs=None, proxy_url=None, proxy_from_env=false, keylog=false, compression_level=None, compression_min_body_bytes=None))]
+#[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false, relay_mode=None, bind_addrs=None, proxy_url=None, proxy_from_env=false, keylog=false, compression_level=None, compression_min_body_bytes=None, max_concurrency=None, max_connections_per_peer=None, request_timeout=None, max_request_body_bytes=None))]
 fn create_node<'py>(
     py: Python<'py>,
     key: Option<Vec<u8>>,
@@ -393,6 +393,10 @@ fn create_node<'py>(
     compression_level: Option<i32>,
     #[allow(unused_variables)]
     compression_min_body_bytes: Option<usize>,
+    max_concurrency: Option<usize>,
+    max_connections_per_peer: Option<usize>,
+    request_timeout: Option<u64>,
+    max_request_body_bytes: Option<usize>,
 ) -> PyResult<Bound<'py, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let opts = NodeOptions {
@@ -416,6 +420,11 @@ fn create_node<'py>(
             proxy_url,
             proxy_from_env,
             keylog,
+            max_concurrency,
+            max_connections_per_peer,
+            request_timeout_ms: request_timeout,
+            max_request_body_bytes,
+            drain_timeout_secs: None,
             #[cfg(feature = "compression")]
             compression: if compression_level.is_some() || compression_min_body_bytes.is_some() {
                 Some(iroh_http_core::CompressionOptions {

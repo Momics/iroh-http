@@ -83,6 +83,19 @@ pub struct NodeOptions {
     /// Default: 65536 (64 KB).
     pub max_header_size: Option<usize>,
 
+    // ── Server limits ───────────────────────────────────────────────────────
+    /// Maximum simultaneous in-flight requests, all peers combined.  Default: 64.
+    pub max_concurrency: Option<usize>,
+    /// Maximum simultaneous connections from a single peer.  Default: 8.
+    pub max_connections_per_peer: Option<usize>,
+    /// Per-request timeout in milliseconds.  `None` uses the default (60 000).
+    /// `0` disables the timeout.
+    pub request_timeout_ms: Option<u64>,
+    /// Reject request bodies larger than this many bytes.  `None` means unlimited.
+    pub max_request_body_bytes: Option<usize>,
+    /// Drain timeout in seconds for graceful shutdown.  Default: 30.
+    pub drain_timeout_secs: Option<u64>,
+
     // ── Compression ─────────────────────────────────────────────────────────
     /// Body compression options.  `None` disables compression (default).
     /// Only effective when the `compression` feature is enabled.
@@ -109,6 +122,16 @@ pub(crate) struct EndpointInner {
     pub pool: ConnectionPool,
     /// Maximum byte size of a QPACK-encoded head (request or response).
     pub max_header_size: usize,
+    /// Maximum simultaneous in-flight requests.
+    pub max_concurrency: Option<usize>,
+    /// Maximum simultaneous connections from a single peer.
+    pub max_connections_per_peer: Option<usize>,
+    /// Per-request timeout in milliseconds.
+    pub request_timeout_ms: Option<u64>,
+    /// Reject request bodies larger than this many bytes.
+    pub max_request_body_bytes: Option<usize>,
+    /// Drain timeout in seconds for graceful shutdown.
+    pub drain_timeout_secs: Option<u64>,
     /// Active serve handle, if `serve()` has been called.
     pub serve_handle: std::sync::Mutex<Option<ServeHandle>>,
     /// Body compression options, if the feature is enabled.
@@ -228,6 +251,11 @@ impl IrohEndpoint {
                 max_consecutive_errors: opts.max_consecutive_errors.unwrap_or(5),
                 pool: ConnectionPool::new(opts.max_pooled_connections),
                 max_header_size: opts.max_header_size.unwrap_or(64 * 1024),
+                max_concurrency: opts.max_concurrency,
+                max_connections_per_peer: opts.max_connections_per_peer,
+                request_timeout_ms: opts.request_timeout_ms,
+                max_request_body_bytes: opts.max_request_body_bytes,
+                drain_timeout_secs: opts.drain_timeout_secs,
                 serve_handle: std::sync::Mutex::new(None),
                 #[cfg(feature = "compression")]
                 compression: opts.compression,
@@ -243,6 +271,21 @@ impl IrohEndpoint {
     /// The configured consecutive-error limit for the serve loop.
     pub fn max_consecutive_errors(&self) -> usize {
         self.inner.max_consecutive_errors
+    }
+
+    /// Build a [`ServeOptions`] from the endpoint's stored configuration.
+    ///
+    /// Platform adapters should call this instead of constructing `ServeOptions`
+    /// manually so that all server-limit fields are forwarded consistently.
+    pub fn serve_options(&self) -> crate::server::ServeOptions {
+        crate::server::ServeOptions {
+            max_concurrency: self.inner.max_concurrency,
+            max_consecutive_errors: Some(self.inner.max_consecutive_errors),
+            request_timeout_secs: self.inner.request_timeout_ms.map(|ms| ms / 1000),
+            max_connections_per_peer: self.inner.max_connections_per_peer,
+            max_request_body_bytes: self.inner.max_request_body_bytes,
+            drain_timeout_secs: self.inner.drain_timeout_secs,
+        }
     }
 
     /// The node's raw secret key bytes (32 bytes).
