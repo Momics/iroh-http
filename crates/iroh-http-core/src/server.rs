@@ -30,6 +30,7 @@ const READ_BUF: usize = 16 * 1024;
 const DEFAULT_CONCURRENCY: usize = 64;
 const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_MAX_CONNECTIONS_PER_PEER: usize = 8;
+const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
 
 /// Options controlling the serve loop.
 #[derive(Debug, Clone, Default)]
@@ -47,6 +48,48 @@ pub struct ServeOptions {
     /// Maximum request body size in bytes.  `None` means unlimited.
     /// When exceeded, the stream is reset.  Default: None.
     pub max_request_body_bytes: Option<usize>,
+    /// Drain timeout in seconds for graceful shutdown.  When `shutdown()` is
+    /// called, the serve loop stops accepting new connections and waits up to
+    /// this long for in-flight requests to complete.  Default: 30.
+    pub drain_timeout_secs: Option<u64>,
+}
+
+/// Handle returned by [`serve`].
+///
+/// Dropping the handle does **not** stop the serve loop — the background task
+/// continues independently.  Use [`shutdown`](ServeHandle::shutdown) for
+/// graceful shutdown, or [`abort`](ServeHandle::abort) for immediate stop.
+pub struct ServeHandle {
+    join: tokio::task::JoinHandle<()>,
+    shutdown_notify: std::sync::Arc<tokio::sync::Notify>,
+    drain_timeout: std::time::Duration,
+}
+
+impl ServeHandle {
+    /// Signal the serve loop to stop accepting new connections and drain
+    /// in-flight requests.  Returns immediately — call [`drain`](ServeHandle::drain)
+    /// to wait for completion.
+    pub fn shutdown(&self) {
+        self.shutdown_notify.notify_one();
+    }
+
+    /// Wait for the serve loop to finish draining (up to the configured
+    /// drain timeout).  If the loop has not been shut down yet, this calls
+    /// `shutdown()` first.
+    pub async fn drain(self) {
+        self.shutdown();
+        let _ = self.join.await;
+    }
+
+    /// Immediately abort the serve loop without draining.
+    pub fn abort(&self) {
+        self.join.abort();
+    }
+
+    /// The configured drain timeout.
+    pub fn drain_timeout(&self) -> std::time::Duration {
+        self.drain_timeout
+    }
 }
 
 // ── Pending response head registry ───────────────────────────────────────────
@@ -84,13 +127,13 @@ pub fn respond(req_handle: u32, status: u16, headers: Vec<(String, String)>) -> 
 /// [`RequestPayload`] and must eventually call [`respond`] with the
 /// response head and write/finish `payload.res_body_handle`.
 ///
-/// The returned handle is a `JoinHandle`; the caller can drop it to allow
-/// the task to run indefinitely in the background.
+/// Returns a [`ServeHandle`] that can be used to gracefully shut down the
+/// serve loop.  Dropping the handle lets the loop run indefinitely.
 pub fn serve<F>(
     endpoint: IrohEndpoint,
     options: ServeOptions,
     on_request: F,
-) -> tokio::task::JoinHandle<()>
+) -> ServeHandle
 where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
@@ -105,6 +148,9 @@ where
         .unwrap_or(DEFAULT_MAX_CONNECTIONS_PER_PEER);
     let max_header_size = endpoint.max_header_size();
     let max_request_body_bytes = options.max_request_body_bytes;
+    let drain_timeout = std::time::Duration::from_secs(
+        options.drain_timeout_secs.unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS),
+    );
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max));
     let on_request = std::sync::Arc::new(on_request);
 
@@ -112,14 +158,30 @@ where
     let peer_counts: std::sync::Arc<Mutex<HashMap<iroh::PublicKey, usize>>> =
         std::sync::Arc::new(Mutex::new(HashMap::new()));
 
-    tokio::spawn(async move {
+    // Shutdown signal.
+    let shutdown_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    let shutdown_listen = shutdown_notify.clone();
+    let drain_sem = semaphore.clone();
+    let drain_max = max;
+    let drain_dur = drain_timeout;
+
+    let join = tokio::spawn(async move {
         let ep = endpoint.raw().clone();
         let mut consecutive_errors: usize = 0;
 
         loop {
-            let incoming = match ep.accept().await {
-                Some(i) => i,
-                None => break, // endpoint closed
+            let incoming = tokio::select! {
+                biased;
+                _ = shutdown_listen.notified() => {
+                    tracing::info!("iroh-http: serve loop shutting down (drain requested)");
+                    break;
+                }
+                inc = ep.accept() => {
+                    match inc {
+                        Some(i) => i,
+                        None => break, // endpoint closed
+                    }
+                }
             };
 
             let conn = match incoming.await {
@@ -181,7 +243,35 @@ where
                 }
             });
         }
-    })
+
+        // Drain: wait for all in-flight requests to finish (all permits returned).
+        // acquire_many(max) succeeds only when every permit is free.
+        let drain_result = tokio::time::timeout(
+            drain_dur,
+            drain_sem.acquire_many(drain_max as u32),
+        )
+        .await;
+        match drain_result {
+            Ok(Ok(_permits)) => {
+                tracing::info!("iroh-http: all in-flight requests drained");
+            }
+            Ok(Err(_)) => {
+                tracing::warn!("iroh-http: semaphore closed during drain");
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "iroh-http: drain timed out after {}s, force-closing remaining requests",
+                    drain_dur.as_secs()
+                );
+            }
+        }
+    });
+
+    ServeHandle {
+        join,
+        shutdown_notify,
+        drain_timeout: drain_dur,
+    }
 }
 
 async fn handle_connection<F>(

@@ -395,7 +395,7 @@ async fn serve_start(p: Value) -> Value {
 
     let queue = serve_registry::register(handle);
 
-    iroh_http_core::serve(
+    let serve_handle = iroh_http_core::serve(
         ep.clone(),
         ServeOptions { max_consecutive_errors: Some(ep.max_consecutive_errors()), ..Default::default() },
         move |payload: RequestPayload| {
@@ -429,6 +429,7 @@ async fn serve_start(p: Value) -> Value {
             });
         },
     );
+    ep.set_serve_handle(serve_handle);
 
     ok(json!({}))
 }

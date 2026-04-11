@@ -274,7 +274,7 @@ pub async fn serve(
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
 
-    iroh_http_core::serve(
+    let handle = iroh_http_core::serve(
         ep.clone(),
         ServeOptions { max_consecutive_errors: Some(ep.max_consecutive_errors()), ..Default::default() },
         move |payload: RequestPayload| {
@@ -301,11 +301,10 @@ pub async fn serve(
             }
         },
     );
+    ep.set_serve_handle(handle);
 
     Ok(())
 }
-
-// ── respond_to_request ────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
