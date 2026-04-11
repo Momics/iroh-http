@@ -177,9 +177,18 @@ impl IrohEndpoint {
 
         // DNS discovery (enabled by default unless disable_networking).
         if !opts.disable_networking && opts.dns_discovery_enabled {
-            builder = builder
-                .address_lookup(PkarrPublisher::n0_dns())
-                .address_lookup(DnsAddressLookup::n0_dns());
+            if let Some(ref url_str) = opts.dns_discovery {
+                let url: url::Url = url_str
+                    .parse()
+                    .map_err(|e| format!("invalid dns_discovery URL: {e}"))?;
+                builder = builder
+                    .address_lookup(PkarrPublisher::builder(url.clone()))
+                    .address_lookup(DnsAddressLookup::builder(url.host_str().unwrap_or_default().to_string()));
+            } else {
+                builder = builder
+                    .address_lookup(PkarrPublisher::n0_dns())
+                    .address_lookup(DnsAddressLookup::n0_dns());
+            }
         }
 
         if let Some(key_bytes) = opts.key {
