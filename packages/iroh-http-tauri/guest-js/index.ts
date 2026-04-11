@@ -34,7 +34,6 @@ function decodeBase64(s: string): Uint8Array {
 import {
   buildNode,
   type NodeOptions,
-  type LifecycleOptions,
   type IrohNode,
   type AddrFunctions,
   type DiscoveryFunctions,
@@ -42,7 +41,6 @@ import {
   type PeerStats,
   type PeerDiscoveryEvent,
   type RelayMode,
-  type DiscoveryOptions,
   classifyBindError,
   type SecretKey,
 } from "@momics/iroh-http-shared";
@@ -279,12 +277,12 @@ const tauriSessionFns: RawSessionFns = {
 
 function installLifecycleListener(
   endpointHandle: number,
-  options: LifecycleOptions,
+  options: { auto?: boolean; maxRetries?: number },
   onDead: () => void,
 ): (() => void) | undefined {
   if (typeof document === "undefined") return;
   const isMobile = /android|iphone|ipad/i.test(navigator.userAgent);
-  if (!isMobile && !options.autoReconnect) return;
+  if (!isMobile && !options.auto) return;
 
   let retries = 0;
   const maxRetries = options.maxRetries ?? 3;
@@ -323,13 +321,17 @@ function normaliseRelayMode(mode?: RelayMode): {
   return { relayMode: "custom", relays: [mode], disableNetworking: false };
 }
 
-/** Normalise DiscoveryOptions into flat fields for the Rust adapter. */
-function normaliseDiscovery(disc?: DiscoveryOptions): {
+/** Normalise the `discovery` option into flat fields for the Rust adapter. */
+function normaliseDiscovery(disc?: NodeOptions["discovery"]): {
   dnsEnabled: boolean;
+  dnsServerUrl?: string;
 } {
   if (!disc) return { dnsEnabled: true };
-  const dnsEnabled = disc.dns !== false;
-  return { dnsEnabled };
+  if (disc.dns === false) return { dnsEnabled: false };
+  if (typeof disc.dns === "object" && disc.dns !== null) {
+    return { dnsEnabled: true, dnsServerUrl: disc.dns.serverUrl };
+  }
+  return { dnsEnabled: true };
 }
 
 /** Address introspection functions backed by Tauri invoke calls. */
@@ -396,13 +398,13 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           relayMode: relayMode ?? null,
           relays,
           bindAddrs,
-          dnsDiscovery: options.dnsDiscovery ?? null,
+          dnsDiscovery: discovery.dnsServerUrl ?? options.dnsDiscovery ?? null,
           dnsDiscoveryEnabled: discovery.dnsEnabled,
-          channelCapacity: options.channelCapacity ?? null,
-          maxChunkSizeBytes: options.maxChunkSizeBytes ?? null,
-          maxConsecutiveErrors: options.maxConsecutiveErrors ?? null,
-          drainTimeout: options.drainTimeout ?? null,
-          handleTtl: options.handleTtl ?? null,
+          channelCapacity: options.advanced?.channelCapacity ?? null,
+          maxChunkSizeBytes: options.advanced?.maxChunkSizeBytes ?? null,
+          maxConsecutiveErrors: options.advanced?.maxConsecutiveErrors ?? null,
+          drainTimeout: options.advanced?.drainTimeout ?? null,
+          handleTtl: options.advanced?.handleTtl ?? null,
           maxPooledConnections: options.maxPooledConnections ?? null,
           poolIdleTimeoutMs: options.poolIdleTimeoutMs ?? null,
           disableNetworking,
@@ -441,10 +443,13 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   );
 
   // Install lifecycle listener for mobile/reconnect support.
-  if (options?.lifecycle) {
+  const reconnect = options?.reconnect ?? (options?.lifecycle
+    ? { auto: options.lifecycle.autoReconnect, maxRetries: options.lifecycle.maxRetries }
+    : undefined);
+  if (reconnect) {
     installLifecycleListener(
       info.endpointHandle,
-      options.lifecycle,
+      reconnect,
       () => {
         // Resolve the closed promise to signal the node is dead.
         node.close().catch(() => {/* already closed */});

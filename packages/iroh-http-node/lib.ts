@@ -190,13 +190,17 @@ function normaliseRelayMode(mode?: import("@momics/iroh-http-shared").RelayMode)
   return { relayMode: "custom", relays: [mode], disableNetworking: false };
 }
 
-/** Normalise DiscoveryOptions into flat fields for the Rust adapter. */
-function normaliseDiscovery(disc?: import("@momics/iroh-http-shared").DiscoveryOptions): {
+/** Normalise the `discovery` option into flat fields for the Rust adapter. */
+function normaliseDiscovery(disc?: NodeOptions["discovery"]): {
   dnsEnabled: boolean;
+  dnsServerUrl?: string;
 } {
   if (!disc) return { dnsEnabled: true };
-  const dnsEnabled = disc.dns !== false;
-  return { dnsEnabled };
+  if (disc.dns === false) return { dnsEnabled: false };
+  if (typeof disc.dns === "object" && disc.dns !== null) {
+    return { dnsEnabled: true, dnsServerUrl: disc.dns.serverUrl };
+  }
+  return { dnsEnabled: true };
 }
 
 /** Address introspection functions backed by napi bindings. */
@@ -213,7 +217,12 @@ const addrFns: AddrFunctions = {
   },
   peerStats: async (handle, nodeId) => {
     const stats = await napiPeerStats(handle, nodeId);
-    return stats ?? null;
+    if (!stats) return null;
+    return {
+      relay: stats.relay,
+      relayUrl: stats.relayUrl ?? null,
+      paths: stats.paths,
+    };
   },
 };
 
@@ -222,7 +231,12 @@ const discoveryFns: DiscoveryFunctions = {
   mdnsBrowse: async (handle, serviceName) => napiMdnsBrowse(handle, serviceName),
   mdnsNextEvent: async (browseHandle) => {
     const ev = await napiMdnsNextEvent(browseHandle);
-    return ev ?? null;
+    if (!ev) return null;
+    return {
+      type: ev.isActive ? "discovered" : "expired",
+      nodeId: ev.nodeId,
+      addrs: ev.addrs,
+    };
   },
   mdnsBrowseClose: (browseHandle) => napiMdnsBrowseClose(browseHandle),
   mdnsAdvertise: async (handle, serviceName) => napiMdnsAdvertise(handle, serviceName),
@@ -280,13 +294,13 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
           relayMode,
           relays,
           bindAddrs,
-          dnsDiscovery: options.dnsDiscovery,
+          dnsDiscovery: discovery.dnsServerUrl ?? options.dnsDiscovery,
           dnsDiscoveryEnabled: discovery.dnsEnabled,
-          channelCapacity: options.channelCapacity,
-          maxChunkSizeBytes: options.maxChunkSizeBytes,
-          maxConsecutiveErrors: options.maxConsecutiveErrors,
-          drainTimeout: options.drainTimeout,
-          handleTtl: options.handleTtl,
+          channelCapacity: options.advanced?.channelCapacity,
+          maxChunkSizeBytes: options.advanced?.maxChunkSizeBytes,
+          maxConsecutiveErrors: options.advanced?.maxConsecutiveErrors,
+          drainTimeout: options.advanced?.drainTimeout,
+          handleTtl: options.advanced?.handleTtl,
           maxPooledConnections: options.maxPooledConnections,
           poolIdleTimeoutMs: options.poolIdleTimeoutMs,
           disableNetworking,
