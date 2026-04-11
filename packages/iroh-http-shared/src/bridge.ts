@@ -103,14 +103,32 @@ export interface RequestPayload extends FfiRequest {
 // ── Platform function types ───────────────────────────────────────────────────
 
 /** Options for mDNS local network discovery. */
-export interface DiscoveryOptions {
-  /** Enable mDNS local network discovery.  Default: false. */
-  mdns?: boolean;
-  /** Application-specific service name.  Required when `mdns` is true. */
-  serviceName?: string;
-  /** Advertise this node on the local network.  Default: true. */
-  advertise?: boolean;
-}
+export type DiscoveryOptions = {
+  /**
+   * Enable DNS discovery via n0's DNS servers.  Default: true.
+   * Set to `false` for LAN-only deployments.
+   */
+  dns?: boolean;
+
+  /**
+   * Local network discovery via mDNS.
+   *
+   * Set to `true` for defaults, or pass an object to customise.
+   * Omit or set `false` to disable.  Default: false.
+   */
+  mdns?: boolean | {
+    /**
+     * Advertise this node on the LAN.  Set `false` to listen without being
+     * discoverable.  Default: true.
+     */
+    advertise?: boolean;
+    /**
+     * mDNS swarm identifier.  Different apps on the same LAN should use
+     * different names to avoid cross-talk.  Default: iroh's built-in name.
+     */
+    serviceName?: string;
+  };
+};
 
 /** Options for mobile/background lifecycle management. */
 export interface LifecycleOptions {
@@ -126,22 +144,25 @@ export interface LifecycleOptions {
  * Relays are QUIC-over-HTTPS servers that keep peers reachable behind NATs/firewalls.
  *
  *   `"default"`       — n0's public production relays (recommended).
+ *   `"staging"`       — n0's canary relays (for testing pre-release infra).
  *   `"disabled"`      — No relay, no DNS discovery. Direct addresses only.
  *   `"https://…"`     — A single custom relay URL.
  *   `["https://…", …]` — Multiple custom relay URLs.
  */
 export type RelayMode =
   | "default"
+  | "staging"
   | "disabled"
   | string
   | string[];
 
 /** Options accepted by `createNode`. */
 export interface NodeOptions {
+  // ── Identity ─────────────────────────────────────────────────────────────
   /** 32-byte Ed25519 secret key or `SecretKey` object.  Omit to generate a new identity. */
   key?: SecretKey | Uint8Array;
-  /** Idle connection timeout in milliseconds. */
-  idleTimeout?: number;
+
+  // ── Connectivity ──────────────────────────────────────────────────────────
   /**
    * Relay server configuration. Default: `"default"`.
    *
@@ -151,20 +172,56 @@ export interface NodeOptions {
    * @see {@link RelayMode}
    */
   relayMode?: RelayMode;
+  /**
+   * Bind the UDP socket on a specific address and/or port.
+   *
+   * Default: OS-assigned port on all interfaces (`"0.0.0.0:0"`).
+   * Accepts a single address or an array for multi-socket binding.
+   *
+   * @example `"192.168.1.5:0"`, `["0.0.0.0:0", "[::]:0"]`
+   */
+  bindAddr?: string | string[];
+  /** Idle connection timeout in milliseconds. */
+  idleTimeout?: number;
+
+  // ── Discovery ─────────────────────────────────────────────────────────────
   /** DNS discovery server URL override.  Uses n0 DNS defaults when unset. */
   dnsDiscovery?: string;
+  /** Local peer discovery configuration. */
+  discovery?: DiscoveryOptions;
+
+  // ── Power-user options ────────────────────────────────────────────────────
+  //
+  // Leave unset unless you have a specific reason. Incorrect values can
+  // silently break connectivity or degrade performance.
+  /**
+   * HTTP proxy URL for relay traffic.  For corporate networks that route
+   * UDP through an HTTP proxy.
+   */
+  proxyUrl?: string;
+  /**
+   * Read `HTTP_PROXY` / `HTTPS_PROXY` environment variables for proxy config.
+   * Default: false.
+   */
+  proxyFromEnv?: boolean;
+  /**
+   * Log TLS pre-master session keys to `$SSLKEYLOGFILE`.
+   * **DEV ONLY** — enables Wireshark decryption. Never enable in production.
+   * Default: false.
+   */
+  keylog?: boolean;
   /** Capacity (in chunks) of each body channel.  Default: 32. */
   channelCapacity?: number;
   /** Maximum byte length of a single chunk.  Larger chunks are split.  Default: 65536 (64 KB). */
   maxChunkSizeBytes?: number;
   /** Number of consecutive accept errors before the serve loop gives up.  Default: 5. */
   maxConsecutiveErrors?: number;
-  /** Local peer discovery configuration. */
-  discovery?: DiscoveryOptions;
   /** Milliseconds to wait for a slow body reader before dropping.  Default: 30 000. */
   drainTimeout?: number;
   /** TTL in milliseconds for slab handle entries.  `0` disables sweeping.  Default: 300 000. */
   handleTtl?: number;
+
+  // ── Mobile / background lifecycle ─────────────────────────────────────────
   /** Mobile/background lifecycle options. */
   lifecycle?: LifecycleOptions;
 }
@@ -237,12 +294,25 @@ export interface IrohNode {
    * Only available when the node was created with `discovery.mdns: true`.
    * Returns a cleanup function that removes the listener.
    */
-  onPeerDiscovered?(callback: (nodeId: string) => void): () => void;
+  onPeerDiscovered?(callback: (event: PeerDiscoveryEvent) => void): () => void;
   /**
    * Resolves when the node has been closed (either via `close()` or due to
    * a fatal error).  Mirrors `WebTransportSession.closed`.
    */
   readonly closed: Promise<void>;
+  /**
+   * Full node address: node ID + relay URL(s) + direct socket addresses.
+   * Share this with remote peers so they can connect directly.
+   */
+  addr(): Promise<NodeAddrInfo>;
+  /**
+   * Home relay URL, or `null` if not connected to a relay.
+   */
+  homeRelay(): Promise<string | null>;
+  /**
+   * Known addresses for a remote peer, or `null` if unknown.
+   */
+  peerInfo(peer: PublicKey | string): Promise<NodeAddrInfo | null>;
   /** Close the endpoint and release resources. */
   close(): Promise<void>;
   /** Enables `await using node = await createNode()` (TC39 explicit resource management). */
@@ -254,6 +324,29 @@ export interface EndpointInfo {
   endpointHandle: number;
   nodeId: string;
   keypair: Uint8Array;
+}
+
+/**
+ * Node address information: node ID + relay URL(s) + direct socket addresses.
+ * Used for sharing connection info with remote peers.
+ */
+export interface NodeAddrInfo {
+  /** Base32-encoded public key (node ID). */
+  id: string;
+  /** Relay URLs and/or `ip:port` direct addresses. */
+  addrs: string[];
+}
+
+/**
+ * Peer discovery event from mDNS local network discovery.
+ */
+export interface PeerDiscoveryEvent {
+  /** Whether this peer was just discovered or has left the network. */
+  type: "discovered" | "expired";
+  /** Base32-encoded public key of the discovered peer. */
+  nodeId: string;
+  /** Known addresses for this peer (relay URLs and/or `ip:port`). */
+  addrs?: string[];
 }
 
 /** Raw serve function provided by each platform bridge. */

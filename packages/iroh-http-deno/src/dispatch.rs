@@ -86,6 +86,9 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
     match method {
         "createEndpoint" => create_endpoint(p).await,
         "closeEndpoint" => close_endpoint(p).await,
+        "nodeAddr" => node_addr_dispatch(p),
+        "homeRelay" => home_relay_dispatch(p),
+        "peerInfo" => peer_info_dispatch(p).await,
         "allocBodyWriter" => alloc_body_writer_dispatch(),
         "allocFetchToken" => alloc_fetch_token_dispatch(),
         "cancelInFlight" => cancel_in_flight_dispatch(p),
@@ -111,8 +114,11 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
 struct CreateEndpointPayload {
     key: Option<String>,
     idle_timeout: Option<u64>,
+    relay_mode: Option<String>,
     relays: Option<Vec<String>>,
+    bind_addrs: Option<Vec<String>>,
     dns_discovery: Option<String>,
+    dns_discovery_enabled: Option<bool>,
     channel_capacity: Option<usize>,
     max_chunk_size_bytes: Option<usize>,
     max_consecutive_errors: Option<usize>,
@@ -122,6 +128,9 @@ struct CreateEndpointPayload {
     drain_timeout: Option<u64>,
     handle_ttl: Option<u64>,
     disable_networking: Option<bool>,
+    proxy_url: Option<String>,
+    proxy_from_env: Option<bool>,
+    keylog: Option<bool>,
 }
 
 async fn create_endpoint(p: Value) -> Value {
@@ -143,8 +152,11 @@ async fn create_endpoint(p: Value) -> Value {
     let opts = NodeOptions {
         key: args.key.and_then(|k| B64.decode(k).ok()?.try_into().ok()),
         idle_timeout_ms: args.idle_timeout,
+        relay_mode: args.relay_mode,
         relays: args.relays.unwrap_or_default(),
+        bind_addrs: args.bind_addrs.unwrap_or_default(),
         dns_discovery: args.dns_discovery,
+        dns_discovery_enabled: args.dns_discovery_enabled.unwrap_or(true),
         capabilities: Vec::new(),
         channel_capacity: args.channel_capacity,
         max_chunk_size_bytes: args.max_chunk_size_bytes,
@@ -154,6 +166,10 @@ async fn create_endpoint(p: Value) -> Value {
         drain_timeout_ms: args.drain_timeout,
         handle_ttl_ms: args.handle_ttl,
         max_pooled_connections: None,
+        max_header_size: None,
+        proxy_url: args.proxy_url,
+        proxy_from_env: args.proxy_from_env.unwrap_or(false),
+        keylog: args.keylog.unwrap_or(false),
     };
     match IrohEndpoint::bind(opts).await {
         Err(e) => err(e),
@@ -195,6 +211,50 @@ async fn close_endpoint(p: Value) -> Value {
         Some(ep) => {
             ep.close().await;
             ok(json!({}))
+        }
+    }
+}
+
+// ── Address introspection ─────────────────────────────────────────────────────
+
+fn node_addr_dispatch(p: Value) -> Value {
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    match get_endpoint(handle) {
+        None => err(format!("invalid endpoint handle: {handle}")),
+        Some(ep) => {
+            let info = ep.node_addr();
+            ok(json!({ "id": info.id, "addrs": info.addrs }))
+        }
+    }
+}
+
+fn home_relay_dispatch(p: Value) -> Value {
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    match get_endpoint(handle) {
+        None => err(format!("invalid endpoint handle: {handle}")),
+        Some(ep) => ok(ep.home_relay()),
+    }
+}
+
+async fn peer_info_dispatch(p: Value) -> Value {
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    let node_id = match p["nodeId"].as_str() {
+        Some(s) => s,
+        None => return err("missing nodeId"),
+    };
+    match get_endpoint(handle) {
+        None => err(format!("invalid endpoint handle: {handle}")),
+        Some(ep) => {
+            ok(ep.peer_info(node_id).await.map(|info| json!({ "id": info.id, "addrs": info.addrs })))
         }
     }
 }

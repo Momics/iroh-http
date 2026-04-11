@@ -79,8 +79,11 @@ pub struct JsDiscoveryOptions {
 pub struct JsNodeOptions {
     pub key: Option<Uint8Array>,
     pub idle_timeout: Option<f64>,
+    pub relay_mode: Option<String>,
     pub relays: Option<Vec<String>>,
+    pub bind_addrs: Option<Vec<String>>,
     pub dns_discovery: Option<String>,
+    pub dns_discovery_enabled: Option<bool>,
     pub channel_capacity: Option<u32>,
     pub max_chunk_size_bytes: Option<u32>,
     pub max_consecutive_errors: Option<u32>,
@@ -88,6 +91,9 @@ pub struct JsNodeOptions {
     pub drain_timeout: Option<f64>,
     pub handle_ttl: Option<f64>,
     pub disable_networking: Option<bool>,
+    pub proxy_url: Option<String>,
+    pub proxy_from_env: Option<bool>,
+    pub keylog: Option<bool>,
 }
 
 #[napi(object)]
@@ -114,8 +120,11 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
             arr
         }),
         idle_timeout_ms: o.idle_timeout.map(|t| t as u64),
+        relay_mode: o.relay_mode,
         relays: o.relays.unwrap_or_default(),
+        bind_addrs: o.bind_addrs.unwrap_or_default(),
         dns_discovery: o.dns_discovery,
+        dns_discovery_enabled: o.dns_discovery_enabled.unwrap_or(true),
         capabilities: Vec::new(),
         channel_capacity: o.channel_capacity.map(|v| v as usize),
         max_chunk_size_bytes: o.max_chunk_size_bytes.map(|v| v as usize),
@@ -125,6 +134,10 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         drain_timeout_ms: o.drain_timeout.map(|v| v as u64),
         handle_ttl_ms: o.handle_ttl.map(|v| v as u64),
         max_pooled_connections: None,
+        max_header_size: None,
+        proxy_url: o.proxy_url,
+        proxy_from_env: o.proxy_from_env.unwrap_or(false),
+        keylog: o.keylog.unwrap_or(false),
     }).unwrap_or_default();
 
     let ep = IrohEndpoint::bind(opts)
@@ -223,6 +236,38 @@ pub fn on_peer_discovered(
 }
 
 // ── Bridge methods ────────────────────────────────────────────────────────────
+
+// ── Address introspection ─────────────────────────────────────────────────────
+
+#[napi(object)]
+pub struct JsNodeAddrInfo {
+    pub id: String,
+    pub addrs: Vec<String>,
+}
+
+/// Full node address: node ID + relay URL(s) + direct socket addresses.
+#[napi]
+pub fn node_addr(endpoint_handle: u32) -> napi::Result<JsNodeAddrInfo> {
+    let ep = get_endpoint(endpoint_handle)?;
+    let info = ep.node_addr();
+    Ok(JsNodeAddrInfo { id: info.id, addrs: info.addrs })
+}
+
+/// Home relay URL, or null if not connected to a relay.
+#[napi]
+pub fn home_relay(endpoint_handle: u32) -> napi::Result<Option<String>> {
+    let ep = get_endpoint(endpoint_handle)?;
+    Ok(ep.home_relay())
+}
+
+/// Known addresses for a remote peer, or null if unknown.
+#[napi]
+pub async fn peer_info(endpoint_handle: u32, node_id: String) -> napi::Result<Option<JsNodeAddrInfo>> {
+    let ep = get_endpoint(endpoint_handle)?;
+    Ok(ep.peer_info(&node_id).await.map(|info| JsNodeAddrInfo { id: info.id, addrs: info.addrs }))
+}
+
+// ── Body streaming ────────────────────────────────────────────────────────────
 
 #[napi]
 pub async fn js_next_chunk(handle: u32) -> napi::Result<Option<Buffer>> {

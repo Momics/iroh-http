@@ -45,6 +45,10 @@ import {
   type RawConnectFn,
   type AllocBodyWriterFn,
   type RequestPayload,
+  type AddrFunctions,
+  type NodeAddrInfo,
+  type RelayMode,
+  type DiscoveryOptions,
   classifyBindError,
   type SecretKey,
 } from "iroh-http-shared";
@@ -250,15 +254,51 @@ function installLifecycleListener(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /** Normalise `relayMode` into flat fields for the Rust adapter. */
-function normaliseRelayMode(mode?: import("iroh-http-shared").RelayMode): {
+function normaliseRelayMode(mode?: RelayMode): {
+  relayMode: string | undefined;
   relays: string[] | null;
   disableNetworking: boolean;
 } {
-  if (mode === "disabled") return { relays: [], disableNetworking: true };
-  if (mode === "default" || mode === undefined) return { relays: null, disableNetworking: false };
-  if (Array.isArray(mode)) return { relays: mode, disableNetworking: false };
-  return { relays: [mode], disableNetworking: false };
+  if (mode === "disabled") return { relayMode: "disabled", relays: [], disableNetworking: true };
+  if (mode === "default" || mode === undefined) return { relayMode: undefined, relays: null, disableNetworking: false };
+  if (mode === "staging") return { relayMode: "staging", relays: null, disableNetworking: false };
+  if (Array.isArray(mode)) return { relayMode: "custom", relays: mode, disableNetworking: false };
+  return { relayMode: "custom", relays: [mode], disableNetworking: false };
 }
+
+/** Normalise DiscoveryOptions into flat fields for the Rust adapter. */
+function normaliseDiscovery(disc?: DiscoveryOptions): {
+  mdns: boolean;
+  serviceName?: string;
+  advertise: boolean;
+  dnsEnabled: boolean;
+} {
+  if (!disc) return { mdns: false, advertise: true, dnsEnabled: true };
+  const dnsEnabled = disc.dns !== false;
+  if (disc.mdns === true) return { mdns: true, advertise: true, dnsEnabled };
+  if (disc.mdns && typeof disc.mdns === "object") {
+    return {
+      mdns: true,
+      advertise: disc.mdns.advertise ?? true,
+      serviceName: disc.mdns.serviceName,
+      dnsEnabled,
+    };
+  }
+  return { mdns: false, advertise: true, dnsEnabled };
+}
+
+/** Address introspection functions backed by Tauri invoke calls. */
+const tauriAddrFns: AddrFunctions = {
+  nodeAddr: async (handle) => {
+    return invoke<NodeAddrInfo>(`${PLUGIN}|node_addr`, { endpointHandle: handle });
+  },
+  homeRelay: async (handle) => {
+    return invoke<string | null>(`${PLUGIN}|home_relay`, { endpointHandle: handle });
+  },
+  peerInfo: async (handle, nodeId) => {
+    return invoke<NodeAddrInfo | null>(`${PLUGIN}|peer_info`, { endpointHandle: handle, nodeId });
+  },
+};
 
 /**
  * Create an Iroh node for peer-to-peer HTTP inside a Tauri application.
@@ -268,7 +308,11 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     ? encodeBase64(options.key instanceof Uint8Array ? options.key : (options.key as SecretKey).toBytes())
     : null;
 
-  const { relays, disableNetworking } = normaliseRelayMode(options?.relayMode);
+  const { relayMode, relays, disableNetworking } = normaliseRelayMode(options?.relayMode);
+  const discovery = normaliseDiscovery(options?.discovery);
+  const bindAddrs = options?.bindAddr
+    ? (Array.isArray(options.bindAddr) ? options.bindAddr : [options.bindAddr])
+    : null;
 
   const info = await invoke<{
     endpointHandle: number;
@@ -279,17 +323,23 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
       ? {
           key: keyBytes,
           idleTimeout: options.idleTimeout ?? null,
+          relayMode: relayMode ?? null,
           relays,
+          bindAddrs,
           dnsDiscovery: options.dnsDiscovery ?? null,
+          dnsDiscoveryEnabled: discovery.dnsEnabled,
           channelCapacity: options.channelCapacity ?? null,
           maxChunkSizeBytes: options.maxChunkSizeBytes ?? null,
           maxConsecutiveErrors: options.maxConsecutiveErrors ?? null,
-          discoveryMdns: options.discovery?.mdns ?? null,
-          discoveryServiceName: options.discovery?.serviceName ?? null,
-          discoveryAdvertise: options.discovery?.advertise ?? null,
+          discoveryMdns: discovery.mdns,
+          discoveryServiceName: discovery.serviceName ?? null,
+          discoveryAdvertise: discovery.advertise,
           drainTimeout: options.drainTimeout ?? null,
           handleTtl: options.handleTtl ?? null,
           disableNetworking,
+          proxyUrl: options.proxyUrl ?? null,
+          proxyFromEnv: options.proxyFromEnv ?? null,
+          keylog: options.keylog ?? null,
         }
       : null,
   }).catch((e: unknown) => { throw classifyBindError(e); });
@@ -305,7 +355,8 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawServe,
     rawConnect,
     allocBodyWriter,
-    (handle) => invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: handle })
+    (handle) => invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: handle }),
+    tauriAddrFns,
   );
 
   // Install lifecycle listener for mobile/reconnect support.
@@ -324,15 +375,3 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
 }
 
 export type { NodeOptions, IrohNode };
- *
- * Implements the `Bridge` interface using Tauri `invoke()` calls and wires
- * it into iroh-http-shared to export the standard `createNode` API.
- *
- * ```ts
- * import { createNode } from 'iroh-http-tauri';
- *
- * const node = await createNode({ key: savedKey });
- * node.serve({}, req => new Response('hello'));
- * const res = await node.fetch(peerId, '/api');
- * ```
- */

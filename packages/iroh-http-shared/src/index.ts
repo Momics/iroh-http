@@ -8,7 +8,8 @@
 export type { Bridge, FfiRequest, FfiResponseHead, FfiResponse, RequestPayload,
               NodeOptions, IrohNode, EndpointInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn,
               FfiDuplexStream, BidirectionalStream, DuplexStream, RawConnectFn,
-              RelayMode, IrohFetchInit } from "./bridge.js";
+              RelayMode, IrohFetchInit, DiscoveryOptions, LifecycleOptions,
+              NodeAddrInfo, PeerDiscoveryEvent } from "./bridge.js";
 export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
 export { makeFetch, makeConnect } from "./fetch.js";
 export { makeServe } from "./serve.js";
@@ -19,10 +20,20 @@ export {
   classifyError, classifyBindError,
 } from "./errors.js";
 
-import type { Bridge, EndpointInfo, NodeOptions, IrohNode, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
+import type { Bridge, EndpointInfo, NodeOptions, IrohNode, NodeAddrInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
 import { makeFetch, makeConnect } from "./fetch.js";
 import { makeServe } from "./serve.js";
-import { PublicKey, SecretKey } from "./keys.js";
+import { PublicKey, SecretKey, resolveNodeId } from "./keys.js";
+
+/** Platform-specific address introspection functions. */
+export interface AddrFunctions {
+  /** Full node address: node ID + relay URL(s) + direct socket addresses. */
+  nodeAddr(endpointHandle: number): Promise<NodeAddrInfo>;
+  /** Home relay URL, or null if not connected to a relay. */
+  homeRelay(endpointHandle: number): Promise<string | null>;
+  /** Known addresses for a remote peer, or null if unknown. */
+  peerInfo(endpointHandle: number, nodeId: string): Promise<NodeAddrInfo | null>;
+}
 
 /**
  * Factory that constructs an `IrohNode` from platform primitives.
@@ -36,6 +47,7 @@ import { PublicKey, SecretKey } from "./keys.js";
  * @param rawConnect      Low-level duplex connect function (platform-specific).
  * @param allocBodyWriter Synchronously allocates a body writer handle.
  * @param closeEndpoint   Closes the bound endpoint.
+ * @param addrFns         Platform-specific address introspection functions.
  */
 export function buildNode(
   bridge: Bridge,
@@ -44,7 +56,8 @@ export function buildNode(
   rawServe: RawServeFn,
   rawConnect: RawConnectFn,
   allocBodyWriter: AllocBodyWriterFn,
-  closeEndpoint: (handle: number) => Promise<void>
+  closeEndpoint: (handle: number) => Promise<void>,
+  addrFns?: AddrFunctions,
 ): IrohNode {
   let resolveClosed!: () => void;
   const closedPromise = new Promise<void>((resolve) => {
@@ -62,6 +75,19 @@ export function buildNode(
     fetch: makeFetch(bridge, info.endpointHandle, rawFetch, allocBodyWriter),
     serve: makeServe(bridge, info.endpointHandle, rawServe),
     createBidirectionalStream: makeConnect(bridge, info.endpointHandle, rawConnect),
+    addr: async () => {
+      if (!addrFns) throw new Error("addr() not supported by this platform adapter");
+      return addrFns.nodeAddr(info.endpointHandle);
+    },
+    homeRelay: async () => {
+      if (!addrFns) return null;
+      return addrFns.homeRelay(info.endpointHandle);
+    },
+    peerInfo: async (peer: PublicKey | string) => {
+      if (!addrFns) return null;
+      const nodeId = resolveNodeId(peer);
+      return addrFns.peerInfo(info.endpointHandle, nodeId);
+    },
     closed: closedPromise,
     close: async () => {
       await closeEndpoint(info.endpointHandle);
