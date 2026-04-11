@@ -194,6 +194,14 @@ pub fn node_addr(endpoint_handle: u32) -> Result<NodeAddrPayload, String> {
     Ok(NodeAddrPayload { id: info.id, addrs: info.addrs })
 }
 
+/// Generate a ticket string for the given endpoint.
+#[command]
+pub fn node_ticket(endpoint_handle: u32) -> Result<String, String> {
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
+    Ok(iroh_http_core::node_ticket(&ep))
+}
+
 /// Home relay URL, or null if not connected to a relay.
 #[command]
 pub fn home_relay(endpoint_handle: u32) -> Result<Option<String>, String> {

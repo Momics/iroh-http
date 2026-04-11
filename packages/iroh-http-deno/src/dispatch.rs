@@ -87,6 +87,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "createEndpoint" => create_endpoint(p).await,
         "closeEndpoint" => close_endpoint(p).await,
         "nodeAddr" => node_addr_dispatch(p),
+        "nodeTicket" => node_ticket_dispatch(p),
         "homeRelay" => home_relay_dispatch(p),
         "peerInfo" => peer_info_dispatch(p).await,
         "allocBodyWriter" => alloc_body_writer_dispatch(),
@@ -252,6 +253,17 @@ fn node_addr_dispatch(p: Value) -> Value {
             let info = ep.node_addr();
             ok(json!({ "id": info.id, "addrs": info.addrs }))
         }
+    }
+}
+
+fn node_ticket_dispatch(p: Value) -> Value {
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    match get_endpoint(handle) {
+        None => err(format!("invalid endpoint handle: {handle}")),
+        Some(ep) => ok(iroh_http_core::node_ticket(&ep)),
     }
 }
 

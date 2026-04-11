@@ -292,6 +292,16 @@ pub fn node_addr(endpoint_handle: u32) -> napi::Result<JsNodeAddrInfo> {
     Ok(JsNodeAddrInfo { id: info.id, addrs: info.addrs })
 }
 
+/// Generate a ticket string for the given endpoint.
+///
+/// The ticket encodes the node ID and all known addresses (relay URLs + direct IPs).
+/// Share with peers so they can connect directly.
+#[napi]
+pub fn node_ticket(endpoint_handle: u32) -> napi::Result<String> {
+    let ep = get_endpoint(endpoint_handle)?;
+    Ok(iroh_http_core::node_ticket(&ep))
+}
+
 /// Home relay URL, or null if not connected to a relay.
 #[napi]
 pub fn home_relay(endpoint_handle: u32) -> napi::Result<Option<String>> {
