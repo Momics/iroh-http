@@ -55,7 +55,7 @@ import {
   type DiscoveryOptions,
   classifyBindError,
   type SecretKey,
-} from "iroh-http-shared";
+} from "@momics/iroh-http-shared";
 
 const PLUGIN = "plugin:iroh-http";
 
