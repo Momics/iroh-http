@@ -641,10 +641,22 @@ fn send_500(req_handle: u32, res_body_handle: u32) {
 /// Create an Iroh node.
 ///
 /// Parameters:
-///   key          — 32 bytes (Ed25519 secret key).  Omit to generate a fresh identity.
-///   idle_timeout — milliseconds before idle connections are closed.
-///   relays       — list of custom relay server URL strings.
-///   dns_discovery — custom DNS discovery server URL.
+///   key                      — 32-byte Ed25519 secret key.  Omit to generate a fresh identity.
+///   idle_timeout             — Milliseconds before idle connections are closed.
+///   relays                   — List of custom relay server URL strings.
+///   dns_discovery            — Custom DNS discovery server URL.
+///   disable_networking       — If True, binds locally only (no relay, no DNS).
+///   relay_mode               — Relay mode string: "default", "staging", "disabled", or a URL.
+///   bind_addrs               — List of socket addresses to bind to (e.g. ["0.0.0.0:0"]).
+///   proxy_url                — HTTP proxy URL for outbound connections.
+///   proxy_from_env           — Use HTTP_PROXY / HTTPS_PROXY environment variables.
+///   keylog                   — Enable TLS key logging (for Wireshark debugging).
+///   compression_level        — Zstd compression level (1–22).  Enables compression.
+///   compression_min_body_bytes — Skip compression for bodies smaller than this (default 512).
+///   max_concurrency          — Maximum simultaneous in-flight requests (default 64).
+///   max_connections_per_peer — Maximum connections from a single peer (default 8).
+///   request_timeout          — Per-request timeout in milliseconds (default 60000, 0 = disabled).
+///   max_request_body_bytes   — Reject request bodies larger than this (default unlimited).
 #[pyfunction]
 #[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false, relay_mode=None, bind_addrs=None, proxy_url=None, proxy_from_env=false, keylog=false, compression_level=None, compression_min_body_bytes=None, max_concurrency=None, max_connections_per_peer=None, request_timeout=None, max_request_body_bytes=None))]
 fn create_node<'py>(
