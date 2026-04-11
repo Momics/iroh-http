@@ -1,5 +1,8 @@
 # Signed Response Caching
 
+> **Ecosystem package** (`iroh-http-cache`) — not part of iroh-http core.
+> Built on top of the [sign/verify primitives](../sign-verify.md) that core provides.
+
 A caching pattern — and optional middleware package — that makes cache
 invalidation tractable in a P2P context by anchoring cache validity to the
 sender's cryptographic identity rather than a trusted CDN. Because the

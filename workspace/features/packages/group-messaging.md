@@ -1,5 +1,8 @@
 # Group / Multicast Messaging
 
+> **Ecosystem package** (`iroh-http-group`) — not part of iroh-http core.
+> Built on top of iroh-gossip and iroh-http's peer identity primitives.
+
 A named group abstraction on top of iroh-http's point-to-point transport.
 Sending to a group fans out the message to all current members. Members join
 and leave dynamically. The group is identified by a shared name rather than
