@@ -17,6 +17,7 @@ pub use stream::{
 };
 pub use client::{fetch, raw_connect, alloc_fetch_token, cancel_in_flight};
 pub use server::serve;
+pub use server::ServeHandle;
 
 // ── Structured error serialization ───────────────────────────────────────────
 

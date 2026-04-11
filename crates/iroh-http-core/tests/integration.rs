@@ -1034,3 +1034,176 @@ async fn max_header_size_custom() {
     }).await.unwrap();
     assert_eq!(ep.max_header_size(), 1024);
 }
+
+// -- Graceful shutdown (patch 15) ---------------------------------------------
+
+/// Graceful shutdown: in-flight request completes, then drain finishes.
+#[tokio::test]
+async fn graceful_shutdown_drains_in_flight() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    // Use a notify to confirm the handler is actually running.
+    let handler_started = std::sync::Arc::new(tokio::sync::Notify::new());
+    let handler_started_tx = handler_started.clone();
+
+    let handle = serve(
+        server_ep.clone(),
+        ServeOptions {
+            drain_timeout_secs: Some(10),
+            ..Default::default()
+        },
+        move |payload: RequestPayload| {
+            let res_h = payload.res_body_handle;
+            let req_h = payload.req_handle;
+            let started = handler_started_tx.clone();
+            tokio::spawn(async move {
+                // Signal that the handler is running.
+                started.notify_one();
+                // Simulate a slow handler (1s).
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                respond(req_h, 200, vec![
+                    ("content-length".into(), "2".into()),
+                ]).unwrap();
+                stream::send_chunk(res_h, Bytes::from_static(b"ok")).await.unwrap();
+                stream::finish_body(res_h).unwrap();
+            });
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Start a request that will take 1s to complete.
+    let fetch_task = {
+        let client = client_ep.clone();
+        let sid = server_id.clone();
+        let a = addrs.clone();
+        tokio::spawn(async move {
+            fetch(&client, &sid, "/slow", "GET", &[], None, None, Some(&a)).await
+        })
+    };
+
+    // Wait for the handler to actually start running before we trigger shutdown.
+    handler_started.notified().await;
+
+    // Signal shutdown — the serve loop should stop accepting but drain the
+    // in-flight request.
+    let start = std::time::Instant::now();
+    handle.drain().await;
+    let elapsed = start.elapsed();
+
+    // The drain should have waited for the in-flight request (~1s handler).
+    assert!(
+        elapsed >= std::time::Duration::from_millis(300),
+        "drain completed too fast ({elapsed:?}), should have waited for in-flight request"
+    );
+
+    // The in-flight request should have succeeded.
+    let result = fetch_task.await.unwrap();
+    assert!(result.is_ok(), "in-flight request should succeed: {:?}", result);
+    let res = result.unwrap();
+    assert_eq!(res.status, 200);
+}
+
+/// Force close aborts immediately without draining.
+#[tokio::test]
+async fn force_close_aborts_immediately() {
+    let (server_ep, _client_ep) = make_pair().await;
+
+    let _handle = serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |_payload: RequestPayload| {},
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let start = std::time::Instant::now();
+    server_ep.close_force().await;
+    let elapsed = start.elapsed();
+
+    // Force close should be near-instant (well under 1 second).
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "force close took too long: {elapsed:?}"
+    );
+}
+
+/// A node with no serve loop should close immediately.
+#[tokio::test]
+async fn close_without_serve_is_immediate() {
+    let ep = IrohEndpoint::bind(NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    }).await.unwrap();
+
+    let start = std::time::Instant::now();
+    ep.close().await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "close without serve took too long: {elapsed:?}"
+    );
+}
+
+/// After shutdown, new requests are rejected (connection refused).
+#[tokio::test]
+async fn shutdown_rejects_new_requests() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    let handle = serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            respond(payload.req_handle, 200, vec![
+                ("content-length".into(), "0".into()),
+            ]).unwrap();
+            stream::finish_body(payload.res_body_handle).unwrap();
+        },
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // First request should succeed.
+    let res = fetch(&client_ep, &server_id, "/before", "GET", &[], None, None, Some(&addrs)).await.unwrap();
+    assert_eq!(res.status, 200);
+    while let Ok(Some(_)) = next_chunk(res.body_handle).await {}
+
+    // Shut down the serve loop.
+    handle.drain().await;
+
+    // Close the endpoint too so the client gets a clean rejection.
+    server_ep.close_force().await;
+
+    // Request after shutdown should fail.
+    let result = fetch(&client_ep, &server_id, "/after", "GET", &[], None, None, Some(&addrs)).await;
+    assert!(result.is_err(), "expected error after shutdown, got: {:?}", result);
+}
+
+/// ServeHandle::shutdown() returns immediately without blocking.
+#[tokio::test]
+async fn shutdown_returns_immediately() {
+    let (server_ep, _client_ep) = make_pair().await;
+
+    let handle = serve(
+        server_ep.clone(),
+        ServeOptions::default(),
+        move |_payload: RequestPayload| {},
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let start = std::time::Instant::now();
+    handle.shutdown();
+    let elapsed = start.elapsed();
+
+    // shutdown() should be non-blocking (< 10ms).
+    assert!(
+        elapsed < std::time::Duration::from_millis(100),
+        "shutdown() blocked for {elapsed:?}"
+    );
+}

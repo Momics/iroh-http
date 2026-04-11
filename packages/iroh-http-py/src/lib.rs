@@ -230,8 +230,8 @@ impl IrohNode {
         // hand payloads off to an async polling loop without blocking.
         let (tx, mut rx) = tokio::sync::mpsc::channel::<iroh_http_core::RequestPayload>(64);
 
-        iroh_http_core::serve(
-            ep,
+        let handle = iroh_http_core::serve(
+            ep.clone(),
             ServeOptions::default(),
             move |payload| {
                 let tx = tx.clone();
@@ -241,6 +241,7 @@ impl IrohNode {
                 });
             },
         );
+        ep.set_serve_handle(handle);
 
         // Polling task: receives each payload, calls the Python handler, sends response.
         tokio::spawn(async move {

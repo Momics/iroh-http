@@ -8,6 +8,7 @@ use iroh::endpoint::{IdleTimeout, QuicTransportConfig};
 
 use crate::{ALPN, ALPN_DUPLEX, ALPN_TRAILERS, ALPN_FULL};
 use crate::pool::ConnectionPool;
+use crate::server::ServeHandle;
 
 /// Configuration for mDNS local network discovery.
 #[derive(Debug, Default, Clone)]
@@ -82,6 +83,8 @@ pub(crate) struct EndpointInner {
     pub pool: ConnectionPool,
     /// Maximum byte size of a QPACK-encoded head (request or response).
     pub max_header_size: usize,
+    /// Active serve handle, if `serve()` has been called.
+    pub serve_handle: std::sync::Mutex<Option<ServeHandle>>,
 }
 
 impl IrohEndpoint {
@@ -164,6 +167,7 @@ impl IrohEndpoint {
                 max_consecutive_errors: opts.max_consecutive_errors.unwrap_or(5),
                 pool: ConnectionPool::new(opts.max_pooled_connections),
                 max_header_size: opts.max_header_size.unwrap_or(64 * 1024),
+                serve_handle: std::sync::Mutex::new(None),
             }),
         })
     }
@@ -183,9 +187,32 @@ impl IrohEndpoint {
         self.inner.ep.secret_key().to_bytes()
     }
 
-    /// Close the endpoint and all active connections.
+    /// Graceful close: signal the serve loop to stop accepting, wait for
+    /// in-flight requests to drain (up to the configured drain timeout),
+    /// then close the QUIC endpoint.
+    ///
+    /// If no serve loop is running, closes the endpoint immediately.
     pub async fn close(&self) {
+        let handle = self.inner.serve_handle.lock().unwrap().take();
+        if let Some(h) = handle {
+            h.drain().await;
+        }
         self.inner.ep.close().await;
+    }
+
+    /// Immediate close: abort the serve loop and close the endpoint with
+    /// no drain period.
+    pub async fn close_force(&self) {
+        let handle = self.inner.serve_handle.lock().unwrap().take();
+        if let Some(h) = handle {
+            h.abort();
+        }
+        self.inner.ep.close().await;
+    }
+
+    /// Store a serve handle so that `close()` can drain it.
+    pub fn set_serve_handle(&self, handle: ServeHandle) {
+        *self.inner.serve_handle.lock().unwrap() = Some(handle);
     }
 
     pub fn raw(&self) -> &Endpoint {

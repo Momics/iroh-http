@@ -409,7 +409,7 @@ pub fn raw_serve(
 
     let tsfn = Arc::new(tsfn);
 
-    iroh_http_core::serve(
+    let handle = iroh_http_core::serve(
         ep.clone(),
         ServeOptions { max_consecutive_errors: Some(ep.max_consecutive_errors()), ..Default::default() },
         move |payload: RequestPayload| {
@@ -418,6 +418,7 @@ pub fn raw_serve(
             tsfn.call(payload, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
         },
     );
+    ep.set_serve_handle(handle);
 
     Ok(())
 }
