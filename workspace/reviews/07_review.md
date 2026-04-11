@@ -167,10 +167,7 @@ what to borrow from standards and what to build itself.
 
 - [x] **`node_ticket()` swallows serialization errors** ✅ FIXED — `unwrap_or_default()` replaced with explicit `match`: on `Err` logs `tracing::warn!` with the error and returns `String::new()`. Error is now observable in logs.
 
-- [ ] **No LRU eviction in connection pool**
-  - Pool evicts the first `Ready` connection found via iterator, not least
-    recently used
-  - May evict active connections under load
+- [x] **No LRU eviction in connection pool** ✅ FIXED — `Slot::Ready` now carries a `std::time::Instant` timestamp. On cache hit, the timestamp is updated. `evict_if_needed` uses `min_by_key` on the timestamp to evict the least-recently-used connection instead of an arbitrary one.
 
 ---
 

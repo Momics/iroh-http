@@ -46,8 +46,8 @@ struct PoolKey {
 /// A slot in the pool.  While a connection is being established the slot
 /// holds a `Connecting` future that waiters can subscribe to.
 enum Slot {
-    /// A live, cached connection.
-    Ready(PooledConnection),
+    /// A live, cached connection with the last-used timestamp for LRU eviction.
+    Ready(PooledConnection, std::time::Instant),
     /// A connection attempt is in progress.  Waiters subscribe to the channel.
     Connecting(tokio::sync::watch::Receiver<Option<Result<PooledConnection, String>>>),
 }
@@ -101,10 +101,11 @@ impl ConnectionPool {
 
         let action = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(slot) = inner.conns.get(&key) {
+            if let Some(slot) = inner.conns.get_mut(&key) {
                 match slot {
-                    Slot::Ready(pooled) => {
+                    Slot::Ready(pooled, last_used) => {
                         if pooled.conn.close_reason().is_none() {
+                            *last_used = std::time::Instant::now();
                             Action::Hit(pooled.clone())
                         } else {
                             inner.conns.remove(&key);
@@ -140,7 +141,7 @@ impl ConnectionPool {
                             if let Some(max) = inner.max_idle {
                                 evict_if_needed(&mut inner.conns, max);
                             }
-                            inner.conns.insert(key, Slot::Ready(pooled.clone()));
+                            inner.conns.insert(key, Slot::Ready(pooled.clone(), std::time::Instant::now()));
                         }
                         Err(_) => {
                             inner.conns.remove(&key);
@@ -158,7 +159,7 @@ impl ConnectionPool {
     /// Return the number of entries currently in the pool (for testing).
     #[cfg(test)]
     pub fn len(&self) -> usize {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).conns.iter().filter(|(_, s)| matches!(s, Slot::Ready(_))).count()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).conns.iter().filter(|(_, s)| matches!(s, Slot::Ready(_, _))).count()
     }
 
     /// Remove a specific connection from the pool (e.g. after a fatal error).
@@ -188,7 +189,7 @@ async fn wait_for_connection(
 /// If the pool has more than `max` Ready entries, remove the oldest ones.
 fn evict_if_needed(conns: &mut HashMap<PoolKey, Slot>, max: usize) {
     // Count ready connections.
-    let ready_count = conns.values().filter(|s| matches!(s, Slot::Ready(_))).count();
+    let ready_count = conns.values().filter(|s| matches!(s, Slot::Ready(_, _))).count();
     if ready_count < max {
         return;
     }
@@ -196,18 +197,23 @@ fn evict_if_needed(conns: &mut HashMap<PoolKey, Slot>, max: usize) {
     let stale_keys: Vec<PoolKey> = conns
         .iter()
         .filter_map(|(k, s)| match s {
-            Slot::Ready(pooled) if pooled.conn.close_reason().is_some() => Some(k.clone()),
+            Slot::Ready(pooled, _) if pooled.conn.close_reason().is_some() => Some(k.clone()),
             _ => None,
         })
         .collect();
     for k in stale_keys {
         conns.remove(&k);
     }
-    // If still over limit, evict arbitrary ready entries.
-    while conns.values().filter(|s| matches!(s, Slot::Ready(_))).count() >= max {
+    // If still over limit, evict the least-recently-used ready entry.
+    while conns.values().filter(|s| matches!(s, Slot::Ready(_, _))).count() >= max {
         if let Some(key) = conns
             .iter()
-            .find_map(|(k, s)| if matches!(s, Slot::Ready(_)) { Some(k.clone()) } else { None })
+            .filter_map(|(k, s)| match s {
+                Slot::Ready(_, last_used) => Some((k.clone(), *last_used)),
+                _ => None,
+            })
+            .min_by_key(|(_, t)| *t)
+            .map(|(k, _)| k)
         {
             conns.remove(&key);
         } else {
