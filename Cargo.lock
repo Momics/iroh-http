@@ -1600,6 +1600,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "iroh-http-core",
+ "iroh-http-discovery",
  "pyo3",
  "pyo3-async-runtimes",
  "serde_json",
