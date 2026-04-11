@@ -1,5 +1,5 @@
 ---
-status: open
+status: applied
 ---
 
 # Patch 29 — `NodeOptions` Developer Experience Improvements
