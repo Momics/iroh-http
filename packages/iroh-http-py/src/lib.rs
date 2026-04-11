@@ -295,6 +295,21 @@ impl IrohNode {
             Ok(ep.peer_info(&node_id).await.map(|info| (info.id, info.addrs)))
         })
     }
+
+    /// Per-peer connection statistics with path information.
+    /// Returns a dict with `relay` (bool), `relay_url` (str|None), `paths` (list of dicts).
+    fn peer_stats<'py>(&self, py: Python<'py>, node_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let ep = self.ep.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let stats = ep.peer_stats(&node_id).await;
+            Ok(stats.map(|s| {
+                let paths: Vec<(bool, String, bool)> = s.paths.into_iter()
+                    .map(|p| (p.relay, p.addr, p.active))
+                    .collect();
+                (s.relay, s.relay_url, paths)
+            }))
+        })
+    }
 }
 
 // ── Serve request handler ─────────────────────────────────────────────────────

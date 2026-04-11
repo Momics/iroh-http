@@ -90,6 +90,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "nodeTicket" => node_ticket_dispatch(p),
         "homeRelay" => home_relay_dispatch(p),
         "peerInfo" => peer_info_dispatch(p).await,
+        "peerStats" => peer_stats_dispatch(p).await,
         "allocBodyWriter" => alloc_body_writer_dispatch(),
         "allocFetchToken" => alloc_fetch_token_dispatch(),
         "cancelInFlight" => cancel_in_flight_dispatch(p),
@@ -291,6 +292,23 @@ async fn peer_info_dispatch(p: Value) -> Value {
         None => err(format!("invalid endpoint handle: {handle}")),
         Some(ep) => {
             ok(ep.peer_info(node_id).await.map(|info| json!({ "id": info.id, "addrs": info.addrs })))
+        }
+    }
+}
+
+async fn peer_stats_dispatch(p: Value) -> Value {
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    let node_id = match p["nodeId"].as_str() {
+        Some(s) => s,
+        None => return err("missing nodeId"),
+    };
+    match get_endpoint(handle) {
+        None => err(format!("invalid endpoint handle: {handle}")),
+        Some(ep) => {
+            ok(ep.peer_stats(node_id).await)
         }
     }
 }
