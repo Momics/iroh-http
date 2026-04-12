@@ -86,6 +86,7 @@ pub async fn create_endpoint(
             drain_timeout_ms: a.drain_timeout,
             handle_ttl_ms: a.handle_ttl,
             max_pooled_connections: None,
+            pool_idle_timeout_ms: None,
             max_header_size: a.max_header_bytes,
             proxy_url: a.proxy_url,
             proxy_from_env: a.proxy_from_env.unwrap_or(false),
