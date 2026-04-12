@@ -1,20 +1,19 @@
 # Rust Core Guidelines
 
-Applies to: `iroh-http-core`, `iroh-http-framing`, `iroh-http-discovery`.
+Applies to: `iroh-http-core`, `iroh-http-discovery`.
 
 ---
 
 ## Architecture layers
 
 ```
-iroh-http-framing   (portable wire layer; target: no_std + alloc) — wire format only
-iroh-http-core      (std + tokio + iroh)                           — endpoint, client, server, streams
-iroh-http-discovery (std + iroh, DNS/mDNS)                         — peer discovery
+iroh-http-core      (std + tokio + iroh + hyper) — endpoint, client, server, streams
+iroh-http-discovery (std + iroh, DNS/mDNS)        — peer discovery
 ```
 
-Each crate has a single responsibility. `framing` parses and serializes the
-wire format without any I/O. `core` owns the `IrohEndpoint`, connection
-pool, fetch/serve logic, and body/trailer slab. `discovery` configures DNS
+Each crate has a single responsibility. `core` owns the `IrohEndpoint`, connection
+pool, fetch/serve logic, and body/trailer slab. HTTP framing is handled by hyper v1,
+not by a separate crate. `discovery` configures DNS
 and mDNS resolution on top of Iroh's discovery traits.
 
 ---
@@ -136,7 +135,7 @@ default:
 | Max concurrent requests            | 64      | `ServeOptions::max_concurrency`  |
 | Per-request timeout                | 60 s    | `ServeOptions::request_timeout_secs` |
 | Per-peer connection limit          | 8       | `ServeOptions::max_connections_per_peer` |
-| Max request head size              | 64 KB   | hardcoded in framing             |
+| Max request head size              | 64 KB   | `ServeOptions::max_header_bytes` |
 | Max request body size              | none    | `ServeOptions::max_request_body_bytes` |
 | Drain timeout (graceful shutdown)  | 30 s    | `ServeOptions::drain_timeout_secs` |
 
@@ -145,26 +144,16 @@ always opt-in.
 
 ---
 
-## Embedded portability strategy (`iroh-http-framing`)
+## Embedded portability strategy
 
-`iroh-http-framing` is the wire-level contract layer for future embedded
-targets. The target state is `no_std + alloc` so embedded/WASM implementations
-can reuse it directly.
+HTTP framing is currently handled by hyper v1 (host-only). If an embedded or
+WASM target is needed in the future, a dedicated `iroh-http-framing` crate
+can be created as a `no_std + alloc` wire-format layer. See
+`docs/embedded-roadmap.md` for the tracking plan.
 
-Rules:
-
-- Keep the crate free of runtime and transport concerns (`tokio`, sockets,
-  endpoint state machines).
-- Prefer dependencies that are `no_std`-compatible.
-- If a `std`-only dependency is adopted temporarily for robustness, document
-  the reason and migration plan in `docs/embedded-roadmap.md`.
-- Never couple framing to `iroh` internals; framing must remain pure
-  parse/serialize logic.
-
-Examples:
-
-- Allowed: parser/codec crates, byte/container utilities.
-- Forbidden in framing: `tokio`, `std::net`, `std::io`, discovery, transport.
+If that crate is introduced, keep it free of runtime and transport concerns
+(`tokio`, sockets, endpoint state machines), and never couple it to `iroh`
+internals — it must remain pure parse/serialize logic.
 
 ---
 
