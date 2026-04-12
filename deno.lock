@@ -24,6 +24,12 @@
   },
   "workspace": {
     "members": {
+      "examples/deno": {
+        "dependencies": [
+          "jsr:@std/fs@1",
+          "jsr:@std/path@1"
+        ]
+      },
       "packages/iroh-http-deno": {
         "dependencies": [
           "jsr:@momics/iroh-http-shared@0.1",
@@ -42,8 +48,12 @@
         }
       },
       "packages/iroh-http-shared": {
+        "dependencies": [
+          "npm:@scure/base@^1.2.6"
+        ],
         "packageJson": {
           "dependencies": [
+            "npm:@scure/base@^1.2.6",
             "npm:typescript@5"
           ]
         }
