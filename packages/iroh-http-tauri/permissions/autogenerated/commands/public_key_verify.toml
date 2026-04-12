@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-public-key-verify"
+description = "Enables the public_key_verify command without any pre-configured scope."
+commands.allow = ["public_key_verify"]
+
+[[permission]]
+identifier = "deny-public-key-verify"
+description = "Denies the public_key_verify command without any pre-configured scope."
+commands.deny = ["public_key_verify"]

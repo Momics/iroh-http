@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-node-addr"
+description = "Enables the node_addr command without any pre-configured scope."
+commands.allow = ["node_addr"]
+
+[[permission]]
+identifier = "deny-node-addr"
+description = "Denies the node_addr command without any pre-configured scope."
+commands.deny = ["node_addr"]

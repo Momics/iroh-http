@@ -37,7 +37,7 @@ pub struct CreateEndpointArgs {
     pub proxy_url: Option<String>,
     pub proxy_from_env: Option<bool>,
     pub keylog: Option<bool>,
-    pub compression_level: Option<i32>,
+    #[cfg(feature = "compression")]
     pub compression_min_body_bytes: Option<usize>,
     pub max_concurrency: Option<usize>,
     pub max_connections_per_peer: Option<usize>,

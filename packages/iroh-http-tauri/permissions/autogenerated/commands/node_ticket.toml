@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-node-ticket"
+description = "Enables the node_ticket command without any pre-configured scope."
+commands.allow = ["node_ticket"]
+
+[[permission]]
+identifier = "deny-node-ticket"
+description = "Denies the node_ticket command without any pre-configured scope."
+commands.deny = ["node_ticket"]

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-session-create-uni-stream"
+description = "Enables the session_create_uni_stream command without any pre-configured scope."
+commands.allow = ["session_create_uni_stream"]
+
+[[permission]]
+identifier = "deny-session-create-uni-stream"
+description = "Denies the session_create_uni_stream command without any pre-configured scope."
+commands.deny = ["session_create_uni_stream"]

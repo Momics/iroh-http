@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-session-send-datagram"
+description = "Enables the session_send_datagram command without any pre-configured scope."
+commands.allow = ["session_send_datagram"]
+
+[[permission]]
+identifier = "deny-session-send-datagram"
+description = "Denies the session_send_datagram command without any pre-configured scope."
+commands.deny = ["session_send_datagram"]
