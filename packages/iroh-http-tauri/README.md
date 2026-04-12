@@ -1,5 +1,7 @@
 # @momics/iroh-http-tauri
 
+> **Experimental** — This package is in an early, unstable state. APIs may change or break without notice between any releases. Do not depend on it for production use.
+
 Tauri v2 plugin for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer HTTP over [Iroh](https://iroh.computer) QUIC transport.
 
 ## How is this different from regular HTTP?
