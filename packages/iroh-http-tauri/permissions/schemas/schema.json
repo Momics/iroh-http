@@ -379,6 +379,90 @@
           "markdownDescription": "Denies the finish_body command without any pre-configured scope."
         },
         {
+          "description": "Enables the generate_secret_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-generate-secret-key",
+          "markdownDescription": "Enables the generate_secret_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_secret_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-generate-secret-key",
+          "markdownDescription": "Denies the generate_secret_key command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the home_relay command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-home-relay",
+          "markdownDescription": "Enables the home_relay command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the home_relay command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-home-relay",
+          "markdownDescription": "Denies the home_relay command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the mdns_advertise command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-mdns-advertise",
+          "markdownDescription": "Enables the mdns_advertise command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the mdns_advertise command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-mdns-advertise",
+          "markdownDescription": "Denies the mdns_advertise command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the mdns_advertise_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-mdns-advertise-close",
+          "markdownDescription": "Enables the mdns_advertise_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the mdns_advertise_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-mdns-advertise-close",
+          "markdownDescription": "Denies the mdns_advertise_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the mdns_browse command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-mdns-browse",
+          "markdownDescription": "Enables the mdns_browse command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the mdns_browse command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-mdns-browse",
+          "markdownDescription": "Denies the mdns_browse command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the mdns_browse_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-mdns-browse-close",
+          "markdownDescription": "Enables the mdns_browse_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the mdns_browse_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-mdns-browse-close",
+          "markdownDescription": "Denies the mdns_browse_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the mdns_next_event command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-mdns-next-event",
+          "markdownDescription": "Enables the mdns_next_event command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the mdns_next_event command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-mdns-next-event",
+          "markdownDescription": "Denies the mdns_next_event command without any pre-configured scope."
+        },
+        {
           "description": "Enables the next_chunk command without any pre-configured scope.",
           "type": "string",
           "const": "allow-next-chunk",
@@ -401,6 +485,78 @@
           "type": "string",
           "const": "deny-next-trailer",
           "markdownDescription": "Denies the next_trailer command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the node_addr command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-node-addr",
+          "markdownDescription": "Enables the node_addr command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the node_addr command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-node-addr",
+          "markdownDescription": "Denies the node_addr command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the node_ticket command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-node-ticket",
+          "markdownDescription": "Enables the node_ticket command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the node_ticket command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-node-ticket",
+          "markdownDescription": "Denies the node_ticket command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the peer_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-peer-info",
+          "markdownDescription": "Enables the peer_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the peer_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-peer-info",
+          "markdownDescription": "Denies the peer_info command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the peer_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-peer-stats",
+          "markdownDescription": "Enables the peer_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the peer_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-peer-stats",
+          "markdownDescription": "Denies the peer_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ping command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ping",
+          "markdownDescription": "Enables the ping command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ping command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ping",
+          "markdownDescription": "Denies the ping command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the public_key_verify command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-public-key-verify",
+          "markdownDescription": "Enables the public_key_verify command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the public_key_verify command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-public-key-verify",
+          "markdownDescription": "Denies the public_key_verify command without any pre-configured scope."
         },
         {
           "description": "Enables the raw_connect command without any pre-configured scope.",
@@ -439,6 +595,18 @@
           "markdownDescription": "Denies the respond_to_request command without any pre-configured scope."
         },
         {
+          "description": "Enables the secret_key_sign command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-secret-key-sign",
+          "markdownDescription": "Enables the secret_key_sign command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the secret_key_sign command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-secret-key-sign",
+          "markdownDescription": "Denies the secret_key_sign command without any pre-configured scope."
+        },
+        {
           "description": "Enables the send_chunk command without any pre-configured scope.",
           "type": "string",
           "const": "allow-send-chunk",
@@ -473,6 +641,138 @@
           "type": "string",
           "const": "deny-serve",
           "markdownDescription": "Denies the serve command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-close",
+          "markdownDescription": "Enables the session_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-close",
+          "markdownDescription": "Denies the session_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_closed command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-closed",
+          "markdownDescription": "Enables the session_closed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_closed command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-closed",
+          "markdownDescription": "Denies the session_closed command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-connect",
+          "markdownDescription": "Enables the session_connect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-connect",
+          "markdownDescription": "Denies the session_connect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_create_bidi_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-create-bidi-stream",
+          "markdownDescription": "Enables the session_create_bidi_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_create_bidi_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-create-bidi-stream",
+          "markdownDescription": "Denies the session_create_bidi_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_create_uni_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-create-uni-stream",
+          "markdownDescription": "Enables the session_create_uni_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_create_uni_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-create-uni-stream",
+          "markdownDescription": "Denies the session_create_uni_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_max_datagram_size command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-max-datagram-size",
+          "markdownDescription": "Enables the session_max_datagram_size command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_max_datagram_size command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-max-datagram-size",
+          "markdownDescription": "Denies the session_max_datagram_size command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_next_bidi_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-next-bidi-stream",
+          "markdownDescription": "Enables the session_next_bidi_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_next_bidi_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-next-bidi-stream",
+          "markdownDescription": "Denies the session_next_bidi_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_next_uni_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-next-uni-stream",
+          "markdownDescription": "Enables the session_next_uni_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_next_uni_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-next-uni-stream",
+          "markdownDescription": "Denies the session_next_uni_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_recv_datagram command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-recv-datagram",
+          "markdownDescription": "Enables the session_recv_datagram command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_recv_datagram command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-recv-datagram",
+          "markdownDescription": "Denies the session_recv_datagram command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_send_datagram command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-send-datagram",
+          "markdownDescription": "Enables the session_send_datagram command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_send_datagram command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-send-datagram",
+          "markdownDescription": "Denies the session_send_datagram command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_serve command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-serve",
+          "markdownDescription": "Enables the stop_serve command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_serve command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-serve",
+          "markdownDescription": "Denies the stop_serve command without any pre-configured scope."
         },
         {
           "description": "Default permissions for iroh-http plugin",

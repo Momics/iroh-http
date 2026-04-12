@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-stop-serve"
+description = "Enables the stop_serve command without any pre-configured scope."
+commands.allow = ["stop_serve"]
+
+[[permission]]
+identifier = "deny-stop-serve"
+description = "Denies the stop_serve command without any pre-configured scope."
+commands.deny = ["stop_serve"]

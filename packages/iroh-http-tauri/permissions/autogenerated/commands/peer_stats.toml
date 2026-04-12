@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-peer-stats"
+description = "Enables the peer_stats command without any pre-configured scope."
+commands.allow = ["peer_stats"]
+
+[[permission]]
+identifier = "deny-peer-stats"
+description = "Denies the peer_stats command without any pre-configured scope."
+commands.deny = ["peer_stats"]
