@@ -209,11 +209,8 @@ async fn create_endpoint(p: Value) -> Value {
         max_request_body_bytes: args.max_request_body_bytes,
         drain_timeout_secs: None,
         #[cfg(feature = "compression")]
-        compression: if args.compression_level.is_some()
-            || args.compression_min_body_bytes.is_some()
-        {
+        compression: if args.compression_min_body_bytes.is_some() {
             Some(iroh_http_core::CompressionOptions {
-                level: args.compression_level.unwrap_or(3),
                 min_body_bytes: args.compression_min_body_bytes.unwrap_or(512),
             })
         } else {

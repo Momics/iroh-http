@@ -438,7 +438,7 @@ pub async fn raw_connect(
     let io = TokioIo::new(IrohStream::new(send, recv));
 
     let (mut sender, conn_task) = hyper::client::conn::http1::Builder::new()
-        .max_buf_size(max_header_size)
+        .max_buf_size(max_header_size.max(8192))
         .handshake::<_, BoxBody>(io)
         .await
         .map_err(|e| format!("hyper handshake (duplex): {e}"))?;
