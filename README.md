@@ -120,8 +120,7 @@ print(res.text())
 ## Architecture
 
 ```
-iroh-http-core (Rust)       — QUIC transport, HTTP framing
-iroh-http-framing (Rust)    — no_std HTTP/1.1 parser
+iroh-http-core (Rust)       — QUIC transport, HTTP framing (via hyper)
 iroh-http-discovery (Rust)  — optional mDNS (feature = "mdns")
 iroh-http-shared (TS)       — shared Bridge interface + error types
 iroh-http-node (napi-rs)    — Node.js native addon

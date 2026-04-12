@@ -1,8 +1,0 @@
-[package]
-name = "iroh-http-framing"
-version = "0.1.0"
-edition = "2021"
-description = "HTTP chunked body encoding/decoding and trailer serialisation (no_std)"
-license = "MIT OR Apache-2.0"
-
-[dependencies]

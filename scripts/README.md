@@ -87,7 +87,7 @@ When you're ready to tag a release:
 3. Commit and tag: `git tag vX.Y.Z`
 4. Publish (when ready):
    - **npm:** `cd packages/iroh-http-shared && npm publish` (repeat for node, tauri)
-   - **crates.io:** `cargo publish -p iroh-http-framing` (then core, discovery)
+   - **crates.io:** `cargo publish -p iroh-http-core` (then discovery)
    - **JSR:** `cd packages/iroh-http-shared && deno publish`
    - **Deno:** `cd packages/iroh-http-deno && deno publish`
    - **PyPI:** `cd packages/iroh-http-py && maturin publish`

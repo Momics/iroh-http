@@ -9,7 +9,7 @@
 | `@momics/iroh-http-deno` | JSR | Config looks correct |
 | `@momics/iroh-http-tauri` | npm | Config looks correct |
 | `iroh-http` | PyPI | Missing metadata |
-| `iroh-http-{framing,core,discovery}` | crates.io | Missing metadata |
+| `iroh-http-{core,discovery}` | crates.io | Missing metadata |
 
 ---
 
@@ -23,7 +23,7 @@ napi-rs multi-platform distribution requires one small package per platform (e.g
 
 ### 2. crates.io — all three crates missing publish metadata
 
-`iroh-http-framing`, `iroh-http-core`, and `iroh-http-discovery` have no `repository`, `documentation`, `keywords`, or `categories` fields. These affect search ranking and whether crates.io renders the README.
+`iroh-http-core` and `iroh-http-discovery` have no `repository`, `documentation`, `keywords`, or `categories` fields. These affect search ranking and whether crates.io renders the README.
 
 Add to each `[package]` section:
 ```toml
@@ -66,7 +66,7 @@ workspace/
 
 ## Files/entries to remove or gitignore
 
-- Add `workspace/` to `.gitignore`
+- `workspace/` is removed from the repo (deleted)
 - Add `.obsidian/` to `.gitignore`
 - `git rm --cached packages/iroh-http-node/index.darwin-arm64.node`
 - `git rm --cached packages/iroh-http-node/lib.js lib.d.ts` and maps (already in `.gitignore` but were committed)
