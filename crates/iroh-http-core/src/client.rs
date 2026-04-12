@@ -1,32 +1,40 @@
-//! Outgoing HTTP request — `fetch()` implementation.
+//! Outgoing HTTP request — `fetch()` and `raw_connect()` implementation.
+//!
+//! HTTP/1.1 framing is delegated entirely to hyper.  Iroh's QUIC stream pair
+//! is wrapped in `IrohStream` and handed to hyper's client connection API.
 
 use std::sync::Arc;
 
 use bytes::Bytes;
-use iroh::endpoint::Connection;
+use http::{HeaderName, HeaderValue, Method, StatusCode};
+use http_body_util::{BodyExt, StreamBody};
+use hyper::body::{Frame, Incoming};
+use hyper_util::rt::TokioIo;
 
 use crate::{
     base32_encode, parse_node_addr,
+    io::IrohStream,
     stream::{
-        compose_handle, decompose_handle, insert_reader, insert_writer, make_body_channel,
-        BodyReader, BodyWriter,
+        compose_handle, decompose_handle, insert_reader, insert_trailer_receiver,
+        insert_writer, make_body_channel, BodyReader, BodyWriter,
     },
-    FfiDuplexStream, FfiResponse, IrohEndpoint, ALPN, ALPN_DUPLEX,
-};
-use iroh_http_framing::{
-    encode_chunk, parse_trailers, serialize_trailers, terminal_chunk, terminal_chunk_start,
-    FramingError,
+    CoreError, FfiDuplexStream, FfiResponse, IrohEndpoint, ALPN, ALPN_DUPLEX,
 };
 
-const READ_BUF: usize = 16 * 1024;
+// ── BoxBody type alias ────────────────────────────────────────────────────────
+
+type BoxBody = http_body_util::combinators::BoxBody<Bytes, std::convert::Infallible>;
+
+fn box_body<B>(body: B) -> BoxBody
+where
+    B: http_body::Body<Data = Bytes, Error = std::convert::Infallible> + Send + Sync + 'static,
+{
+    body.map_err(|_| unreachable!()).boxed()
+}
 
 // ── In-flight fetch cancellation ──────────────────────────────────────────────
 
 /// Allocate a cancellation token for an upcoming `fetch` call.
-///
-/// Call this before `rawFetch`, wire `AbortSignal → cancel_in_flight(token)`,
-/// and pass `token` to the platform's `rawFetch`/`fetch` binding.  The token
-/// is automatically removed from the map when the fetch completes.
 pub fn alloc_fetch_token() -> u32 {
     let slabs = crate::stream::global_slabs();
     let id = slabs
@@ -41,8 +49,7 @@ pub fn alloc_fetch_token() -> u32 {
     compose_handle(0, id)
 }
 
-/// Signal an in-flight fetch to abort.  Safe to call after the fetch has
-/// already completed — it is a no-op in that case.
+/// Signal an in-flight fetch to abort.
 pub fn cancel_in_flight(token: u32) {
     let (ep_idx, id) = decompose_handle(token);
     if let Some(slabs) = crate::stream::get_slabs(ep_idx) {
@@ -57,15 +64,8 @@ pub fn cancel_in_flight(token: u32) {
     }
 }
 
-/// Send an HTTP/1.1 request to a remote node and return the response.
-///
-/// `req_body_reader` — optional body channel that the caller will pump
-/// from the JS side via `sendChunk`/`finishBody`.  `None` for bodyless methods.
-///
-/// `fetch_token` — optional cancellation token previously allocated with
-/// `alloc_fetch_token()`.  When `cancel_in_flight(token)` is called from
-/// another thread/task while this future is running, the fetch is dropped
-/// and the underlying QUIC streams are reset.
+// ── Public fetch API ──────────────────────────────────────────────────────────
+
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch(
     endpoint: &IrohEndpoint,
@@ -77,20 +77,32 @@ pub async fn fetch(
     fetch_token: Option<u32>,
     direct_addrs: Option<&[std::net::SocketAddr]>,
 ) -> Result<FfiResponse, String> {
-    // Reject standard web schemes. iroh-http uses httpi://, not http:// or https://.
+    // Reject standard web schemes.
     {
         let lower = url.to_ascii_lowercase();
         if lower.starts_with("https://") || lower.starts_with("http://") {
             let scheme_end = lower.find("://").map(|i| i + 3).unwrap_or(lower.len());
             return Err(format!(
                 "iroh-http URLs must use the \"httpi://\" scheme, not \"{}\". \
-                 Example: httpi://nodeId/path — or pass a bare path like \"/api/data\".",
+                 Example: httpi://nodeId/path",
                 &url[..scheme_end]
             ));
         }
     }
 
-    // Retrieve the cancellation Notify for this token, if any.
+    // Validate method and headers at the FFI boundary.
+    let http_method = Method::from_bytes(method.as_bytes()).map_err(|_| {
+        CoreError::invalid_input(format!("invalid HTTP method {:?}", method)).to_string()
+    })?;
+    for (name, value) in headers {
+        HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+            CoreError::invalid_input(format!("invalid header name {:?}", name)).to_string()
+        })?;
+        HeaderValue::from_str(value).map_err(|_| {
+            CoreError::invalid_input(format!("invalid header value for {:?}", name)).to_string()
+        })?;
+    }
+
     let cancel_notify = fetch_token.and_then(|token| {
         let (ep_idx, id) = decompose_handle(token);
         crate::stream::get_slabs(ep_idx).and_then(|s| {
@@ -106,7 +118,6 @@ pub async fn fetch(
     let parsed = parse_node_addr(remote_node_id)?;
     let node_id = parsed.node_id;
     let mut addr = iroh::EndpointAddr::new(node_id);
-    // Merge direct addresses from the ticket (if any) and from explicit args.
     for a in &parsed.direct_addrs {
         addr = addr.with_ip_addr(*a);
     }
@@ -118,51 +129,24 @@ pub async fn fetch(
 
     let ep_raw = endpoint.raw().clone();
     let addr_clone = addr.clone();
+    let max_header_size = endpoint.max_header_size();
 
     let pooled = endpoint
         .pool()
         .get_or_connect(node_id, ALPN, || async move {
-            ep_raw
-                .connect(addr_clone, ALPN)
-                .await
-                .map_err(|e| format!("connect: {e}"))
+            ep_raw.connect(addr_clone, ALPN).await.map_err(|e| format!("connect: {e}"))
         })
         .await?;
 
     let conn = pooled.conn.clone();
-    let codec = pooled.codec.clone();
-    let max_header_size = endpoint.max_header_size();
 
-    // Inject Accept-Encoding: zstd when compression is enabled.
-    #[cfg(feature = "compression")]
-    let owned_headers;
-    #[allow(unused_mut)]
-    let mut final_headers: &[(String, String)] = headers;
-    #[cfg(feature = "compression")]
-    if endpoint.compression().is_some()
-        && !headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("accept-encoding"))
-    {
-        owned_headers = {
-            let mut h = headers.to_vec();
-            h.push((
-                "accept-encoding".to_string(),
-                crate::compress::ACCEPT_ENCODING.to_string(),
-            ));
-            h
-        };
-        final_headers = &owned_headers;
-    }
-
-    let result = do_request(
+    let result = do_fetch(
         ep_idx,
         conn,
         url,
-        method,
-        final_headers,
+        http_method,
+        headers,
         req_body_reader,
-        codec,
         max_header_size,
     );
 
@@ -175,126 +159,82 @@ pub async fn fetch(
         result.await
     };
 
-    // Clean up the token regardless of outcome.
+    // Clean up the cancellation token.
     if let Some(token) = fetch_token {
         let (ep_idx_t, id) = decompose_handle(token);
         if let Some(slabs) = crate::stream::get_slabs(ep_idx_t) {
-            slabs
-                .fetch_cancel
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
+            slabs.fetch_cancel.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         }
     }
 
     out
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn do_request(
+async fn do_fetch(
     ep_idx: u32,
-    conn: Connection,
+    conn: iroh::endpoint::Connection,
     url: &str,
-    method: &str,
+    method: Method,
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
-    codec: std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
     max_header_size: usize,
 ) -> Result<FfiResponse, String> {
-    let (mut send, mut recv) = conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
+    let (send, recv) = conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
 
-    // Derive path from URL.
-    let path = extract_path(url);
-    let has_body = req_body_reader.is_some();
+    let io = TokioIo::new(IrohStream::new(send, recv));
 
-    // Build header list for serialisation (convert owned pairs to borrowed refs).
-    let pairs: Vec<(&str, &str)> = headers
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    // Use chunked encoding only when the caller did not supply a Content-Length.
-    // When Content-Length is present, send raw bytes so the framing matches.
-    let has_content_len = pairs
-        .iter()
-        .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
-    let req_chunked = has_body && !has_content_len;
-
-    // Encode request head via QPACK.
-    // When chunked encoding is needed, inject Transfer-Encoding: chunked
-    // into the QPACK-encoded headers so the server decodes correctly.
-    let mut qpack_pairs = pairs.clone();
-    if req_chunked {
-        qpack_pairs.push(("transfer-encoding", "chunked"));
-    }
-    let head_bytes = {
-        let mut guard = codec.lock().await;
-        guard
-            .encode_request(method, &path, &qpack_pairs)
-            .map_err(|e| format!("qpack encode: {e}"))?
-    };
-
-    send.write_all(&head_bytes)
+    let (mut sender, conn_task) = hyper::client::conn::http1::Builder::new()
+        .max_buf_size(max_header_size)
+        .max_headers(128)
+        .handshake::<_, BoxBody>(io)
         .await
-        .map_err(|e| format!("write head: {e}"))?;
+        .map_err(|e| format!("hyper handshake: {e}"))?;
 
-    // Spawn request body pump as a background task so we can concurrently
-    // read the response head (avoids deadlock when the server sends an early
-    // error response before the request body is fully consumed).
-    if let Some(reader) = req_body_reader {
-        tokio::spawn(async move {
-            let _ = pump_body_to_stream(reader, &mut send, req_chunked, None).await;
-            let _ = send.finish();
-        });
-    } else {
-        send.finish().map_err(|e| format!("finish send: {e}"))?;
+    // Drive the connection state machine in the background.
+    tokio::spawn(conn_task);
+
+    let path = extract_path(url);
+    let remote_str = base32_encode(conn.remote_id().as_bytes());
+
+    // Build the hyper request.
+    let mut req_builder = hyper::Request::builder()
+        .method(method)
+        .uri(&path)
+        .header(hyper::header::HOST, &remote_str)
+        // Tell the server we accept chunked trailers (required for HTTP/1.1 trailer delivery).
+        .header("te", "trailers");
+
+    for (k, v) in headers {
+        req_builder = req_builder.header(k.as_str(), v.as_str());
     }
 
-    // Read and parse the response head.
-    #[allow(unused_mut)]
-    let (status, mut resp_headers, consumed) =
-        read_head_qpack(&mut recv, &codec, max_header_size).await?;
-
-    // Detect Content-Encoding: zstd and prepare to decompress.
-    #[cfg(feature = "compression")]
-    let content_encoding_zstd = resp_headers
-        .iter()
-        .any(|(k, v)| k.eq_ignore_ascii_case("content-encoding") && crate::compress::is_zstd(v));
-    #[cfg(feature = "compression")]
-    if content_encoding_zstd {
-        resp_headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-encoding"));
-    }
-
-    let resp_is_chunked = resp_headers.iter().any(|(k, v)| {
-        k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().contains("chunked")
-    });
-
-    // Spawn a task to pump the response body into a channel.
-    let (res_writer, res_reader) = make_body_channel();
-    // Set up a trailer channel — the pump task will send trailers when found.
-    let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-    let trailer_handle = crate::stream::insert_trailer_receiver(ep_idx, trailer_rx);
-
-    tokio::spawn(pump_stream_to_body(
-        recv,
-        res_writer,
-        consumed,
-        trailer_tx,
-        resp_is_chunked,
-    ));
-
-    // If the response was zstd-compressed, interpose a decompression channel
-    // so JS receives plain bytes.
-    #[cfg(feature = "compression")]
-    let res_reader = if content_encoding_zstd {
-        crate::compress::decompress_body(res_reader)
+    let req_body: BoxBody = if let Some(reader) = req_body_reader {
+        // Adapt BodyReader → hyper body (no trailers on request side for now).
+        box_body(body_from_reader(reader, None))
     } else {
-        res_reader
+        box_body(http_body_util::Empty::new())
     };
+
+    let req = req_builder.body(req_body).map_err(|e| format!("build request: {e}"))?;
+
+    let resp = sender.send_request(req).await.map_err(|e| format!("send_request: {e}"))?;
+
+    let status = resp.status().as_u16();
+    let resp_headers: Vec<(String, String)> = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+
+    // Allocate channels for streaming the response body to JS.
+    let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
+    let trailer_handle = insert_trailer_receiver(ep_idx, trailer_rx);
+
+    let (res_writer, res_reader) = make_body_channel();
+    let body = resp.into_body();
+    tokio::spawn(pump_hyper_body_to_channel(body, res_writer, trailer_tx));
 
     let body_handle = insert_reader(ep_idx, res_reader);
-
-    // Build response URL: set the URL to the remote peer's address.
-    let remote_str = base32_encode(conn.remote_id().as_bytes());
     let response_url = format!("httpi://{remote_str}{path}");
 
     Ok(FfiResponse {
@@ -306,177 +246,114 @@ async fn do_request(
     })
 }
 
-// ── I/O helpers ──────────────────────────────────────────────────────────────
+// ── Body bridge utilities ─────────────────────────────────────────────────────
 
-/// Write a `BodyReader`'s data to an Iroh `SendStream`.
-///
-/// If `chunked`, wraps each chunk in HTTP/1.1 chunked encoding.
-/// If `trailer_rx` is `Some`, awaits trailers from JS after the body ends and
-/// writes them before the stream-level finish.
-/// If `trailer_rx` is `None`, writes the plain terminal chunk `0\r\n\r\n`.
-pub(crate) async fn pump_body_to_stream(
-    reader: BodyReader,
-    send: &mut iroh::endpoint::SendStream,
-    chunked: bool,
-    trailer_rx: Option<tokio::sync::oneshot::Receiver<Vec<(String, String)>>>,
-) -> Result<(), String> {
-    loop {
-        let chunk = reader.next_chunk().await;
-        match chunk {
-            None => break,
-            Some(data) => {
-                let wire = if chunked {
-                    encode_chunk(&data)
-                } else {
-                    data.to_vec()
-                };
-                send.write_all(&wire)
-                    .await
-                    .map_err(|e| format!("write body chunk: {e}"))?;
-            }
-        }
-    }
-    if chunked {
-        if let Some(rx) = trailer_rx {
-            // Write the terminal chunk header without the empty-trailer terminator.
-            send.write_all(terminal_chunk_start())
-                .await
-                .map_err(|e| format!("write terminal chunk: {e}"))?;
-            // Await trailers from JS (or empty if JS dropped the sender).
-            let trailers = rx.await.unwrap_or_default();
-            let pairs: Vec<(&str, &str)> = trailers
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect();
-            send.write_all(&serialize_trailers(&pairs))
-                .await
-                .map_err(|e| format!("write trailers: {e}"))?;
-        } else {
-            send.write_all(terminal_chunk())
-                .await
-                .map_err(|e| format!("write terminal chunk: {e}"))?;
-        }
-    }
-    Ok(())
-}
-
-/// Read bytes from a `RecvStream` into a `BodyWriter` channel.
-///
-/// Handles chunked transfer-encoding decoding.  Closes the channel (signals EOF)
-/// when the stream finishes.  After the terminal zero-chunk, reads any trailer
-/// block and delivers it via `trailer_tx`.
-async fn pump_stream_to_body(
-    mut recv: iroh::endpoint::RecvStream,
+/// Drain a hyper `Incoming` body into `BodyWriter`, delivering trailers via
+/// the oneshot when the body ends.
+pub(crate) async fn pump_hyper_body_to_channel(
+    body: Incoming,
     writer: BodyWriter,
-    already_consumed: Vec<u8>,
     trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
-    is_chunked: bool,
 ) {
-    let mut buf = already_consumed;
-    let chunked_mode = is_chunked;
-
-    loop {
-        // Parse available data in the buffer BEFORE reading more from the
-        // stream.  This is critical when `already_consumed` (leftover bytes
-        // from response head parsing) already contains body data — without
-        // this, the pump would block on `read_chunk` and miss the data.
-        if chunked_mode {
-            loop {
-                match iroh_http_framing::parse_chunk_header(&buf) {
-                    None => break, // need more bytes
-                    Some((0, header_consumed)) => {
-                        // Terminal chunk — read the trailer block that follows.
-                        let after_header = buf[header_consumed..].to_vec();
-                        let trailers = read_trailers_from_buf(&mut recv, after_header).await;
-                        let _ = trailer_tx.send(trailers);
-                        return; // EOF — writer drops, reader sees None.
-                    }
-                    Some((size, header_len)) => {
-                        let data_end = header_len + size;
-                        let trailer_end = data_end + 2; // skip \r\n after chunk
-                        if buf.len() < trailer_end {
-                            break; // need more bytes
-                        }
-                        let data = Bytes::copy_from_slice(&buf[header_len..data_end]);
-                        if writer.send_chunk(data).await.is_err() {
-                            return; // reader dropped
-                        }
-                        buf.drain(..trailer_end);
-                    }
-                }
-            }
-        } else {
-            // Raw / non-chunked: forward whatever we have.
-            if !buf.is_empty() {
-                let data = Bytes::copy_from_slice(&buf);
-                buf.clear();
-                if writer.send_chunk(data).await.is_err() {
-                    return;
-                }
-            }
-        }
-
-        // Read more data from the stream.
-        match recv.read_chunk(READ_BUF).await {
-            Err(_) | Ok(None) => break,
-            Ok(Some(chunk)) => buf.extend_from_slice(&chunk.bytes),
-        }
-    }
-
-    // Flush any remaining raw bytes (non-chunked only; chunked streams
-    // terminate via the zero-chunk parsed above).
-    if !buf.is_empty() && !chunked_mode {
-        let data = Bytes::copy_from_slice(&buf);
-        let _ = writer.send_chunk(data).await;
-    }
-    // writer drops here → channel closes → reader returns None.
+    pump_hyper_body_to_channel_limited(body, writer, trailer_tx, None).await;
 }
 
-/// Read a QPACK-encoded response head from a stream.
-///
-/// Wire format: `[2-byte big-endian length][QPACK block]`.
-/// Returns `(status, headers, leftover_bytes)`.
-///
-/// The buffer is bounded to `max_header_size` bytes.  If the peer sends a
-/// head larger than this, the read is rejected with an error.
-async fn read_head_qpack(
-    recv: &mut iroh::endpoint::RecvStream,
-    codec: &std::sync::Arc<tokio::sync::Mutex<crate::qpack_bridge::QpackCodec>>,
-    max_header_size: usize,
-) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
-    let mut buf: Vec<u8> = Vec::new();
+/// Drain with optional byte limit.
+pub(crate) async fn pump_hyper_body_to_channel_limited(
+    mut body: Incoming,
+    writer: BodyWriter,
+    trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
+    max_bytes: Option<usize>,
+) {
+    let mut total = 0usize;
+    let mut trailers_vec: Vec<(String, String)> = Vec::new();
 
-    loop {
-        match recv
-            .read_chunk(READ_BUF)
-            .await
-            .map_err(|e| format!("read: {e}"))?
-        {
-            None => return Err("stream closed before complete head".into()),
-            Some(chunk) => buf.extend_from_slice(&chunk.bytes),
-        }
-
-        if buf.len() > max_header_size {
-            return Err(format!(
-                "response head too large ({} bytes, limit {max_header_size})",
-                buf.len()
-            ));
-        }
-
-        let mut guard = codec.lock().await;
-        match guard.decode_response(&buf) {
-            Ok((status, headers, consumed)) => {
-                let leftover = buf[consumed..].to_vec();
-                return Ok((status, headers, leftover));
+    while let Some(frame_result) = body.frame().await {
+        match frame_result {
+            Err(e) => {
+                tracing::warn!("iroh-http: body frame error: {e}");
+                break;
             }
-            Err(crate::qpack_bridge::DecodeError::Incomplete) => continue,
-            Err(e) => return Err(format!("parse response head: {e}")),
+            Ok(frame) => {
+                if frame.is_data() {
+                    let data = frame.into_data().expect("is_data checked above");
+                    total += data.len();
+                    if let Some(limit) = max_bytes {
+                        if total > limit {
+                            tracing::warn!("iroh-http: request body exceeded {limit} bytes");
+                            break;
+                        }
+                    }
+                    if writer.send_chunk(data).await.is_err() {
+                        return; // reader dropped
+                    }
+                } else if frame.is_trailers() {
+                    let hdrs = frame.into_trailers().expect("is_trailers checked above");
+                    trailers_vec = hdrs
+                        .iter()
+                        .map(|(k, v)| {
+                            (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                        })
+                        .collect();
+                }
+            }
         }
     }
+
+    drop(writer);
+    let _ = trailer_tx.send(trailers_vec);
 }
 
-fn extract_path(url: &str) -> String {
-    // httpi://nodeId/path?query  →  /path?query
+/// Adapt a `BodyReader` + optional trailer channel into a hyper-compatible
+/// body using `StreamBody` backed by a futures stream.
+pub(crate) fn body_from_reader(
+    reader: BodyReader,
+    trailer_rx: Option<tokio::sync::oneshot::Receiver<Vec<(String, String)>>>,
+) -> StreamBody<impl futures::Stream<Item = Result<Frame<Bytes>, std::convert::Infallible>>> {
+    use futures::stream;
+
+    // State machine: first yield data frames, then optionally a trailer frame.
+    let s = stream::unfold(
+        (reader, trailer_rx, false),
+        |(reader, trailer_rx, done)| async move {
+            if done {
+                return None;
+            }
+            match reader.next_chunk().await {
+                Some(data) => Some((Ok(Frame::data(data)), (reader, trailer_rx, false))),
+                None => {
+                    // Body data complete — check for trailers.
+                    if let Some(rx) = trailer_rx {
+                        if let Ok(trailers) = rx.await {
+                            let mut map = http::HeaderMap::new();
+                            for (k, v) in trailers {
+                                if let (Ok(name), Ok(val)) = (
+                                    HeaderName::from_bytes(k.as_bytes()),
+                                    HeaderValue::from_str(&v),
+                                ) {
+                                    map.append(name, val);
+                                }
+                            }
+                            if !map.is_empty() {
+                                return Some((
+                                    Ok(Frame::trailers(map)),
+                                    (reader, None, true),
+                                ));
+                            }
+                        }
+                    }
+                    None
+                }
+            }
+        },
+    );
+
+    StreamBody::new(s)
+}
+
+// ── Path extraction ───────────────────────────────────────────────────────────
+
+pub(crate) fn extract_path(url: &str) -> String {
     if let Some(idx) = url.find("://") {
         let after_scheme = &url[idx + 3..];
         if let Some(slash) = after_scheme.find('/') {
@@ -484,7 +361,6 @@ fn extract_path(url: &str) -> String {
         }
         return "/".to_string();
     }
-    // Already a path
     if url.starts_with('/') {
         url.to_string()
     } else {
@@ -492,41 +368,25 @@ fn extract_path(url: &str) -> String {
     }
 }
 
-/// Read a complete trailer block from a stream, starting with `buf`.
-///
-/// Returns the parsed trailers, or an empty `Vec` on parse failure or EOF.
-async fn read_trailers_from_buf(
-    recv: &mut iroh::endpoint::RecvStream,
-    mut buf: Vec<u8>,
-) -> Vec<(String, String)> {
-    loop {
-        match parse_trailers(&buf) {
-            Ok((trailers, _)) => return trailers,
-            Err(FramingError::Incomplete) => {
-                match recv.read_chunk(READ_BUF).await {
-                    Ok(Some(chunk)) => buf.extend_from_slice(&chunk.bytes),
-                    _ => return Vec::new(), // stream closed before trailers complete
-                }
-            }
-            Err(_) => return Vec::new(),
-        }
-    }
-}
+// ── Duplex / raw_connect ──────────────────────────────────────────────────────
 
-// ── §2 Bidirectional streaming — raw_connect ──────────────────────────────────
-
-/// Open a full-duplex QUIC connection to a remote node.
-///
-/// Sends an `Iroh-HTTP/1` request with `Upgrade: iroh-duplex` and awaits a
-/// `101 Switching Protocols` response.  After the handshake, both the read
-/// (`read_handle`) and write (`write_handle`) sides of the stream are exposed
-/// as body-channel handles usable with `nextChunk`/`sendChunk`/`finishBody`.
+/// Open a full-duplex QUIC connection to a remote node via HTTP Upgrade.
 pub async fn raw_connect(
     endpoint: &IrohEndpoint,
     remote_node_id: &str,
     path: &str,
     headers: &[(String, String)],
 ) -> Result<FfiDuplexStream, String> {
+    // Validate headers.
+    for (name, value) in headers {
+        HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+            CoreError::invalid_input(format!("invalid header name {:?}", name)).to_string()
+        })?;
+        HeaderValue::from_str(value).map_err(|_| {
+            CoreError::invalid_input(format!("invalid header value for {:?}", name)).to_string()
+        })?;
+    }
+
     let parsed = parse_node_addr(remote_node_id)?;
     let node_id = parsed.node_id;
     let mut addr = iroh::EndpointAddr::new(node_id);
@@ -534,70 +394,104 @@ pub async fn raw_connect(
         addr = addr.with_ip_addr(*a);
     }
 
-    // Connect using the duplex ALPN — the peer must advertise it.
     let ep_raw = endpoint.raw().clone();
     let addr_clone = addr.clone();
+    let max_header_size = endpoint.max_header_size();
+
     let pooled = endpoint
         .pool()
         .get_or_connect(node_id, ALPN_DUPLEX, || async move {
-            ep_raw
-                .connect(addr_clone, ALPN_DUPLEX)
-                .await
-                .map_err(|e| format!("connect duplex: {e}"))
+            ep_raw.connect(addr_clone, ALPN_DUPLEX).await.map_err(|e| format!("connect duplex: {e}"))
         })
         .await?;
 
-    let (mut send, mut recv) = pooled
-        .conn
-        .open_bi()
+    let (send, recv) = pooled.conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
+    let io = TokioIo::new(IrohStream::new(send, recv));
+
+    let (mut sender, conn_task) = hyper::client::conn::http1::Builder::new()
+        .max_buf_size(max_header_size)
+        .handshake::<_, BoxBody>(io)
         .await
-        .map_err(|e| format!("open_bi: {e}"))?;
+        .map_err(|e| format!("hyper handshake (duplex): {e}"))?;
 
-    // Build the upgrade request header block.
-    let mut all_headers: Vec<(&str, &str)> = vec![("Upgrade", "iroh-duplex")];
-    let extra: Vec<(&str, &str)> = headers
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    all_headers.extend_from_slice(&extra);
+    tokio::spawn(conn_task);
 
-    let head_bytes = {
-        let mut guard = pooled.codec.lock().await;
-        guard
-            .encode_request("CONNECT", path, &all_headers)
-            .map_err(|e| format!("qpack encode: {e}"))?
-    };
+    // Build CONNECT request with Upgrade: iroh-duplex.
+    let mut req_builder = hyper::Request::builder()
+        .method(Method::from_bytes(b"CONNECT").unwrap())
+        .uri(path)
+        .header(hyper::header::UPGRADE, "iroh-duplex");
 
-    send.write_all(&head_bytes)
-        .await
-        .map_err(|e| format!("write connect head: {e}"))?;
-
-    // Await the 101 Switching Protocols response.
-    let max_header_size = endpoint.max_header_size();
-    let (status, _headers, _leftover) =
-        read_head_qpack(&mut recv, &pooled.codec, max_header_size).await?;
-    if status != 101 {
-        return Err(format!(
-            "server rejected duplex connection: expected 101, got {status}"
-        ));
+    for (k, v) in headers {
+        req_builder = req_builder.header(k.as_str(), v.as_str());
     }
 
-    // Receive side: pump data from server into a BodyReader channel.
-    let (server_write, server_read) = make_body_channel();
+    let req = req_builder
+        .body(box_body(http_body_util::Empty::new()))
+        .map_err(|e| format!("build duplex request: {e}"))?;
+
+    let resp = sender.send_request(req).await.map_err(|e| format!("send duplex request: {e}"))?;
+
+    let status = resp.status();
+    if status != StatusCode::SWITCHING_PROTOCOLS {
+        return Err(format!("server rejected duplex: expected 101, got {status}"));
+    }
+
+    // Perform the protocol upgrade to get raw bidirectional IO.
+    let upgraded = hyper::upgrade::on(resp)
+        .await
+        .map_err(|e| format!("upgrade error: {e}"))?;
+
     let ep_idx = endpoint.inner.endpoint_idx;
-    let read_handle = insert_reader(ep_idx, server_read);
-    tokio::spawn(pump_quic_recv_to_body(recv, server_write));
-
-    // Send side: pump data from a BodyWriter channel to the server.
+    let (server_write, server_read) = make_body_channel();
     let (client_write, client_read) = make_body_channel();
-    let write_handle = insert_writer(ep_idx, client_write);
-    tokio::spawn(pump_body_to_quic_send(client_read, send));
 
-    Ok(FfiDuplexStream {
-        read_handle,
-        write_handle,
-    })
+    let read_handle = insert_reader(ep_idx, server_read);
+    let write_handle = insert_writer(ep_idx, client_write);
+
+    // Pipe upgraded IO to/from body channels.
+    tokio::spawn(pump_upgraded(upgraded, server_write, client_read));
+
+    Ok(FfiDuplexStream { read_handle, write_handle })
 }
 
-// Duplex recv/send use the shared pump helpers from stream.rs.
-use crate::stream::{pump_body_to_quic_send, pump_quic_recv_to_body};
+/// Pump data between an upgraded hyper IO object and body channels.
+async fn pump_upgraded(
+    upgraded: hyper::upgrade::Upgraded,
+    writer: BodyWriter,   // server→client: write incoming data here
+    reader: BodyReader,   // client→server: read outgoing data from here
+) {
+    let io = TokioIo::new(upgraded);
+    let (mut recv, mut send) = tokio::io::split(io);
+
+    tokio::join!(
+        async {
+            let mut buf = vec![0u8; 16 * 1024];
+            loop {
+                use tokio::io::AsyncReadExt;
+                match recv.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if writer.send_chunk(bytes::Bytes::copy_from_slice(&buf[..n])).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        },
+        async {
+            use tokio::io::AsyncWriteExt;
+            loop {
+                match reader.next_chunk().await {
+                    None => break,
+                    Some(data) => {
+                        if send.write_all(&data).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+            let _ = send.shutdown().await;
+        },
+    );
+}

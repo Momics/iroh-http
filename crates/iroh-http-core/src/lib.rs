@@ -1,21 +1,17 @@
-//! `iroh-http-core` — Iroh QUIC endpoint, HTTP framing, fetch and serve.
+//! `iroh-http-core` — Iroh QUIC endpoint, HTTP/1.1 via hyper, fetch and serve.
 //!
 //! This crate owns the Iroh endpoint and wires HTTP/1.1 framing to QUIC
-//! streams.  Nothing in here knows about JavaScript.
+//! streams via hyper.  Nothing in here knows about JavaScript.
 
+pub(crate) mod io;
 pub mod client;
-#[cfg(feature = "compression")]
-pub mod compress;
 pub mod endpoint;
 pub(crate) mod pool;
-pub(crate) mod qpack_bridge;
 pub mod server;
 pub mod session;
 pub mod stream;
 
 pub use client::{alloc_fetch_token, cancel_in_flight, fetch, raw_connect};
-#[cfg(feature = "compression")]
-pub use compress::CompressionOptions;
 pub use endpoint::{
     parse_direct_addrs, IrohEndpoint, NodeAddrInfo, NodeOptions, PathInfo, PeerStats,
 };
@@ -32,48 +28,90 @@ pub use stream::{
     send_trailers, BodyReader,
 };
 
-// ── Node tickets ─────────────────────────────────────────────────────────────
-// (defined below, re-exported here at the top for easy discovery)
-// pub fn node_ticket(ep: &IrohEndpoint) -> String
-// pub fn parse_node_addr(s: &str) -> Result<ParsedNodeAddr, String>
-// pub struct ParsedNodeAddr { pub node_id, pub direct_addrs }
+// ── Structured error types ────────────────────────────────────────────────────
 
-// ── Key operations ───────────────────────────────────────────────────────────
-
-/// Sign arbitrary bytes with a 32-byte Ed25519 secret key.
-/// Returns a 64-byte signature.
-pub fn secret_key_sign(secret_key_bytes: &[u8; 32], data: &[u8]) -> [u8; 64] {
-    let key = iroh::SecretKey::from_bytes(secret_key_bytes);
-    key.sign(data).to_bytes()
-}
-
-/// Verify a 64-byte Ed25519 signature against a 32-byte public key.
-/// Returns `true` on success, `false` on any failure.
-pub fn public_key_verify(public_key_bytes: &[u8; 32], data: &[u8], sig_bytes: &[u8; 64]) -> bool {
-    let Ok(key) = iroh::PublicKey::from_bytes(public_key_bytes) else {
-        return false;
-    };
-    let sig = iroh::Signature::from_bytes(sig_bytes);
-    key.verify(data, &sig).is_ok()
-}
-
-/// Generate a fresh Ed25519 secret key. Returns 32 raw bytes.
-pub fn generate_secret_key() -> [u8; 32] {
-    iroh::SecretKey::generate(&mut rand::rng()).to_bytes()
-}
-
-// ── Structured error serialization ───────────────────────────────────────────
-
-/// Classify a Rust error message and return a JSON string
-/// `{"code":"CODE","message":"..."}` suitable for FFI error channels.
+/// Machine-readable error codes for the FFI boundary.
 ///
-/// Adapters should use this instead of `.to_string()` so that JS can
-/// dispatch by stable error codes rather than fragile regex matching.
+/// Platform adapters match on this directly — no string parsing needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorCode {
+    InvalidInput,
+    ConnectionFailed,
+    Timeout,
+    BodyTooLarge,
+    HeaderTooLarge,
+    PeerRejected,
+    Cancelled,
+    Internal,
+}
+
+/// Structured error returned by core functions.
+///
+/// `code` is machine-readable. `message` carries human-readable detail.
+#[derive(Debug, Clone)]
+pub struct CoreError {
+    pub code: ErrorCode,
+    pub message: String,
+}
+
+impl CoreError {
+    pub fn invalid_input(detail: impl std::fmt::Display) -> Self {
+        CoreError { code: ErrorCode::InvalidInput, message: detail.to_string() }
+    }
+    pub fn connection_failed(detail: impl std::fmt::Display) -> Self {
+        CoreError { code: ErrorCode::ConnectionFailed, message: detail.to_string() }
+    }
+    pub fn timeout(detail: impl std::fmt::Display) -> Self {
+        CoreError { code: ErrorCode::Timeout, message: detail.to_string() }
+    }
+    pub fn body_too_large(detail: impl std::fmt::Display) -> Self {
+        CoreError { code: ErrorCode::BodyTooLarge, message: detail.to_string() }
+    }
+    pub fn internal(detail: impl std::fmt::Display) -> Self {
+        CoreError { code: ErrorCode::Internal, message: detail.to_string() }
+    }
+    pub fn invalid_handle(handle: u32) -> Self {
+        CoreError {
+            code: ErrorCode::InvalidInput,
+            message: format!("unknown handle: {handle}"),
+        }
+    }
+    pub fn cancelled() -> Self {
+        CoreError { code: ErrorCode::Cancelled, message: "aborted".to_string() }
+    }
+}
+
+impl std::fmt::Display for CoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for CoreError {}
+
+// Adapters still need to classify errors into JSON for the FFI boundary.
+// This helper wraps CoreError into the legacy JSON format used by adapters.
+pub fn core_error_to_json(e: &CoreError) -> String {
+    let code = match e.code {
+        ErrorCode::InvalidInput => "INVALID_INPUT",
+        ErrorCode::ConnectionFailed => "REFUSED",
+        ErrorCode::Timeout => "TIMEOUT",
+        ErrorCode::BodyTooLarge => "BODY_TOO_LARGE",
+        ErrorCode::HeaderTooLarge => "HEADER_TOO_LARGE",
+        ErrorCode::PeerRejected => "PEER_REJECTED",
+        ErrorCode::Cancelled => "CANCELLED",
+        ErrorCode::Internal => "UNKNOWN",
+    };
+    let json_msg = serde_json::Value::String(e.message.clone());
+    format!("{{\"code\":\"{code}\",\"message\":{json_msg}}}")
+}
+
+/// Classify a free-form error message into a JSON error object.
+/// Preserved for adapter compatibility — new code should use `core_error_to_json`.
 pub fn classify_error_json(e: impl std::fmt::Display) -> String {
     let msg = e.to_string();
     let code = classify_error_code(&msg);
-    // Use serde_json for correct serialisation — handles all control
-    // characters, Unicode escapes, and special sequences automatically.
     let json_msg = serde_json::Value::String(msg);
     format!("{{\"code\":\"{code}\",\"message\":{json_msg}}}")
 }
@@ -117,77 +155,46 @@ fn classify_error_code(msg: &str) -> &'static str {
     }
 }
 
-/// Flat response-head struct that crosses the FFI boundary.
-#[derive(Debug, Clone)]
-pub struct FfiResponse {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    /// Handle to a [`BodyReader`] containing the response body.
-    pub body_handle: u32,
-    /// Full `httpi://` URL of the responding peer, e.g. `httpi://<node-id>/path`.
-    pub url: String,
-    /// Handle to a trailer receiver — call `next_trailer(handle)` after draining
-    /// the body to retrieve any response trailers.
-    pub trailers_handle: u32,
+// ── ALPN protocol identifiers ─────────────────────────────────────────────────
+
+/// ALPN for the HTTP/1.1-over-QUIC protocol (version 2 wire format).
+pub const ALPN: &[u8] = b"iroh-http/2";
+/// ALPN for base + bidirectional streaming (duplex/raw_connect).
+pub const ALPN_DUPLEX: &[u8] = b"iroh-http/2-duplex";
+
+// ── Key operations ───────────────────────────────────────────────────────────
+
+/// Sign arbitrary bytes with a 32-byte Ed25519 secret key.
+/// Returns a 64-byte signature.
+pub fn secret_key_sign(secret_key_bytes: &[u8; 32], data: &[u8]) -> [u8; 64] {
+    let key = iroh::SecretKey::from_bytes(secret_key_bytes);
+    key.sign(data).to_bytes()
 }
 
-/// Options passed to the JS serve callback per incoming request.
-#[derive(Debug)]
-pub struct RequestPayload {
-    /// Opaque handle used to send the response head back via [`server::respond`].
-    pub req_handle: u32,
-    /// Handle to a [`BodyReader`] for reading the request body.
-    pub req_body_handle: u32,
-    /// Handle to a [`stream::BodyWriter`] that the handler writes the response body into.
-    pub res_body_handle: u32,
-    /// Handle to a trailer receiver for reading request trailers (after body is consumed).
-    /// `0` in duplex mode (trailers not supported for duplex connections).
-    pub req_trailers_handle: u32,
-    /// Handle to a trailer sender for delivering response trailers.
-    /// JS calls `sendTrailers(resTrailersHandle, pairs)` after `finishBody`.
-    /// `0` in duplex mode.
-    pub res_trailers_handle: u32,
-    pub method: String,
-    /// Full `httpi://` URL (server's own node-id + path).
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub remote_node_id: String,
-    /// True when the client sent `Upgrade: iroh-duplex` — both stream directions
-    /// are open immediately after the 101 response.
-    pub is_bidi: bool,
+/// Verify a 64-byte Ed25519 signature against a 32-byte public key.
+/// Returns `true` on success, `false` on any failure.
+pub fn public_key_verify(public_key_bytes: &[u8; 32], data: &[u8], sig_bytes: &[u8; 64]) -> bool {
+    let Ok(key) = iroh::PublicKey::from_bytes(public_key_bytes) else {
+        return false;
+    };
+    let sig = iroh::Signature::from_bytes(sig_bytes);
+    key.verify(data, &sig).is_ok()
 }
 
-/// Handles for the two sides of a full-duplex QUIC stream.
-///
-/// Returned by [`raw_connect`] when the server accepts the upgrade.
-#[derive(Debug)]
-pub struct FfiDuplexStream {
-    /// Body reader handle — JS calls `nextChunk(readHandle)` to receive data from the server.
-    pub read_handle: u32,
-    /// Body writer handle — JS calls `sendChunk(writeHandle, …)` / `finishBody(writeHandle)`.
-    pub write_handle: u32,
+/// Generate a fresh Ed25519 secret key. Returns 32 raw bytes.
+pub fn generate_secret_key() -> [u8; 32] {
+    iroh::SecretKey::generate(&mut rand::rng()).to_bytes()
 }
 
-/// ALPN protocol identifier for the base iroh-http/1 protocol.
-pub const ALPN: &[u8] = b"iroh-http/1";
-/// ALPN for base + bidirectional streaming.
-pub const ALPN_DUPLEX: &[u8] = b"iroh-http/1-duplex";
-/// ALPN for base + trailer headers.
-pub const ALPN_TRAILERS: &[u8] = b"iroh-http/1-trailers";
-/// ALPN for base + bidirectional + trailers + cancellation.
-pub const ALPN_FULL: &[u8] = b"iroh-http/1-full";
+// ── Encode bytes as base32 ────────────────────────────────────────────────────
 
 /// Encode bytes as lowercase RFC 4648 base32 (no padding).
-///
-/// Uses the maintained [`base32`] crate with the `Rfc4648Lower { padding: false }`
-/// alphabet, which matches iroh's node-ID format exactly.
 pub fn base32_encode(bytes: &[u8]) -> String {
     base32::encode(base32::Alphabet::Rfc4648Lower { padding: false }, bytes)
 }
 
 /// Decode an RFC 4648 base32 string (no padding, case-insensitive) to bytes.
 pub(crate) fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
-    // The crate's Rfc4648Lower decoder is case-insensitive.
     base32::decode(base32::Alphabet::Rfc4648Lower { padding: false }, s)
         .ok_or_else(|| format!("invalid base32 string: {s}"))
 }
@@ -204,10 +211,6 @@ pub(crate) fn parse_node_id(s: &str) -> Result<iroh::PublicKey, String> {
 // ── Node tickets ──────────────────────────────────────────────────────────────
 
 /// Generate a ticket string for the given endpoint.
-///
-/// A ticket is a JSON-encoded `NodeAddrInfo` containing the node ID and all
-/// known addresses (relay URLs + direct IPs). Share it with peers so they can
-/// connect directly without DNS discovery.
 pub fn node_ticket(ep: &IrohEndpoint) -> String {
     let info = ep.node_addr();
     match serde_json::to_string(&info) {
@@ -221,18 +224,13 @@ pub fn node_ticket(ep: &IrohEndpoint) -> String {
 
 /// Parsed node address from a ticket string, bare node ID, or JSON address info.
 pub struct ParsedNodeAddr {
-    /// The node's public key.
     pub node_id: iroh::PublicKey,
-    /// Direct IP addresses extracted from the ticket (may be empty).
     pub direct_addrs: Vec<std::net::SocketAddr>,
 }
 
 /// Parse a string that may be a bare node ID, a ticket string (JSON-encoded
 /// `NodeAddrInfo`), or a JSON object with `id` and `addrs` fields.
-///
-/// Returns the parsed public key and any direct socket addresses.
 pub fn parse_node_addr(s: &str) -> Result<ParsedNodeAddr, String> {
-    // 1. Try parsing as JSON (ticket string or NodeAddrInfo object)
     if let Ok(info) = serde_json::from_str::<NodeAddrInfo>(s) {
         let node_id = parse_node_id(&info.id)?;
         let direct_addrs = info
@@ -240,115 +238,52 @@ pub fn parse_node_addr(s: &str) -> Result<ParsedNodeAddr, String> {
             .iter()
             .filter_map(|a| a.parse::<std::net::SocketAddr>().ok())
             .collect();
-        return Ok(ParsedNodeAddr {
-            node_id,
-            direct_addrs,
-        });
+        return Ok(ParsedNodeAddr { node_id, direct_addrs });
     }
-    // 2. Fall back to bare base32 node ID
     let node_id = parse_node_id(s)?;
-    Ok(ParsedNodeAddr {
-        node_id,
-        direct_addrs: Vec::new(),
-    })
+    Ok(ParsedNodeAddr { node_id, direct_addrs: Vec::new() })
+}
+
+// ── FFI types ─────────────────────────────────────────────────────────────────
+
+/// Flat response-head struct that crosses the FFI boundary.
+#[derive(Debug, Clone)]
+pub struct FfiResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    /// Handle to a [`BodyReader`] containing the response body.
+    pub body_handle: u32,
+    /// Full `httpi://` URL of the responding peer.
+    pub url: String,
+    /// Handle to a trailer receiver.
+    pub trailers_handle: u32,
+}
+
+/// Options passed to the JS serve callback per incoming request.
+#[derive(Debug)]
+pub struct RequestPayload {
+    pub req_handle: u32,
+    pub req_body_handle: u32,
+    pub res_body_handle: u32,
+    pub req_trailers_handle: u32,
+    pub res_trailers_handle: u32,
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub remote_node_id: String,
+    pub is_bidi: bool,
+}
+
+/// Handles for the two sides of a full-duplex QUIC stream.
+#[derive(Debug)]
+pub struct FfiDuplexStream {
+    pub read_handle: u32,
+    pub write_handle: u32,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── classify_error_json ─────────────────────────────────────────────
-
-    #[test]
-    fn classify_timeout() {
-        let json = classify_error_json("connect timed out after 30s");
-        assert!(json.contains("\"code\":\"TIMEOUT\""));
-        assert!(json.contains("timed out"));
-    }
-
-    #[test]
-    fn classify_dns_failure() {
-        let json = classify_error_json("dns resolution failed for node.example.com");
-        assert!(json.contains("\"code\":\"DNS_FAILURE\""));
-    }
-
-    #[test]
-    fn classify_alpn_mismatch() {
-        let json = classify_error_json("peer does not support required alpn protocol");
-        assert!(json.contains("\"code\":\"ALPN_MISMATCH\""));
-    }
-
-    #[test]
-    fn classify_upgrade_rejected() {
-        let json = classify_error_json("upgrade rejected: non-101 response");
-        assert!(json.contains("\"code\":\"UPGRADE_REJECTED\""));
-    }
-
-    #[test]
-    fn classify_parse_failure() {
-        let json = classify_error_json("parse response head: invalid status line");
-        assert!(json.contains("\"code\":\"PARSE_FAILURE\""));
-    }
-
-    #[test]
-    fn classify_invalid_handle() {
-        let json = classify_error_json("invalid writer handle: 42");
-        assert!(json.contains("\"code\":\"INVALID_HANDLE\""));
-    }
-
-    #[test]
-    fn classify_writer_dropped() {
-        let json = classify_error_json("body writer dropped before completion");
-        assert!(json.contains("\"code\":\"WRITER_DROPPED\""));
-    }
-
-    #[test]
-    fn classify_reader_dropped() {
-        let json = classify_error_json("body reader dropped");
-        assert!(json.contains("\"code\":\"READER_DROPPED\""));
-    }
-
-    #[test]
-    fn classify_connection_refused() {
-        let json = classify_error_json("connection refused by peer");
-        assert!(json.contains("\"code\":\"REFUSED\""));
-    }
-
-    #[test]
-    fn classify_stream_reset() {
-        let json = classify_error_json("stream reset by remote");
-        assert!(json.contains("\"code\":\"STREAM_RESET\""));
-    }
-
-    #[test]
-    fn classify_invalid_key() {
-        let json = classify_error_json("invalid key bytes: wrong length");
-        assert!(json.contains("\"code\":\"INVALID_KEY\""));
-    }
-
-    #[test]
-    fn classify_endpoint_failure() {
-        let json = classify_error_json("failed to bind endpoint");
-        assert!(json.contains("\"code\":\"ENDPOINT_FAILURE\""));
-    }
-
-    #[test]
-    fn classify_unknown() {
-        let json = classify_error_json("something completely unexpected happened");
-        assert!(json.contains("\"code\":\"UNKNOWN\""));
-    }
-
-    #[test]
-    fn classify_escapes_special_chars() {
-        let json = classify_error_json("message with \"quotes\" and\nnewlines");
-        assert!(json.contains(r#"\"quotes\""#));
-        assert!(json.contains(r"\n"));
-        // Verify it's valid-ish JSON
-        assert!(json.starts_with('{'));
-        assert!(json.ends_with('}'));
-    }
-
-    // ── base32 encode / decode ──────────────────────────────────────────
 
     #[test]
     fn base32_round_trip() {
@@ -372,8 +307,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── parse_node_id ───────────────────────────────────────────────────
-
     #[test]
     fn parse_node_id_invalid_base32() {
         let result = parse_node_id("!!!not-base32!!!");
@@ -382,7 +315,21 @@ mod tests {
 
     #[test]
     fn parse_node_id_wrong_length() {
-        let result = parse_node_id("aa"); // too short
+        let result = parse_node_id("aa");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn core_error_display() {
+        let e = CoreError::timeout("30s elapsed");
+        assert!(e.to_string().contains("Timeout"));
+        assert!(e.to_string().contains("30s elapsed"));
+    }
+
+    #[test]
+    fn core_error_to_json_timeout() {
+        let e = CoreError::timeout("timed out");
+        let json = core_error_to_json(&e);
+        assert!(json.contains("\"code\":\"TIMEOUT\""));
     }
 }

@@ -1,88 +1,62 @@
-//! QUIC connection pool — reuse connections across fetch/connect calls.
+//! QUIC connection pool backed by `moka` async cache.
 //!
-//! The pool maps `(NodeId, ALPN) → Connection`.  Before every `connect()` call
-//! the pool is checked; a live cached connection avoids a full QUIC handshake.
+//! `moka::future::Cache::try_get_with` provides built-in single-flight semantics:
+//! concurrent callers for the same `(node_id, ALPN)` key wait on the same
+//! in-progress connect future rather than each starting a new handshake.
+//! On failure the error is returned to all concurrent waiters (wrapped in Arc).
 //!
-//! When many callers request the same peer concurrently and no pooled connection
-//! exists, only one caller performs the handshake while the others wait
-//! (connection-storm prevention via per-slot `OnceCell`).
-//!
-//! A [`QpackCodec`] is stored alongside each connection for QPACK header
-//! compression.
+//! Liveness checking: before returning a cached connection we call
+//! `close_reason()`.  Closed connections are invalidated and one retry is
+//! attempted so the caller always gets a live connection on the first call.
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use iroh::endpoint::Connection;
 use iroh::PublicKey;
 
-use crate::qpack_bridge::QpackCodec;
-
-/// A pooled connection with QPACK codec state.
+/// A pooled QUIC connection (clone-cheap).
 #[derive(Clone)]
 pub(crate) struct PooledConnection {
     pub conn: Connection,
-    /// Per-connection QPACK encoder/decoder state.
-    pub codec: Arc<tokio::sync::Mutex<QpackCodec>>,
 }
 
 impl PooledConnection {
     pub fn new(conn: Connection) -> Self {
-        Self {
-            conn,
-            codec: Arc::new(tokio::sync::Mutex::new(QpackCodec::new())),
-        }
+        Self { conn }
     }
 }
 
-/// Key for a pooled connection: `(NodeId, ALPN bytes)`.
+/// Key for a pooled connection: `(node_id, ALPN bytes)`.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct PoolKey {
     node_id: PublicKey,
     alpn: Vec<u8>,
 }
 
-/// A slot in the pool.  While a connection is being established the slot
-/// holds a `Connecting` future that waiters can subscribe to.
-enum Slot {
-    /// A live, cached connection with the last-used timestamp for LRU eviction.
-    Ready(PooledConnection, std::time::Instant),
-    /// A connection attempt is in progress.  Waiters subscribe to the channel.
-    Connecting(tokio::sync::watch::Receiver<Option<Result<PooledConnection, String>>>),
-}
-
-/// Thread-safe QUIC connection pool.
+/// Thread-safe QUIC connection pool backed by moka.
 pub(crate) struct ConnectionPool {
-    inner: Mutex<PoolInner>,
-    /// Connections idle for longer than this are evicted on next access.
-    idle_timeout: Option<std::time::Duration>,
-}
-
-struct PoolInner {
-    conns: HashMap<PoolKey, Slot>,
-    max_idle: Option<usize>,
+    cache: moka::future::Cache<PoolKey, Arc<PooledConnection>>,
 }
 
 impl ConnectionPool {
     /// Create a new pool.
     ///
-    /// - `max_idle`: maximum number of cached connections (`None` = unlimited).
-    /// - `idle_timeout`: evict connections that have been idle longer than this.
+    /// - `max_idle`: max cached connections (None = 512).
+    /// - `idle_timeout`: connections idle longer than this are evicted.
     pub fn new(max_idle: Option<usize>, idle_timeout: Option<std::time::Duration>) -> Self {
-        Self {
-            inner: Mutex::new(PoolInner {
-                conns: HashMap::new(),
-                max_idle,
-            }),
-            idle_timeout,
+        let cap = max_idle.unwrap_or(512) as u64;
+        let mut builder = moka::future::Cache::builder().max_capacity(cap);
+        if let Some(tti) = idle_timeout {
+            builder = builder.time_to_idle(tti);
         }
+        Self { cache: builder.build() }
     }
 
     /// Get an existing live connection, or establish a new one.
     ///
-    /// `connect_fn` is called at most once per concurrent batch of requests
-    /// to the same `(node_id, alpn)` pair.
+    /// `connect_fn` is called at most once per concurrent batch of callers on
+    /// the same `(node_id, ALPN)` pair.  Concurrent callers wait for the
+    /// single in-progress connect and receive the same result.
     pub async fn get_or_connect<F, Fut>(
         &self,
         node_id: PublicKey,
@@ -90,151 +64,56 @@ impl ConnectionPool {
         connect_fn: F,
     ) -> Result<PooledConnection, String>
     where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<Connection, String>>,
+        F: FnOnce() -> Fut + Send,
+        Fut: std::future::Future<Output = Result<Connection, String>> + Send,
     {
-        let key = PoolKey {
-            node_id,
-            alpn: alpn.to_vec(),
-        };
+        let key = PoolKey { node_id, alpn: alpn.to_vec() };
 
-        // Phase 1: check the pool (short lock, no await).
-        enum Action {
-            Hit(PooledConnection),
-            Wait(tokio::sync::watch::Receiver<Option<Result<PooledConnection, String>>>),
-            Connect(tokio::sync::watch::Sender<Option<Result<PooledConnection, String>>>),
-        }
-
-        let action = {
-            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(slot) = inner.conns.get_mut(&key) {
-                match slot {
-                    Slot::Ready(pooled, last_used) => {
-                        let timed_out = self.idle_timeout.is_some_and(|d| last_used.elapsed() > d);
-                        if timed_out || pooled.conn.close_reason().is_some() {
-                            inner.conns.remove(&key);
-                            let (tx, rx) = tokio::sync::watch::channel(None);
-                            inner.conns.insert(key.clone(), Slot::Connecting(rx));
-                            Action::Connect(tx)
-                        } else {
-                            *last_used = std::time::Instant::now();
-                            Action::Hit(pooled.clone())
-                        }
-                    }
-                    Slot::Connecting(rx) => Action::Wait(rx.clone()),
-                }
-            } else {
-                let (tx, rx) = tokio::sync::watch::channel(None);
-                inner.conns.insert(key.clone(), Slot::Connecting(rx));
-                Action::Connect(tx)
+        // Phase 1: check for a live cached connection (no lock held while awaiting).
+        if let Some(pooled) = self.cache.get(&key).await {
+            if pooled.conn.close_reason().is_none() {
+                tracing::debug!("iroh-http: pool hit for {:?}", key.alpn);
+                return Ok((*pooled).clone());
             }
-            // MutexGuard dropped here
-        };
-
-        match action {
-            Action::Hit(pooled) => Ok(pooled),
-            Action::Wait(mut rx) => wait_for_connection(&mut rx).await,
-            Action::Connect(tx) => {
-                // Phase 2: perform the actual QUIC handshake (no lock held).
-                let result = connect_fn().await;
-
-                let pooled_result = result.map(PooledConnection::new);
-
-                // Phase 3: store the result (short lock, no await).
-                {
-                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-                    match &pooled_result {
-                        Ok(pooled) => {
-                            if let Some(max) = inner.max_idle {
-                                evict_if_needed(&mut inner.conns, max);
-                            }
-                            inner.conns.insert(
-                                key,
-                                Slot::Ready(pooled.clone(), std::time::Instant::now()),
-                            );
-                        }
-                        Err(_) => {
-                            inner.conns.remove(&key);
-                        }
-                    }
-                }
-
-                // Wake all waiters.
-                let _ = tx.send(Some(pooled_result.clone()));
-                pooled_result
-            }
+            // Stale — invalidate and fall through to a fresh connect.
+            tracing::debug!("iroh-http: pool stale for {:?}, invalidating", key.alpn);
+            self.cache.invalidate(&key).await;
         }
-    }
 
-    /// Return the number of entries currently in the pool (for testing).
-    #[cfg(test)]
-    pub fn len(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .conns
-            .iter()
-            .filter(|(_, s)| matches!(s, Slot::Ready(_, _)))
-            .count()
-    }
-}
-
-/// Wait for an in-flight connection attempt to complete.
-async fn wait_for_connection(
-    rx: &mut tokio::sync::watch::Receiver<Option<Result<PooledConnection, String>>>,
-) -> Result<PooledConnection, String> {
-    loop {
-        rx.changed()
-            .await
-            .map_err(|_| "connection attempt dropped".to_string())?;
-        let val = rx.borrow().clone();
-        if let Some(result) = val {
-            return result;
-        }
-    }
-}
-
-/// If the pool has more than `max` Ready entries, remove the oldest ones.
-fn evict_if_needed(conns: &mut HashMap<PoolKey, Slot>, max: usize) {
-    // Count ready connections.
-    let ready_count = conns
-        .values()
-        .filter(|s| matches!(s, Slot::Ready(_, _)))
-        .count();
-    if ready_count < max {
-        return;
-    }
-    // Remove stale connections first.
-    let stale_keys: Vec<PoolKey> = conns
-        .iter()
-        .filter_map(|(k, s)| match s {
-            Slot::Ready(pooled, _) if pooled.conn.close_reason().is_some() => Some(k.clone()),
-            _ => None,
-        })
-        .collect();
-    for k in stale_keys {
-        conns.remove(&k);
-    }
-    // If still over limit, evict the least-recently-used ready entry.
-    while conns
-        .values()
-        .filter(|s| matches!(s, Slot::Ready(_, _)))
-        .count()
-        >= max
-    {
-        if let Some(key) = conns
-            .iter()
-            .filter_map(|(k, s)| match s {
-                Slot::Ready(_, last_used) => Some((k.clone(), *last_used)),
-                _ => None,
+        // Phase 2: single-flight connect via try_get_with.
+        // If multiple callers race, only one invokes connect_fn; the rest wait.
+        let result = self
+            .cache
+            .try_get_with(key.clone(), async move {
+                connect_fn()
+                    .await
+                    .map(|conn| Arc::new(PooledConnection::new(conn)))
             })
-            .min_by_key(|(_, t)| *t)
-            .map(|(k, _)| k)
-        {
-            conns.remove(&key);
-        } else {
-            break;
+            .await;
+
+        match result {
+            Err(e) => {
+                // try_get_with wraps the error in Arc; clone the message out.
+                Err((*e).clone())
+            }
+            Ok(pooled) => {
+                // Guard against a connection that was closed immediately.
+                if pooled.conn.close_reason().is_some() {
+                    self.cache.invalidate(&key).await;
+                    return Err(
+                        "pooled connection closed immediately after connect".to_string(),
+                    );
+                }
+                Ok((*pooled).clone())
+            }
         }
+    }
+
+    /// Number of live entries (for testing).
+    #[cfg(test)]
+    pub async fn len(&self) -> usize {
+        self.cache.run_pending_tasks().await;
+        self.cache.entry_count() as usize
     }
 }
 
@@ -245,13 +124,6 @@ mod tests {
     #[tokio::test]
     async fn pool_starts_empty() {
         let pool = ConnectionPool::new(None, None);
-        assert_eq!(pool.len(), 0);
-    }
-
-    #[test]
-    fn evict_respects_max() {
-        let mut conns = HashMap::new();
-        evict_if_needed(&mut conns, 5);
-        assert!(conns.is_empty());
+        assert_eq!(pool.len().await, 0);
     }
 }
