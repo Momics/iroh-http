@@ -98,4 +98,4 @@ jobs:
              packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
 
       - name: Run Deno tests
-        run: deno test --allow-read --allow-ffi packages/iroh-http-deno/test/smoke.ts
+        run: deno test --allow-read --allow-ffi --allow-env --allow-net packages/iroh-http-deno/test/smoke.test.ts
