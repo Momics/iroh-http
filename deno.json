@@ -8,5 +8,10 @@
   "exclude": [
     "workspace/old_references",
     "target"
-  ]
+  ],
+  "test": {
+    "include": [
+      "packages/iroh-http-deno/test/smoke.test.ts"
+    ]
+  }
 }
