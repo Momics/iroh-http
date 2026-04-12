@@ -1,10 +1,3 @@
-
-  - We are currently writing integration and unit tests for the core and all platforms.
-  - Patch 17 is not yet integrated and also needs to be evaluated for 'use'.
-  - We should invest heavily in developer UX and great JSDoc like the previous packages. We should have an agent check all developer facing (and perhaps even our own internal code) for exceptional IDE documentation.
-  - Much of the core broke when we tried testing which indicates that the developers who built it didn't really write good code. It's vital that an agent 'aggressively' checks all the core code and makes sure it satisfies robust 'Rust-standard' code requirements.
-  - Verify that all patches were applied correctly.
-
 ## Integration test timeout on macOS — open investigation
 
 **Symptom:**
@@ -13,11 +6,30 @@ Every test that calls `fetch()` fails with `"connect: timed out"`.
 `cargo test --test bidi_stream` passes (4/4, ~3 s).
 `cargo test --test integration --features compression` passes (49/49, ~92 s).
 
-**Root cause: not yet identified.**
-The failure is reproducible and deterministic (not flaky), but the exact reason why
-the `compression` feature gate changes connectivity behaviour is unknown.
+**Root cause: RESOLVED — macOS Application Firewall.**
 
-**Key findings from investigation:**
+The macOS firewall was set to **"Block incoming connections"** for the
+`integration` test binary. The server endpoint never received QUIC packets
+because the OS silently dropped them.
+
+- `bidi_stream` binary → **Allow incoming connections** → passes
+- `integration` binary → **Block incoming connections** → times out
+- `--features compression` recompiles to a new binary hash → fresh firewall
+  prompt → user clicks Allow → passes
+
+**Fix:** Go to System Settings → Network → Firewall → Options, find the
+`integration-*` entry and switch from Block to Allow. Always click "Allow"
+when macOS shows the incoming connections popup for test binaries.
+
+The library code is correct — this was purely an OS-level network policy issue.
+
+---
+
+~~**Root cause: not yet identified.**~~
+~~The failure is reproducible and deterministic (not flaky), but the exact reason why~~
+~~the `compression` feature gate changes connectivity behaviour is unknown.~~
+
+**Key findings from investigation (retained for reference):**
 
 1. **Same IP addresses in both cases.**
    Both test binaries bind to `192.168.50.16:<random-port>` (the LAN interface, not

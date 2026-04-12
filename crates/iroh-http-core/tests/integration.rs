@@ -12,10 +12,11 @@ use iroh_http_core::{
     server::ServeOptions, IrohEndpoint, NodeOptions, RequestPayload,
 };
 
-/// Create a pair of locally-connected endpoints (relay disabled).
+/// Create a pair of locally-connected endpoints (relay disabled, loopback only).
 async fn make_pair() -> (IrohEndpoint, IrohEndpoint) {
     let opts = || NodeOptions {
         disable_networking: true,
+        bind_addrs: vec!["127.0.0.1:0".into()],
         ..Default::default()
     };
     let server = IrohEndpoint::bind(opts()).await.unwrap();
@@ -1062,6 +1063,7 @@ async fn make_pair_custom_server(server_opts: NodeOptions) -> (IrohEndpoint, Iro
     let server = IrohEndpoint::bind(server_opts).await.unwrap();
     let client = IrohEndpoint::bind(NodeOptions {
         disable_networking: true,
+        bind_addrs: vec!["127.0.0.1:0".into()],
         ..Default::default()
     })
     .await
@@ -1074,6 +1076,7 @@ async fn make_pair_custom_server(server_opts: NodeOptions) -> (IrohEndpoint, Iro
 async fn header_bomb_rejected() {
     let (server_ep, client_ep) = make_pair_custom_server(NodeOptions {
         disable_networking: true,
+        bind_addrs: vec!["127.0.0.1:0".into()],
         max_header_size: Some(256), // very small
         ..Default::default()
     })

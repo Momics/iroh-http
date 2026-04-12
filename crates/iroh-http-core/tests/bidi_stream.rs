@@ -9,10 +9,11 @@ use iroh_http_core::{
     session_create_bidi_stream, session_next_bidi_stream, IrohEndpoint, NodeOptions,
 };
 
-/// Create a pair of locally-connected endpoints (relay disabled).
+/// Create a pair of locally-connected endpoints (relay disabled, loopback only).
 async fn make_pair() -> (IrohEndpoint, IrohEndpoint) {
     let opts = || NodeOptions {
         disable_networking: true,
+        bind_addrs: vec!["127.0.0.1:0".into()],
         ..Default::default()
     };
     let a = IrohEndpoint::bind(opts()).await.unwrap();
