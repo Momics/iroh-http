@@ -25,6 +25,8 @@ packages/iroh-http-deno/lib/*.dll
 __pycache__/
 *.egg-info/
 *.whl
+*.so
+.venv/
 
 # macOS
 .DS_Store
