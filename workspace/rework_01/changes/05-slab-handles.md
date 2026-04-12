@@ -121,9 +121,11 @@ impl StreamHandle {
 
 ### Handle composition
 
-The current model composes endpoint index + local index into a single `u32`
-(20 bits each). With slotmap, the endpoint index becomes a field on the
-registry itself rather than encoded into every handle:
+The current model encodes endpoint index + local slab index into a single `u32`
+(approximately 10 bits for endpoints and 22 bits for local index). This leaves
+no room for generational protection and risks collisions under high allocation
+rates. With slotmap, the endpoint index becomes a field on the registry itself
+rather than encoded into every handle:
 
 ```rust
 pub(crate) struct HandleRegistry<T> {

@@ -123,9 +123,21 @@ hyper v1 supports HTTP/1.1 trailers via `http_body::Frame`. On the send side,
 `Frame::data(Bytes)`. On the receive side, `body.trailers().await` returns
 the trailer `HeaderMap` after the body is consumed.
 
-This replaces the custom `TrailerTx` / `TrailerRx` `oneshot` channel pattern
-with hyper's native trailer API. The FFI functions `send_trailers` and
-`next_trailer` become thin wrappers around this.
+hyper's `StreamBody` accepts `Frame::trailers(HeaderMap)` interleaved with
+`Frame::data(Bytes)` at the wire level. However, the FFI boundary requires
+named handle semantics (`send_trailers(handle, ...)` / `next_trailer(handle)`),
+so the implementation retains the `TrailerTx` / `TrailerRx` oneshot channel
+pattern as the bridge between the JS FFI and hyper's trailer API:
+
+- **Receive (request trailers)**: hyper delivers trailers via the body stream;
+  the pump task extracts them and sends them over the oneshot to the
+  `TrailerRx` handle readable by JS.
+- **Send (response trailers)**: JS calls `send_trailers(handle, ...)` which
+  resolves the oneshot; the body stream appends a `Frame::trailers` frame
+  before EOF so hyper delivers them to the client.
+
+The oneshot channels are not replaced — they are the FFI-facing half.
+Hyper's native trailer frame mechanism is the wire-facing half.
 
 ### Duplex / raw_connect
 
@@ -150,7 +162,7 @@ pattern, using the upgraded IO as the source/sink instead of raw QUIC streams.
 ```toml
 # iroh-http-core/Cargo.toml
 hyper = { version = "1", features = ["http1", "client", "server"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
 http = "1"
 http-body-util = "0.1"
 ```

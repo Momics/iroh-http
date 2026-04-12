@@ -29,7 +29,9 @@ pub(crate) struct ConnectionPool {
 ```
 
 - `PoolKey` remains `(node_id, alpn)`.
-- Use `cache.get_with(key, async { ...connect... })` for single-flight init.
+- Use `cache.try_get_with(key, async { ...connect... })` for single-flight init.
+  `get_with` is for infallible initializers only; `try_get_with` propagates
+  connection errors as `Arc<E>` and does not cache failures.
 - On read, verify `conn.close_reason().is_none()`; if stale, invalidate and retry once.
 - Keep explicit metrics/logging around hit/miss/stale-evict to aid debugging.
 
