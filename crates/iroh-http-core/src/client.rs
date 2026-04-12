@@ -236,9 +236,12 @@ async fn do_fetch(
 
     // Enforce max_header_size: measure reconstructed header bytes and reject if exceeded.
     // (hyper's max_buf_size is clamped to 8192 to avoid panics, so we enforce the limit here.)
-    let header_bytes: usize = resp_headers
+    // Use the raw byte length of each header value (not the UTF-8 decoded string) so
+    // non-UTF-8 values don't shrink the measurement.
+    let header_bytes: usize = resp
+        .headers()
         .iter()
-        .map(|(k, v)| k.len() + 2 + v.len() + 2) // "name: value\r\n"
+        .map(|(k, v)| k.as_str().len() + 2 + v.as_bytes().len() + 2) // "name: value\r\n"
         .sum::<usize>()
         + 16; // approximate status line
     if header_bytes > max_header_size {

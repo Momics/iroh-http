@@ -103,7 +103,11 @@ const chunkBuf = new Uint8Array(65536);
 
 async function call<T>(method: string, payload: unknown): Promise<T> {
   const methodBuf  = METHOD_BUFS[method] ?? enc.encode(method);
-  const payloadBuf = enc.encode(JSON.stringify(payload));
+  // JSON.stringify throws on bigint; convert bigint values to numbers at the
+  // JSON boundary (handle indices are slotmap u64 keys, safe within f64 range).
+  const payloadBuf = enc.encode(JSON.stringify(payload, (_k, v) =>
+    typeof v === "bigint" ? Number(v) : v
+  ));
   // Deno's FFI types require Uint8Array<ArrayBuffer>; TextEncoder returns
   // Uint8Array<ArrayBufferLike>. The backing store is always a plain ArrayBuffer
   // in practice — cast to satisfy the stricter type.
@@ -169,8 +173,8 @@ export const bridge: Bridge = {
     await call<Record<never, never>>("cancelRequest", { handle });
   },
   async allocFetchToken(): Promise<bigint> {
-    const res = await call<{ token: bigint }>("allocFetchToken", {});
-    return res.token;
+    const res = await call<{ token: number }>("allocFetchToken", {});
+    return BigInt(res.token);
   },
   cancelFetch(token: bigint): void {
     // Fire-and-forget — do not await.
@@ -200,9 +204,9 @@ export const rawFetch: RawFetchFn = async (
   const res = await call<{
     status: number;
     headers: [string, string][];
-    bodyHandle: bigint;
+    bodyHandle: number;
     url: string;
-    trailersHandle: bigint;
+    trailersHandle: number;
   }>("rawFetch", {
     endpointHandle,
     nodeId,
@@ -216,9 +220,9 @@ export const rawFetch: RawFetchFn = async (
   return {
     status:         res.status,
     headers:        res.headers,
-    bodyHandle:     res.bodyHandle,
+    bodyHandle:     BigInt(res.bodyHandle),
     url:            res.url,
-    trailersHandle: res.trailersHandle,
+    trailersHandle: BigInt(res.trailersHandle),
   } satisfies FfiResponse;
 };
 
@@ -228,13 +232,13 @@ export const rawConnect: RawConnectFn = async (
   path: string,
   headers: [string, string][],
 ) => {
-  const res = await call<{ readHandle: bigint; writeHandle: bigint }>(
+  const res = await call<{ readHandle: number; writeHandle: number }>(
     "rawConnect",
     { endpointHandle, nodeId, path, headers },
   );
   return {
-    readHandle:  res.readHandle,
-    writeHandle: res.writeHandle,
+    readHandle:  BigInt(res.readHandle),
+    writeHandle: BigInt(res.writeHandle),
   } satisfies FfiDuplexStream;
 };
 
@@ -256,11 +260,25 @@ export const rawServe: RawServeFn = (
     .then(() => {
       (async () => {
         while (true) {
-          const payload = await call<RequestPayload | null>(
-            "nextRequest",
-            { endpointHandle },
-          );
-          if (payload === null) break;
+          const raw = await call<{
+            reqHandle: number; reqBodyHandle: number; resBodyHandle: number;
+            reqTrailersHandle: number; resTrailersHandle: number;
+            method: string; url: string; headers: [string, string][];
+            remoteNodeId: string; isBidi: boolean;
+          } | null>("nextRequest", { endpointHandle });
+          if (raw === null) break;
+          const payload: RequestPayload = {
+            reqHandle:          BigInt(raw.reqHandle),
+            reqBodyHandle:      BigInt(raw.reqBodyHandle),
+            resBodyHandle:      BigInt(raw.resBodyHandle),
+            reqTrailersHandle:  BigInt(raw.reqTrailersHandle),
+            resTrailersHandle:  BigInt(raw.resTrailersHandle),
+            method:             raw.method,
+            url:                raw.url,
+            headers:            raw.headers,
+            remoteNodeId:       raw.remoteNodeId,
+            isBidi:             raw.isBidi,
+          };
 
           // Handle in the background — do not await.
           (async () => {
@@ -289,7 +307,7 @@ export const rawServe: RawServeFn = (
 };
 
 export const allocBodyWriter: AllocBodyWriterFn = () =>
-  call<{ handle: bigint }>("allocBodyWriter", {}).then((r) => r.handle);
+  call<{ handle: number }>("allocBodyWriter", {}).then((r) => BigInt(r.handle));
 
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 
@@ -423,34 +441,34 @@ export const denoDiscoveryFns: DiscoveryFunctions = {
 
 export const denoSessionFns: RawSessionFns = {
   connect: async (endpointHandle, nodeId, directAddrs) => {
-    const res = await call<{ sessionHandle: bigint }>("sessionConnect", {
+    const res = await call<{ sessionHandle: number }>("sessionConnect", {
       endpointHandle,
       nodeId,
       directAddrs: directAddrs ?? null,
     });
-    return res.sessionHandle;
+    return BigInt(res.sessionHandle as unknown as number);
   },
   createBidiStream: async (sessionHandle) => {
-    const res = await call<{ readHandle: bigint; writeHandle: bigint }>(
+    const res = await call<{ readHandle: number; writeHandle: number }>(
       "sessionCreateBidiStream",
       { sessionHandle },
     );
-    return { readHandle: res.readHandle, writeHandle: res.writeHandle } satisfies FfiDuplexStream;
+    return { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream;
   },
   nextBidiStream: async (sessionHandle) => {
-    const res = await call<{ readHandle: bigint; writeHandle: bigint } | null>(
+    const res = await call<{ readHandle: number; writeHandle: number } | null>(
       "sessionNextBidiStream",
       { sessionHandle },
     );
-    return res ? { readHandle: res.readHandle, writeHandle: res.writeHandle } satisfies FfiDuplexStream : null;
+    return res ? { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream : null;
   },
   createUniStream: async (sessionHandle) => {
-    const res = await call<{ writeHandle: bigint }>("sessionCreateUniStream", { sessionHandle });
-    return res.writeHandle;
+    const res = await call<{ writeHandle: number }>("sessionCreateUniStream", { sessionHandle });
+    return BigInt(res.writeHandle);
   },
   nextUniStream: async (sessionHandle) => {
-    const res = await call<{ readHandle: bigint } | null>("sessionNextUniStream", { sessionHandle });
-    return res ? res.readHandle : null;
+    const res = await call<{ readHandle: number } | null>("sessionNextUniStream", { sessionHandle });
+    return res ? BigInt(res.readHandle) : null;
   },
   sendDatagram: async (sessionHandle, data) => {
     await call<Record<never, never>>("sessionSendDatagram", {
