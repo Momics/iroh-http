@@ -18,13 +18,14 @@ The rework is executed in two phases:
 - **Phase 1**: Hyper migration (changes 01-04, 06-07). Replace custom HTTP
   framing, compression, and pooling with hyper/tower/moka.
 - **Phase 2**: Generational handles (change 05). Replace `HashMap<u32, T>` +
-  `AtomicU32` with `slotmap` generational keys, eliminating stale-handle
-  aliasing structurally. Phase 2 executes after phase 1 stabilizes and must
-  complete before any public release.
+  `AtomicU32` with `slotmap` generational keys and move FFI handles from `u32`
+  to `u64`, eliminating stale-handle aliasing structurally. Phase 2 executes
+  after phase 1 stabilizes and must complete before any public release.
 
-No adapter API changes are required. The FFI boundary (`fetch`,
+No adapter API changes are required in phase 1. The FFI boundary (`fetch`,
 `respond`, `next_chunk`, `send_chunk`, `finish_body`, `next_trailer`,
-`send_trailers`, `raw_connect`) is preserved exactly.
+`send_trailers`, `raw_connect`) is preserved exactly. Phase 2 changes handle
+parameters from `u32` to `u64` across all adapters (see change 05).
 
 ---
 
@@ -95,7 +96,7 @@ gzip/br).
   completely unaffected by this rework
 - Ticket-based peer addressing
 - Per-peer connection limiting, graceful drain, circuit breaker
-- The u32 FFI contract at the adapter boundary (internal storage changes in phase 2)
+- The u32 FFI handle type at the adapter boundary (changes to `u64` in phase 2)
 - All platform adapters (napi-rs, PyO3, Deno FFI)
 
 ---
