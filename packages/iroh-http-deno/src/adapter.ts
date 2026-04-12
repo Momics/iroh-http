@@ -80,8 +80,12 @@ function decodeBase64(s: string): Uint8Array {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-/** Output buffer shared across calls; grows permanently but never shrinks. */
-let outBuf = new Uint8Array(128 * 1024);
+/**
+ * Capacity hint for per-call output buffers.  Each call allocates its own
+ * buffer of this size so concurrent `nonblocking` FFI calls never alias the
+ * same memory.  Grows when any call needs more space; never shrinks.
+ */
+let outBufHint = 128 * 1024;
 
 /** Pre-encoded method name buffers (UTF-8). */
 const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
@@ -106,23 +110,29 @@ async function call<T>(method: string, payload: unknown): Promise<T> {
   const mb = methodBuf  as Uint8Array<ArrayBuffer>;
   const pb = payloadBuf as Uint8Array<ArrayBuffer>;
 
+  // Per-call buffer: concurrent nonblocking FFI calls must not share memory.
+  // Use the global hint as the initial capacity so most calls allocate once.
+  let buf = new Uint8Array(outBufHint) as Uint8Array<ArrayBuffer>;
+
   let n = await lib.symbols.iroh_http_call(
-    mb,     BigInt(mb.byteLength),
-    pb,     BigInt(pb.byteLength),
-    outBuf, BigInt(outBuf.byteLength),
+    mb,  BigInt(mb.byteLength),
+    pb,  BigInt(pb.byteLength),
+    buf, BigInt(buf.byteLength),
   ) as number;
 
   if (n < 0) {
-    // Output buffer too small; grow permanently and retry once.
-    outBuf = new Uint8Array(-n);
+    // Output buffer too small; grow and retry once.
+    buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
     n = await lib.symbols.iroh_http_call(
-      mb,     BigInt(mb.byteLength),
-      pb,     BigInt(pb.byteLength),
-      outBuf, BigInt(outBuf.byteLength),
+      mb,  BigInt(mb.byteLength),
+      pb,  BigInt(pb.byteLength),
+      buf, BigInt(buf.byteLength),
     ) as number;
+    // Raise the hint so future calls start with a large enough buffer.
+    if (buf.byteLength > outBufHint) outBufHint = buf.byteLength;
   }
 
-  const result = JSON.parse(dec.decode(outBuf.subarray(0, n))) as
+  const result = JSON.parse(dec.decode(buf.subarray(0, n))) as
     | { ok: T }
     | { err: string };
 
