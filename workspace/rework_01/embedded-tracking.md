@@ -94,3 +94,4 @@ single-flight approach (moka).
 | Compression | `tower-http` (zstd only) | No | Feature-gated, separate embedded impl later |
 | Pool | `moka` | No | Internal boundary, replaceable backend |
 | Host framing runtime | removed/deprecated | N/A | Recreate embedded crate from protocol spec if needed |
+| Handle storage | `slotmap` (phase 2) | Yes (`no_std` compatible) | Direct reuse possible |

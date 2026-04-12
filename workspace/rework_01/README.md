@@ -11,7 +11,16 @@ while preserving FFI/API compatibility and security invariants.
 
 This plan is intentionally critical of custom code. We keep custom
 implementation only where the ecosystem does not cleanly solve our exact
-contract (notably the existing `u32` FFI handle model).
+contract.
+
+The rework is executed in two phases:
+
+- **Phase 1**: Hyper migration (changes 01-04, 06-07). Replace custom HTTP
+  framing, compression, and pooling with hyper/tower/moka.
+- **Phase 2**: Generational handles (change 05). Replace `HashMap<u32, T>` +
+  `AtomicU32` with `slotmap` generational keys, eliminating stale-handle
+  aliasing structurally. Phase 2 executes after phase 1 stabilizes and must
+  complete before any public release.
 
 No adapter API changes are required. The FFI boundary (`fetch`,
 `respond`, `next_chunk`, `send_chunk`, `finish_body`, `next_trailer`,
@@ -68,8 +77,8 @@ gzip/br).
 | `changes/02-tower-service.md` | Serve loop and per-request middleware via tower |
 | `changes/03-tower-http-compression.md` | Replace compress.rs with zstd-only tower-http path |
 | `changes/04-pool-rework.md` | Pool strategy using ecosystem cache primitives |
-| `changes/05-slab-handles.md` | Handle strategy (why this stays partially custom) |
-| `changes/06-http-validation.md` | FFI input validation via http crate |
+| `changes/05-slab-handles.md` | Generational handle model via slotmap (phase 2) |
+| `changes/06-http-validation.md` | FFI input validation + typed ErrorCode enum |
 | `changes/07-framing-crate.md` | Removal/deprecation strategy for iroh-http-framing |
 | `embedded-tracking.md` | Host-only dependency decisions per embedded roadmap template |
 
@@ -81,9 +90,11 @@ gzip/br).
   `next_chunk`, `send_chunk`, `finish_body`, `next_trailer`, `send_trailers`
 - `ServeOptions`, `ServeHandle`, `RequestPayload`, `FfiResponse`, `FfiDuplexStream`
 - `iroh-http-discovery` — completely untouched
+- `session.rs` — WebTransport-style raw stream API, does not use HTTP framing,
+  completely unaffected by this rework
 - Ticket-based peer addressing
 - Per-peer connection limiting, graceful drain, circuit breaker
-- The u32 handle model at the FFI boundary
+- The u32 FFI contract at the adapter boundary (internal storage changes in phase 2)
 - All platform adapters (napi-rs, PyO3, Deno FFI)
 
 ---

@@ -15,12 +15,59 @@ inside the connection:
 
 ## Solution
 
-Add `http = "1"` to `iroh-http-core/Cargo.toml` (also needed for change 01
-— these can be combined into one Cargo.toml edit).
+Two changes:
+
+1. Add `http = "1"` to `iroh-http-core/Cargo.toml` (also needed for change 01
+   — these can be combined into one Cargo.toml edit).
+2. Introduce a typed `CoreError` with an `ErrorCode` enum. Since the package
+   is unreleased, there is no reason to keep string-matching error classification.
+
+### ErrorCode enum
+
+```rust
+/// Machine-readable error codes for the FFI boundary.
+///
+/// Platform adapters match on this directly — no string parsing needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorCode {
+    InvalidInput,
+    ConnectionFailed,
+    Timeout,
+    BodyTooLarge,
+    HeaderTooLarge,
+    PeerRejected,
+    Cancelled,
+    Internal,
+}
+
+/// Structured error returned by core functions.
+///
+/// `code` is machine-readable. `message` carries human-readable detail.
+pub struct CoreError {
+    pub code: ErrorCode,
+    pub message: String,
+}
+
+impl std::fmt::Display for CoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for CoreError {}
+```
+
+The existing `classify_error_code` function and all its string-matching
+branches are **deleted**. Errors are created with the correct code at the
+point of origin.
+
+### FFI input validation
 
 At the entry point of each FFI-facing function, parse raw inputs into `http`
-crate types and return a descriptive `Err(String)` if invalid. The validated
-types are used immediately and not surfaced across the FFI boundary.
+crate types and return a `CoreError` with `ErrorCode::InvalidInput` if
+invalid. The validated types are used immediately and not surfaced across the
+FFI boundary.
 
 Notes:
 
@@ -34,56 +81,81 @@ Notes:
 
 ```rust
 // After the scheme check and before building the Request:
-http::Method::from_bytes(method.as_bytes())
-    .map_err(|_| format!("invalid HTTP method {:?}", method))?;
+let method = http::Method::from_bytes(method.as_bytes())
+    .map_err(|_| CoreError {
+        code: ErrorCode::InvalidInput,
+        message: format!("invalid HTTP method {:?}", method),
+    })?;
 
 for (name, value) in &headers {
     http::header::HeaderName::from_bytes(name.as_bytes())
-        .map_err(|_| format!("invalid header name {:?}", name))?;
+        .map_err(|_| CoreError {
+            code: ErrorCode::InvalidInput,
+            message: format!("invalid header name {:?}", name),
+        })?;
     http::header::HeaderValue::from_str(value)
-        .map_err(|_| format!("invalid header value for {:?}", name))?;
+        .map_err(|_| CoreError {
+            code: ErrorCode::InvalidInput,
+            message: format!("invalid header value for {:?}", name),
+        })?;
 }
 ```
 
 ### server.rs — respond()
 
 ```rust
-http::StatusCode::from_u16(status)
-    .map_err(|_| format!("invalid HTTP status code: {status}"))?;
+let status = http::StatusCode::from_u16(status)
+    .map_err(|_| CoreError {
+        code: ErrorCode::InvalidInput,
+        message: format!("invalid HTTP status code: {status}"),
+    })?;
 
 for (name, value) in &headers {
     http::header::HeaderName::from_bytes(name.as_bytes())
-        .map_err(|_| format!("invalid response header name {:?}", name))?;
+        .map_err(|_| CoreError {
+            code: ErrorCode::InvalidInput,
+            message: format!("invalid response header name {:?}", name),
+        })?;
     http::header::HeaderValue::from_str(value)
-        .map_err(|_| format!("invalid response header value for {:?}", name))?;
+        .map_err(|_| CoreError {
+            code: ErrorCode::InvalidInput,
+            message: format!("invalid response header value for {:?}", name),
+        })?;
 }
 ```
 
-### Error code taxonomy
+### Adapter mapping
 
-Add `INVALID_INPUT` to `classify_error_code` in `lib.rs`:
+Platform adapters convert `CoreError` to their native error type:
 
 ```rust
-// In classify_error_code():
-if msg.contains("invalid HTTP method")
-    || msg.contains("invalid header")
-    || msg.contains("invalid HTTP status")
-{
-    return "INVALID_INPUT";
+// Node.js (napi-rs)
+impl From<CoreError> for napi::Error {
+    fn from(e: CoreError) -> Self {
+        napi::Error::new(napi::Status::GenericFailure, e.to_string())
+    }
+}
+
+// Python (PyO3)
+impl From<CoreError> for PyErr {
+    fn from(e: CoreError) -> Self {
+        match e.code {
+            ErrorCode::InvalidInput => PyValueError::new_err(e.message),
+            ErrorCode::Timeout => PyTimeoutError::new_err(e.message),
+            _ => PyRuntimeError::new_err(e.message),
+        }
+    }
 }
 ```
-
-This makes validation failures machine-readable at the platform adapter layer,
-consistent with the existing error taxonomy.
 
 ## Files changed
 
 | File | Change |
 |---|---|
 | `iroh-http-core/Cargo.toml` | Add `http = "1"` (shared with change 01) |
-| `iroh-http-core/src/client.rs` | Validate method and headers in `fetch()` |
-| `iroh-http-core/src/server.rs` | Validate status and headers in `respond()` |
-| `iroh-http-core/src/lib.rs` | Add `INVALID_INPUT` to `classify_error_code` |
+| `iroh-http-core/src/lib.rs` | Add `CoreError`, `ErrorCode` enum; **delete** `classify_error_code` |
+| `iroh-http-core/src/client.rs` | Validate method and headers in `fetch()`, return `CoreError` |
+| `iroh-http-core/src/server.rs` | Validate status and headers in `respond()`, return `CoreError` |
 
 ## Tests to add
 
@@ -91,29 +163,33 @@ consistent with the existing error taxonomy.
 // client.rs
 #[tokio::test]
 async fn fetch_rejects_invalid_method() {
-    // Contains space — invalid method token
     let result = fetch(..., "BAD METHOD", ...).await;
-    assert!(result.unwrap_err().contains("invalid HTTP method"));
+    let err = result.unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert!(err.message.contains("invalid HTTP method"));
 }
 
 #[tokio::test]
 async fn fetch_rejects_header_name_with_space() {
-    // Space in header name — invalid per RFC 7230
     let result = fetch(..., &[("Content Length".into(), "0".into())]).await;
-    assert!(result.unwrap_err().contains("invalid header name"));
+    let err = result.unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert!(err.message.contains("invalid header name"));
 }
 
 // server.rs
 #[tokio::test]
 fn respond_rejects_status_zero() {
-    let result = respond(handle, 0, vec![]);
-    assert!(result.unwrap_err().contains("invalid HTTP status code"));
+    let err = respond(handle, 0, vec![]).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert!(err.message.contains("invalid HTTP status code"));
 }
 
 #[tokio::test]
 fn respond_rejects_status_600() {
-    let result = respond(handle, 600, vec![]);
-    assert!(result.unwrap_err().contains("invalid HTTP status code"));
+    let err = respond(handle, 600, vec![]).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert!(err.message.contains("invalid HTTP status code"));
 }
 ```
 

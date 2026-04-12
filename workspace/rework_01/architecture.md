@@ -70,6 +70,27 @@
 
 ---
 
+## Per-stream-per-request model
+
+Each QUIC bidirectional stream carries exactly one HTTP/1.1 request-response
+exchange. Multiplexing is provided by the QUIC layer, not the HTTP layer.
+
+hyper's `http1::handshake` initializes a codec state machine per stream — this
+is not a TCP handshake. The on-the-wire cost is a few dozen bytes of HTTP/1.1
+framing per request. QUIC provides everything the transport needs:
+
+- Stream multiplexing (many concurrent requests, one connection)
+- Per-stream flow control and backpressure
+- 0-RTT connection resumption
+- No head-of-line blocking between streams
+- Encryption via the node keypair
+
+hyper's HTTP/1.1 keep-alive must be disabled on the builder. Each QUIC stream
+is one exchange — hyper must not attempt to reuse the "connection" (which is
+a QUIC stream that closes after the response).
+
+---
+
 ## Lines of custom code eliminated
 
 | File | Current | After |
