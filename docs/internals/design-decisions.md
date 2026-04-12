@@ -246,11 +246,28 @@ These are the non-negotiable gates for any change to the HTTP engine:
 
 ## 11. h3 upgrade path
 
-Nothing in this architecture closes the door to HTTP/3. When Iroh exposes the
-underlying `quinn::Connection` directly, plugging in `h3` + `h3-quinn` means:
+Nothing in this architecture closes the door to HTTP/3. The application layer
+(`tower::Service` and all business logic) would be unchanged — only the
+transport wiring needs to swap.
 
-1. Swap `hyper::server::conn::http1::Builder` for `h3::server::Connection`
-2. The `tower::Service` layer and all application logic are unchanged
+**Current state of the stack:**
+
+Iroh has shipped on [noq](https://www.iroh.computer/blog/noq-announcement)
+("number 0 QUIC") since v0.96. noq is n0's hard fork of Quinn with first-class
+multipath, NAT traversal, and QUIC Address Discovery built in. It exposes a raw
+`noq::Connection` and a `WeakConnectionHandle`.
+
+The h3 blocker is therefore not "Iroh doesn't expose the underlying connection"
+anymore — it's that there is no `h3-noq` crate yet. The existing `h3-quinn`
+crate is tightly coupled to `quinn::Connection` and won't work with
+`noq::Connection`.
+
+**The path to h3:**
+
+1. A `h3-noq` crate is written (analogous to `h3-quinn`, but driving `noq`)
+2. Iroh exposes `noq::Connection` from its public API
+3. We swap `hyper::server::conn::http1::Builder` for `h3::server::Connection`
+4. The `tower::Service` layer and all application logic are unchanged
 
 The QUIC multiplexing model (one exchange per stream) maps cleanly to h3
-streams.
+streams. Step 3 and 4 are the easy part; steps 1 and 2 are upstream work.
