@@ -50,7 +50,7 @@ pub struct CreateEndpointArgs {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EndpointInfoPayload {
-    pub endpoint_handle: u32,
+    pub endpoint_handle: u64,
     pub node_id: String,
     pub keypair: Vec<u8>,
 }
@@ -97,9 +97,8 @@ pub async fn create_endpoint(
             max_request_body_bytes: a.max_request_body_bytes,
             drain_timeout_secs: None,
             #[cfg(feature = "compression")]
-            compression: if a.compression_level.is_some() || a.compression_min_body_bytes.is_some() {
+            compression: if a.compression_min_body_bytes.is_some() {
                 Some(iroh_http_core::CompressionOptions {
-                    level: a.compression_level.unwrap_or(3),
                     min_body_bytes: a.compression_min_body_bytes.unwrap_or(512),
                 })
             } else {
@@ -128,7 +127,7 @@ pub async fn create_endpoint(
 ///
 /// If `force` is `true`, aborts immediately.  Otherwise drains in-flight requests.
 #[command]
-pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> Result<(), String> {
+pub async fn close_endpoint(endpoint_handle: u64, force: Option<bool>) -> Result<(), String> {
     let ep = state::remove_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     if force.unwrap_or(false) {
@@ -143,7 +142,7 @@ pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> Result
 
 /// Trivial liveness probe — returns `true` when the endpoint exists.
 #[command]
-pub async fn ping(endpoint_handle: u32) -> Result<bool, String> {
+pub async fn ping(endpoint_handle: u64) -> Result<bool, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("endpoint not found: {endpoint_handle}")))?;
     // If the endpoint exists, it's alive.
@@ -162,7 +161,7 @@ pub struct NodeAddrPayload {
 
 /// Full node address: node ID + relay URL(s) + direct socket addresses.
 #[command]
-pub fn node_addr(endpoint_handle: u32) -> Result<NodeAddrPayload, String> {
+pub fn node_addr(endpoint_handle: u64) -> Result<NodeAddrPayload, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     let info = ep.node_addr();
@@ -171,7 +170,7 @@ pub fn node_addr(endpoint_handle: u32) -> Result<NodeAddrPayload, String> {
 
 /// Generate a ticket string for the given endpoint.
 #[command]
-pub fn node_ticket(endpoint_handle: u32) -> Result<String, String> {
+pub fn node_ticket(endpoint_handle: u64) -> Result<String, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     Ok(iroh_http_core::node_ticket(&ep))
@@ -179,7 +178,7 @@ pub fn node_ticket(endpoint_handle: u32) -> Result<String, String> {
 
 /// Home relay URL, or null if not connected to a relay.
 #[command]
-pub fn home_relay(endpoint_handle: u32) -> Result<Option<String>, String> {
+pub fn home_relay(endpoint_handle: u64) -> Result<Option<String>, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     Ok(ep.home_relay())
@@ -187,7 +186,7 @@ pub fn home_relay(endpoint_handle: u32) -> Result<Option<String>, String> {
 
 /// Known addresses for a remote peer, or null if unknown.
 #[command]
-pub async fn peer_info(endpoint_handle: u32, node_id: String) -> Result<Option<NodeAddrPayload>, String> {
+pub async fn peer_info(endpoint_handle: u64, node_id: String) -> Result<Option<NodeAddrPayload>, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     Ok(ep.peer_info(&node_id).await.map(|info| NodeAddrPayload { id: info.id, addrs: info.addrs }))
@@ -195,7 +194,7 @@ pub async fn peer_info(endpoint_handle: u32, node_id: String) -> Result<Option<N
 
 /// Per-peer connection statistics with path information.
 #[command]
-pub async fn peer_stats(endpoint_handle: u32, node_id: String) -> Result<Option<iroh_http_core::PeerStats>, String> {
+pub async fn peer_stats(endpoint_handle: u64, node_id: String) -> Result<Option<iroh_http_core::PeerStats>, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     Ok(ep.peer_stats(&node_id).await)
@@ -205,40 +204,40 @@ pub async fn peer_stats(endpoint_handle: u32, node_id: String) -> Result<Option<
 
 /// Read the next chunk from a body reader handle (base64-encoded).
 #[command]
-pub async fn next_chunk(handle: u32) -> Result<Option<String>, String> {
+pub async fn next_chunk(handle: u64) -> Result<Option<String>, String> {
     let chunk = iroh_http_core::stream::next_chunk(handle).await.map_err(|e| iroh_http_core::classify_error_json(e))?;
     Ok(chunk.map(|b| B64.encode(&b[..])))
 }
 
 /// Push a base64-encoded chunk into a body writer handle.
 #[command]
-pub async fn send_chunk(handle: u32, chunk: String) -> Result<(), String> {
+pub async fn send_chunk(handle: u64, chunk: String) -> Result<(), String> {
     let bytes = B64.decode(&chunk).map_err(|e| iroh_http_core::classify_error_json(format!("base64 decode: {e}")))?;
     iroh_http_core::stream::send_chunk(handle, Bytes::from(bytes)).await.map_err(|e| iroh_http_core::classify_error_json(e))
 }
 
 /// Signal end-of-body for a writer handle.
 #[command]
-pub fn finish_body(handle: u32) -> Result<(), String> {
+pub fn finish_body(handle: u64) -> Result<(), String> {
     iroh_http_core::stream::finish_body(handle).map_err(|e| iroh_http_core::classify_error_json(e))
 }
 
 /// Cancel a body reader, signalling EOF.
 #[command]
-pub fn cancel_request(handle: u32) {
+pub fn cancel_request(handle: u64) {
     iroh_http_core::stream::cancel_reader(handle);
 }
 
 /// Await and retrieve trailer headers from a completed request/response.
 #[command]
-pub async fn next_trailer(handle: u32) -> Result<Option<Vec<Vec<String>>>, String> {
+pub async fn next_trailer(handle: u64) -> Result<Option<Vec<Vec<String>>>, String> {
     let trailers = iroh_http_core::stream::next_trailer(handle).await.map_err(|e| iroh_http_core::classify_error_json(e))?;
     Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
 }
 
 /// Deliver response trailer headers to the Rust pump task.
 #[command]
-pub fn send_trailers(handle: u32, trailers: Vec<Vec<String>>) -> Result<(), String> {
+pub fn send_trailers(handle: u64, trailers: Vec<Vec<String>>) -> Result<(), String> {
     let pairs: Vec<(String, String)> = trailers
         .into_iter()
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
@@ -248,19 +247,19 @@ pub fn send_trailers(handle: u32, trailers: Vec<Vec<String>>) -> Result<(), Stri
 
 /// Allocate a body writer handle for streaming request bodies.
 #[command]
-pub fn alloc_body_writer() -> u32 {
+pub fn alloc_body_writer() -> u64 {
     state::js_alloc_body_writer()
 }
 
 /// Allocate a cancellation token for an upcoming fetch call.
 #[command]
-pub fn alloc_fetch_token() -> u32 {
-    iroh_http_core::alloc_fetch_token()
+pub fn alloc_fetch_token() -> u64 {
+    iroh_http_core::alloc_fetch_token(0)
 }
 
 /// Cancel an in-flight fetch by its token.
 #[command]
-pub fn cancel_in_flight(token: u32) {
+pub fn cancel_in_flight(token: u64) {
     iroh_http_core::cancel_in_flight(token);
 }
 
@@ -270,13 +269,13 @@ pub fn cancel_in_flight(token: u32) {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawFetchArgs {
-    pub endpoint_handle: u32,
+    pub endpoint_handle: u64,
     pub node_id: String,
     pub url: String,
     pub method: String,
     pub headers: Vec<Vec<String>>,
-    pub req_body_handle: Option<u32>,
-    pub fetch_token: Option<u32>,
+    pub req_body_handle: Option<u64>,
+    pub fetch_token: Option<u64>,
     pub direct_addrs: Option<Vec<String>>,
 }
 
@@ -286,9 +285,9 @@ pub struct RawFetchArgs {
 pub struct FfiResponsePayload {
     pub status: u16,
     pub headers: Vec<Vec<String>>,
-    pub body_handle: u32,
+    pub body_handle: u64,
     pub url: String,
-    pub trailers_handle: u32,
+    pub trailers_handle: u64,
 }
 
 /// Send an HTTP request to a remote Iroh peer.
@@ -330,11 +329,11 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServeEventPayload {
-    pub req_handle: u32,
-    pub req_body_handle: u32,
-    pub res_body_handle: u32,
-    pub req_trailers_handle: u32,
-    pub res_trailers_handle: u32,
+    pub req_handle: u64,
+    pub req_body_handle: u64,
+    pub res_body_handle: u64,
+    pub req_trailers_handle: u64,
+    pub res_trailers_handle: u64,
     pub is_bidi: bool,
     pub method: String,
     pub url: String,
@@ -345,7 +344,7 @@ pub struct ServeEventPayload {
 /// Start the serve accept loop, streaming incoming requests via a Tauri Channel.
 #[command]
 pub async fn serve(
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     channel: Channel<ServeEventPayload>,
 ) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
@@ -385,7 +384,7 @@ pub async fn serve(
 
 /// Stop the serve loop for the given endpoint (graceful shutdown).
 #[command]
-pub fn stop_serve(endpoint_handle: u32) -> Result<(), String> {
+pub fn stop_serve(endpoint_handle: u64) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     ep.stop_serve();
@@ -395,7 +394,7 @@ pub fn stop_serve(endpoint_handle: u32) -> Result<(), String> {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RespondArgs {
-    pub req_handle: u32,
+    pub req_handle: u64,
     pub status: u16,
     pub headers: Vec<Vec<String>>,
 }
@@ -419,7 +418,7 @@ pub fn respond_to_request(args: RespondArgs) -> Result<(), String> {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawConnectArgs {
-    pub endpoint_handle: u32,
+    pub endpoint_handle: u64,
     pub node_id: String,
     pub path: String,
     pub headers: Vec<Vec<String>>,
@@ -429,8 +428,8 @@ pub struct RawConnectArgs {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FfiDuplexStreamPayload {
-    pub read_handle: u32,
-    pub write_handle: u32,
+    pub read_handle: u64,
+    pub write_handle: u64,
 }
 
 /// Open a full-duplex QUIC connection to a remote peer.
@@ -460,14 +459,14 @@ pub async fn raw_connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload,
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionConnectArgs {
-    pub endpoint_handle: u32,
+    pub endpoint_handle: u64,
     pub node_id: String,
     pub direct_addrs: Option<Vec<String>>,
 }
 
 /// Establish a session (QUIC connection) to a remote peer.
 #[command]
-pub async fn session_connect(args: SessionConnectArgs) -> Result<u32, String> {
+pub async fn session_connect(args: SessionConnectArgs) -> Result<u64, String> {
     let ep = state::get_endpoint(args.endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
 
@@ -485,13 +484,13 @@ pub async fn session_connect(args: SessionConnectArgs) -> Result<u32, String> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionBidiStreamPayload {
-    pub read_handle: u32,
-    pub write_handle: u32,
+    pub read_handle: u64,
+    pub write_handle: u64,
 }
 
 /// Open a new bidirectional stream on an existing session.
 #[command]
-pub async fn session_create_bidi_stream(session_handle: u32) -> Result<SessionBidiStreamPayload, String> {
+pub async fn session_create_bidi_stream(session_handle: u64) -> Result<SessionBidiStreamPayload, String> {
     let duplex = iroh_http_core::session_create_bidi_stream(session_handle)
         .await.map_err(iroh_http_core::classify_error_json)?;
     Ok(SessionBidiStreamPayload {
@@ -503,7 +502,7 @@ pub async fn session_create_bidi_stream(session_handle: u32) -> Result<SessionBi
 /// Accept the next incoming bidirectional stream on a session.
 /// Returns null when the session is closed.
 #[command]
-pub async fn session_next_bidi_stream(session_handle: u32) -> Result<Option<SessionBidiStreamPayload>, String> {
+pub async fn session_next_bidi_stream(session_handle: u64) -> Result<Option<SessionBidiStreamPayload>, String> {
     let result = iroh_http_core::session_next_bidi_stream(session_handle)
         .await.map_err(iroh_http_core::classify_error_json)?;
     Ok(result.map(|d| SessionBidiStreamPayload {
@@ -514,7 +513,7 @@ pub async fn session_next_bidi_stream(session_handle: u32) -> Result<Option<Sess
 
 /// Close a session with optional close code and reason.
 #[command]
-pub async fn session_close(session_handle: u32, close_code: Option<u32>, reason: Option<String>) -> Result<(), String> {
+pub async fn session_close(session_handle: u64, close_code: Option<u32>, reason: Option<String>) -> Result<(), String> {
     iroh_http_core::session_close(session_handle, close_code.unwrap_or(0), reason.as_deref().unwrap_or(""))
         .map_err(iroh_http_core::classify_error_json)
 }
@@ -528,7 +527,7 @@ pub struct CloseInfoPayload {
 }
 
 #[command]
-pub async fn session_closed(session_handle: u32) -> Result<CloseInfoPayload, String> {
+pub async fn session_closed(session_handle: u64) -> Result<CloseInfoPayload, String> {
     let info = iroh_http_core::session_closed(session_handle)
         .await
         .map_err(iroh_http_core::classify_error_json)?;
@@ -541,7 +540,7 @@ pub async fn session_closed(session_handle: u32) -> Result<CloseInfoPayload, Str
 /// Open a new unidirectional (send-only) stream on a session.
 /// Returns a write handle.
 #[command]
-pub async fn session_create_uni_stream(session_handle: u32) -> Result<u32, String> {
+pub async fn session_create_uni_stream(session_handle: u64) -> Result<u64, String> {
     iroh_http_core::session_create_uni_stream(session_handle)
         .await
         .map_err(iroh_http_core::classify_error_json)
@@ -550,7 +549,7 @@ pub async fn session_create_uni_stream(session_handle: u32) -> Result<u32, Strin
 /// Accept the next incoming unidirectional stream on a session.
 /// Returns a read handle, or null when the session is closed.
 #[command]
-pub async fn session_next_uni_stream(session_handle: u32) -> Result<Option<u32>, String> {
+pub async fn session_next_uni_stream(session_handle: u64) -> Result<Option<u64>, String> {
     iroh_http_core::session_next_uni_stream(session_handle)
         .await
         .map_err(iroh_http_core::classify_error_json)
@@ -558,7 +557,7 @@ pub async fn session_next_uni_stream(session_handle: u32) -> Result<Option<u32>,
 
 /// Send a datagram on a session. Data is base64-encoded.
 #[command]
-pub async fn session_send_datagram(session_handle: u32, data: String) -> Result<(), String> {
+pub async fn session_send_datagram(session_handle: u64, data: String) -> Result<(), String> {
     let bytes = B64.decode(&data)
         .map_err(|e| format!("base64 decode: {e}"))?;
     iroh_http_core::session_send_datagram(session_handle, &bytes)
@@ -567,7 +566,7 @@ pub async fn session_send_datagram(session_handle: u32, data: String) -> Result<
 
 /// Receive the next datagram on a session. Returns base64, or null when closed.
 #[command]
-pub async fn session_recv_datagram(session_handle: u32) -> Result<Option<String>, String> {
+pub async fn session_recv_datagram(session_handle: u64) -> Result<Option<String>, String> {
     let result = iroh_http_core::session_recv_datagram(session_handle)
         .await
         .map_err(iroh_http_core::classify_error_json)?;
@@ -576,7 +575,7 @@ pub async fn session_recv_datagram(session_handle: u32) -> Result<Option<String>
 
 /// Get the maximum datagram payload size for a session.
 #[command]
-pub fn session_max_datagram_size(session_handle: u32) -> Result<Option<u32>, String> {
+pub fn session_max_datagram_size(session_handle: u64) -> Result<Option<u32>, String> {
     let result = iroh_http_core::session_max_datagram_size(session_handle)
         .map_err(iroh_http_core::classify_error_json)?;
     Ok(result.map(|s| s as u32))
@@ -657,26 +656,26 @@ pub struct PeerDiscoveryEventPayload {
 /// Start a browse session: discover peers on the local network via mDNS.
 #[command]
 #[cfg(feature = "discovery")]
-pub async fn mdns_browse(endpoint_handle: u32, service_name: String) -> Result<u32, String> {
+pub async fn mdns_browse(endpoint_handle: u64, service_name: String) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     let session = iroh_http_discovery::start_browse(ep.raw(), &service_name)
         .await
         .map_err(|e| iroh_http_core::classify_error_json(e))?;
-    let handle = browse_slab().lock().unwrap().insert(Arc::new(TokioMutex::new(session))) as u32;
+    let handle = browse_slab().lock().unwrap().insert(Arc::new(TokioMutex::new(session))) as u64;
     Ok(handle)
 }
 
 #[command]
 #[cfg(not(feature = "discovery"))]
-pub async fn mdns_browse(_endpoint_handle: u32, _service_name: String) -> Result<u32, String> {
+pub async fn mdns_browse(_endpoint_handle: u64, _service_name: String) -> Result<u64, String> {
     Err(iroh_http_core::classify_error_json("discovery feature not enabled in this build"))
 }
 
 /// Poll the next discovery event from a browse session.
 #[command]
 #[cfg(feature = "discovery")]
-pub async fn mdns_next_event(browse_handle: u32) -> Result<Option<PeerDiscoveryEventPayload>, String> {
+pub async fn mdns_next_event(browse_handle: u64) -> Result<Option<PeerDiscoveryEventPayload>, String> {
     let session = {
         browse_slab().lock().unwrap().get(browse_handle as usize).cloned()
     }.ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid browse handle: {browse_handle}")))?;
@@ -690,13 +689,13 @@ pub async fn mdns_next_event(browse_handle: u32) -> Result<Option<PeerDiscoveryE
 
 #[command]
 #[cfg(not(feature = "discovery"))]
-pub async fn mdns_next_event(_browse_handle: u32) -> Result<Option<PeerDiscoveryEventPayload>, String> {
+pub async fn mdns_next_event(_browse_handle: u64) -> Result<Option<PeerDiscoveryEventPayload>, String> {
     Err(iroh_http_core::classify_error_json("discovery feature not enabled in this build"))
 }
 
 /// Close a browse session, stopping mDNS discovery.
 #[command]
-pub fn mdns_browse_close(browse_handle: u32) {
+pub fn mdns_browse_close(browse_handle: u64) {
     #[cfg(feature = "discovery")]
     {
         let mut slab = browse_slab().lock().unwrap();
@@ -709,24 +708,24 @@ pub fn mdns_browse_close(browse_handle: u32) {
 /// Start advertising this node on the local network via mDNS.
 #[command]
 #[cfg(feature = "discovery")]
-pub fn mdns_advertise(endpoint_handle: u32, service_name: String) -> Result<u32, String> {
+pub fn mdns_advertise(endpoint_handle: u64, service_name: String) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {endpoint_handle}")))?;
     let session = iroh_http_discovery::start_advertise(ep.raw(), &service_name)
         .map_err(|e| iroh_http_core::classify_error_json(e))?;
-    let handle = advertise_slab().lock().unwrap().insert(session) as u32;
+    let handle = advertise_slab().lock().unwrap().insert(session) as u64;
     Ok(handle)
 }
 
 #[command]
 #[cfg(not(feature = "discovery"))]
-pub fn mdns_advertise(_endpoint_handle: u32, _service_name: String) -> Result<u32, String> {
+pub fn mdns_advertise(_endpoint_handle: u64, _service_name: String) -> Result<u64, String> {
     Err(iroh_http_core::classify_error_json("discovery feature not enabled in this build"))
 }
 
 /// Stop advertising this node on the local network.
 #[command]
-pub fn mdns_advertise_close(advertise_handle: u32) {
+pub fn mdns_advertise_close(advertise_handle: u64) {
     #[cfg(feature = "discovery")]
     {
         let mut slab = advertise_slab().lock().unwrap();

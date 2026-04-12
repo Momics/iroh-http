@@ -238,7 +238,7 @@ Deno.test("serve + fetch — concurrent requests return correct bodies (no buffe
     const texts = await Promise.all(
       paths.map((path) =>
         client
-          .fetch(ticket, `https://example.com${path}`)
+          .fetch(ticket, path)
           .then((r) => r.text())
       ),
     );
