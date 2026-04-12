@@ -178,3 +178,98 @@ Deno.test("serve + fetch — POST with body", async () => {
     await client.close();
   }
 });
+
+// ── Regression: concurrent FFI call buffer race ────────────────────────────────
+//
+// Before the fix, `iroh_http_call` was nonblocking (concurrent) but all calls
+// shared one output buffer — concurrent responses would overwrite each other,
+// producing corrupted JSON ("Unexpected non-whitespace character after JSON").
+
+Deno.test("serve + fetch — concurrent requests return correct bodies (no buffer race)", async () => {
+  const server = await createNode();
+  const client = await createNode();
+
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (req: Request) => {
+      const path = new URL(req.url).pathname;
+      return new Response(`echo:${path}`, { status: 200 });
+    });
+
+    // Fire 10 requests simultaneously — if buffers are shared this will corrupt.
+    const N = 10;
+    const paths = Array.from({ length: N }, (_, i) => `/path${i}`);
+    const texts = await Promise.all(
+      paths.map((path) =>
+        client
+          .fetch(serverId, `https://example.com${path}`, { directAddrs: serverAddrs })
+          .then((r) => r.text())
+      ),
+    );
+
+    for (let i = 0; i < N; i++) {
+      assertEquals(texts[i], `echo:${paths[i]}`, `response ${i} body mismatch`);
+    }
+
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+// ── Regression: invalid trailer sender handle for plain responses ──────────────
+//
+// Before the fix, serve.ts called bridge.sendTrailers() for every response,
+// but the Rust server removes the trailer sender handle from its slab when the
+// response carries no `Trailer:` header.  This produced:
+//   [iroh-http] response body pipe error: IrohHandleError: invalid trailer sender handle
+
+Deno.test("serve + fetch — plain response produces no internal pipe errors", async () => {
+  const server = await createNode();
+  const client = await createNode();
+
+  // Intercept console.error to catch any [iroh-http] internal errors.
+  const internalErrors: string[] = [];
+  const origConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    const msg = args.map(String).join(" ");
+    if (msg.includes("[iroh-http]")) {
+      internalErrors.push(msg);
+    } else {
+      origConsoleError(...args);
+    }
+  };
+
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (_req: Request) =>
+      new Response("hello", { status: 200 })
+    );
+
+    const resp = await client.fetch(serverId, "https://example.com/", {
+      directAddrs: serverAddrs,
+    });
+    assertEquals(resp.status, 200);
+    assertEquals(await resp.text(), "hello");
+
+    // Yield briefly so any async pipe errors from doPipe() have time to surface.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    assertEquals(
+      internalErrors,
+      [],
+      `Unexpected internal errors:\n${internalErrors.join("\n")}`,
+    );
+
+    ac.abort();
+  } finally {
+    console.error = origConsoleError;
+    await server.close();
+    await client.close();
+  }
+});
