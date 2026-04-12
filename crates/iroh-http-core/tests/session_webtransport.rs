@@ -11,6 +11,7 @@ use iroh_http_core::{
 async fn make_pair() -> (IrohEndpoint, IrohEndpoint) {
     let opts = || NodeOptions {
         disable_networking: true,
+        bind_addrs: vec!["127.0.0.1:0".into()],
         ..Default::default()
     };
     let a = IrohEndpoint::bind(opts()).await.unwrap();
