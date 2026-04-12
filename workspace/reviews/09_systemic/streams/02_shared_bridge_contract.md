@@ -34,3 +34,7 @@ npm run typecheck --workspace=packages/iroh-http-shared
 
 - Bridge invariants are explicitly documented and testable
 - Any contract ambiguity has a proposed single-source definition
+
+## Latest Run
+
+- 2026-04-12 delegated output: `../evidence/S2_shared_bridge_2026-04-12.md`

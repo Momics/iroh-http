@@ -36,3 +36,7 @@ cd packages/iroh-http-tauri && cargo check
 
 - Cross-platform contract mismatches are clearly evidenced
 - Any FFI safety assumptions are either proven or flagged as risk
+
+## Latest Run
+
+- 2026-04-12 delegated output: `../evidence/S4_deno_tauri_2026-04-12.md`

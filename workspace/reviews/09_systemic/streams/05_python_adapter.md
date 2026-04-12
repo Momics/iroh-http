@@ -35,3 +35,7 @@ cd packages/iroh-http-py && pytest -q
 
 - Any mismatch with JS contract behavior is documented
 - Typed exception roadmap is either accepted risk or backlog item
+
+## Latest Run
+
+- 2026-04-12 delegated output: `../evidence/S5_python_2026-04-12.md`
