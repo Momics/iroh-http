@@ -4,5 +4,9 @@
     "packages/iroh-http-deno",
     "examples/deno"
   ],
-  "unstable": ["sloppy-imports"]
+  "unstable": ["sloppy-imports"],
+  "exclude": [
+    "workspace/old_references",
+    "target"
+  ]
 }
