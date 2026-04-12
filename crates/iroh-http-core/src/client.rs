@@ -8,7 +8,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, Method, StatusCode};
 use http_body_util::{BodyExt, StreamBody};
-use hyper::body::{Frame, Incoming};
+use hyper::body::Frame;
 use hyper_util::rt::TokioIo;
 
 use crate::{
@@ -30,6 +30,33 @@ where
     B: http_body::Body<Data = Bytes, Error = std::convert::Infallible> + Send + Sync + 'static,
 {
     body.map_err(|_| unreachable!()).boxed()
+}
+
+// ── Compression: thin tower service wrapper around hyper SendRequest ─────────
+
+/// Wraps `SendRequest<BoxBody>` as a `tower::Service` so compression/decompression
+/// layers from `tower-http` can be composed around it.
+#[cfg(feature = "compression")]
+struct HyperClientSvc(hyper::client::conn::http1::SendRequest<BoxBody>);
+
+#[cfg(feature = "compression")]
+impl tower::Service<hyper::Request<BoxBody>> for HyperClientSvc {
+    type Response = hyper::Response<hyper::body::Incoming>;
+    type Error = hyper::Error;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: hyper::Request<BoxBody>) -> Self::Future {
+        Box::pin(self.0.send_request(req))
+    }
 }
 
 // ── In-flight fetch cancellation ──────────────────────────────────────────────
@@ -204,6 +231,12 @@ async fn do_fetch(
         // Tell the server we accept chunked trailers (required for HTTP/1.1 trailer delivery).
         .header("te", "trailers");
 
+    // When compression is enabled, advertise zstd-only Accept-Encoding.
+    #[cfg(feature = "compression")]
+    {
+        req_builder = req_builder.header("accept-encoding", "zstd");
+    }
+
     for (k, v) in headers {
         req_builder = req_builder.header(k.as_str(), v.as_str());
     }
@@ -217,6 +250,17 @@ async fn do_fetch(
 
     let req = req_builder.body(req_body).map_err(|e| format!("build request: {e}"))?;
 
+    // Dispatch: with compression, wrap sender in DecompressionLayer so the
+    // response body is transparently decompressed before reaching the channel pump.
+    #[cfg(feature = "compression")]
+    let resp = {
+        use tower::ServiceExt;
+        let svc = tower::ServiceBuilder::new()
+            .layer(tower_http::decompression::DecompressionLayer::new())
+            .service(HyperClientSvc(sender));
+        svc.oneshot(req).await.map_err(|e| format!("send_request: {e}"))?
+    };
+    #[cfg(not(feature = "compression"))]
     let resp = sender.send_request(req).await.map_err(|e| format!("send_request: {e}"))?;
 
     let status = resp.status().as_u16();
@@ -248,30 +292,38 @@ async fn do_fetch(
 
 // ── Body bridge utilities ─────────────────────────────────────────────────────
 
-/// Drain a hyper `Incoming` body into `BodyWriter`, delivering trailers via
-/// the oneshot when the body ends.
-pub(crate) async fn pump_hyper_body_to_channel(
-    body: Incoming,
+/// Drain a hyper body into `BodyWriter`, delivering trailers via the oneshot when done.
+/// Generic over any body type with `Data = Bytes` (e.g. `Incoming`, `DecompressionBody`).
+pub(crate) async fn pump_hyper_body_to_channel<B>(
+    body: B,
     writer: BodyWriter,
     trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
-) {
+) where
+    B: http_body::Body<Data = Bytes>,
+    B::Error: std::fmt::Debug,
+{
     pump_hyper_body_to_channel_limited(body, writer, trailer_tx, None).await;
 }
 
 /// Drain with optional byte limit.
-pub(crate) async fn pump_hyper_body_to_channel_limited(
-    mut body: Incoming,
+pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
+    body: B,
     writer: BodyWriter,
     trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
     max_bytes: Option<usize>,
-) {
+) where
+    B: http_body::Body<Data = Bytes>,
+    B::Error: std::fmt::Debug,
+{
+    // Box::pin gives Pin<Box<B>>: Unpin (Box<T>: Unpin ∀T), which satisfies BodyExt::frame().
+    let mut body = Box::pin(body);
     let mut total = 0usize;
     let mut trailers_vec: Vec<(String, String)> = Vec::new();
 
     while let Some(frame_result) = body.frame().await {
         match frame_result {
             Err(e) => {
-                tracing::warn!("iroh-http: body frame error: {e}");
+                tracing::warn!("iroh-http: body frame error: {e:?}");
                 break;
             }
             Ok(frame) => {

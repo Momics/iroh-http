@@ -565,13 +565,29 @@ where
                     let svc = peer_svc.clone();
 
                     tokio::spawn(async move {
+                        // Build the hyper-facing service, optionally wrapping with
+                        // CompressionLayer (zstd-only, for responses ≥ 512 bytes).
+                        #[cfg(feature = "compression")]
+                        let hyper_svc = {
+                            use tower_http::compression::{CompressionLayer, predicate::SizeAbove};
+                            TowerToHyperService::new(
+                                tower::ServiceBuilder::new()
+                                    .layer(
+                                        CompressionLayer::new()
+                                            .zstd(true)
+                                            .compress_when(SizeAbove::new(512)),
+                                    )
+                                    .service(TimeoutService::new(svc, timeout_dur)),
+                            )
+                        };
+                        #[cfg(not(feature = "compression"))]
+                        let hyper_svc =
+                            TowerToHyperService::new(TimeoutService::new(svc, timeout_dur));
+
                         let result = hyper::server::conn::http1::Builder::new()
                             .max_buf_size(max_header_size)
                             .max_headers(128)
-                            .serve_connection(
-                                io,
-                                TowerToHyperService::new(TimeoutService::new(svc, timeout_dur)),
-                            )
+                            .serve_connection(io, hyper_svc)
                             .with_upgrades()
                             .await;
                         if let Err(e) = result {
