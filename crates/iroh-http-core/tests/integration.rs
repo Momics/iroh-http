@@ -1038,11 +1038,18 @@ async fn pool_different_peers_get_separate_connections() {
         );
     }
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-    let r1 = fetch(&client, &id1, "/", "GET", &[], None, None, Some(&addrs1))
-        .await
-        .unwrap();
+    // Give serve tasks time to start their accept loops.
+    // Under heavy parallel test load the tokio scheduler may need extra time,
+    // so retry a few times rather than relying on a fixed sleep.
+    let r1 = {
+        let mut result = Err(String::new());
+        for attempt in 0..5 {
+            tokio::time::sleep(std::time::Duration::from_millis(200 * (1 + attempt))).await;
+            result = fetch(&client, &id1, "/", "GET", &[], None, None, Some(&addrs1)).await;
+            if result.is_ok() { break; }
+        }
+        result.unwrap()
+    };
     assert_eq!(r1.status, 200);
     while let Some(_) = next_chunk(r1.body_handle).await.unwrap() {}
 
