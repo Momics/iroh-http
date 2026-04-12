@@ -233,10 +233,17 @@ export function makeServe(
       const bodyStream = res.body ?? emptyStream();
       const doPipe = async () => {
         await pipeToWriter(bridge, bodyStream, payload.resBodyHandle);
-        const trailerPairs: [string, string][] = trailersFn
-          ? [...(await trailersFn())] as [string, string][]
-          : [];
-        await bridge.sendTrailers(payload.resTrailersHandle, trailerPairs);
+        // The server only keeps the trailer sender handle live when the response
+        // includes a `Trailer:` header — if that header is absent it removes the
+        // handle from the slab before JS gets to call sendTrailers.
+        // Also skip in bidi mode (resTrailersHandle === 0).
+        const hasTrailerHeader = res.headers.has("trailer");
+        if (payload.resTrailersHandle !== 0 && hasTrailerHeader) {
+          const trailerPairs: [string, string][] = trailersFn
+            ? [...(await trailersFn())] as [string, string][]
+            : [];
+          await bridge.sendTrailers(payload.resTrailersHandle, trailerPairs);
+        }
       };
       doPipe().catch((err) =>
         console.error("[iroh-http] response body pipe error:", classifyError(err))
