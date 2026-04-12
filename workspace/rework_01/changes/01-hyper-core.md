@@ -30,7 +30,7 @@ of `iroh-quinn` types, which implement:
 hyper v1 drives I/O through its own `hyper::rt::Read` / `hyper::rt::Write`
 traits. `hyper-util` provides `TokioIo<T>` which adapts any `AsyncRead +
 AsyncWrite` into what hyper needs. This means Iroh streams can be handed to
-hyper with zero custom wrapping.
+hyper with a small wrapper that combines send/recv halves.
 
 ## Solution
 
@@ -58,7 +58,7 @@ tokio::spawn(pump_stream_to_body(recv, body_writer, trailer_tx));
 ```rust
 let (send, recv) = conn.open_bi().await?;
 // Wrap Iroh streams for hyper
-let io = hyper_util::rt::TokioIo::new(SendRecvStream { send, recv });
+let io = hyper_util::rt::TokioIo::new(IrohStream { send, recv });
 // Hand to hyper — all framing, encoding, chunking is hyper's problem
 let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
 tokio::spawn(conn);  // drive the connection
@@ -76,7 +76,7 @@ let body = resp.into_body();
 tokio::spawn(pump_hyper_body_to_channel(body, body_writer, trailer_tx));
 ```
 
-The `SendRecvStream` adapter is a thin struct that pairs Iroh's split
+The `IrohStream` adapter is a thin struct that pairs Iroh's split
 `SendStream` + `RecvStream` into a single `AsyncRead + AsyncWrite` type,
 which `TokioIo` then adapts for hyper:
 
@@ -90,8 +90,8 @@ impl tokio::io::AsyncRead for IrohStream { /* delegate to recv */ }
 impl tokio::io::AsyncWrite for IrohStream { /* delegate to send */ }
 ```
 
-This is approximately 15 lines and is the only new custom struct in this
-entire rework.
+This is small but required glue. It must remain minimal and covered by
+integration tests.
 
 ### Server path (`server.rs`)
 
@@ -167,10 +167,13 @@ Additional targeted tests to add:
 - `round_trip_with_trailers` — confirm trailer send/receive through hyper
 - `duplex_upgrade_handshake` — confirm 101 and post-upgrade raw streaming
 - `large_body_backpressure` — confirm flow control under hyper
+- `reject_oversized_header_block` — header size limit still enforced
+- `reject_oversized_request_body` — body size limit still enforced
+- `reject_oversized_trailers` — trailer size limit enforced
 
 ## Notes
 
 - The `qpack` crate dependency is removed entirely.
 - The `ALPN` constants change from `iroh-http/1` to `iroh-http/2` (see
   `wire-format.md`).
-- `iroh-http-framing` is kept but the host path stops using it (see change 07).
+- `iroh-http-framing` is removed/deprecated as runtime code in this rework (see change 07).

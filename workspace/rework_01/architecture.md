@@ -45,8 +45,8 @@
 │                                                          │
 │  client.rs    — connect, build hyper Request, FFI glue   │
 │  server.rs    — accept, dispatch hyper Request, FFI glue │
-│  pool.rs      — DashMap<PoolKey, Arc<OnceCell<…>>>       │
-│  stream.rs    — slab::Slab<T> handles, body channels     │
+│  pool.rs      — cache-backed single-flight strategy       │
+│  stream.rs    — existing handle model + hardening         │
 │  endpoint.rs  — IrohEndpoint, ServeOptions (unchanged)   │
 └──────┬──────────────────────────────┬────────────────────┘
        │                              │
@@ -57,8 +57,8 @@
 │  Layer       │          │  Header parsing               │
 │  Decompression          │  Chunked encoding             │
 │  Layer       │          │  Trailer support              │
-│  (zstd, gzip,│          │  Upgrade / duplex handshake   │
-│   brotli)    │          │  Body streaming               │
+│  (zstd only) │          │  Upgrade / duplex handshake   │
+│              │          │  Body streaming               │
 └──────────────┘          └──────────┬────────────────────┘
                                      │
 ┌────────────────────────────────────▼────────────────────┐
@@ -74,13 +74,13 @@
 
 | File | Current | After |
 |---|---|---|
-| `iroh-http-framing/src/lib.rs` | ~300 lines custom | Kept as protocol spec / test vectors; host path no longer uses it |
+| `iroh-http-framing/src/lib.rs` | ~300 lines custom | Removed/deprecated from active host runtime path |
 | `qpack_bridge.rs` | ~150 lines custom | **Deleted** — hyper handles headers as standard HTTP/1.1 |
 | `compress.rs` | ~255 lines custom | **Deleted** — replaced by `tower-http` CompressionLayer |
 | `client.rs` (pump loops, framing) | ~500 lines | ~150 lines (connect + FFI glue only) |
 | `server.rs` (accept loop, framing) | ~310 lines | ~150 lines (accept + dispatch only) |
-| `stream.rs` (slab + channels) | ~450 lines | ~200 lines (slab handles + channel wiring) |
-| `pool.rs` (Slot + watch) | ~240 lines | ~120 lines (DashMap + OnceCell) |
+| `stream.rs` (handles/channels) | ~450 lines | Preserved initially, hardened with explicit guardrails |
+| `pool.rs` (Slot + watch) | ~240 lines | Replaced by cache-backed single-flight implementation |
 
 Total reduction: roughly **1,400 lines of custom Rust replaced by well-maintained crates**.
 
@@ -96,12 +96,11 @@ Total reduction: roughly **1,400 lines of custom Rust replaced by well-maintaine
 | `http-body-util` | `0.1` | Body combinators (`StreamBody`, `BodyExt`) |
 | `tower` | `0.5` | Service trait + `ServiceBuilder` |
 | `tower-http` | `0.6` | `CompressionLayer`, `DecompressionLayer` |
-| `dashmap` | `6` | Lock-free concurrent HashMap for pool |
+| `moka` | `0.12` | Async cache + single-flight primitive for pool |
 
 Already in workspace (no new additions):
 | Crate | Already present |
 |---|---|
-| `slab` | `slab = "0.4"` in workspace deps |
 | `tokio` | workspace dep |
 | `bytes` | workspace dep |
 

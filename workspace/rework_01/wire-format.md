@@ -100,11 +100,14 @@ split into the existing `BodyReader`/`BodyWriter` channel handles.
 
 ## Conformance and embedded future
 
-`iroh-http-framing` is kept as a crate. It now serves as:
-- The reference implementation of the wire format for embedded targets
-- The source of golden test vectors (byte-exact encode/decode round-trips)
-- Documentation of the wire protocol invariants
+The host path uses Hyper as the only active framing implementation.
 
-The host-side no longer uses it for I/O. An embedded implementation would
-implement the same protocol independently and validate against the same
-test vectors.
+Protocol conformance is defined by:
+
+1. This wire-format document.
+2. Integration tests and golden vectors in core.
+3. Adapter-level behavior tests for trailers/cancellation/upgrade.
+
+`iroh-http-framing` is not the active host engine in this rework. If embedded
+support is implemented later, a dedicated embedded crate can be created from
+these protocol artifacts.

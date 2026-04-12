@@ -1,17 +1,19 @@
-# Rework 01 — Adopt the hyper/tower ecosystem
+# Rework 01 — Hyper-First Rework (Source of Truth)
 
-## Status: Design complete, implementation not started
+## Status: Approved design direction, implementation not started
 
 ---
 
 ## Summary
 
-Replace the custom HTTP machinery in `iroh-http-core` and `iroh-http-framing`
-with the hyper/tower/tower-http ecosystem. The result is a codebase with
-dramatically less custom Rust, better HTTP standards compliance, and the same
-public API surface visible to all platform adapters.
+Replace custom HTTP machinery with the hyper/tower ecosystem wherever possible,
+while preserving FFI/API compatibility and security invariants.
 
-No platform adapter changes are required. The FFI boundary (`fetch`,
+This plan is intentionally critical of custom code. We keep custom
+implementation only where the ecosystem does not cleanly solve our exact
+contract (notably the existing `u32` FFI handle model).
+
+No adapter API changes are required. The FFI boundary (`fetch`,
 `respond`, `next_chunk`, `send_chunk`, `finish_body`, `next_trailer`,
 `send_trailers`, `raw_connect`) is preserved exactly.
 
@@ -19,7 +21,8 @@ No platform adapter changes are required. The FFI boundary (`fetch`,
 
 ## Problem
 
-iroh-http currently implements HTTP from scratch on top of Iroh QUIC streams:
+iroh-http currently implements large parts of HTTP semantics manually on top of
+Iroh QUIC streams:
 
 - Custom chunked transfer encoding (`iroh-http-framing`)
 - Custom header encoding via a stateless QPACK wrapper (`qpack_bridge.rs`)
@@ -29,21 +32,27 @@ iroh-http currently implements HTTP from scratch on top of Iroh QUIC streams:
 - Custom handle slab using `HashMap<u32,T>` + `AtomicU32` pairs
 - Monolithic serve accept loop with inline concurrency/timeout logic
 
-Every one of these is a re-implementation of something the Rust ecosystem
-already solves in a production-grade, fuzz-tested, maintained way.
+Many of these are better owned by mature ecosystem crates.
 
 ---
 
 ## Solution
 
 Iroh's `SendStream` and `RecvStream` implement `tokio::io::AsyncWrite` and
-`AsyncRead` respectively (they are `iroh-quinn` wrappers over Quinn 0.11
-streams). This means **hyper v1 can drive them directly** — no adapters needed.
+`AsyncRead`. hyper v1 can drive them via `hyper_util::rt::TokioIo` with one
+thin stream-pair wrapper (`IrohStream`).
 
-The HTTP machinery disappears. hyper handles framing, headers, chunked
-encoding, trailers, and Upgrade semantics. tower-http handles compression and
-decompression as middleware layers. The codebase becomes an integration layer
-between Iroh's P2P QUIC transport and standard HTTP semantics.
+Core HTTP machinery moves to hyper:
+
+- request/response parsing
+- chunked body framing
+- trailer frame handling
+- upgrade semantics
+
+tower/tower-http are used for middleware concerns.
+
+Compression policy is intentionally **zstd-only** (no silent expansion to
+gzip/br).
 
 ---
 
@@ -54,13 +63,14 @@ between Iroh's P2P QUIC transport and standard HTTP semantics.
 | `README.md` | This file — overview and rationale |
 | `architecture.md` | Before/after architecture, layer diagram |
 | `wire-format.md` | Wire format change and ALPN versioning |
+| `security-checklist.md` | Non-negotiable security and behavior parity gates |
 | `changes/01-hyper-core.md` | Adopt hyper v1 as HTTP engine |
 | `changes/02-tower-service.md` | Serve loop and per-request middleware via tower |
-| `changes/03-tower-http-compression.md` | Replace compress.rs with tower-http layers |
-| `changes/04-pool-rework.md` | Connection pool: dashmap + OnceCell |
-| `changes/05-slab-handles.md` | Handle slab: slab crate |
+| `changes/03-tower-http-compression.md` | Replace compress.rs with zstd-only tower-http path |
+| `changes/04-pool-rework.md` | Pool strategy using ecosystem cache primitives |
+| `changes/05-slab-handles.md` | Handle strategy (why this stays partially custom) |
 | `changes/06-http-validation.md` | FFI input validation via http crate |
-| `changes/07-framing-crate.md` | What happens to iroh-http-framing |
+| `changes/07-framing-crate.md` | Removal/deprecation strategy for iroh-http-framing |
 | `embedded-tracking.md` | Host-only dependency decisions per embedded roadmap template |
 
 ---
@@ -78,17 +88,28 @@ between Iroh's P2P QUIC transport and standard HTTP semantics.
 
 ---
 
+## Security gates (must pass before merge)
+
+See `security-checklist.md`. In short:
+
+1. Preserve or strengthen all resource limits.
+2. Keep deterministic cancellation and trailer completion semantics.
+3. Keep per-peer fairness and graceful drain behavior.
+4. Add regression tests for every invariant touched by the rework.
+
+---
+
 ## Implementation order
 
 Changes must be applied in this order. Each is a self-contained commit:
 
 ```
-01 → 06 → 07 → 05 → 04 → 02 → 03
+01 → 06 → 02 → 03 → 04 → 05 → 07
 ```
 
 - **01** (hyper core) is the foundation everything else builds on.
-- **06** (http validation) can go in alongside 01.
-- **07** (framing crate) becomes trivial once 01 lands.
-- **05** (slab) and **04** (pool) are independent of each other, both after 01.
-- **02** (tower service) depends on the handle slab being clean (05).
-- **03** (compression) is the last layer, sits on top of 02.
+- **06** (http validation) can land with 01.
+- **02** (tower service) lands early to establish middleware architecture.
+- **03** (compression) is scoped to zstd-only behavior.
+- **04** (pool) and **05** (handles) are explicit follow-up hardening steps.
+- **07** (framing crate removal/deprecation) is last, after core behavior parity is verified.

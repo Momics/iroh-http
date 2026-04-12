@@ -1,136 +1,96 @@
 # Embedded Compatibility Tracking
 
-Per the template in `docs/embedded-roadmap.md`, each host-only dependency
-choice is documented here.
+Per `docs/embedded-roadmap.md`, host-only dependency choices are documented
+here.
 
 ---
 
 ## Choice 1 — hyper v1 as HTTP engine
 
-**Change:** `iroh-http-core` adopts hyper for HTTP framing, header parsing,
-chunked encoding, and Upgrade handling.
+**Change:** `iroh-http-core` adopts hyper for host-side HTTP framing/parsing.
 
-**Why this is safer/stronger now:**
-- Eliminates ~1,400 lines of custom HTTP implementation
-- Fuzz-tested, CVE-tracked, maintained by the Hyperium team
-- Full HTTP/1.1 standard compliance (trailers, Upgrade, proper chunked encoding)
-- Iroh's AsyncRead/AsyncWrite implementation allows direct integration with
-  zero adapter complexity
+**Why stronger now:**
+- Removes large custom HTTP implementation surface
+- Uses maintained, widely-audited HTTP stack
 
 **Embedded impact:**
-- hyper requires `std` and tokio — it cannot run on embedded targets
-- An embedded implementation would need to implement HTTP/1.1 framing
-  independently (or use a purpose-built embedded HTTP crate)
+- `hyper` is host/runtime-oriented (`std`/tokio)
 
-**Mitigation plan:**
-- `iroh-http-framing` is kept as the `no_std` reference implementation of the
-  wire format, with golden conformance tests
-- The framing crate's tests define byte-exact expected outputs for every
-  encode/decode operation — an embedded reimplementation validates against
-  these
-- The FFI boundary (`fetch`, `respond`, `next_chunk`, etc.) is the interface
-  contract; embedded targets implement the same interface differently
-
-**Conformance tests added/updated:**
-- `chunk_encoding_golden` — byte-exact chunk output
-- `trailer_serialization_golden` — byte-exact trailer output
-- `trailer_parse_golden` — byte-exact parse result
-- All existing `trailer_round_trip`, `trailer_empty_block` tests remain
+**Mitigation:**
+- Protocol behavior is specified by `wire-format.md` + conformance tests
+- Embedded backend can implement same protocol later
 
 **Revisit trigger:**
-- When Iroh publishes an embedded/no_std QUIC layer and there is a viable
-  embedded HTTP/1.1 crate (e.g., `embedded-http` or similar matures)
+- Embedded QUIC/Iroh runtime becomes production-ready
 
 ---
 
-## Choice 2 — tower-http CompressionLayer (replaces compress.rs)
+## Choice 2 — tower-http compression (zstd-only policy)
 
-**Change:** `compress.rs` (custom async zstd via `async-compression`) is
-replaced by `tower_http::compression::CompressionLayer`.
+**Change:** Replace custom compression pipeline with tower-http compression path,
+keeping policy zstd-only.
 
-**Why this is safer/stronger now:**
-- Eliminates 255 lines of custom async streaming code
-- Automatic `Accept-Encoding` negotiation (standards-compliant)
-- Adds gzip and brotli support at no additional maintenance cost
-- Maintained alongside hyper and tower
+**Why stronger now:**
+- Eliminates bespoke async compression plumbing
+- Keeps explicit policy control in middleware setup
 
 **Embedded impact:**
-- tower-http requires std; not available on embedded
-- Compression on embedded would need a separate implementation (zlib, miniz, etc.)
+- tower-http is host-focused
 
-**Mitigation plan:**
-- Compression is a feature flag (`compression`) — embedded builds that don't
-  enable it are unaffected
-- No protocol-level changes to trailer or framing semantics from this change
-
-**Conformance tests added/updated:**
-- Existing `test_compression_zstd` remains; now also covers gzip and brotli
+**Mitigation:**
+- Compression remains feature-gated
+- Embedded can provide its own optional compression path later
 
 **Revisit trigger:**
-- When embedded target needs compression support
+- Embedded target requires compression feature parity
 
 ---
 
-## Choice 3 — dashmap + tokio::sync::OnceCell (pool rewrite)
+## Choice 3 — Pool strategy via ecosystem cache primitives
 
-**Change:** Custom `Slot` enum + `watch` channel pool replaced by
-`dashmap::DashMap` + `tokio::sync::OnceCell`.
+**Change:** Replace bespoke slot/watch orchestration with cache-backed
+single-flight approach (moka).
 
-**Why this is safer/stronger now:**
-- Eliminates the subtle three-phase lock sequence
-- Eliminates the `watch::Receiver` missed-wake edge case
-- `OnceCell::get_or_try_init` is the canonical single-flight primitive
+**Why stronger now:**
+- Less custom concurrency code
+- Better-tested building blocks for high-contention paths
 
 **Embedded impact:**
-- dashmap and tokio::sync::OnceCell require std
-- Embedded connection pooling would need a different approach (likely simpler
-  since embedded targets typically have one or very few connections)
+- Host-oriented cache/runtime dependencies
 
-**Mitigation plan:**
-- The pool is an internal implementation detail (`pub(crate)`) — its interface
-  (`get_or_connect`) is the boundary an embedded implementation would implement
-
-**Conformance tests added/updated:**
-- `pool_single_flight` — verifies one handshake despite concurrent callers
-- `pool_retry_on_immediate_close` — verifies stale-connection retry
+**Mitigation:**
+- Pool remains internal implementation detail
+- Embedded backend can use simpler pool/no-pool strategy
 
 **Revisit trigger:**
-- Embedded target needs multi-connection management
+- Embedded backend requires multi-connection pooling behavior
 
 ---
 
-## Choice 4 — Drop iroh-http-framing from host path
+## Choice 4 — Framing crate removed/deprecated from host runtime
 
-**Change:** The host path (iroh-http-core) no longer imports or uses
-`iroh-http-framing` for I/O. hyper handles all framing.
+**Change:** Host runtime no longer depends on `iroh-http-framing` as active code.
 
-**Why this is safer/stronger now:**
-- Single framing implementation (hyper's) rather than two
-- Removes the risk of subtle divergence between custom framing and hyper's
+**Why stronger now:**
+- Avoids dual runtime framing implementations and spec drift
 
 **Embedded impact:**
-- `iroh-http-framing` continues to exist as a `no_std` crate
-- It becomes the reference spec rather than the host implementation
+- No direct reusable runtime crate is kept by default
 
-**Mitigation plan:**
-- Keep `iroh-http-framing` in the workspace
-- Add httparse (no_std) for robust trailer parsing within the framing crate
-- Add golden conformance tests
-- Add fuzz target
-
-**Conformance tests added/updated:**
-- Golden test vectors for all encode/decode operations
+**Mitigation:**
+- Protocol source-of-truth is docs + golden conformance tests
+- Embedded-specific crate can be introduced when needed
 
 **Revisit trigger:**
-- Never — the framing crate is the embedded foundation, not a temporary artefact
+- Start of embedded implementation project
 
 ---
 
-## Summary table
+## Summary
 
-| Choice | Crate | Embedded OK? | Mitigation |
+| Choice | Crate/tool | Embedded-ready now? | Mitigation |
 |---|---|---|---|
-| HTTP engine | `hyper` | No | Framing crate + conformance tests define the spec |
-| Compression | `tower-http` | No | Feature flag; embedded implements separately |
-| Pool | `dashmap` + `OnceCell` | No | Interface boundary is `get_or_connect` |
-| Framing from host | Dropped | N/A | Crate kept as reference; golden tests added |
+| HTTP engine | `hyper` | No | Protocol docs + conformance suite |
+| Compression | `tower-http` (zstd only) | No | Feature-gated, separate embedded impl later |
+| Pool | `moka` | No | Internal boundary, replaceable backend |
+| Host framing runtime | removed/deprecated | N/A | Recreate embedded crate from protocol spec if needed |
