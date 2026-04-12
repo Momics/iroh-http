@@ -23,7 +23,7 @@ test("serve + fetch — basic GET round-trip", async () => {
       new Response("hello from node", { status: 200 }),
     );
 
-    const resp = await client.fetch(serverId, "https://example.com/", {
+    const resp = await client.fetch(serverId, "httpi://example.com/", {
       directAddrs: serverAddrs,
     });
     assert.equal(resp.status, 200);
@@ -46,7 +46,7 @@ test("serve + fetch — POST with body round-trip", async () => {
       return new Response(body.toUpperCase(), { status: 201 });
     });
 
-    const resp = await client.fetch(serverId, "https://example.com/echo", {
+    const resp = await client.fetch(serverId, "httpi://example.com/echo", {
       method: "POST",
       body: "ping",
       directAddrs: serverAddrs,
@@ -71,7 +71,7 @@ test("serve + fetch — path is reflected correctly", async () => {
       return new Response(`path=${path}`, { status: 200 });
     });
 
-    const resp = await client.fetch(serverId, "https://example.com/some/deep/path", {
+    const resp = await client.fetch(serverId, "httpi://example.com/some/deep/path", {
       directAddrs: serverAddrs,
     });
     assert.equal(await resp.text(), "path=/some/deep/path");
@@ -103,7 +103,7 @@ test("serve + fetch — 10 concurrent requests return correct bodies", async () 
     const texts = await Promise.all(
       paths.map((path) =>
         client
-          .fetch(serverId, `https://example.com${path}`, { directAddrs: serverAddrs })
+          .fetch(serverId, `httpi://example.com${path}`, { directAddrs: serverAddrs })
           .then((r) => r.text()),
       ),
     );
@@ -147,7 +147,7 @@ test("serve + fetch — plain response logs no internal pipe errors", async () =
       new Response("hello", { status: 200 }),
     );
 
-    const resp = await client.fetch(serverId, "https://example.com/", {
+    const resp = await client.fetch(serverId, "httpi://example.com/", {
       directAddrs: serverAddrs,
     });
     assert.equal(resp.status, 200);
@@ -166,5 +166,38 @@ test("serve + fetch — plain response logs no internal pipe errors", async () =
     console.error = origConsoleError;
     await server.close();
     await client.close();
+  }
+});
+
+// ── URL scheme validation ─────────────────────────────────────────────────────
+
+test("fetch — rejects https:// URL with TypeError", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    await assert.rejects(
+      () => node.fetch(node.nodeId, "https://example.com/"),
+      (err) => {
+        assert.ok(err instanceof TypeError, `Expected TypeError, got ${err.constructor.name}`);
+        assert.ok(err.message.includes("httpi://"), `Error should mention httpi://, got: ${err.message}`);
+        return true;
+      },
+    );
+  } finally {
+    await node.close();
+  }
+});
+
+test("fetch — rejects http:// URL with TypeError", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    await assert.rejects(
+      () => node.fetch(node.nodeId, "http://example.com/"),
+      (err) => {
+        assert.ok(err instanceof TypeError, `Expected TypeError, got ${err.constructor.name}`);
+        return true;
+      },
+    );
+  } finally {
+    await node.close();
   }
 });

@@ -77,6 +77,19 @@ pub async fn fetch(
     fetch_token: Option<u32>,
     direct_addrs: Option<&[std::net::SocketAddr]>,
 ) -> Result<FfiResponse, String> {
+    // Reject standard web schemes. iroh-http uses httpi://, not http:// or https://.
+    {
+        let lower = url.to_ascii_lowercase();
+        if lower.starts_with("https://") || lower.starts_with("http://") {
+            let scheme_end = lower.find("://").map(|i| i + 3).unwrap_or(lower.len());
+            return Err(format!(
+                "iroh-http URLs must use the \"httpi://\" scheme, not \"{}\". \
+                 Example: httpi://nodeId/path — or pass a bare path like \"/api/data\".",
+                &url[..scheme_end]
+            ));
+        }
+    }
+
     // Retrieve the cancellation Notify for this token, if any.
     let cancel_notify = fetch_token.and_then(|token| {
         let (ep_idx, id) = decompose_handle(token);
