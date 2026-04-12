@@ -3,7 +3,6 @@
 //! HTTP/1.1 framing is delegated entirely to hyper.  Iroh's QUIC stream pair
 //! is wrapped in `IrohStream` and handed to hyper's client connection API.
 
-use std::sync::Arc;
 
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, Method, StatusCode};
@@ -15,8 +14,9 @@ use crate::{
     base32_encode, parse_node_addr,
     io::IrohStream,
     stream::{
-        compose_handle, decompose_handle, insert_reader, insert_trailer_receiver,
-        insert_writer, make_body_channel, BodyReader, BodyWriter,
+        get_fetch_cancel_notify, insert_reader,
+        insert_trailer_receiver, insert_writer, make_body_channel, remove_fetch_token,
+        BodyReader, BodyWriter,
     },
     CoreError, FfiDuplexStream, FfiResponse, IrohEndpoint, ALPN, ALPN_DUPLEX,
 };
@@ -61,36 +61,8 @@ impl tower::Service<hyper::Request<BoxBody>> for HyperClientSvc {
 
 // ── In-flight fetch cancellation ──────────────────────────────────────────────
 
-/// Allocate a cancellation token for an upcoming `fetch` call.
-pub fn alloc_fetch_token() -> u32 {
-    let slabs = crate::stream::global_slabs();
-    let id = slabs
-        .next_fetch_id
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let notify = Arc::new(tokio::sync::Notify::new());
-    slabs
-        .fetch_cancel
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(id, notify);
-    compose_handle(0, id)
-}
-
-/// Signal an in-flight fetch to abort.
-pub fn cancel_in_flight(token: u32) {
-    let (ep_idx, id) = decompose_handle(token);
-    if let Some(slabs) = crate::stream::get_slabs(ep_idx) {
-        if let Some(notify) = slabs
-            .fetch_cancel
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&id)
-        {
-            notify.notify_one();
-        }
-    }
-}
-
+// alloc_fetch_token / cancel_in_flight / get_fetch_cancel_notify / remove_fetch_token
+// are now in crate::stream (imported above).
 // ── Public fetch API ──────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -101,7 +73,7 @@ pub async fn fetch(
     method: &str,
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
-    fetch_token: Option<u32>,
+    fetch_token: Option<u64>,
     direct_addrs: Option<&[std::net::SocketAddr]>,
 ) -> Result<FfiResponse, String> {
     // Reject standard web schemes.
@@ -130,16 +102,7 @@ pub async fn fetch(
         })?;
     }
 
-    let cancel_notify = fetch_token.and_then(|token| {
-        let (ep_idx, id) = decompose_handle(token);
-        crate::stream::get_slabs(ep_idx).and_then(|s| {
-            s.fetch_cancel
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(&id)
-                .cloned()
-        })
-    });
+    let cancel_notify = fetch_token.and_then(get_fetch_cancel_notify);
     let ep_idx = endpoint.inner.endpoint_idx;
 
     let parsed = parse_node_addr(remote_node_id)?;
@@ -188,10 +151,7 @@ pub async fn fetch(
 
     // Clean up the cancellation token.
     if let Some(token) = fetch_token {
-        let (ep_idx_t, id) = decompose_handle(token);
-        if let Some(slabs) = crate::stream::get_slabs(ep_idx_t) {
-            slabs.fetch_cancel.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
-        }
+        remove_fetch_token(token);
     }
 
     out

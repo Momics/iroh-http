@@ -54,7 +54,7 @@ const lib = Deno.dlopen(LIB_PATH, {
     nonblocking: true,
   },
   iroh_http_next_chunk: {
-    parameters: ["u32", "buffer", "usize"],
+    parameters: ["u64", "buffer", "usize"],
     result: "i32",
     nonblocking: true,
   },
@@ -145,7 +145,7 @@ async function call<T>(method: string, payload: unknown): Promise<T> {
 // ── Bridge implementation ─────────────────────────────────────────────────────
 
 export const bridge: Bridge = {
-  async nextChunk(handle: number): Promise<Uint8Array | null> {
+  async nextChunk(handle: bigint): Promise<Uint8Array | null> {
     let n = await lib.symbols.iroh_http_next_chunk(
       handle, chunkBuf, BigInt(chunkBuf.byteLength),
     ) as number;
@@ -159,28 +159,28 @@ export const bridge: Bridge = {
     }
     return n > 0 ? chunkBuf.slice(0, n) : null;
   },
-  async sendChunk(handle: number, chunk: Uint8Array): Promise<void> {
+  async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
     await call<Record<never, never>>("sendChunk", { handle, chunk: encodeBase64(chunk) });
   },
-  async finishBody(handle: number): Promise<void> {
+  async finishBody(handle: bigint): Promise<void> {
     await call<Record<never, never>>("finishBody", { handle });
   },
-  async cancelRequest(handle: number): Promise<void> {
+  async cancelRequest(handle: bigint): Promise<void> {
     await call<Record<never, never>>("cancelRequest", { handle });
   },
-  async allocFetchToken(): Promise<number> {
-    const res = await call<{ token: number }>("allocFetchToken", {});
+  async allocFetchToken(): Promise<bigint> {
+    const res = await call<{ token: bigint }>("allocFetchToken", {});
     return res.token;
   },
-  cancelFetch(token: number): void {
+  cancelFetch(token: bigint): void {
     // Fire-and-forget — do not await.
     void call<Record<never, never>>("cancelInFlight", { token });
   },
-  async nextTrailer(handle: number): Promise<[string, string][] | null> {
+  async nextTrailer(handle: bigint): Promise<[string, string][] | null> {
     const res = await call<{ trailers: [string, string][] | null }>("nextTrailer", { handle });
     return res.trailers;
   },
-  async sendTrailers(handle: number, trailers: [string, string][]): Promise<void> {
+  async sendTrailers(handle: bigint, trailers: [string, string][]): Promise<void> {
     await call<Record<never, never>>("sendTrailers", { handle, trailers });
   },
 };
@@ -193,16 +193,16 @@ export const rawFetch: RawFetchFn = async (
   url: string,
   method: string,
   headers: [string, string][],
-  reqBodyHandle: number | null,
-  fetchToken: number,
+  reqBodyHandle: bigint | null,
+  fetchToken: bigint,
   directAddrs: string[] | null,
 ) => {
   const res = await call<{
     status: number;
     headers: [string, string][];
-    bodyHandle: number;
+    bodyHandle: bigint;
     url: string;
-    trailersHandle: number;
+    trailersHandle: bigint;
   }>("rawFetch", {
     endpointHandle,
     nodeId,
@@ -228,7 +228,7 @@ export const rawConnect: RawConnectFn = async (
   path: string,
   headers: [string, string][],
 ) => {
-  const res = await call<{ readHandle: number; writeHandle: number }>(
+  const res = await call<{ readHandle: bigint; writeHandle: bigint }>(
     "rawConnect",
     { endpointHandle, nodeId, path, headers },
   );
@@ -289,7 +289,7 @@ export const rawServe: RawServeFn = (
 };
 
 export const allocBodyWriter: AllocBodyWriterFn = () =>
-  call<{ handle: number }>("allocBodyWriter", {}).then((r) => r.handle);
+  call<{ handle: bigint }>("allocBodyWriter", {}).then((r) => r.handle);
 
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 
@@ -423,7 +423,7 @@ export const denoDiscoveryFns: DiscoveryFunctions = {
 
 export const denoSessionFns: RawSessionFns = {
   connect: async (endpointHandle, nodeId, directAddrs) => {
-    const res = await call<{ sessionHandle: number }>("sessionConnect", {
+    const res = await call<{ sessionHandle: bigint }>("sessionConnect", {
       endpointHandle,
       nodeId,
       directAddrs: directAddrs ?? null,
@@ -431,25 +431,25 @@ export const denoSessionFns: RawSessionFns = {
     return res.sessionHandle;
   },
   createBidiStream: async (sessionHandle) => {
-    const res = await call<{ readHandle: number; writeHandle: number }>(
+    const res = await call<{ readHandle: bigint; writeHandle: bigint }>(
       "sessionCreateBidiStream",
       { sessionHandle },
     );
     return { readHandle: res.readHandle, writeHandle: res.writeHandle } satisfies FfiDuplexStream;
   },
   nextBidiStream: async (sessionHandle) => {
-    const res = await call<{ readHandle: number; writeHandle: number } | null>(
+    const res = await call<{ readHandle: bigint; writeHandle: bigint } | null>(
       "sessionNextBidiStream",
       { sessionHandle },
     );
     return res ? { readHandle: res.readHandle, writeHandle: res.writeHandle } satisfies FfiDuplexStream : null;
   },
   createUniStream: async (sessionHandle) => {
-    const res = await call<{ writeHandle: number }>("sessionCreateUniStream", { sessionHandle });
+    const res = await call<{ writeHandle: bigint }>("sessionCreateUniStream", { sessionHandle });
     return res.writeHandle;
   },
   nextUniStream: async (sessionHandle) => {
-    const res = await call<{ readHandle: number } | null>("sessionNextUniStream", { sessionHandle });
+    const res = await call<{ readHandle: bigint } | null>("sessionNextUniStream", { sessionHandle });
     return res ? res.readHandle : null;
   },
   sendDatagram: async (sessionHandle, data) => {

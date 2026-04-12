@@ -34,25 +34,25 @@ export interface WebTransportDatagramDuplexStream {
 /** Raw session FFI functions provided by each platform adapter. */
 export interface RawSessionFns {
   /** Establish a session to a remote peer. Returns an opaque session handle. */
-  connect(endpointHandle: number, nodeId: string, directAddrs: string[] | null): Promise<number>;
+  connect(endpointHandle: number, nodeId: string, directAddrs: string[] | null): Promise<bigint>;
   /** Open a new bidi stream on an existing session. */
-  createBidiStream(sessionHandle: number): Promise<FfiDuplexStream>;
+  createBidiStream(sessionHandle: bigint): Promise<FfiDuplexStream>;
   /** Accept the next incoming bidi stream. Returns `null` when the session closes. */
-  nextBidiStream(sessionHandle: number): Promise<FfiDuplexStream | null>;
+  nextBidiStream(sessionHandle: bigint): Promise<FfiDuplexStream | null>;
   /** Open a new unidirectional (send-only) stream. Returns a write handle. */
-  createUniStream(sessionHandle: number): Promise<number>;
+  createUniStream(sessionHandle: bigint): Promise<bigint>;
   /** Accept the next incoming unidirectional (receive-only) stream. Returns a read handle, or `null` when closed. */
-  nextUniStream(sessionHandle: number): Promise<number | null>;
+  nextUniStream(sessionHandle: bigint): Promise<bigint | null>;
   /** Send a datagram. */
-  sendDatagram(sessionHandle: number, data: Uint8Array): Promise<void>;
+  sendDatagram(sessionHandle: bigint, data: Uint8Array): Promise<void>;
   /** Receive the next datagram. Returns `null` when the session closes. */
-  recvDatagram(sessionHandle: number): Promise<Uint8Array | null>;
+  recvDatagram(sessionHandle: bigint): Promise<Uint8Array | null>;
   /** Get the maximum datagram payload size. Returns `null` if datagrams are unsupported. */
-  maxDatagramSize(sessionHandle: number): Promise<number | null>;
+  maxDatagramSize(sessionHandle: bigint): Promise<number | null>;
   /** Wait for the session to close. Returns close info. */
-  closed(sessionHandle: number): Promise<WebTransportCloseInfo>;
+  closed(sessionHandle: bigint): Promise<WebTransportCloseInfo>;
   /** Close the session with an optional close code and reason. */
-  close(sessionHandle: number, closeCode?: number, reason?: string): Promise<void>;
+  close(sessionHandle: bigint, closeCode?: number, reason?: string): Promise<void>;
 }
 
 /**
@@ -105,7 +105,7 @@ export interface IrohSession {
  */
 export function buildSession(
   bridge: Bridge,
-  sessionHandle: number,
+  sessionHandle: bigint,
   remoteId: PublicKey,
   rawSession: RawSessionFns,
 ): IrohSession {

@@ -33,7 +33,7 @@ fn py_err(e: impl std::fmt::Display) -> PyErr {
 struct IrohResponse {
     status: u16,
     headers: Vec<(String, String)>,
-    body_handle: u32,
+    body_handle: u64,
     url: String,
 }
 
@@ -167,7 +167,7 @@ impl HandlerResponse {
 /// Incoming request passed to the `serve` handler.
 #[pyclass]
 struct IrohRequest {
-    pub req_body_handle: u32,
+    pub req_body_handle: u64,
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
@@ -220,8 +220,8 @@ impl IrohRequest {
 /// and `close()` when done.
 #[pyclass]
 struct IrohBidiStream {
-    read_handle: u32,
-    write_handle: u32,
+    read_handle: u64,
+    write_handle: u64,
 }
 
 // ── IrohUniStream ───────────────────────────────────────────────────────────
@@ -231,7 +231,7 @@ struct IrohBidiStream {
 /// Use `write(data)` to send and `close()` when done.
 #[pyclass]
 struct IrohUniStream {
-    write_handle: u32,
+    write_handle: u64,
 }
 
 #[pymethods]
@@ -344,7 +344,7 @@ impl IrohBrowseSession {
 /// Use `create_bidirectional_stream()` to open streams.
 #[pyclass]
 struct IrohSession {
-    session_handle: u32,
+    session_handle: u64,
 }
 
 #[pymethods]
@@ -878,7 +878,7 @@ async fn handle_request(handler: Arc<PyObject>, payload: iroh_http_core::Request
     }
 }
 
-fn send_500(req_handle: u32, res_body_handle: u32) {
+fn send_500(req_handle: u64, res_body_handle: u64) {
     let _ = respond(req_handle, 500, vec![]);
     let _ = finish_body(res_body_handle);
 }

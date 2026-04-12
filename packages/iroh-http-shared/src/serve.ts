@@ -238,7 +238,7 @@ export function makeServe(
         // handle from the slab before JS gets to call sendTrailers.
         // Also skip in bidi mode (resTrailersHandle === 0).
         const hasTrailerHeader = res.headers.has("trailer");
-        if (payload.resTrailersHandle !== 0 && hasTrailerHeader) {
+        if (payload.resTrailersHandle !== 0n && hasTrailerHeader) {
           const trailerPairs: [string, string][] = trailersFn
             ? [...(await trailersFn())] as [string, string][]
             : [];

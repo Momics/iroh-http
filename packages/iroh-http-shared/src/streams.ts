@@ -18,7 +18,7 @@ import type { Bridge } from "./bridge.js";
  * @param onClose Optional callback invoked when the stream reaches EOF or is cancelled.
  * @returns A `ReadableStream<Uint8Array>` backed by the body channel.
  */
-export function makeReadable(bridge: Bridge, handle: number, onClose?: () => void): ReadableStream<Uint8Array> {
+export function makeReadable(bridge: Bridge, handle: bigint, onClose?: () => void): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       const chunk = await bridge.nextChunk(handle);
@@ -50,7 +50,7 @@ export function makeReadable(bridge: Bridge, handle: number, onClose?: () => voi
 export async function pipeToWriter(
   bridge: Bridge,
   stream: ReadableStream<Uint8Array>,
-  handle: number
+  handle: bigint
 ): Promise<void> {
   const reader = stream.getReader();
   try {

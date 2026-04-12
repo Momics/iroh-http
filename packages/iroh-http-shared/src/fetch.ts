@@ -76,7 +76,7 @@ export function makeFetch(
     const headers: [string, string][] = normaliseHeaders(init?.headers);
 
     // Allocate request body writer if needed.
-    let reqBodyHandle: number | null = null;
+    let reqBodyHandle: bigint | null = null;
     let bodyPipePromise: Promise<void> | null = null;
     const bodyStream = init?.body ? bodyInitToStream(init.body) : null;
     if (bodyStream) {

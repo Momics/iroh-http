@@ -629,7 +629,7 @@ async fn fetch_cancelled_via_token() {
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let token = alloc_fetch_token();
+    let token = alloc_fetch_token(0);
 
     // Cancel after 100ms
     tokio::spawn(async move {

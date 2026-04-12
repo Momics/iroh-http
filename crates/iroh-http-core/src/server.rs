@@ -26,9 +26,9 @@ use crate::{
     client::{body_from_reader, pump_hyper_body_to_channel_limited},
     io::IrohStream,
     stream::{
-        compose_handle, decompose_handle, get_slabs, insert_reader, insert_trailer_receiver,
+        allocate_req_handle, insert_reader, insert_trailer_receiver,
         insert_trailer_sender, insert_writer, make_body_channel, remove_trailer_sender,
-        ResponseHeadEntry,
+        take_req_sender, ResponseHeadEntry,
     },
     CoreError, IrohEndpoint, RequestPayload,
 };
@@ -79,7 +79,7 @@ impl ServeHandle {
 
 // ── respond() ────────────────────────────────────────────────────────────────
 
-pub fn respond(req_handle: u32, status: u16, headers: Vec<(String, String)>) -> Result<(), String> {
+pub fn respond(req_handle: u64, status: u16, headers: Vec<(String, String)>) -> Result<(), String> {
     StatusCode::from_u16(status).map_err(|_| {
         CoreError::invalid_input(format!("invalid HTTP status code: {status}")).to_string()
     })?;
@@ -93,13 +93,7 @@ pub fn respond(req_handle: u32, status: u16, headers: Vec<(String, String)>) -> 
         })?;
     }
 
-    let (ep_idx, id) = decompose_handle(req_handle);
-    let slabs = get_slabs(ep_idx).ok_or_else(|| format!("unknown req_handle: {req_handle}"))?;
-    let sender = slabs
-        .response_head
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&id)
+    let sender = take_req_sender(req_handle)
         .ok_or_else(|| format!("unknown req_handle: {req_handle}"))?;
     sender
         .send(ResponseHeadEntry { status, headers })
@@ -223,14 +217,13 @@ impl RequestService {
                 let rs_h = insert_trailer_sender(ep_idx, rs_tx);
                 (rq_h, rs_h, Some(rq_tx), Some(rs_rx))
             } else {
-                (0u32, 0u32, None, None)
+                (0u64, 0u64, None, None)
             };
 
         // ── Allocate response-head rendezvous ────────────────────────────────
 
         let (head_tx, head_rx) = tokio::sync::oneshot::channel::<ResponseHeadEntry>();
         let req_handle = allocate_req_handle(ep_idx, head_tx);
-        let _req_id = decompose_handle(req_handle).1;
 
         // ── Pump request body ────────────────────────────────────────────────
 
@@ -401,11 +394,11 @@ impl RequestService {
 #[allow(clippy::too_many_arguments)]
 fn on_request_fire(
     cb: &Arc<dyn Fn(RequestPayload) + Send + Sync>,
-    req_handle: u32,
-    req_body_handle: u32,
-    res_body_handle: u32,
-    req_trailers_handle: u32,
-    res_trailers_handle: u32,
+    req_handle: u64,
+    req_body_handle: u64,
+    res_body_handle: u64,
+    req_trailers_handle: u64,
+    res_trailers_handle: u64,
     method: String,
     url: String,
     headers: Vec<(String, String)>,
@@ -424,22 +417,6 @@ fn on_request_fire(
         remote_node_id,
         is_bidi,
     });
-}
-
-fn allocate_req_handle(
-    ep_idx: u32,
-    sender: tokio::sync::oneshot::Sender<ResponseHeadEntry>,
-) -> u32 {
-    let slabs = get_slabs(ep_idx).expect("endpoint not registered");
-    let id = slabs
-        .next_req_id
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    slabs
-        .response_head
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(id, sender);
-    compose_handle(ep_idx, id)
 }
 
 // ── serve() ───────────────────────────────────────────────────────────────────

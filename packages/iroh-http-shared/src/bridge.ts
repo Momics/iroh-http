@@ -13,36 +13,36 @@ import type { IrohSession, WebTransportCloseInfo } from "./session.js";
 export interface Bridge {
   // ── Body streaming ─────────────────────────────────────────────────────────
   /** Pull the next chunk from a body reader. Returns `null` at EOF. */
-  nextChunk(handle: number): Promise<Uint8Array | null>;
+  nextChunk(handle: bigint): Promise<Uint8Array | null>;
   /** Push `chunk` into a body writer. */
-  sendChunk(handle: number, chunk: Uint8Array): Promise<void>;
+  sendChunk(handle: bigint, chunk: Uint8Array): Promise<void>;
   /** Signal end-of-body for the writer at `handle`. */
-  finishBody(handle: number): Promise<void>;
+  finishBody(handle: bigint): Promise<void>;
 
   // ── §3 AbortSignal cancellation ────────────────────────────────────────────
   /** Drop a body reader from the Rust slab, cancelling an in-flight fetch. */
-  cancelRequest(handle: number): Promise<void>;  /**
+  cancelRequest(handle: bigint): Promise<void>;  /**
    * Allocate an in-flight cancellation token in the Rust fetch map.
    * Call this before `rawFetch` and wire abort → `cancelFetch(token)`.
    */
-  allocFetchToken(): Promise<number>;
+  allocFetchToken(): Promise<bigint>;
   /**
    * Signal the Rust fetch task to abort.  Safe to call after the fetch has
    * already completed.  Fire-and-forget (do not await).
    */
-  cancelFetch(token: number): void;
+  cancelFetch(token: bigint): void;
   // ── §4 Trailer headers ──────────────────────────────────────────────────────
   /**
    * Await and retrieve trailers produced after the body is consumed.
    * Returns `null` when no trailers were sent.
    */
-  nextTrailer(handle: number): Promise<[string, string][] | null>;
+  nextTrailer(handle: bigint): Promise<[string, string][] | null>;
   /**
    * Deliver response trailers from the JS handler to the Rust server task.
    * Call after `finishBody`. This must be called exactly once per
    * `resTrailersHandle`; calling it resolves the waiting pump task.
    */
-  sendTrailers(handle: number, trailers: [string, string][]): Promise<void>;
+  sendTrailers(handle: bigint, trailers: [string, string][]): Promise<void>;
 }
 
 // ── FFI data types ────────────────────────────────────────────────────────────
@@ -74,11 +74,11 @@ export interface FfiResponseHead {
 /** Full response object returned by the low-level rawFetch. */
 export interface FfiResponse extends FfiResponseHead {
   /** Handle to the response body reader. */
-  bodyHandle: number;
+  bodyHandle: bigint;
   /** Full `httpi://` URL of the responding peer. */
   url: string;
   /** Handle to the response trailer receiver (pass to `bridge.nextTrailer`). */
-  trailersHandle: number;
+  trailersHandle: bigint;
 }
 
 /**
@@ -89,15 +89,15 @@ export interface FfiResponse extends FfiResponseHead {
  */
 export interface RequestPayload extends FfiRequest {
   /** Opaque handle — pass to `respondToRequest` on the Tauri bridge. */
-  reqHandle: number;
+  reqHandle: bigint;
   /** Body reader handle for the request body. */
-  reqBodyHandle: number;
+  reqBodyHandle: bigint;
   /** Body writer handle for the response body. */
-  resBodyHandle: number;
-  /** Trailer receiver handle — JS calls `bridge.nextTrailer(reqTrailersHandle)` to read request trailers. `0` in duplex mode. */
-  reqTrailersHandle: number;
-  /** Trailer sender handle — JS calls `bridge.sendTrailers(resTrailersHandle, pairs)` to send response trailers. `0` in duplex mode. */
-  resTrailersHandle: number;
+  resBodyHandle: bigint;
+  /** Trailer receiver handle — JS calls `bridge.nextTrailer(reqTrailersHandle)` to read request trailers. `0n` in duplex mode. */
+  reqTrailersHandle: bigint;
+  /** Trailer sender handle — JS calls `bridge.sendTrailers(resTrailersHandle, pairs)` to send response trailers. `0n` in duplex mode. */
+  resTrailersHandle: bigint;
   /** True when the client sent `Upgrade: iroh-duplex`. */
   isBidi: boolean;
 }
@@ -653,22 +653,22 @@ export type RawFetchFn = (
   url: string,
   method: string,
   headers: [string, string][],
-  reqBodyHandle: number | null,
-  fetchToken: number,
+  reqBodyHandle: bigint | null,
+  fetchToken: bigint,
   directAddrs: string[] | null
 ) => Promise<FfiResponse>;
 
 /** Allocate a body writer handle (may be sync or async). */
-export type AllocBodyWriterFn = () => number | Promise<number>;
+export type AllocBodyWriterFn = () => bigint | Promise<bigint>;
 
 // ── §2 Bidirectional streaming types ─────────────────────────────────────────
 
 /** Raw duplex stream handles returned by `rawConnect`. */
 export interface FfiDuplexStream {
   /** Handle for reading data sent by the server. */
-  readHandle: number;
+  readHandle: bigint;
   /** Handle for writing data to the server. */
-  writeHandle: number;
+  writeHandle: bigint;
 }
 
 /** Full-duplex stream returned by `session.createBidirectionalStream()`. Mirrors `WebTransportBidirectionalStream`. */

@@ -1,52 +1,32 @@
-//! Body channel types and global handle slab.
+//! Body channel types and global handle registries backed by `slotmap`.
 //!
-//! Rust owns all stream state; JS holds only opaque `u32` handles.
-//! Two global slabs are maintained:
-//! - `READER_SLAB` — `SlottedReader` handles (JS calls `nextChunk`)
-//! - `WRITER_SLAB` — `mpsc::Sender` handles (JS calls `sendChunk` / `finishBody`)
-//!
-//! A companion map `PENDING_READERS` holds the reader side of newly created
-//! writer channels until `rawFetch` (or the serve path) claims them.
-//!
-//! Each slotted reader uses a `tokio::sync::Mutex` so the `recv` future can
-//! be awaited without holding the slab's `std::sync::Mutex`.
+//! Rust owns all stream state; JS holds only opaque `u64` handles.
+//! One global `Mutex<SlotMap<K, Entry<T>>>` per resource type is maintained.
+//! Handles are `u64` values equal to `key.data().as_ffi()` — globally unique
+//! across all endpoints without encoding `ep_idx` into the handle bits.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex, OnceLock,
+    },
     time::{Duration, Instant},
 };
 
 use bytes::Bytes;
+use slotmap::{KeyData, SlotMap};
 use tokio::sync::mpsc;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 32;
 pub const DEFAULT_MAX_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
 pub const DEFAULT_DRAIN_TIMEOUT_MS: u64 = 30_000; // 30 s
 pub const DEFAULT_SLAB_TTL_MS: u64 = 300_000; // 5 min
 
-// ── Composite handle encoding ─────────────────────────────────────────────────
-pub const STREAM_BITS: u32 = 20;
-pub const STREAM_MASK: u32 = (1 << STREAM_BITS) - 1;
-
-pub fn compose_handle(ep: u32, idx: u32) -> u32 {
-    (ep << STREAM_BITS) | idx
-}
-pub fn decompose_handle(h: u32) -> (u32, u32) {
-    (h >> STREAM_BITS, h & STREAM_MASK)
-}
-
-// ── Moved types ───────────────────────────────────────────────────────────────
-pub struct SessionEntry {
-    pub conn: iroh::endpoint::Connection,
-}
-pub struct ResponseHeadEntry {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-}
-
-// ── Global backpressure config (set at endpoint bind time) ──────────────────
+// ── Global backpressure config (set at endpoint bind time) ────────────────────
+//
 // These values are process-global; they are set from the first endpoint that
 // calls configure_backpressure() and remain fixed for the lifetime of the
 // process.  Subsequent calls are no-ops so that a second endpoint cannot
@@ -90,16 +70,40 @@ pub(crate) fn drain_timeout() -> Duration {
     Duration::from_millis(DRAIN_TIMEOUT_MS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
-// ── Timestamped slab entries ─────────────────────────────────────────────────
+// ── Resource types ────────────────────────────────────────────────────────────
 
-pub struct TimestampedEntry<T> {
-    pub inner: T,
+pub struct SessionEntry {
+    pub conn: iroh::endpoint::Connection,
+}
+
+pub struct ResponseHeadEntry {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+}
+
+// ── SlotMap key types ─────────────────────────────────────────────────────────
+
+slotmap::new_key_type! { pub(crate) struct ReaderKey; }
+slotmap::new_key_type! { pub(crate) struct WriterKey; }
+slotmap::new_key_type! { pub(crate) struct TrailerTxKey; }
+slotmap::new_key_type! { pub(crate) struct TrailerRxKey; }
+slotmap::new_key_type! { pub(crate) struct FetchCancelKey; }
+slotmap::new_key_type! { pub(crate) struct SessionKey; }
+slotmap::new_key_type! { pub(crate) struct RequestHeadKey; }
+
+// ── Registry entry ────────────────────────────────────────────────────────────
+
+struct Entry<T> {
+    ep_idx: u32,
+    value: T,
     created_at: Instant,
 }
-impl<T> TimestampedEntry<T> {
-    pub(crate) fn new(inner: T) -> Self {
+
+impl<T> Entry<T> {
+    fn new(ep_idx: u32, value: T) -> Self {
         Self {
-            inner,
+            ep_idx,
+            value,
             created_at: Instant::now(),
         }
     }
@@ -109,17 +113,42 @@ impl<T> TimestampedEntry<T> {
     }
 }
 
+// ── Handle encode / decode helpers ───────────────────────────────────────────
+
+fn key_to_handle<K: slotmap::Key>(k: K) -> u64 {
+    k.data().as_ffi()
+}
+
+fn handle_to_reader_key(h: u64) -> ReaderKey {
+    ReaderKey::from(KeyData::from_ffi(h))
+}
+fn handle_to_writer_key(h: u64) -> WriterKey {
+    WriterKey::from(KeyData::from_ffi(h))
+}
+fn handle_to_trailer_tx_key(h: u64) -> TrailerTxKey {
+    TrailerTxKey::from(KeyData::from_ffi(h))
+}
+fn handle_to_trailer_rx_key(h: u64) -> TrailerRxKey {
+    TrailerRxKey::from(KeyData::from_ffi(h))
+}
+fn handle_to_session_key(h: u64) -> SessionKey {
+    SessionKey::from(KeyData::from_ffi(h))
+}
+fn handle_to_request_head_key(h: u64) -> RequestHeadKey {
+    RequestHeadKey::from(KeyData::from_ffi(h))
+}
+
 // ── Body channel primitives ───────────────────────────────────────────────────
 
-/// Consumer end — stored in the reader slab.
+/// Consumer end — stored in the reader registry.
 /// Uses `tokio::sync::Mutex` so we can `.await` the receiver without holding
-/// the slab's `std::sync::Mutex`.
+/// the registry's `std::sync::Mutex`.
 pub struct BodyReader {
     pub(crate) rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Bytes>>>,
 }
 
-/// Producer end — stored in the writer slab.
-/// `mpsc::Sender` is `Clone`, so we clone it out of the slab for each call.
+/// Producer end — stored in the writer registry.
+/// `mpsc::Sender` is `Clone`, so we clone it out of the registry for each call.
 pub struct BodyWriter {
     pub(crate) tx: mpsc::Sender<Bytes>,
 }
@@ -154,191 +183,190 @@ impl BodyWriter {
     }
 }
 
-// ── Trailer type aliases ─────────────────────────────────────────────────────
+// ── Trailer type aliases ──────────────────────────────────────────────────────
 
 type TrailerTx = tokio::sync::oneshot::Sender<Vec<(String, String)>>;
 pub(crate) type TrailerRx = tokio::sync::oneshot::Receiver<Vec<(String, String)>>;
 
-// ── Per-endpoint slab set ─────────────────────────────────────────────────────
+// ── Global registries ─────────────────────────────────────────────────────────
 
-pub struct SlabSet {
-    pub reader: Mutex<HashMap<u32, TimestampedEntry<BodyReader>>>,
-    pub reader_next: AtomicU32,
-    pub writer: Mutex<HashMap<u32, TimestampedEntry<BodyWriter>>>,
-    pub writer_next: AtomicU32,
-    pub pending_readers: Mutex<HashMap<u32, BodyReader>>,
-    pub trailer_tx: Mutex<HashMap<u32, TimestampedEntry<TrailerTx>>>,
-    pub trailer_tx_next: AtomicU32,
-    pub trailer_rx: Mutex<HashMap<u32, TimestampedEntry<TrailerRx>>>,
-    pub trailer_rx_next: AtomicU32,
-    pub fetch_cancel: Mutex<HashMap<u32, Arc<tokio::sync::Notify>>>,
-    pub next_fetch_id: AtomicU32,
-    pub session: Mutex<HashMap<u32, SessionEntry>>,
-    pub session_next: AtomicU32,
-    pub response_head: Mutex<HashMap<u32, tokio::sync::oneshot::Sender<ResponseHeadEntry>>>,
-    pub next_req_id: AtomicU32,
+fn reader_registry() -> &'static Mutex<SlotMap<ReaderKey, Entry<BodyReader>>> {
+    static R: OnceLock<Mutex<SlotMap<ReaderKey, Entry<BodyReader>>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
 }
 
-impl Default for SlabSet {
-    fn default() -> Self {
-        Self::new()
+fn writer_registry() -> &'static Mutex<SlotMap<WriterKey, Entry<BodyWriter>>> {
+    static R: OnceLock<Mutex<SlotMap<WriterKey, Entry<BodyWriter>>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
+}
+
+fn fetch_cancel_registry(
+) -> &'static Mutex<SlotMap<FetchCancelKey, Entry<Arc<tokio::sync::Notify>>>> {
+    static R: OnceLock<Mutex<SlotMap<FetchCancelKey, Entry<Arc<tokio::sync::Notify>>>>> =
+        OnceLock::new();
+    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
+}
+
+fn handle_to_fetch_cancel_key(h: u64) -> FetchCancelKey {
+    FetchCancelKey::from(KeyData::from_ffi(h))
+}
+
+/// Allocate a cancellation token (as a u64 handle) for an upcoming `fetch` call.
+pub fn alloc_fetch_token(ep_idx: u32) -> u64 {
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let key = fetch_cancel_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(Entry::new(ep_idx, notify));
+    key_to_handle(key)
+}
+
+/// Signal an in-flight fetch to abort.
+pub fn cancel_in_flight(token: u64) {
+    if let Some(entry) = fetch_cancel_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(handle_to_fetch_cancel_key(token))
+    {
+        entry.value.notify_one();
     }
 }
 
-impl SlabSet {
-    pub fn new() -> Self {
-        Self {
-            reader: Mutex::new(HashMap::new()),
-            reader_next: AtomicU32::new(0),
-            writer: Mutex::new(HashMap::new()),
-            writer_next: AtomicU32::new(0),
-            pending_readers: Mutex::new(HashMap::new()),
-            trailer_tx: Mutex::new(HashMap::new()),
-            trailer_tx_next: AtomicU32::new(0),
-            trailer_rx: Mutex::new(HashMap::new()),
-            trailer_rx_next: AtomicU32::new(0),
-            fetch_cancel: Mutex::new(HashMap::new()),
-            next_fetch_id: AtomicU32::new(1),
-            session: Mutex::new(HashMap::new()),
-            session_next: AtomicU32::new(0),
-            response_head: Mutex::new(HashMap::new()),
-            next_req_id: AtomicU32::new(1),
-        }
-    }
+/// Retrieve the `Notify` for a fetch token (clones the Arc for use in select!).
+pub(crate) fn get_fetch_cancel_notify(token: u64) -> Option<Arc<tokio::sync::Notify>> {
+    fetch_cancel_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(handle_to_fetch_cancel_key(token))
+        .map(|e| e.value.clone())
 }
 
-// ── Global slab registry ──────────────────────────────────────────────────────
+/// Remove a fetch cancel token after the fetch completes.
+pub(crate) fn remove_fetch_token(token: u64) {
+    fetch_cancel_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(handle_to_fetch_cancel_key(token));
+}
 
-static NEXT_EP_IDX: AtomicU32 = AtomicU32::new(1);
-
-fn slab_registry() -> &'static Mutex<HashMap<u32, Arc<SlabSet>>> {
-    static R: OnceLock<Mutex<HashMap<u32, Arc<SlabSet>>>> = OnceLock::new();
+fn pending_readers_map() -> &'static Mutex<HashMap<u64, BodyReader>> {
+    static R: OnceLock<Mutex<HashMap<u64, BodyReader>>> = OnceLock::new();
     R.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn trailer_tx_registry() -> &'static Mutex<SlotMap<TrailerTxKey, Entry<TrailerTx>>> {
+    static R: OnceLock<Mutex<SlotMap<TrailerTxKey, Entry<TrailerTx>>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
+}
+
+fn trailer_rx_registry() -> &'static Mutex<SlotMap<TrailerRxKey, Entry<TrailerRx>>> {
+    static R: OnceLock<Mutex<SlotMap<TrailerRxKey, Entry<TrailerRx>>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
+}
+
+fn session_registry() -> &'static Mutex<SlotMap<SessionKey, Entry<Arc<SessionEntry>>>> {
+    static R: OnceLock<Mutex<SlotMap<SessionKey, Entry<Arc<SessionEntry>>>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
+}
+
+fn request_head_registry(
+) -> &'static Mutex<SlotMap<RequestHeadKey, Entry<tokio::sync::oneshot::Sender<ResponseHeadEntry>>>>
+{
+    static R: OnceLock<
+        Mutex<SlotMap<RequestHeadKey, Entry<tokio::sync::oneshot::Sender<ResponseHeadEntry>>>>,
+    > = OnceLock::new();
+    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
+}
+
+// ── Endpoint lifecycle ────────────────────────────────────────────────────────
+
+static NEXT_EP_IDX_COUNTER: AtomicU32 = AtomicU32::new(1);
+
 pub fn alloc_endpoint_idx() -> u32 {
-    NEXT_EP_IDX.fetch_add(1, Ordering::Relaxed)
+    NEXT_EP_IDX_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-pub fn register_endpoint(ep_idx: u32, slabs: Arc<SlabSet>) {
-    slab_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(ep_idx, slabs);
-}
+/// No-op: global registries need no per-endpoint initialisation.
+pub fn register_endpoint(_ep_idx: u32) {}
 
+/// Remove all registry entries that belong to this endpoint.
 pub fn unregister_endpoint(ep_idx: u32) {
-    slab_registry()
+    reader_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .remove(&ep_idx);
-}
-
-pub(crate) fn get_slabs(ep_idx: u32) -> Option<Arc<SlabSet>> {
-    slab_registry()
+        .retain(|_, e| e.ep_idx != ep_idx);
+    writer_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .get(&ep_idx)
-        .cloned()
-}
-
-pub(crate) fn global_slabs() -> Arc<SlabSet> {
-    let mut reg = slab_registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.entry(0)
-        .or_insert_with(|| Arc::new(SlabSet::new()))
-        .clone()
-}
-
-// ── Public handle operations ──────────────────────────────────────────────────
-
-/// Insert a `BodyReader` into the endpoint's slab and return its composite handle.
-pub fn insert_reader(ep_idx: u32, reader: BodyReader) -> u32 {
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        get_slabs(ep_idx).expect("endpoint not registered")
-    };
-    let key = slabs.reader_next.fetch_add(1, Ordering::Relaxed);
-    slabs
-        .reader
+        .retain(|_, e| e.ep_idx != ep_idx);
+    trailer_tx_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(key, TimestampedEntry::new(reader));
-    compose_handle(ep_idx, key)
-}
-
-/// Insert a `BodyWriter` into the endpoint's slab and return its composite handle.
-pub fn insert_writer(ep_idx: u32, writer: BodyWriter) -> u32 {
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        get_slabs(ep_idx).expect("endpoint not registered")
-    };
-    let key = slabs.writer_next.fetch_add(1, Ordering::Relaxed);
-    slabs
-        .writer
+        .retain(|_, e| e.ep_idx != ep_idx);
+    trailer_rx_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(key, TimestampedEntry::new(writer));
-    compose_handle(ep_idx, key)
+        .retain(|_, e| e.ep_idx != ep_idx);
+    session_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|_, e| e.ep_idx != ep_idx);
+    request_head_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|_, e| e.ep_idx != ep_idx);
+    fetch_cancel_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|_, e| e.ep_idx != ep_idx);
+}
+
+// ── Body reader / writer ──────────────────────────────────────────────────────
+
+/// Insert a `BodyReader` into the global registry and return a `u64` handle.
+pub(crate) fn insert_reader(ep_idx: u32, reader: BodyReader) -> u64 {
+    let key = reader_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(Entry::new(ep_idx, reader));
+    key_to_handle(key)
+}
+
+/// Insert a `BodyWriter` into the global registry and return a `u64` handle.
+pub(crate) fn insert_writer(ep_idx: u32, writer: BodyWriter) -> u64 {
+    let key = writer_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(Entry::new(ep_idx, writer));
+    key_to_handle(key)
 }
 
 /// Allocate a `(writer_handle, reader)` pair using the global (ep_idx=0) pool.
 ///
 /// The writer handle is returned to JS.  The reader must be stored via
 /// [`store_pending_reader`] so `rawFetch` can claim it.
-pub fn alloc_body_writer() -> (u32, BodyReader) {
+pub fn alloc_body_writer() -> (u64, BodyReader) {
     let (writer, reader) = make_body_channel();
     let handle = insert_writer(0, writer);
     (handle, reader)
 }
 
-/// Insert a `SessionEntry` into the endpoint's slab and return its composite handle.
-pub(crate) fn insert_session_for(ep_idx: u32, entry: SessionEntry) -> u32 {
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        get_slabs(ep_idx).expect("endpoint not registered")
-    };
-    let key = slabs.session_next.fetch_add(1, Ordering::Relaxed);
-    slabs
-        .session
+/// Store the reader side of a newly allocated writer channel so that the fetch
+/// path can claim it with [`claim_pending_reader`].
+pub fn store_pending_reader(writer_handle: u64, reader: BodyReader) {
+    pending_readers_map()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(key, entry);
-    compose_handle(ep_idx, key)
-}
-
-/// Store the reader side of a newly allocated writer channel.
-pub fn store_pending_reader(writer_handle: u32, reader: BodyReader) {
-    let (ep_idx, idx) = decompose_handle(writer_handle);
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        get_slabs(ep_idx).expect("endpoint not registered")
-    };
-    slabs
-        .pending_readers
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(idx, reader);
+        .insert(writer_handle, reader);
 }
 
 /// Claim the reader that was paired with `writer_handle`.
 /// Returns `None` if already claimed or never stored.
-pub fn claim_pending_reader(writer_handle: u32) -> Option<BodyReader> {
-    let (ep_idx, idx) = decompose_handle(writer_handle);
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        get_slabs(ep_idx)?
-    };
-    let result = slabs
-        .pending_readers
+pub fn claim_pending_reader(writer_handle: u64) -> Option<BodyReader> {
+    pending_readers_map()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .remove(&idx);
-    result
+        .remove(&writer_handle)
 }
 
 // ── Bridge methods (nextChunk / sendChunk / finishBody) ───────────────────────
@@ -347,41 +375,26 @@ pub fn claim_pending_reader(writer_handle: u32) -> Option<BodyReader> {
 ///
 /// Returns `Ok(None)` at EOF.  The handle remains valid until EOF so JS can
 /// safely call `nextChunk` again after partial reads.  After returning `None`
-/// the handle is cleaned up from the slab automatically.
-pub async fn next_chunk(handle: u32) -> Result<Option<Bytes>, String> {
-    let (ep_idx, idx) = decompose_handle(handle);
-    // Clone the Arc — allows awaiting without holding the slab mutex.
+/// the handle is cleaned up from the registry automatically.
+pub async fn next_chunk(handle: u64) -> Result<Option<Bytes>, String> {
+    // Clone the Arc — allows awaiting without holding the registry mutex.
     let rx_arc = {
-        let slabs = if ep_idx == 0 {
-            global_slabs()
-        } else {
-            get_slabs(ep_idx).ok_or_else(|| format!("invalid reader handle: {handle}"))?
-        };
-        let slab = slabs.reader.lock().unwrap_or_else(|e| e.into_inner());
-        slab.get(&idx)
+        let reg = reader_registry().lock().unwrap_or_else(|e| e.into_inner());
+        reg.get(handle_to_reader_key(handle))
             .ok_or_else(|| format!("invalid reader handle: {handle}"))?
-            .inner
+            .value
             .rx
             .clone()
     };
 
     let chunk = rx_arc.lock().await.recv().await;
 
-    // Clean up on EOF so the map entry is removed promptly.
+    // Clean up on EOF so the slot is released promptly.
     if chunk.is_none() {
-        let slabs = if ep_idx == 0 {
-            global_slabs()
-        } else {
-            match get_slabs(ep_idx) {
-                Some(s) => s,
-                None => return Ok(None),
-            }
-        };
-        slabs
-            .reader
+        reader_registry()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(&idx);
+            .remove(handle_to_reader_key(handle));
     }
 
     Ok(chunk)
@@ -391,19 +404,13 @@ pub async fn next_chunk(handle: u32) -> Result<Option<Bytes>, String> {
 ///
 /// Chunks larger than the configured `MAX_CHUNK_SIZE` are split automatically
 /// so individual messages stay within the backpressure budget.
-pub async fn send_chunk(handle: u32, chunk: Bytes) -> Result<(), String> {
-    let (ep_idx, idx) = decompose_handle(handle);
+pub async fn send_chunk(handle: u64, chunk: Bytes) -> Result<(), String> {
     // Clone the Sender (cheap) and release the lock before awaiting.
     let tx = {
-        let slabs = if ep_idx == 0 {
-            global_slabs()
-        } else {
-            get_slabs(ep_idx).ok_or_else(|| format!("invalid writer handle: {handle}"))?
-        };
-        let slab = slabs.writer.lock().unwrap_or_else(|e| e.into_inner());
-        slab.get(&idx)
+        let reg = writer_registry().lock().unwrap_or_else(|e| e.into_inner());
+        reg.get(handle_to_writer_key(handle))
             .ok_or_else(|| format!("invalid writer handle: {handle}"))?
-            .inner
+            .value
             .tx
             .clone()
     };
@@ -428,144 +435,153 @@ pub async fn send_chunk(handle: u32, chunk: Bytes) -> Result<(), String> {
     }
 }
 
-/// Signal end-of-body by dropping the writer from the slab.
+/// Signal end-of-body by dropping the writer from the registry.
 ///
 /// The associated `BodyReader` will return `None` on its next poll.
-pub fn finish_body(handle: u32) -> Result<(), String> {
-    let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        get_slabs(ep_idx).ok_or_else(|| format!("invalid writer handle: {handle}"))?
-    };
-    let mut slab = slabs.writer.lock().unwrap_or_else(|e| e.into_inner());
-    if !slab.contains_key(&idx) {
-        return Err(format!("invalid writer handle: {handle}"));
-    }
-    slab.remove(&idx);
+pub fn finish_body(handle: u64) -> Result<(), String> {
+    writer_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(handle_to_writer_key(handle))
+        .ok_or_else(|| format!("invalid writer handle: {handle}"))?;
     Ok(())
 }
 
-// ── §3 AbortSignal — cancel a reader ─────────────────────────────────────────
-
-/// Drop a body reader from the global slab, causing any pending `nextChunk`
+/// Drop a body reader from the global registry, causing any pending `nextChunk`
 /// to return an error and signalling EOF on a cancelled fetch.
-pub fn cancel_reader(handle: u32) {
-    let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        match get_slabs(ep_idx) {
-            Some(s) => s,
-            None => return,
-        }
-    };
-    slabs
-        .reader
+pub fn cancel_reader(handle: u64) {
+    reader_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .remove(&idx);
+        .remove(handle_to_reader_key(handle));
 }
 
-// ── §4 Trailer operations ──────────────────────────────────────────────────────
+// ── Trailer operations ────────────────────────────────────────────────────────
 
-/// Insert a trailer oneshot **sender** into the endpoint's slab and return its composite handle.
-pub(crate) fn insert_trailer_sender(ep_idx: u32, tx: TrailerTx) -> u32 {
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        get_slabs(ep_idx).expect("endpoint not registered")
-    };
-    let key = slabs.trailer_tx_next.fetch_add(1, Ordering::Relaxed);
-    slabs
-        .trailer_tx
+/// Insert a trailer oneshot **sender** into the global registry and return a `u64` handle.
+pub(crate) fn insert_trailer_sender(ep_idx: u32, tx: TrailerTx) -> u64 {
+    let key = trailer_tx_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(key, TimestampedEntry::new(tx));
-    compose_handle(ep_idx, key)
+        .insert(Entry::new(ep_idx, tx));
+    key_to_handle(key)
 }
 
-/// Insert a trailer oneshot **receiver** into the endpoint's slab and return its composite handle.
-pub(crate) fn insert_trailer_receiver(ep_idx: u32, rx: TrailerRx) -> u32 {
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        get_slabs(ep_idx).expect("endpoint not registered")
-    };
-    let key = slabs.trailer_rx_next.fetch_add(1, Ordering::Relaxed);
-    slabs
-        .trailer_rx
+/// Insert a trailer oneshot **receiver** into the global registry and return a `u64` handle.
+pub(crate) fn insert_trailer_receiver(ep_idx: u32, rx: TrailerRx) -> u64 {
+    let key = trailer_rx_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(key, TimestampedEntry::new(rx));
-    compose_handle(ep_idx, key)
+        .insert(Entry::new(ep_idx, rx));
+    key_to_handle(key)
 }
 
-/// Remove (drop) a trailer sender from the slab without sending.
+/// Remove (drop) a trailer sender from the registry without sending.
 ///
 /// This causes the corresponding receiver to resolve with `Err`,
 /// which `pump_body_to_stream` handles via `unwrap_or_default()`.
-pub(crate) fn remove_trailer_sender(handle: u32) {
-    let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        match get_slabs(ep_idx) {
-            Some(s) => s,
-            None => return,
-        }
-    };
-    slabs
-        .trailer_tx
+pub(crate) fn remove_trailer_sender(handle: u64) {
+    trailer_tx_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .remove(&idx);
+        .remove(handle_to_trailer_tx_key(handle));
 }
 
 /// Deliver trailers from the JS side to the waiting Rust pump task.
-pub fn send_trailers(handle: u32, trailers: Vec<(String, String)>) -> Result<(), String> {
-    let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        get_slabs(ep_idx).ok_or_else(|| format!("invalid trailer sender handle: {handle}"))?
-    };
-    let tx = {
-        let mut slab = slabs.trailer_tx.lock().unwrap_or_else(|e| e.into_inner());
-        slab.remove(&idx)
-            .ok_or_else(|| format!("invalid trailer sender handle: {handle}"))?
-            .inner
-    };
+pub fn send_trailers(handle: u64, trailers: Vec<(String, String)>) -> Result<(), String> {
+    let tx = trailer_tx_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(handle_to_trailer_tx_key(handle))
+        .ok_or_else(|| format!("invalid trailer sender handle: {handle}"))?
+        .value;
     tx.send(trailers)
         .map_err(|_| "trailer receiver dropped".to_string())
 }
 
 /// Await and retrieve trailers produced by the Rust pump task.
-pub async fn next_trailer(handle: u32) -> Result<Option<Vec<(String, String)>>, String> {
-    let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = if ep_idx == 0 {
-        global_slabs()
-    } else {
-        get_slabs(ep_idx).ok_or_else(|| format!("invalid trailer receiver handle: {handle}"))?
-    };
-    let rx = {
-        let mut slab = slabs.trailer_rx.lock().unwrap_or_else(|e| e.into_inner());
-        slab.remove(&idx)
-            .ok_or_else(|| format!("invalid trailer receiver handle: {handle}"))?
-            .inner
-    };
+pub async fn next_trailer(handle: u64) -> Result<Option<Vec<(String, String)>>, String> {
+    let rx = trailer_rx_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(handle_to_trailer_rx_key(handle))
+        .ok_or_else(|| format!("invalid trailer receiver handle: {handle}"))?
+        .value;
     match rx.await {
         Ok(trailers) => Ok(Some(trailers)),
         Err(_) => Ok(None), // sender dropped = no trailers
     }
 }
 
-// ── Slab TTL sweep ────────────────────────────────────────────────────────────
+// ── Session ───────────────────────────────────────────────────────────────────
 
-/// Ensures at most one slab sweep task is running process-wide.
+/// Insert a `SessionEntry` into the global registry and return a `u64` handle.
+pub(crate) fn insert_session_for(ep_idx: u32, entry: SessionEntry) -> u64 {
+    let key = session_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(Entry::new(ep_idx, Arc::new(entry)));
+    key_to_handle(key)
+}
+
+/// Look up a session by handle without consuming it.
+pub(crate) fn lookup_session(handle: u64) -> Option<Arc<SessionEntry>> {
+    session_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(handle_to_session_key(handle))
+        .map(|e| e.value.clone())
+}
+
+/// Remove a session entry by handle and return it.
+pub(crate) fn remove_session(handle: u64) -> Option<Arc<SessionEntry>> {
+    session_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(handle_to_session_key(handle))
+        .map(|e| e.value)
+}
+
+/// Return the endpoint index for a session handle.
+pub(crate) fn session_ep_idx(handle: u64) -> Option<u32> {
+    session_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(handle_to_session_key(handle))
+        .map(|e| e.ep_idx)
+}
+
+// ── Request head (for server respond path) ────────────────────────────────────
+
+/// Insert a response-head oneshot sender into the global registry and return a `u64` handle.
+pub(crate) fn allocate_req_handle(
+    ep_idx: u32,
+    sender: tokio::sync::oneshot::Sender<ResponseHeadEntry>,
+) -> u64 {
+    let key = request_head_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(Entry::new(ep_idx, sender));
+    key_to_handle(key)
+}
+
+/// Remove and return the response-head sender for the given handle.
+pub(crate) fn take_req_sender(
+    handle: u64,
+) -> Option<tokio::sync::oneshot::Sender<ResponseHeadEntry>> {
+    request_head_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(handle_to_request_head_key(handle))
+        .map(|e| e.value)
+}
+
+// ── TTL sweep ─────────────────────────────────────────────────────────────────
+
+/// Ensures at most one sweep task is running process-wide.
 static SWEEP_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Start a background task that sweeps expired slab entries every 60 seconds.
+/// Start a background task that sweeps expired registry entries every 60 seconds.
 /// Pass `ttl_ms = 0` to disable sweeping.
 ///
 /// Only the first call starts the sweep task; subsequent calls are no-ops so
@@ -586,9 +602,8 @@ pub fn start_slab_sweep(ttl_ms: u64) {
         return; // already running
     }
     let ttl = Duration::from_millis(ttl_ms);
-    let interval = Duration::from_secs(60);
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(interval);
+        let mut ticker = tokio::time::interval(Duration::from_secs(60));
         loop {
             ticker.tick().await;
             sweep_all(ttl);
@@ -597,93 +612,38 @@ pub fn start_slab_sweep(ttl_ms: u64) {
 }
 
 fn sweep_all(ttl: Duration) {
-    let registry_snapshot: Vec<Arc<SlabSet>> = slab_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .values()
-        .cloned()
-        .collect();
-    for slabs in registry_snapshot {
-        sweep_reader_slab(&slabs, ttl);
-        sweep_writer_slab(&slabs, ttl);
-        sweep_trailer_tx_slab(&slabs, ttl);
-        sweep_trailer_rx_slab(&slabs, ttl);
+    sweep_registry(
+        &mut *reader_registry().lock().unwrap_or_else(|e| e.into_inner()),
+        ttl,
+    );
+    sweep_registry(
+        &mut *writer_registry().lock().unwrap_or_else(|e| e.into_inner()),
+        ttl,
+    );
+    sweep_registry(
+        &mut *trailer_tx_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+        ttl,
+    );
+    sweep_registry(
+        &mut *trailer_rx_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+        ttl,
+    );
+}
+
+fn sweep_registry<K: slotmap::Key, T>(registry: &mut SlotMap<K, Entry<T>>, ttl: Duration) {
+    let before = registry.len();
+    registry.retain(|_, e| !e.is_expired(ttl));
+    let removed = before - registry.len();
+    if removed > 0 {
+        tracing::debug!("[iroh-http] swept {removed} expired registry entries (ttl={ttl:?})");
     }
 }
 
-fn sweep_reader_slab(slabs: &SlabSet, ttl: Duration) {
-    let mut s = slabs.reader.lock().unwrap_or_else(|e| e.into_inner());
-    let expired: Vec<u32> = s
-        .iter()
-        .filter(|(_, e)| e.is_expired(ttl))
-        .map(|(k, _)| *k)
-        .collect();
-    if !expired.is_empty() {
-        for key in &expired {
-            s.remove(key);
-        }
-        tracing::debug!(
-            "[iroh-http] swept {} expired reader entries (ttl={ttl:?})",
-            expired.len()
-        );
-    }
-}
-
-fn sweep_writer_slab(slabs: &SlabSet, ttl: Duration) {
-    let mut s = slabs.writer.lock().unwrap_or_else(|e| e.into_inner());
-    let expired: Vec<u32> = s
-        .iter()
-        .filter(|(_, e)| e.is_expired(ttl))
-        .map(|(k, _)| *k)
-        .collect();
-    if !expired.is_empty() {
-        for key in &expired {
-            s.remove(key);
-        }
-        tracing::debug!(
-            "[iroh-http] swept {} expired writer entries (ttl={ttl:?})",
-            expired.len()
-        );
-    }
-}
-
-fn sweep_trailer_tx_slab(slabs: &SlabSet, ttl: Duration) {
-    let mut s = slabs.trailer_tx.lock().unwrap_or_else(|e| e.into_inner());
-    let expired: Vec<u32> = s
-        .iter()
-        .filter(|(_, e)| e.is_expired(ttl))
-        .map(|(k, _)| *k)
-        .collect();
-    if !expired.is_empty() {
-        for key in &expired {
-            s.remove(key);
-        }
-        tracing::debug!(
-            "[iroh-http] swept {} expired trailer_tx entries (ttl={ttl:?})",
-            expired.len()
-        );
-    }
-}
-
-fn sweep_trailer_rx_slab(slabs: &SlabSet, ttl: Duration) {
-    let mut s = slabs.trailer_rx.lock().unwrap_or_else(|e| e.into_inner());
-    let expired: Vec<u32> = s
-        .iter()
-        .filter(|(_, e)| e.is_expired(ttl))
-        .map(|(k, _)| *k)
-        .collect();
-    if !expired.is_empty() {
-        for key in &expired {
-            s.remove(key);
-        }
-        tracing::debug!(
-            "[iroh-http] swept {} expired trailer_rx entries (ttl={ttl:?})",
-            expired.len()
-        );
-    }
-}
-
-// ── Shared pump helpers ──────────────────────────────────────────────────────
+// ── Shared pump helpers ───────────────────────────────────────────────────────
 
 /// Default read buffer size for QUIC stream reads.
 const PUMP_READ_BUF: usize = 64 * 1024;
@@ -769,12 +729,12 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── Slab handle operations ──────────────────────────────────────────
+    // ── Registry handle operations ──────────────────────────────────────
 
     #[tokio::test]
     async fn insert_reader_and_next_chunk() {
         let (writer, reader) = make_body_channel();
-        let handle = insert_reader(0, reader);
+        let handle: u64 = insert_reader(0, reader);
 
         writer.send_chunk(Bytes::from("slab-data")).await.unwrap();
         drop(writer);
@@ -782,7 +742,7 @@ mod tests {
         let chunk = next_chunk(handle).await.unwrap();
         assert_eq!(chunk, Some(Bytes::from("slab-data")));
 
-        // EOF cleans up the slab entry
+        // EOF cleans up the registry entry
         let eof = next_chunk(handle).await.unwrap();
         assert!(eof.is_none());
     }
@@ -797,7 +757,7 @@ mod tests {
     #[tokio::test]
     async fn send_chunk_via_slab_handle() {
         let (writer, reader) = make_body_channel();
-        let handle = insert_writer(0, writer);
+        let handle: u64 = insert_writer(0, writer);
 
         send_chunk(handle, Bytes::from("via-slab")).await.unwrap();
         finish_body(handle).unwrap();
@@ -825,7 +785,7 @@ mod tests {
     #[test]
     fn finish_body_signals_eof() {
         let (writer, _reader) = make_body_channel();
-        let handle = insert_writer(0, writer);
+        let handle: u64 = insert_writer(0, writer);
         finish_body(handle).unwrap();
         // Double finish should fail
         let result = finish_body(handle);
@@ -836,7 +796,7 @@ mod tests {
 
     #[test]
     fn alloc_body_writer_and_claim() {
-        let (handle, reader) = alloc_body_writer();
+        let (handle, reader): (u64, BodyReader) = alloc_body_writer();
         store_pending_reader(handle, reader);
         let claimed = claim_pending_reader(handle);
         assert!(claimed.is_some());
@@ -850,7 +810,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_reader_drops_from_slab() {
         let (_writer, reader) = make_body_channel();
-        let handle = insert_reader(0, reader);
+        let handle: u64 = insert_reader(0, reader);
         cancel_reader(handle);
         // Subsequent next_chunk should fail (handle invalid)
         let result = next_chunk(handle).await;
@@ -868,8 +828,8 @@ mod tests {
     #[tokio::test]
     async fn trailers_send_and_receive() {
         let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-        let tx_handle = insert_trailer_sender(0, tx);
-        let rx_handle = insert_trailer_receiver(0, rx);
+        let tx_handle: u64 = insert_trailer_sender(0, tx);
+        let rx_handle: u64 = insert_trailer_receiver(0, rx);
 
         send_trailers(tx_handle, vec![("x-checksum".into(), "abc".into())]).unwrap();
 
@@ -900,7 +860,7 @@ mod tests {
     #[tokio::test]
     async fn next_trailer_sender_dropped_returns_none() {
         let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-        let rx_handle = insert_trailer_receiver(0, rx);
+        let rx_handle: u64 = insert_trailer_receiver(0, rx);
         drop(tx); // sender dropped without sending
         let result = next_trailer(rx_handle).await.unwrap();
         assert!(result.is_none());
@@ -909,8 +869,8 @@ mod tests {
     #[tokio::test]
     async fn send_trailers_empty_vec() {
         let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-        let tx_handle = insert_trailer_sender(0, tx);
-        let rx_handle = insert_trailer_receiver(0, rx);
+        let tx_handle: u64 = insert_trailer_sender(0, tx);
+        let rx_handle: u64 = insert_trailer_receiver(0, rx);
 
         send_trailers(tx_handle, vec![]).unwrap();
         let result = next_trailer(rx_handle).await.unwrap();

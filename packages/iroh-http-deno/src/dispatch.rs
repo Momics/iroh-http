@@ -331,12 +331,12 @@ fn alloc_body_writer_dispatch() -> Value {
 }
 
 fn alloc_fetch_token_dispatch() -> Value {
-    ok(json!({ "token": iroh_http_core::alloc_fetch_token() }))
+    ok(json!({ "token": iroh_http_core::alloc_fetch_token(0) }))
 }
 
 fn cancel_in_flight_dispatch(p: Value) -> Value {
     let token = match p["token"].as_u64() {
-        Some(t) => t as u32,
+        Some(t) => t,
         None => return err("missing token"),
     };
     iroh_http_core::cancel_in_flight(token);
@@ -347,7 +347,7 @@ fn cancel_in_flight_dispatch(p: Value) -> Value {
 
 async fn next_chunk_dispatch(p: Value) -> Value {
     let handle = match p["handle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing handle"),
     };
     match next_chunk(handle).await {
@@ -359,7 +359,7 @@ async fn next_chunk_dispatch(p: Value) -> Value {
 
 async fn send_chunk_dispatch(p: Value) -> Value {
     let handle = match p["handle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing handle"),
     };
     let b64: String = match serde_json::from_value(p["chunk"].clone()) {
@@ -378,7 +378,7 @@ async fn send_chunk_dispatch(p: Value) -> Value {
 
 fn finish_body_dispatch(p: Value) -> Value {
     let handle = match p["handle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing handle"),
     };
     match finish_body(handle) {
@@ -389,7 +389,7 @@ fn finish_body_dispatch(p: Value) -> Value {
 
 fn cancel_request_dispatch(p: Value) -> Value {
     let handle = match p["handle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing handle"),
     };
     cancel_reader(handle);
@@ -398,7 +398,7 @@ fn cancel_request_dispatch(p: Value) -> Value {
 
 async fn next_trailer_dispatch(p: Value) -> Value {
     let handle = match p["handle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing handle"),
     };
     match next_trailer(handle).await {
@@ -410,7 +410,7 @@ async fn next_trailer_dispatch(p: Value) -> Value {
 
 fn send_trailers_dispatch(p: Value) -> Value {
     let handle = match p["handle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing handle"),
     };
     let raw: Vec<Vec<String>> = match serde_json::from_value(p["trailers"].clone()) {
@@ -443,8 +443,8 @@ struct RawFetchPayload {
     url: String,
     method: String,
     headers: Vec<Vec<String>>,
-    req_body_handle: Option<u32>,
-    fetch_token: Option<u32>,
+    req_body_handle: Option<u64>,
+    fetch_token: Option<u64>,
     direct_addrs: Option<Vec<String>>,
 }
 
@@ -622,7 +622,7 @@ async fn next_request(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RespondPayload {
-    req_handle: u32,
+    req_handle: u64,
     status: u16,
     headers: Vec<Vec<String>>,
 }
@@ -881,7 +881,7 @@ async fn session_connect_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionHandlePayload {
-    session_handle: u32,
+    session_handle: u64,
 }
 
 async fn session_create_bidi_stream_dispatch(p: Value) -> Value {
@@ -925,7 +925,7 @@ fn session_close_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionClosePayload {
-    session_handle: u32,
+    session_handle: u64,
     close_code: Option<u32>,
     reason: Option<String>,
 }
@@ -967,7 +967,7 @@ async fn session_next_uni_stream_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionDatagramPayload {
-    session_handle: u32,
+    session_handle: u64,
     data: String, // base64
 }
 

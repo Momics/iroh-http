@@ -10,8 +10,9 @@ use serde::Serialize;
 use crate::{
     parse_node_addr,
     stream::{
-        decompose_handle, get_slabs, insert_reader, insert_session_for, insert_writer,
-        make_body_channel, pump_body_to_quic_send, pump_quic_recv_to_body, SessionEntry,
+        insert_reader, insert_session_for, insert_writer, lookup_session,
+        make_body_channel, pump_body_to_quic_send, pump_quic_recv_to_body,
+        remove_session, session_ep_idx, SessionEntry,
     },
     FfiDuplexStream, IrohEndpoint, ALPN_DUPLEX,
 };
@@ -34,27 +35,20 @@ pub struct CloseInfo {
     pub reason: String,
 }
 
-// ── Session slab ─────────────────────────────────────────────────────────────
+// ── Session registry ──────────────────────────────────────────────────────────
 
-fn get_conn(handle: u32) -> Result<Connection, String> {
-    let (ep_idx, idx) = decompose_handle(handle);
-    let slabs = get_slabs(ep_idx).ok_or_else(|| format!("invalid session handle: {handle}"))?;
-    let conn = slabs
-        .session
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&idx)
+fn get_conn(handle: u64) -> Result<Connection, String> {
+    lookup_session(handle)
         .map(|s| s.conn.clone())
-        .ok_or_else(|| format!("invalid session handle: {handle}"))?;
-    Ok(conn)
+        .ok_or_else(|| format!("invalid session handle: {handle}"))
 }
 
 /// Return the remote peer's public key for a session.
-pub fn session_remote_id(handle: u32) -> Result<iroh::PublicKey, String> {
+pub fn session_remote_id(handle: u64) -> Result<iroh::PublicKey, String> {
     get_conn(handle).map(|c| c.remote_id())
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
+// ── Public API ────────────────────────────────────────────────────────────────
 
 /// Establish a session (QUIC connection) to a remote peer.
 ///
@@ -69,7 +63,7 @@ pub async fn session_connect(
     endpoint: &IrohEndpoint,
     remote_node_id: &str,
     direct_addrs: Option<&[std::net::SocketAddr]>,
-) -> Result<u32, String> {
+) -> Result<u64, String> {
     let parsed = parse_node_addr(remote_node_id)?;
     let node_id = parsed.node_id;
     let mut addr = iroh::EndpointAddr::new(node_id);
@@ -97,25 +91,25 @@ pub async fn session_connect(
 ///
 /// Returns `FfiDuplexStream` with `read_handle` / `write_handle` backed by
 /// body channels — the same interface used by fetch and raw_connect.
-pub async fn session_create_bidi_stream(session_handle: u32) -> Result<FfiDuplexStream, String> {
+pub async fn session_create_bidi_stream(session_handle: u64) -> Result<FfiDuplexStream, String> {
     let conn = get_conn(session_handle)?;
 
     let (send, recv) = conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
 
-    let ep_idx = decompose_handle(session_handle).0;
+    let ep_idx = session_ep_idx(session_handle).unwrap_or(0);
     Ok(wrap_bidi_stream(ep_idx, send, recv))
 }
 ///
 /// Blocks until the remote opens a stream, or returns `None` when the
 /// connection is closed.
 pub async fn session_next_bidi_stream(
-    session_handle: u32,
+    session_handle: u64,
 ) -> Result<Option<FfiDuplexStream>, String> {
     let conn = get_conn(session_handle)?;
 
     match conn.accept_bi().await {
         Ok((send, recv)) => {
-            let ep_idx = decompose_handle(session_handle).0;
+            let ep_idx = session_ep_idx(session_handle).unwrap_or(0);
             Ok(Some(wrap_bidi_stream(ep_idx, send, recv)))
         }
         Err(e) if is_connection_closed(&e) => Ok(None),
@@ -127,7 +121,7 @@ pub async fn session_next_bidi_stream(
 ///
 /// Blocks until a peer connects.  Returns an opaque session handle, or
 /// `None` if the endpoint is shutting down.
-pub async fn session_accept(endpoint: &IrohEndpoint) -> Result<Option<u32>, String> {
+pub async fn session_accept(endpoint: &IrohEndpoint) -> Result<Option<u64>, String> {
     let incoming = match endpoint.raw().accept().await {
         Some(inc) => inc,
         None => return Ok(None),
@@ -140,27 +134,21 @@ pub async fn session_accept(endpoint: &IrohEndpoint) -> Result<Option<u32>, Stri
     Ok(Some(handle))
 }
 
-/// Close a session and remove it from the slab.
+/// Close a session and remove it from the registry.
 ///
 /// `close_code` is an application-level error code (maps to QUIC VarInt).
 /// `reason` is a human-readable string sent to the peer.
-pub fn session_close(session_handle: u32, close_code: u32, reason: &str) -> Result<(), String> {
-    let (ep_idx, idx) = decompose_handle(session_handle);
-    let slabs =
-        get_slabs(ep_idx).ok_or_else(|| format!("invalid session handle: {session_handle}"))?;
-    let mut slab = slabs.session.lock().unwrap_or_else(|e| e.into_inner());
-    if !slab.contains_key(&idx) {
-        return Err(format!("invalid session handle: {session_handle}"));
-    }
-    let session = slab.remove(&idx).unwrap();
-    session.conn.close(close_code.into(), reason.as_bytes());
+pub fn session_close(session_handle: u64, close_code: u32, reason: &str) -> Result<(), String> {
+    let entry = remove_session(session_handle)
+        .ok_or_else(|| format!("invalid session handle: {session_handle}"))?;
+    entry.conn.close(close_code.into(), reason.as_bytes());
     Ok(())
 }
 
 /// Wait for the QUIC handshake to complete on a session.
 ///
 /// Resolves immediately if the handshake has already completed.
-pub async fn session_ready(_session_handle: u32) -> Result<(), String> {
+pub async fn session_ready(_session_handle: u64) -> Result<(), String> {
     // iroh connections are fully established by the time session_connect returns,
     // so ready always resolves immediately. Kept for WebTransport API compatibility.
     Ok(())
@@ -169,36 +157,29 @@ pub async fn session_ready(_session_handle: u32) -> Result<(), String> {
 /// Wait for the session to close and return the close information.
 ///
 /// Blocks until the connection is closed by either side.  Removes the
-/// session from the slab so resources are freed.
-pub async fn session_closed(session_handle: u32) -> Result<CloseInfo, String> {
+/// session from the registry so resources are freed.
+pub async fn session_closed(session_handle: u64) -> Result<CloseInfo, String> {
     let conn = get_conn(session_handle)?;
     let err = conn.closed().await;
-    // Connection is dead — clean up the slab entry.
-    let (ep_idx, idx) = decompose_handle(session_handle);
-    if let Some(slabs) = get_slabs(ep_idx) {
-        slabs
-            .session
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&idx);
-    }
+    // Connection is dead — clean up the registry entry.
+    remove_session(session_handle);
     let (close_code, reason) = parse_connection_error(&err);
     Ok(CloseInfo { close_code, reason })
 }
 
-// ── Unidirectional streams ───────────────────────────────────────────────────
+// ── Unidirectional streams ────────────────────────────────────────────────────
 
 /// Open a new unidirectional (send-only) stream on an existing session.
 ///
 /// Returns a write handle backed by a body channel.
-pub async fn session_create_uni_stream(session_handle: u32) -> Result<u32, String> {
+pub async fn session_create_uni_stream(session_handle: u64) -> Result<u64, String> {
     let conn = get_conn(session_handle)?;
     let send = conn
         .open_uni()
         .await
         .map_err(|e| format!("open_uni: {e}"))?;
 
-    let ep_idx = decompose_handle(session_handle).0;
+    let ep_idx = session_ep_idx(session_handle).unwrap_or(0);
     let (send_writer, send_reader) = make_body_channel();
     let write_handle = insert_writer(ep_idx, send_writer);
     tokio::spawn(pump_body_to_quic_send(send_reader, send));
@@ -209,12 +190,12 @@ pub async fn session_create_uni_stream(session_handle: u32) -> Result<u32, Strin
 /// Accept the next incoming unidirectional (receive-only) stream.
 ///
 /// Returns a read handle, or `None` when the connection is closed.
-pub async fn session_next_uni_stream(session_handle: u32) -> Result<Option<u32>, String> {
+pub async fn session_next_uni_stream(session_handle: u64) -> Result<Option<u64>, String> {
     let conn = get_conn(session_handle)?;
 
     match conn.accept_uni().await {
         Ok(recv) => {
-            let ep_idx = decompose_handle(session_handle).0;
+            let ep_idx = session_ep_idx(session_handle).unwrap_or(0);
             let (recv_writer, recv_reader) = make_body_channel();
             let read_handle = insert_reader(ep_idx, recv_reader);
             tokio::spawn(pump_quic_recv_to_body(recv, recv_writer));
@@ -225,12 +206,12 @@ pub async fn session_next_uni_stream(session_handle: u32) -> Result<Option<u32>,
     }
 }
 
-// ── Datagrams ────────────────────────────────────────────────────────────────
+// ── Datagrams ─────────────────────────────────────────────────────────────────
 
 /// Send a datagram on the session.
 ///
 /// Fails if `data.len()` exceeds `session_max_datagram_size`.
-pub fn session_send_datagram(session_handle: u32, data: &[u8]) -> Result<(), String> {
+pub fn session_send_datagram(session_handle: u64, data: &[u8]) -> Result<(), String> {
     let conn = get_conn(session_handle)?;
     conn.send_datagram(bytes::Bytes::copy_from_slice(data))
         .map_err(|e| format!("send_datagram: {e}"))
@@ -239,7 +220,7 @@ pub fn session_send_datagram(session_handle: u32, data: &[u8]) -> Result<(), Str
 /// Receive the next datagram from the session.
 ///
 /// Blocks until a datagram arrives, or returns `None` when the connection closes.
-pub async fn session_recv_datagram(session_handle: u32) -> Result<Option<Vec<u8>>, String> {
+pub async fn session_recv_datagram(session_handle: u64) -> Result<Option<Vec<u8>>, String> {
     let conn = get_conn(session_handle)?;
     match conn.read_datagram().await {
         Ok(data) => Ok(Some(data.to_vec())),
@@ -251,12 +232,12 @@ pub async fn session_recv_datagram(session_handle: u32) -> Result<Option<Vec<u8>
 /// Return the current maximum datagram payload size for this session.
 ///
 /// Returns `None` if datagrams are not supported on the current path.
-pub fn session_max_datagram_size(session_handle: u32) -> Result<Option<usize>, String> {
+pub fn session_max_datagram_size(session_handle: u64) -> Result<Option<usize>, String> {
     let conn = get_conn(session_handle)?;
     Ok(conn.max_datagram_size())
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Wrap raw QUIC send/recv streams into body-channel–backed `FfiDuplexStream`.
 fn wrap_bidi_stream(
@@ -291,3 +272,4 @@ fn parse_connection_error(err: &iroh::endpoint::ConnectionError) -> (u32, String
         other => (0, other.to_string()),
     }
 }
+
