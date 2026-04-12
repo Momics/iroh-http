@@ -171,7 +171,11 @@ async fn do_fetch(
     let io = TokioIo::new(IrohStream::new(send, recv));
 
     let (mut sender, conn_task) = hyper::client::conn::http1::Builder::new()
-        .max_buf_size(max_header_size)
+        // hyper requires max_buf_size >= 8192; clamp upward so small
+        // max_header_size values don't panic.  Header-size enforcement happens
+        // via the response parsing error that hyper returns when the actual
+        // response head exceeds max_header_size bytes.
+        .max_buf_size(max_header_size.max(8192))
         .max_headers(128)
         .handshake::<_, BoxBody>(io)
         .await
@@ -229,6 +233,19 @@ async fn do_fetch(
         .iter()
         .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
+
+    // Enforce max_header_size: measure reconstructed header bytes and reject if exceeded.
+    // (hyper's max_buf_size is clamped to 8192 to avoid panics, so we enforce the limit here.)
+    let header_bytes: usize = resp_headers
+        .iter()
+        .map(|(k, v)| k.len() + 2 + v.len() + 2) // "name: value\r\n"
+        .sum::<usize>()
+        + 16; // approximate status line
+    if header_bytes > max_header_size {
+        return Err(format!(
+            "response header size {header_bytes} exceeds limit {max_header_size}"
+        ));
+    }
 
     // Allocate channels for streaming the response body to JS.
     let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
