@@ -10,10 +10,17 @@ import { base32 } from "@scure/base";
 // ── Base32 codec ──────────────────────────────────────────────────────────────
 //
 // Iroh node IDs are RFC 4648 base32 (a-z2-7, no padding, lowercase).
-// @scure/base uses uppercase; we normalise on encode/decode.
+// @scure/base's `base32` codec uses padding; we strip it on encode and re-add
+// it on decode so the library stays happy while wire format stays unpadded.
 
-const base32Encode = (b: Uint8Array): string => base32.encode(b).toLowerCase();
-const base32Decode = (s: string): Uint8Array => base32.decode(s.toUpperCase());
+const base32Encode = (b: Uint8Array): string =>
+  base32.encode(b).replace(/=+$/, "").toLowerCase();
+const base32Decode = (s: string): Uint8Array => {
+  const upper = s.toUpperCase();
+  // RFC 4648 §6: base32 groups are 5 chars; pad to next multiple of 8.
+  const pad = (8 - (upper.length % 8)) % 8;
+  return base32.decode(upper + "=".repeat(pad));
+};
 
 // ── Web Crypto algorithm descriptor ──────────────────────────────────────────
 
