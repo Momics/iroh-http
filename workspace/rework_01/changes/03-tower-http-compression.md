@@ -110,6 +110,10 @@ The existing compression integration tests (`test_compression_zstd`,
 `test_no_compression_below_threshold`) must pass with the new implementation.
 Add:
 - `test_reject_non_zstd_encoding` — verifies gzip/br are not negotiated
+- `test_compressed_body_with_trailers` — verifies that a compressed response
+  with HTTP trailers delivers both the decompressed body and the trailer
+  `HeaderMap` correctly. `CompressionLayer` must not strip or corrupt trailer
+  frames during encoding.
 
 ## Notes
 
@@ -118,6 +122,12 @@ Add:
 - The `CompressionOptions` struct (currently `{ level: u8, min_size_bytes: usize }`)
   is simplified. The `min_size_bytes` is expressed as `SizeAbove::new(n)`.
   The `level` field is removed pending tower-http API support.
+- **Trailer pass-through**: `tower-http`'s `CompressionLayer` wraps the
+  response body. It must forward `http_body::Frame::trailers()` frames
+  unchanged. Verify this explicitly — if the layer consumes or drops trailer
+  frames, a custom `Body` wrapper that captures trailers before compression
+  and re-emits them after will be needed. The `test_compressed_body_with_trailers`
+  test gates this.
 - The `BodyAsyncRead` adapter in `compress.rs` is gone. This also removes
   one of the few places in the codebase where `tokio::io::AsyncRead` was
   manually implemented for a custom type.

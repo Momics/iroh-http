@@ -78,6 +78,8 @@ let svc = tower::ServiceBuilder::new()
 The accept loop then becomes:
 
 ```rust
+let consecutive_errors = Arc::new(AtomicUsize::new(0));
+
 loop {
     select! {
         biased;
@@ -90,11 +92,12 @@ loop {
             };
 
             // Circuit breaker
-            if consecutive_errors >= max_consecutive_errors {
+            if consecutive_errors.load(Ordering::Acquire) >= max_consecutive_errors {
                 warn!("circuit breaker open"); break;
             }
 
             let svc = svc.clone();
+            let errors = consecutive_errors.clone();
             tokio::spawn(async move {
                 let _guard = guard;  // holds peer slot open
                 let io = IrohStream::new(send, recv);
@@ -105,8 +108,11 @@ loop {
                     )
                     .with_upgrades()
                     .await;
-                if result.is_err() { /* increment consecutive_errors */ }
-                else { consecutive_errors = 0; }
+                if result.is_err() {
+                    errors.fetch_add(1, Ordering::AcqRel);
+                } else {
+                    errors.store(0, Ordering::Release);
+                }
             });
         }
     }
@@ -149,26 +155,29 @@ impl Drop for PeerConnectionGuard {
 
 ### Graceful drain
 
-Tower's `ConcurrencyLimit` layer holds a permit per active request. For
-graceful drain, we can count in-flight requests via a separate
-`Arc<AtomicUsize>` counter that the accept loop increments on spawn and
-decrements in the spawned task's drop. On shutdown, spin-wait until the
-counter reaches zero or drain_timeout expires:
+Tower's `ConcurrencyLimit` layer holds a permit per active request. The
+existing semaphore-based drain approach is correct and preferred: acquire all
+`max_concurrency` permits on shutdown, which blocks until all in-flight
+requests have completed and released their permits (or until the drain
+timeout expires).
 
 ```rust
 pub async fn drain(self) {
+    // Acquire all permits — blocks until in-flight requests finish.
     let deadline = tokio::time::Instant::now() + self.drain_timeout;
-    loop {
-        if self.in_flight.load(Ordering::Acquire) == 0 { break; }
-        if tokio::time::Instant::now() >= deadline { break; }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let result = tokio::time::timeout_at(
+        deadline,
+        self.semaphore.acquire_many(self.max_concurrency as u32),
+    )
+    .await;
+    // If timeout expires, we proceed with shutdown anyway.
+    // Permits are dropped implicitly — no explicit release needed.
+    drop(result);
 }
 ```
 
-Alternatively, use a `tokio::sync::Semaphore` with the full capacity of
-`max_concurrency` permits and acquire all of them on drain (the existing
-approach). Either is acceptable; the existing approach is already correct.
+This avoids polling/sleeping and is event-driven: the runtime wakes the
+drain future exactly when a permit becomes available.
 
 ## Files changed
 

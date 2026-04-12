@@ -60,7 +60,10 @@ let (send, recv) = conn.open_bi().await?;
 // Wrap Iroh streams for hyper
 let io = hyper_util::rt::TokioIo::new(IrohStream { send, recv });
 // Hand to hyper — all framing, encoding, chunking is hyper's problem
-let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
+    .keep_alive(false)  // each QUIC stream is one exchange
+    .handshake(io)
+    .await?;
 tokio::spawn(conn);  // drive the connection
 // Build a standard http::Request
 let req = http::Request::builder()
@@ -104,8 +107,9 @@ integration tests.
 ```rust
 let io = hyper_util::rt::TokioIo::new(IrohStream { send, recv });
 hyper::server::conn::http1::Builder::new()
+    .keep_alive(false)   // each QUIC stream is one exchange
     .serve_connection(io, service)
-    .with_upgrades()  // enables the duplex Upgrade path
+    .with_upgrades()     // enables the duplex Upgrade path
     .await?;
 ```
 
@@ -177,3 +181,8 @@ Additional targeted tests to add:
 - The `ALPN` constants change from `iroh-http/1` to `iroh-http/2` (see
   `wire-format.md`).
 - `iroh-http-framing` is removed/deprecated as runtime code in this rework (see change 07).
+- **Keep-alive must be disabled** on both `http1::Builder` (client) and
+  `http1::Builder` (server). Each QUIC bidirectional stream carries exactly
+  one request-response exchange. hyper must not attempt to read a second
+  request or send Connection: keep-alive headers. See `architecture.md`
+  "Per-stream-per-request model" section.
