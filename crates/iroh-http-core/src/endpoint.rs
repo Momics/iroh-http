@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::pool::ConnectionPool;
 use crate::server::ServeHandle;
-use crate::{ALPN, ALPN_DUPLEX, ALPN_FULL, ALPN_TRAILERS};
+use crate::{ALPN, ALPN_DUPLEX};
 
 /// Configuration passed to [`IrohEndpoint::bind`].
 #[derive(Debug, Default, Clone)]
@@ -91,7 +91,16 @@ pub struct NodeOptions {
     /// Body compression options.  `None` disables compression (default).
     /// Only effective when the `compression` feature is enabled.
     #[cfg(feature = "compression")]
-    pub compression: Option<crate::compress::CompressionOptions>,
+    pub compression: Option<CompressionOptions>,
+}
+
+/// Compression options for response bodies.
+/// Only used when the `compression` feature is enabled.
+#[cfg(feature = "compression")]
+#[derive(Debug, Clone)]
+pub struct CompressionOptions {
+    /// Minimum body size in bytes before compression is applied. Default: 512.
+    pub min_body_bytes: usize,
 }
 
 /// A shared Iroh endpoint.
@@ -132,7 +141,7 @@ pub(crate) struct EndpointInner {
     pub serve_handle: std::sync::Mutex<Option<ServeHandle>>,
     /// Body compression options, if the feature is enabled.
     #[cfg(feature = "compression")]
-    pub compression: Option<crate::compress::CompressionOptions>,
+    pub compression: Option<CompressionOptions>,
 }
 
 impl IrohEndpoint {
@@ -163,13 +172,8 @@ impl IrohEndpoint {
         };
 
         let alpns: Vec<Vec<u8>> = if opts.capabilities.is_empty() {
-            // Advertise all capabilities in preference order.
-            vec![
-                ALPN_FULL.to_vec(),
-                ALPN_DUPLEX.to_vec(),
-                ALPN_TRAILERS.to_vec(),
-                ALPN.to_vec(),
-            ]
+            // Advertise both ALPN variants.
+            vec![ALPN_DUPLEX.to_vec(), ALPN.to_vec()]
         } else {
             let mut list: Vec<Vec<u8>> = opts
                 .capabilities
@@ -396,7 +400,7 @@ impl IrohEndpoint {
 
     /// Compression options, if the `compression` feature is enabled.
     #[cfg(feature = "compression")]
-    pub fn compression(&self) -> Option<&crate::compress::CompressionOptions> {
+    pub fn compression(&self) -> Option<&CompressionOptions> {
         self.inner.compression.as_ref()
     }
 
