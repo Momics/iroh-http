@@ -964,9 +964,8 @@ fn create_node<'py>(
             max_request_body_bytes,
             drain_timeout_secs: None,
             #[cfg(feature = "compression")]
-            compression: if compression_level.is_some() || compression_min_body_bytes.is_some() {
+            compression: if compression_min_body_bytes.is_some() {
                 Some(iroh_http_core::CompressionOptions {
-                    level: compression_level.unwrap_or(3),
                     min_body_bytes: compression_min_body_bytes.unwrap_or(512),
                 })
             } else {

@@ -227,8 +227,9 @@ impl RequestService {
 
         // ── Pump request body ────────────────────────────────────────────────
 
-        if !is_bidi {
-            // Regular request: pump hyper incoming body → channel.
+        // For duplex: keep req_body_writer to move into the upgrade spawn below.
+        // For regular: consume it immediately into the pump task.
+        let duplex_req_body_writer = if !is_bidi {
             let body = req.into_body();
             let trailer_tx = req_trailer_tx.expect("non-duplex has req_trailer_tx");
             tokio::spawn(pump_hyper_body_to_channel_limited(
@@ -237,11 +238,12 @@ impl RequestService {
                 trailer_tx,
                 max_request_body_bytes,
             ));
+            None
         } else {
-            // Duplex: discard the hyper body (no HTTP body before upgrade).
+            // Duplex: discard the HTTP preamble body (empty before 101).
             drop(req.into_body());
-            drop(req_body_writer); // no data will come from hyper
-        }
+            Some(req_body_writer)
+        };
 
         // ── Fire on_request callback ─────────────────────────────────────────
 
@@ -268,63 +270,30 @@ impl RequestService {
         // ── Duplex path: send 101 and pipe upgraded IO ────────────────────────
 
         if let Some(upgrade_fut) = upgrade_future {
+            let req_body_writer = duplex_req_body_writer
+                .expect("duplex path always has req_body_writer");
             // Spawn the upgrade pump after hyper delivers the 101.
+            //
+            // Both directions are wired to the channels already sent to JS:
+            //   recv_io → req_body_writer  (JS reads via req_body_handle)
+            //   res_body_reader → send_io  (JS writes via res_body_handle)
             tokio::spawn(async move {
                 match upgrade_fut.await {
                     Err(e) => tracing::warn!("iroh-http: duplex upgrade error: {e}"),
                     Ok(upgraded) => {
                         let io = TokioIo::new(upgraded);
                         let (mut recv_io, mut send_io) = tokio::io::split(io);
-                        // Re-create a writer to pump data from the upgraded recv into
-                        // the req_body channel. (The original writer was dropped above
-                        // since we have no way to get it back from the slab for re-use.)
-                        //
-                        // Design note: for duplex, JS reads from req_body_handle and
-                        // the upgraded recv pumps into that channel via a fresh writer.
-                        // We need a second writer for the req_body channel.
-                        // Because BodyWriter is backed by mpsc::Sender (clone-able via slab),
-                        // we use a fresh make_body_channel() pair and store the new reader
-                        // as the req_body_handle.
-                        //
-                        // FIXME: the req_body_handle was already set above (before upgrade).
-                        // The pump below cannot retroactively replace it.
-                        // For now: pump data from the upgraded recv and discard it
-                        // until a proper duplex redesign can supply a fresh channel.
-                        //
-                        // WORKAROUND: use a separate body channel for duplex recv.
-                        // This makes req_body_handle point to the upgraded data correctly:
-                        // we cannot because the handle was already sent to JS.
-                        //
-                        // Real fix is to delay req_body_handle allocation until after
-                        // upgrade. For this rework we keep parity with the original
-                        // by pumping into the same writer (retrieved from slab).
-                        // Since BodyWriter.tx is cloneable (mpsc::Sender), we can
-                        // get it via make_body_channel and push a new sender.
-                        // 
-                        // Simplest correct approach: allocate the body channel here,
-                        // AFTER upgrade resolves, and send a "channel ready" notification.
-                        // But JS already has req_body_handle...
-                        //
-                        // For now: signal EOF on req_body by dropping (no writer to pump).
-                        // JS will see nextChunk() return null immediately for duplex.
-                        // The send direction (res → upgraded) is supported.
-                        
-                        let (dup_writer, dup_reader) = make_body_channel();
-                        // dup_reader is the true duplex recv channel.
-                        // We cannot retroactively swap req_body_handle in the slab.
-                        // Log and proceed with send-only duplex.
-                        // TODO: proper duplex recv channel allocation.
-                        
+
                         tokio::join!(
-                            // upgraded recv → body channel (best-effort)
+                            // upgraded recv → req_body channel (JS reads via req_body_handle)
                             async {
+                                use tokio::io::AsyncReadExt;
                                 let mut buf = vec![0u8; 16 * 1024];
                                 loop {
-                                    use tokio::io::AsyncReadExt;
                                     match recv_io.read(&mut buf).await {
                                         Ok(0) | Err(_) => break,
                                         Ok(n) => {
-                                            if dup_writer
+                                            if req_body_writer
                                                 .send_chunk(Bytes::copy_from_slice(&buf[..n]))
                                                 .await
                                                 .is_err()
@@ -334,16 +303,22 @@ impl RequestService {
                                         }
                                     }
                                 }
+                                // Dropping writer signals EOF on req_body_handle.
+                                drop(req_body_writer);
                             },
-                            // res_body_reader → upgraded send
+                            // res_body channel → upgraded send (JS writes via res_body_handle)
                             async {
                                 use tokio::io::AsyncWriteExt;
-                                let _ = dup_reader; // consumed above
-                                // Actually pump from the res_body_reader that JS writes to.
-                                // But res_body_reader was moved into insert_writer...
-                                // We have the same problem: we need res_body_reader here
-                                // but it was consumed by body_from_reader for regular reqs.
-                                // For duplex we must keep it. Let me restructure.
+                                loop {
+                                    match res_body_reader.next_chunk().await {
+                                        None => break,
+                                        Some(chunk) => {
+                                            if send_io.write_all(&chunk).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
                                 let _ = send_io.shutdown().await;
                             },
                         );
@@ -448,7 +423,8 @@ where
     let peer_counts: Arc<Mutex<HashMap<iroh::PublicKey, usize>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
-    // Drain semaphore: one permit per in-flight connection task.
+    // Drain semaphore: one permit per in-flight REQUEST (bi-stream), not per connection.
+    // Drain waits for acquire_many(max) which returns only when all requests finish.
     let drain_semaphore = Arc::new(tokio::sync::Semaphore::new(max));
 
     let base_svc = RequestService {
@@ -509,27 +485,18 @@ where
                 }
             };
 
-            let permit = match drain_semaphore.clone().acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => break,
-            };
-
             let remote_id = base32_encode(remote_pk.as_bytes());
             let mut peer_svc = base_svc.clone();
             peer_svc.remote_node_id = Some(remote_id);
 
-            // Compose middleware: timeout wraps the core service.
-            // Note: ConcurrencyLimitLayer is tracked via the drain semaphore;
-            // we don't add a second concurrent limit via tower here to keep
-            // error types simple for hyper compatibility.
             let timeout_dur = if request_timeout.is_zero() {
                 std::time::Duration::MAX
             } else {
                 request_timeout
             };
 
+            let conn_drain = drain_semaphore.clone();
             tokio::spawn(async move {
-                let _permit = permit;
                 let _guard = guard;
 
                 loop {
@@ -538,10 +505,18 @@ where
                         Err(_) => break,
                     };
 
+                    // Acquire one concurrency slot per request (bi-stream).
+                    // Dropping the permit when hyper finishes the request signals drain().
+                    let permit = match conn_drain.clone().acquire_owned().await {
+                        Ok(p) => p,
+                        Err(_) => break, // semaphore closed → shutting down
+                    };
+
                     let io = TokioIo::new(IrohStream::new(send, recv));
                     let svc = peer_svc.clone();
 
                     tokio::spawn(async move {
+                        let _permit = permit;
                         // Build the hyper-facing service, optionally wrapping with
                         // CompressionLayer (zstd-only, for responses ≥ 512 bytes).
                         #[cfg(feature = "compression")]

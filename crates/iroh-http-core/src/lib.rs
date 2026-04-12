@@ -16,6 +16,8 @@ pub use stream::{alloc_fetch_token, cancel_in_flight};
 pub use endpoint::{
     parse_direct_addrs, IrohEndpoint, NodeAddrInfo, NodeOptions, PathInfo, PeerStats,
 };
+#[cfg(feature = "compression")]
+pub use endpoint::CompressionOptions;
 pub use server::serve;
 pub use server::ServeHandle;
 pub use session::{
