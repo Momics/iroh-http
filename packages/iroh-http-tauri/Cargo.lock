@@ -94,6 +94,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-compression"
+version = "0.4.41"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0f9ee0f6e02ffd7ad5816e9464499fba7b3effd01123b515c41d1697c43dad1"
+dependencies = [
+ "compression-codecs",
+ "compression-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -504,6 +516,23 @@ dependencies = [
  "bytes",
  "memchr",
 ]
+
+[[package]]
+name = "compression-codecs"
+version = "0.4.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb7b51a7d9c967fc26773061ba86150f19c50c0d65c887cb1fbe295fd16619b7"
+dependencies = [
+ "compression-core",
+ "zstd",
+ "zstd-safe",
+]
+
+[[package]]
+name = "compression-core"
+version = "0.4.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75984efb6ed102a0d42db99afb6c1948f0380d1d91808d5529916e6c08b49d8d"
 
 [[package]]
 name = "const-oid"
@@ -2371,6 +2400,8 @@ dependencies = [
 name = "iroh-http-core"
 version = "0.1.0"
 dependencies = [
+ "async-compression",
+ "base32",
  "bytes",
  "iroh",
  "iroh-http-framing",
@@ -2382,7 +2413,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "zstd",
 ]
 
 [[package]]
@@ -2397,9 +2427,6 @@ dependencies = [
 [[package]]
 name = "iroh-http-framing"
 version = "0.1.0"
-dependencies = [
- "httparse",
-]
 
 [[package]]
 name = "iroh-metrics"
