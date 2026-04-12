@@ -155,23 +155,42 @@ impl Drop for PeerConnectionGuard {
 
 ### Graceful drain
 
-Tower's `ConcurrencyLimit` layer holds a permit per active request. The
-existing semaphore-based drain approach is correct and preferred: acquire all
-`max_concurrency` permits on shutdown, which blocks until all in-flight
-requests have completed and released their permits (or until the drain
-timeout expires).
+There are two concurrency controls, each with a distinct role:
+
+1. **Tower's `ConcurrencyLimitLayer`** — limits how many requests are
+   processed concurrently. This is a middleware concern inside the service
+   chain. Tower owns its own internal semaphore; we do not interact with it
+   for drain.
+
+2. **An explicit `Arc<Semaphore>` owned by the serve loop** — used
+   exclusively for drain signaling. Each spawned connection task acquires one
+   permit on entry and releases it on drop. On shutdown, we acquire all
+   permits to block until in-flight work finishes.
+
+These are separate and intentionally so. Tower's layer protects the service;
+our semaphore tracks spawned tasks for clean shutdown.
 
 ```rust
+// In serve() — create the drain semaphore
+let drain_semaphore = Arc::new(Semaphore::new(max_concurrency));
+
+// In the accept loop — each connection acquires a drain permit
+let permit = drain_semaphore.clone().acquire_owned().await.unwrap();
+tokio::spawn(async move {
+    let _permit = permit;  // released when task completes
+    let _guard = guard;
+    // ... serve_connection ...
+});
+
+// In ServeHandle::drain() — acquire all permits = all tasks done
 pub async fn drain(self) {
-    // Acquire all permits — blocks until in-flight requests finish.
     let deadline = tokio::time::Instant::now() + self.drain_timeout;
     let result = tokio::time::timeout_at(
         deadline,
-        self.semaphore.acquire_many(self.max_concurrency as u32),
+        self.drain_semaphore.acquire_many(self.max_concurrency as u32),
     )
     .await;
     // If timeout expires, we proceed with shutdown anyway.
-    // Permits are dropped implicitly — no explicit release needed.
     drop(result);
 }
 ```

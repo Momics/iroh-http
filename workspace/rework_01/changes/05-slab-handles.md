@@ -21,10 +21,42 @@ after the hyper migration (changes 01-04, 06-07) has landed and stabilized.
 
 Phase 2 is part of this rework plan and must complete before any release.
 
+### FFI handle width: `u32` → `u64`
+
+`slotmap::KeyData` is 64 bits (32-bit index + 32-bit generation). Its FFI
+helpers (`KeyData::as_ffi() -> u64`, `KeyData::from_ffi(u64)`) operate on
+`u64`. Attempting to truncate to `u32` would lose the generation bits and
+defeat the purpose.
+
+Since the package is unreleased, we move the FFI handle type from `u32` to
+`u64`. This is a clean break with no backward-compatibility cost.
+
+**Runtime support for `u64` handles:**
+
+| Runtime | Mechanism | Notes |
+|---|---|---|
+| Node.js (napi-rs) | `BigInt` | napi-rs supports `BigInt` natively as a parameter and return type |
+| Deno FFI | `u64` / `BigInt` | Deno's FFI layer handles `u64` as `BigInt` directly |
+| Python (PyO3) | `u64` | Python integers have no size limit; PyO3 maps `u64` directly |
+| Tauri | Serialize as string in JSON | Tauri's `invoke()` uses JSON; `u64` serializes as string to avoid precision loss |
+
+Handles are opaque tokens — users never do arithmetic on them. The only code
+that touches handle values is the `Bridge` interface in `iroh-http-shared`,
+which is internal. The change surface is type annotations only.
+
+### Why NOT a custom u32 generational allocator
+
+A custom allocator packing index + generation into 32 bits (e.g. 22+10)
+trades one structural weakness for another: 10-bit generation wraps after
+1024 reuse cycles per slot. A long-running server at moderate load wraps a
+slot's generation in ~100 seconds, re-opening the aliasing window. Increasing
+generation bits reduces index capacity. This is a lateral move, not a fix.
+
+`u64` with slotmap gives 32-bit generation (4 billion cycles before wrap per
+slot) — aliasing is structurally eliminated for any practical lifetime.
+
 ### Why `slotmap`
 
-- `slotmap::SlotMap` uses `u32`-sized keys by default (`KeyData` is 32 bits:
-  index + generation packed together). The FFI boundary stays `u32`.
 - Stale-handle aliasing is eliminated structurally: a removed key's generation
   is bumped, so any stale handle pointing to the old generation returns `None`.
 - The crate is well-maintained, `no_std`-compatible, and widely used.
@@ -70,28 +102,27 @@ pub(crate) struct HandleRegistry<T> {
 
 ### FFI encoding
 
-`StreamHandle` is 32 bits internally. The FFI boundary converts:
+`StreamHandle` wraps slotmap's `KeyData` (64 bits). The FFI boundary uses
+`u64`:
 
 ```rust
 impl StreamHandle {
-    /// Encode as u32 for FFI. The adapter holds only this integer.
-    pub fn to_ffi(self) -> u32 {
-        self.0.as_ffi()  // slotmap provides this
+    /// Encode as u64 for FFI. The adapter holds only this integer.
+    pub fn to_ffi(self) -> u64 {
+        self.0.as_ffi()
     }
 
-    /// Decode from FFI u32. Returns None if the bits are malformed.
-    pub fn from_ffi(raw: u32) -> Option<Self> {
-        KeyData::from_ffi(raw).map(StreamHandle)
+    /// Decode from FFI u64. Returns None if the bits are invalid.
+    pub fn from_ffi(raw: u64) -> Option<Self> {
+        Some(StreamHandle(KeyData::from_ffi(raw)))
     }
 }
 ```
 
-Adapter code continues to pass `u32` handles — no JS/Python/Deno changes.
-
 ### Handle composition
 
 The current model composes endpoint index + local index into a single `u32`
-(20 bits each). With slotmap, the endpoint index can be a field on the
+(20 bits each). With slotmap, the endpoint index becomes a field on the
 registry itself rather than encoded into every handle:
 
 ```rust
@@ -102,6 +133,37 @@ pub(crate) struct HandleRegistry<T> {
 ```
 
 This eliminates the bit-packing and the associated overflow risk entirely.
+
+### Adapter changes
+
+All adapters change handle parameter types from `u32`/`number` to
+`u64`/`bigint`:
+
+**`iroh-http-shared` (TypeScript):**
+```typescript
+interface Bridge {
+    nextChunk(handle: bigint): Promise<Uint8Array | null>;
+    sendChunk(handle: bigint, chunk: Uint8Array): Promise<void>;
+    finishBody(handle: bigint): Promise<void>;
+}
+```
+
+**Node.js (napi-rs):**
+```rust
+#[napi]
+pub async fn next_chunk(handle: BigInt) -> napi::Result<Option<Buffer>> {
+    let h = handle.get_u64().1;  // extract u64 from BigInt
+    // ...
+}
+```
+
+**Python (PyO3):**
+```rust
+#[pyfunction]
+fn next_chunk(py: Python, handle: u64) -> PyResult<...> {
+    // u64 maps directly — no change in Python caller code
+}
+```
 
 ## Files changed
 
@@ -116,15 +178,25 @@ This eliminates the bit-packing and the associated overflow risk entirely.
 | File | Change |
 |---|---|
 | `iroh-http-core/Cargo.toml` | Add `slotmap = "1"` |
-| `iroh-http-core/src/stream.rs` | Replace `HashMap<u32, T>` + `AtomicU32` with `SlotMap` |
-| `iroh-http-core/src/lib.rs` | Update handle encode/decode helpers |
-| Platform adapters | No changes — `u32` FFI contract preserved |
+| `iroh-http-core/src/stream.rs` | Replace `HashMap<u32, T>` + `AtomicU32` with `SlotMap`; handle params `u32` → `u64` |
+| `iroh-http-core/src/lib.rs` | Update handle encode/decode helpers; remove `compose_handle`/`decompose_handle` |
+| `iroh-http-core/src/server.rs` | Handle parameter types `u32` → `u64` |
+| `iroh-http-core/src/client.rs` | Handle parameter types `u32` → `u64` |
+| `packages/iroh-http-shared/src/bridge.ts` | `number` → `bigint` for handle parameters |
+| `packages/iroh-http-node/src/lib.rs` | `u32` → `BigInt` in napi function signatures |
+| `packages/iroh-http-deno/src/lib.rs` | `u32` → `u64` in FFI function signatures |
+| `packages/iroh-http-py/src/lib.rs` | `u32` → `u64` in PyO3 function signatures |
+| `packages/iroh-http-tauri/src/lib.rs` | `u32` → `u64`, handle JSON serialization as string |
 
 ## Validation
 
 ```bash
 cargo test -p iroh-http-core
 cargo test --test integration --features compression
+# All adapter test suites
+cd packages/iroh-http-node && npm test
+cd packages/iroh-http-deno && deno test
+cd packages/iroh-http-py && pytest
 ```
 
 Required tests (phase 1, carried into phase 2):
@@ -137,10 +209,11 @@ Additional phase 2 tests:
 
 - `stale_handle_returns_none_after_generation_bump`
 - `ffi_round_trip_preserves_handle_identity`
+- `u64_handle_survives_bigint_round_trip` (Node.js specific)
 
 ## Exit criteria
 
 - No stale-handle aliasing under stress (structural guarantee, not guardrail).
-- `u32` FFI contract preserved — all adapters pass without modification.
+- All adapters pass with `u64`/`bigint` handles.
 - Phase 2 lands after phase 1 (hyper migration) is stable and tested.
 - Phase 2 completes before any public release.
