@@ -42,3 +42,7 @@ If none apply, prefer package adoption.
 
 - Every major custom subsystem has an explicit decision
 - At least one concrete adoption candidate per high-maintenance custom area
+
+## Latest Run
+
+- 2026-04-12 delegated output: `../evidence/S6_package_matrix_2026-04-12.md`

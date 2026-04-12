@@ -36,3 +36,7 @@ npm run test --workspace=packages/iroh-http-node
 
 - Any contract mismatches are documented with evidence
 - Behavioral drift from Deno/Tauri is flagged with concrete examples
+
+## Latest Run
+
+- 2026-04-12 delegated output: `../evidence/S3_node_adapter_2026-04-12.md`

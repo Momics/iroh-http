@@ -42,3 +42,7 @@ cargo clippy -p iroh-http-core -- -D warnings
 - All high-severity issues are evidenced with file/line references
 - No unresolved assumptions on protocol behavior
 - Explicit statement on whether security defaults are safe by default
+
+## Latest Run
+
+- 2026-04-12 delegated output: `../evidence/S1_rust_core_2026-04-12.md`
