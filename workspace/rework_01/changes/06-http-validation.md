@@ -9,7 +9,7 @@ header values, and a bare `u16` for status. There is no validation at the
 entry point. Invalid inputs propagate silently through hyper and fail deep
 inside the connection:
 
-- `method = "GETT"` — not a valid HTTP method token
+- `method = "BAD METHOD"` — invalid token syntax (space)
 - `name = "Content Length"` — space in header name, invalid per RFC 7230
 - `status = 0` — not a valid HTTP status code (valid range: 100–599)
 
@@ -21,6 +21,14 @@ Add `http = "1"` to `iroh-http-core/Cargo.toml` (also needed for change 01
 At the entry point of each FFI-facing function, parse raw inputs into `http`
 crate types and return a descriptive `Err(String)` if invalid. The validated
 types are used immediately and not surfaced across the FFI boundary.
+
+Notes:
+
+- Extension methods are allowed if token syntax is valid.
+- This is complementary to hyper parsing; we validate early at FFI boundaries
+  so callers get stable, immediate errors.
+- Protocol-level scheme policy (`httpi://` vs `http://`/`https://`) remains an
+  explicit check in our API layer and is not delegated to hyper.
 
 ### client.rs — fetch()
 
@@ -83,8 +91,8 @@ consistent with the existing error taxonomy.
 // client.rs
 #[tokio::test]
 async fn fetch_rejects_invalid_method() {
-    // GETT is not a valid token — extra T
-    let result = fetch(..., "GETT", ...).await;
+    // Contains space — invalid method token
+    let result = fetch(..., "BAD METHOD", ...).await;
     assert!(result.unwrap_err().contains("invalid HTTP method"));
 }
 

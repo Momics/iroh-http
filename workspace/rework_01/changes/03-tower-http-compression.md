@@ -1,4 +1,4 @@
-# Change 03 — Replace compress.rs with tower-http layers
+# Change 03 — Replace compress.rs with tower-http (zstd only)
 
 ## Risk: Low — additive replacement, feature-gated
 
@@ -15,8 +15,7 @@ decompression using `async-compression`. It manually:
 - Negotiates based on `Accept-Encoding: zstd` / `Content-Encoding: zstd` headers
 
 The code is correct, but it's 255 lines that replicate what `tower-http` does
-as a one-line middleware layer — with broader algorithm support and better
-integration with hyper's body types.
+as a middleware layer with better integration with hyper body types.
 
 ## Solution
 
@@ -37,8 +36,8 @@ let svc = tower::ServiceBuilder::new()
     .layer(
         CompressionLayer::new()
             .zstd(true)
-            .gzip(true)     // free, adds no meaningful overhead
-            .br(true)       // free
+            .gzip(false)
+            .br(false)
             .compress_when(SizeAbove::new(512))  // replaces min_size_bytes
     )
     .service(RequestService { ... });
@@ -61,8 +60,12 @@ let svc = tower::ServiceBuilder::new()
     .service(HyperClientService::new(sender));
 ```
 
-The client receives the compressed bytes from the server, tower-http
-decompresses them transparently before returning to the application layer.
+The client receives compressed bytes from the server and only zstd is accepted
+by project policy.
+
+If `DecompressionLayer` cannot be configured to a strict zstd-only set in the
+current version, keep the existing zstd-only decode path until that policy can
+be enforced explicitly.
 
 ### Feature flag
 
@@ -71,7 +74,7 @@ opt-in:
 
 ```toml
 [features]
-compression = ["tower-http/compression-zstd", "tower-http/compression-gzip", "tower-http/compression-br", "tower-http/decompression-full"]
+compression = ["tower-http/compression-zstd", "tower-http/decompression-full"]
 
 [dependencies]
 tower-http = { version = "0.6", features = ["timeout", "trace"] }
@@ -106,14 +109,12 @@ cargo test --test integration --features compression
 The existing compression integration tests (`test_compression_zstd`,
 `test_no_compression_below_threshold`) must pass with the new implementation.
 Add:
-- `test_compression_gzip` — verifies gzip negotiation now works
-- `test_compression_brotli` — verifies brotli negotiation now works
+- `test_reject_non_zstd_encoding` — verifies gzip/br are not negotiated
 
 ## Notes
 
-- Compression negotiation is now fully standards-compliant — the server
-  responds to `Accept-Encoding` correctly for any algorithm in tower-http's
-  supported set.
+- Compression policy remains intentionally strict: zstd only.
+- The server must not silently enable gzip or brotli in this rework.
 - The `CompressionOptions` struct (currently `{ level: u8, min_size_bytes: usize }`)
   is simplified. The `min_size_bytes` is expressed as `SizeAbove::new(n)`.
   The `level` field is removed pending tower-http API support.
