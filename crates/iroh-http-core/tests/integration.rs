@@ -1008,7 +1008,6 @@ async fn pool_concurrent_requests_share_connection() {
 }
 
 #[tokio::test]
-#[ignore = "flaky under parallel load — relies on scheduler timing; run in isolation with -- --ignored"]
 async fn pool_different_peers_get_separate_connections() {
     // Create two separate servers.
     let opts = || NodeOptions {
@@ -1040,24 +1039,24 @@ async fn pool_different_peers_get_separate_connections() {
         );
     }
 
-    // Give serve tasks time to start their accept loops.
-    // Under heavy parallel test load the tokio scheduler may need extra time,
-    // so retry a few times rather than relying on a fixed sleep.
-    let r1 = {
-        let mut result = Err(String::new());
-        for attempt in 0..5 {
-            tokio::time::sleep(std::time::Duration::from_millis(200 * (1 + attempt))).await;
-            result = fetch(&client, &id1, "/", "GET", &[], None, None, Some(&addrs1)).await;
-            if result.is_ok() { break; }
-        }
-        result.unwrap()
-    };
+    // Helper: retry a fetch up to 5 times with exponential back-off.
+    macro_rules! fetch_retry {
+        ($id:expr, $addrs:expr) => {{
+            let mut result = Err(String::new());
+            for attempt in 0u64..5 {
+                tokio::time::sleep(std::time::Duration::from_millis(200 * (1 + attempt))).await;
+                result = fetch(&client, $id, "/", "GET", &[], None, None, Some($addrs)).await;
+                if result.is_ok() { break; }
+            }
+            result.expect("fetch failed after 5 attempts")
+        }};
+    }
+
+    let r1 = fetch_retry!(&id1, &addrs1);
     assert_eq!(r1.status, 200);
     while let Some(_) = next_chunk(r1.body_handle).await.unwrap() {}
 
-    let r2 = fetch(&client, &id2, "/", "GET", &[], None, None, Some(&addrs2))
-        .await
-        .unwrap();
+    let r2 = fetch_retry!(&id2, &addrs2);
     assert_eq!(r2.status, 200);
     while let Some(_) = next_chunk(r2.body_handle).await.unwrap() {}
 
