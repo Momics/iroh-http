@@ -51,21 +51,27 @@ bytes.
 ### Client-side request decompression
 
 For decompressing server responses received by the client, use
-`tower_http::decompression::DecompressionLayer` in the client's service stack:
+`tower_http::decompression::DecompressionLayer` in the client's service stack.
+Because project policy is **zstd-only**, use the `decompression-zstd` feature
+(not `decompression-full`, which silently enables gzip/brotli/deflate) and
+construct the layer with only zstd enabled:
 
 ```rust
 // client.rs — wrap the hyper sender in a tower service with decompression
 let svc = tower::ServiceBuilder::new()
-    .layer(tower_http::decompression::DecompressionLayer::new())
+    .layer(
+        tower_http::decompression::DecompressionLayer::new()
+            .gzip(false)
+            .br(false)
+            .deflate(false)
+            .zstd(true),
+    )
     .service(HyperClientService::new(sender));
 ```
 
-The client receives compressed bytes from the server and only zstd is accepted
-by project policy.
-
-If `DecompressionLayer` cannot be configured to a strict zstd-only set in the
-current version, keep the existing zstd-only decode path until that policy can
-be enforced explicitly.
+The client receives compressed bytes from the server; only zstd is accepted
+by project policy. Using `DecompressionLayer::new()` (unmodified) would
+silently negotiate gzip/br/deflate, violating that contract.
 
 ### Feature flag
 
@@ -74,7 +80,7 @@ opt-in:
 
 ```toml
 [features]
-compression = ["tower-http/compression-zstd", "tower-http/decompression-full"]
+compression = ["tower-http/compression-zstd", "tower-http/decompression-zstd"]
 
 [dependencies]
 tower-http = { version = "0.6", features = ["timeout", "trace"] }

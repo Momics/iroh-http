@@ -150,7 +150,7 @@ When adding new crates (`hyper`, `http`, `tower`, etc.), add them as
 ```toml
 [workspace.dependencies]
 hyper = { version = "1", features = ["http1", "client", "server"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
 http = "1"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["limit", "timeout", "util"] }

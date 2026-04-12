@@ -69,8 +69,10 @@ struct RequestService {
 }
 ```
 
-Inside `RequestService::call`, use `self.remote_node_id.clone().unwrap()` to
-populate `RequestPayload.remote_node_id`.
+Inside `RequestService::call`, use `self.remote_node_id.clone().unwrap_or_default()`
+to populate `RequestPayload.remote_node_id`. Do **not** use `.unwrap()` — if the
+field is missing due to a wiring regression, a hard panic kills the request task
+and poisons the server. An empty string is a safe, observable fallback.
 
 **Alternative**: use `http::Request::extensions_mut()` to inject the peer ID
 as a typed extension. This is a common tower pattern but adds a layer of
@@ -286,7 +288,9 @@ After: configure on hyper's builder:
 // Server
 hyper::server::conn::http1::Builder::new()
     .keep_alive(false)
-    .max_buf_size(max_header_size)  // max header block bytes
+    // hyper panics if max_buf_size < 8192; clamp upward and enforce the
+    // configured limit via a post-parse byte-count check instead.
+    .max_buf_size(max_header_size.max(8192))
     .max_headers(128)               // max number of header lines
     .serve_connection(io, service)
     .with_upgrades()
@@ -295,11 +299,15 @@ hyper::server::conn::http1::Builder::new()
 // Client
 hyper::client::conn::http1::Builder::new()
     .keep_alive(false)
-    .max_buf_size(max_header_size)
+    .max_buf_size(max_header_size.max(8192))
     .max_headers(128)
     .handshake(io)
     .await?;
 ```
+
+> **Note**: do not pass `max_header_size` directly — hyper HTTP/1 panics for
+> values below 8192. Always clamp with `.max(8192)` and enforce the actual
+> configured limit with a post-parse byte-count check on the parsed headers.
 
 `max_buf_size` controls the maximum bytes hyper will buffer while parsing
 headers. This is the direct replacement for the custom `max_header_size`

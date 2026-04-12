@@ -17,8 +17,10 @@ was never enabled — the codebase comment explicitly states:
 > "The `qpack` crate v0.1.0 does not publicly export Encoder/Decoder, so true
 > dynamic-table compression is not yet available."
 
-This means the current QPACK usage provides no compression benefit over
-plain text headers. It only adds a custom encoding layer.
+This means the current QPACK usage provides minimal compression benefit over
+plain text headers — the static table may compress common field names and values
+slightly, but without dynamic table support there is no cross-request compression
+and the overhead of the custom encoding layer outweighs any static-table gain.
 
 ## New wire format (after rework)
 

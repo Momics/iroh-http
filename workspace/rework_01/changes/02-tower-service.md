@@ -40,6 +40,9 @@ types outside the loop.
 struct RequestService {
     on_request: Arc<dyn Fn(RequestPayload) + Send + Sync>,
     ep_idx: u32,
+    /// Injected per-connection by the accept loop from the QUIC peer's public key.
+    /// Use `unwrap_or_default()` when populating `RequestPayload` — never `.unwrap()`.
+    remote_node_id: Option<String>,
     #[cfg(feature = "compression")]
     compression: Option<CompressionOptions>,
 }
