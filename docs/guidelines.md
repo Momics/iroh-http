@@ -152,6 +152,13 @@ types, and different idioms. What they share is behaviour: the same request
 to the same peer produces the same result, regardless of which platform sent
 it.
 
+Embedded targets are a strategic goal, but they are not a veto on improving
+robustness for currently supported host platforms. If a battle-tested crate
+materially improves safety and correctness on host platforms, we may adopt it
+even if it is not immediately reusable on microcontrollers. The condition is
+that protocol and wire-level behaviour stay clearly specified and testable so
+an embedded implementation can be added later without guessing.
+
 **How to apply this:**
 - Define each platform's conventions (naming, async model, error handling)
   before writing implementation code.
@@ -160,6 +167,8 @@ it.
   platform's public API.
 - When adding a new platform target, add its conventions to this document
   first.
+- Keep protocol semantics and wire behaviour documented independently of
+  runtime choices. See `docs/embedded-roadmap.md`.
 
 ---
 
@@ -215,6 +224,10 @@ These principles are ordered. When they conflict:
   better than a fast default that's exploitable.
 - **Standards** inform but never override platform feel. If the standard type
   is unidiomatic on the platform, wrap it.
+- **Robustness now beats speculative portability.** We can choose host-only
+  dependencies when they significantly improve quality, as long as embedded
+  portability is preserved by documented protocol boundaries and conformance
+  tests.
 
 When none of these principles clearly apply, ask: what would the developer
 expect? Then do that.
