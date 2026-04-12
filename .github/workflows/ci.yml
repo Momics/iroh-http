@@ -54,3 +54,48 @@ jobs:
           node-version: 20
       - run: npm install
       - run: npm run typecheck
+
+  e2e:
+    name: End-to-end tests (Node + Deno)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build native libs (release)
+        run: cargo build --release -p iroh-http-node -p iroh-http-deno
+
+      # ── Node ──────────────────────────────────────────────────────────────────
+
+      - name: napi generate .node + JS wrapper
+        run: |
+          cd packages/iroh-http-node
+          npx napi build --platform --release
+          npx tsc
+
+      - name: Run Node e2e tests
+        run: node packages/iroh-http-node/test/e2e.mjs
+
+      # ── Deno ──────────────────────────────────────────────────────────────────
+
+      - name: Copy Deno native lib
+        run: |
+          mkdir -p packages/iroh-http-deno/lib
+          cp target/release/libiroh_http_deno.so \
+             packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
+
+      - name: Run Deno tests
+        run: deno test --allow-read --allow-ffi packages/iroh-http-deno/test/smoke.ts
