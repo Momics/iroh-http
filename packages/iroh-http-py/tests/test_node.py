@@ -80,7 +80,7 @@ async def test_serve_fetch_basic(node_pair):
     server_id, server_addrs = server.addr()
 
     resp = await client.fetch(
-        server_id, "https://example.com/", direct_addrs=server_addrs
+        server_id, "httpi://example.com/", direct_addrs=server_addrs
     )
     assert resp.status == 200
     data = await resp.bytes()
@@ -103,7 +103,7 @@ async def test_serve_fetch_with_body(node_pair):
 
     resp = await client.fetch(
         server_id,
-        "https://example.com/echo",
+        "httpi://example.com/echo",
         method="POST",
         body=b"ping",
         direct_addrs=server_addrs,
@@ -125,7 +125,7 @@ async def test_response_text(node_pair):
     server.serve(handler)
     server_id, server_addrs = server.addr()
 
-    resp = await client.fetch(server_id, "https://example.com/", direct_addrs=server_addrs)
+    resp = await client.fetch(server_id, "httpi://example.com/", direct_addrs=server_addrs)
     text = await resp.text()
     assert text == "hello world"
 
@@ -146,7 +146,7 @@ async def test_response_json(node_pair):
     server.serve(handler)
     server_id, server_addrs = server.addr()
 
-    resp = await client.fetch(server_id, "https://example.com/", direct_addrs=server_addrs)
+    resp = await client.fetch(server_id, "httpi://example.com/", direct_addrs=server_addrs)
     data = await resp.json()
     assert data == {"ok": True}
 
@@ -163,7 +163,7 @@ async def test_handler_500_on_exception(node_pair):
     server.serve(handler)
     server_id, server_addrs = server.addr()
 
-    resp = await client.fetch(server_id, "https://example.com/", direct_addrs=server_addrs)
+    resp = await client.fetch(server_id, "httpi://example.com/", direct_addrs=server_addrs)
     assert resp.status == 500
 
     server.stop_serve()
@@ -196,7 +196,7 @@ async def test_serve_with_handler_response(node_pair):
     server_id, server_addrs = server.addr()
     try:
         res = await client.fetch(
-            server_id, "https://example.com/resource", direct_addrs=server_addrs
+            server_id, "httpi://example.com/resource", direct_addrs=server_addrs
         )
         assert res.status == 201
         body = await res.bytes()
@@ -205,3 +205,26 @@ async def test_serve_with_handler_response(node_pair):
         assert headers.get("x-custom") == "yes"
     finally:
         server.stop_serve()
+
+
+# ── URL scheme validation ─────────────────────────────────────────────────────
+
+
+async def test_fetch_rejects_https_scheme():
+    """fetch() must raise RuntimeError when the URL uses https:// instead of httpi://."""
+    node = await create_node(disable_networking=True)
+    try:
+        with pytest.raises(RuntimeError, match="httpi://"):
+            await node.fetch(node.node_id, "https://example.com/")
+    finally:
+        await node.close()
+
+
+async def test_fetch_rejects_http_scheme():
+    """fetch() must raise RuntimeError when the URL uses http:// instead of httpi://."""
+    node = await create_node(disable_networking=True)
+    try:
+        with pytest.raises(RuntimeError):
+            await node.fetch(node.node_id, "http://example.com/")
+    finally:
+        await node.close()

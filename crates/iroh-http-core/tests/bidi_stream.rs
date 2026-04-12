@@ -221,3 +221,5 @@ async fn session_bidi_stream_clean_close() {
     session_close(session_b, 0, "").ok();
     session_close(session_a, 0, "").ok();
 }
+
+

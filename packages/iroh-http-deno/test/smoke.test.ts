@@ -118,6 +118,42 @@ Deno.test("publicKeyVerify — valid signature passes", async () => {
 });
 
 // ── Serve / fetch round-trip ───────────────────────────────────────────────────
+
+// ── URL scheme validation ─────────────────────────────────────────────────────
+
+Deno.test("fetch — rejects https:// URL with TypeError", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    let threw = false;
+    try {
+      // Should throw before any network activity.
+      await node.fetch(node.nodeId, "https://example.com/");
+    } catch (e) {
+      threw = true;
+      assert(e instanceof TypeError, `Expected TypeError, got ${(e as Error).constructor.name}`);
+      assert((e as TypeError).message.includes("httpi://"), `Error message should mention httpi://, got: ${(e as TypeError).message}`);
+    }
+    assert(threw, "Expected fetch to throw for https:// URL");
+  } finally {
+    await node.close();
+  }
+});
+
+Deno.test("fetch — rejects http:// URL with TypeError", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    let threw = false;
+    try {
+      await node.fetch(node.nodeId, "http://example.com/");
+    } catch (e) {
+      threw = true;
+      assert(e instanceof TypeError, `Expected TypeError, got ${(e as Error).constructor.name}`);
+    }
+    assert(threw, "Expected fetch to throw for http:// URL");
+  } finally {
+    await node.close();
+  }
+});
 //
 // Networking tests use ticket() instead of addr().directAddrs so that iroh
 // connects through the relay server rather than attempting QUIC loopback.
@@ -136,7 +172,7 @@ Deno.test("serve + fetch — basic round-trip", async () => {
       new Response("hello from deno", { status: 200 }),
     );
 
-    const resp = await client.fetch(ticket, "https://example.com/");
+    const resp = await client.fetch(ticket, "httpi://example.com/");
     assertEquals(resp.status, 200);
     const text = await resp.text();
     assertEquals(text, "hello from deno");
@@ -162,7 +198,7 @@ Deno.test("serve + fetch — POST with body", async () => {
       return new Response(body.toUpperCase(), { status: 201 });
     });
 
-    const resp = await client.fetch(ticket, "https://example.com/echo", {
+    const resp = await client.fetch(ticket, "httpi://example.com/echo", {
       method: "POST",
       body: "ping",
     });
@@ -249,7 +285,7 @@ Deno.test("serve + fetch — plain response produces no internal pipe errors", a
       new Response("hello", { status: 200 })
     );
 
-    const resp = await client.fetch(ticket, "https://example.com/");
+    const resp = await client.fetch(ticket, "httpi://example.com/");
     assertEquals(resp.status, 200);
     assertEquals(await resp.text(), "hello");
 

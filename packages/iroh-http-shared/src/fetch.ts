@@ -54,6 +54,16 @@ export function makeFetch(
   ): Promise<Response> => {
     const nodeId = resolveNodeId(peer);
     const url = typeof input === "string" ? input : input.toString();
+
+    // Reject standard web schemes — iroh-http uses httpi://, not https:// or http://.
+    if (/^https?:\/\//i.test(url)) {
+      const scheme = url.slice(0, url.indexOf("://") + 3);
+      throw new TypeError(
+        `iroh-http URLs must use the "httpi://" scheme, not "${scheme}". ` +
+        `Example: httpi://nodeId/path — or pass a bare path like "/api/data".`
+      );
+    }
+
     const method = init?.method ?? "GET";
     const signal = init?.signal ?? null;
     const directAddrs = init?.directAddrs ?? null;

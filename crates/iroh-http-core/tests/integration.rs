@@ -2040,3 +2040,23 @@ async fn request_timeout_fires() {
     // Should not hang — accept either an error or a 200 that raced through.
     assert!(result.is_ok(), "fetch should not hang past the timeout");
 }
+
+// ── URL scheme validation ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn fetch_rejects_https_scheme() {
+    let (server_ep, client_ep) = make_pair().await;
+    let err = fetch(&client_ep, server_ep.node_id(), "https://example.com/", "GET", &[], None, None, None)
+        .await
+        .unwrap_err();
+    assert!(err.contains("httpi://"), "error should mention httpi://, got: {err}");
+}
+
+#[tokio::test]
+async fn fetch_rejects_http_scheme() {
+    let (server_ep, client_ep) = make_pair().await;
+    let err = fetch(&client_ep, server_ep.node_id(), "http://example.com/path", "GET", &[], None, None, None)
+        .await
+        .unwrap_err();
+    assert!(err.contains("httpi://"), "error should mention httpi://, got: {err}");
+}
