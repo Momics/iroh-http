@@ -7,9 +7,9 @@ Applies to: `iroh-http-core`, `iroh-http-framing`, `iroh-http-discovery`.
 ## Architecture layers
 
 ```
-iroh-http-framing   (no_std, #![no_std]) — wire format only
-iroh-http-core      (tokio, iroh)        — endpoint, client, server, streams
-iroh-http-discovery (iroh, DNS/mDNS)     — peer discovery
+iroh-http-framing   (portable wire layer; target: no_std + alloc) — wire format only
+iroh-http-core      (std + tokio + iroh)                           — endpoint, client, server, streams
+iroh-http-discovery (std + iroh, DNS/mDNS)                         — peer discovery
 ```
 
 Each crate has a single responsibility. `framing` parses and serializes the
@@ -145,14 +145,26 @@ always opt-in.
 
 ---
 
-## `no_std` — framing crate
+## Embedded portability strategy (`iroh-http-framing`)
 
-`iroh-http-framing` is `#![no_std]` with `alloc`. It must never depend on
-`std`, `tokio`, or any I/O library. It exists so that embedded/WASM targets
-can share the same wire format implementation.
+`iroh-http-framing` is the wire-level contract layer for future embedded
+targets. The target state is `no_std + alloc` so embedded/WASM implementations
+can reuse it directly.
 
-Dependencies allowed: `httparse`, `qpack` (or equivalent), `bytes`.
-Dependencies forbidden: `tokio`, `std::net`, `std::io`.
+Rules:
+
+- Keep the crate free of runtime and transport concerns (`tokio`, sockets,
+  endpoint state machines).
+- Prefer dependencies that are `no_std`-compatible.
+- If a `std`-only dependency is adopted temporarily for robustness, document
+  the reason and migration plan in `docs/embedded-roadmap.md`.
+- Never couple framing to `iroh` internals; framing must remain pure
+  parse/serialize logic.
+
+Examples:
+
+- Allowed: parser/codec crates, byte/container utilities.
+- Forbidden in framing: `tokio`, `std::net`, `std::io`, discovery, transport.
 
 ---
 
