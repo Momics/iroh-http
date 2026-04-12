@@ -132,11 +132,8 @@ pub(crate) struct EndpointInner {
     pub max_request_body_bytes: Option<usize>,
     /// Drain timeout in seconds for graceful shutdown.
     pub drain_timeout_secs: Option<u64>,
-    /// Per-endpoint slab set for all streams/sessions/requests.
+    /// Per-endpoint index for global slab registries.
     pub endpoint_idx: u32,
-    /// Slab set owned by this endpoint (kept alive for the endpoint's lifetime).
-    #[allow(dead_code)]
-    pub slabs: std::sync::Arc<crate::stream::SlabSet>,
     /// Active serve handle, if `serve()` has been called.
     pub serve_handle: std::sync::Mutex<Option<ServeHandle>>,
     /// Body compression options, if the feature is enabled.
@@ -266,8 +263,7 @@ impl IrohEndpoint {
         let node_id_str = crate::base32_encode(ep.id().as_bytes());
 
         let endpoint_idx = crate::stream::alloc_endpoint_idx();
-        let slabs = std::sync::Arc::new(crate::stream::SlabSet::new());
-        crate::stream::register_endpoint(endpoint_idx, slabs.clone());
+        crate::stream::register_endpoint(endpoint_idx);
 
         Ok(Self {
             inner: Arc::new(EndpointInner {
@@ -286,7 +282,6 @@ impl IrohEndpoint {
                 max_request_body_bytes: opts.max_request_body_bytes,
                 drain_timeout_secs: opts.drain_timeout_secs,
                 endpoint_idx,
-                slabs,
                 serve_handle: std::sync::Mutex::new(None),
                 #[cfg(feature = "compression")]
                 compression: opts.compression,

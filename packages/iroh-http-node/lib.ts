@@ -79,23 +79,23 @@ import type {
 // ── Bridge implementation ─────────────────────────────────────────────────────
 
 const bridge: Bridge = {
-  nextChunk: (handle: number) => jsNextChunk(handle),
-  sendChunk: (handle: number, chunk: Uint8Array) => jsSendChunk(handle, chunk),
-  finishBody: (handle: number) => {
+  nextChunk: (handle: bigint) => jsNextChunk(handle),
+  sendChunk: (handle: bigint, chunk: Uint8Array) => jsSendChunk(handle, chunk),
+  finishBody: (handle: bigint) => {
     jsFinishBody(handle);
     return Promise.resolve();
   },
-  cancelRequest: (handle: number) => {
+  cancelRequest: (handle: bigint) => {
     jsCancelRequest(handle);
     return Promise.resolve();
   },
   allocFetchToken: () => Promise.resolve(jsAllocFetchToken()),
-  cancelFetch: (token: number) => { jsCancelInFlight(token); },
-  nextTrailer: async (handle: number) => {
+  cancelFetch: (token: bigint) => { jsCancelInFlight(token); },
+  nextTrailer: async (handle: bigint) => {
     const rows = await jsNextTrailer(handle);
     return rows ? (rows as string[][]).map((p) => [p[0], p[1]] as [string, string]) : null;
   },
-  sendTrailers: (handle: number, trailers: [string, string][]) => {
+  sendTrailers: (handle: bigint, trailers: [string, string][]) => {
     jsSendTrailers(handle, trailers as string[][]);
     return Promise.resolve();
   },
@@ -255,19 +255,19 @@ const nodeSessionFns: RawSessionFns = {
     const ffi = await napiSessionNextBidiStream(sessionHandle);
     return ffi ? { readHandle: ffi.readHandle, writeHandle: ffi.writeHandle } satisfies FfiDuplexStream : null;
   },
-  createUniStream: async (sessionHandle: number) => napiSessionCreateUniStream(sessionHandle),
-  nextUniStream: async (sessionHandle: number) => napiSessionNextUniStream(sessionHandle) ?? null,
-  sendDatagram: async (sessionHandle: number, data: Uint8Array) => napiSessionSendDatagram(sessionHandle, data),
-  recvDatagram: async (sessionHandle: number) => {
+  createUniStream: async (sessionHandle: bigint) => napiSessionCreateUniStream(sessionHandle),
+  nextUniStream: async (sessionHandle: bigint) => napiSessionNextUniStream(sessionHandle) ?? null,
+  sendDatagram: async (sessionHandle: bigint, data: Uint8Array) => napiSessionSendDatagram(sessionHandle, data),
+  recvDatagram: async (sessionHandle: bigint) => {
     const buf = await napiSessionRecvDatagram(sessionHandle);
     return buf ? new Uint8Array(buf) : null;
   },
-  maxDatagramSize: async (sessionHandle: number) => napiSessionMaxDatagramSize(sessionHandle) ?? null,
-  closed: async (sessionHandle: number) => {
+  maxDatagramSize: async (sessionHandle: bigint) => napiSessionMaxDatagramSize(sessionHandle) ?? null,
+  closed: async (sessionHandle: bigint) => {
     const info = await napiSessionClosed(sessionHandle);
     return { closeCode: info.closeCode, reason: info.reason };
   },
-  close: async (sessionHandle: number, closeCode?: number, reason?: string) => napiSessionClose(sessionHandle, closeCode, reason),
+  close: async (sessionHandle: bigint, closeCode?: number, reason?: string) => napiSessionClose(sessionHandle, closeCode, reason),
 };
 
 /**

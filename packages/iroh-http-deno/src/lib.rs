@@ -103,7 +103,7 @@ pub extern "C" fn iroh_http_call(
 /// active reference for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iroh_http_next_chunk(
-    handle: u32,
+    handle: u64,
     out_ptr: *mut u8,
     out_cap: usize,
 ) -> i32 {

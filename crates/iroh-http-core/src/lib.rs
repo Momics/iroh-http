@@ -11,7 +11,8 @@ pub mod server;
 pub mod session;
 pub mod stream;
 
-pub use client::{alloc_fetch_token, cancel_in_flight, fetch, raw_connect};
+pub use client::{fetch, raw_connect};
+pub use stream::{alloc_fetch_token, cancel_in_flight};
 pub use endpoint::{
     parse_direct_addrs, IrohEndpoint, NodeAddrInfo, NodeOptions, PathInfo, PeerStats,
 };
@@ -252,21 +253,21 @@ pub struct FfiResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     /// Handle to a [`BodyReader`] containing the response body.
-    pub body_handle: u32,
+    pub body_handle: u64,
     /// Full `httpi://` URL of the responding peer.
     pub url: String,
     /// Handle to a trailer receiver.
-    pub trailers_handle: u32,
+    pub trailers_handle: u64,
 }
 
 /// Options passed to the JS serve callback per incoming request.
 #[derive(Debug)]
 pub struct RequestPayload {
-    pub req_handle: u32,
-    pub req_body_handle: u32,
-    pub res_body_handle: u32,
-    pub req_trailers_handle: u32,
-    pub res_trailers_handle: u32,
+    pub req_handle: u64,
+    pub req_body_handle: u64,
+    pub res_body_handle: u64,
+    pub req_trailers_handle: u64,
+    pub res_trailers_handle: u64,
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
@@ -277,8 +278,8 @@ pub struct RequestPayload {
 /// Handles for the two sides of a full-duplex QUIC stream.
 #[derive(Debug)]
 pub struct FfiDuplexStream {
-    pub read_handle: u32,
-    pub write_handle: u32,
+    pub read_handle: u64,
+    pub write_handle: u64,
 }
 
 #[cfg(test)]
