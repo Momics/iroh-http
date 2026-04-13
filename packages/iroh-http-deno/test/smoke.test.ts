@@ -155,24 +155,32 @@ Deno.test("fetch — rejects http:// URL with TypeError", async () => {
   }
 });
 //
-// Networking tests use ticket() instead of addr().directAddrs so that iroh
-// connects through the relay server rather than attempting QUIC loopback.
-// QUIC loopback to 127.0.0.1 is unreliable on macOS; relay works everywhere.
+function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T> {
+  return Promise.race([
+    fn(),
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Test timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
 
-Deno.test("serve + fetch — basic round-trip", async () => {
+Deno.test("serve + fetch — basic round-trip", () => withTimeout(20_000, async () => {
   const server = await createNode();
   const client = await createNode();
 
   try {
-    // ticket() encodes the relay URL; passing it as peerId routes via relay.
-    const ticket = await server.ticket();
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    console.log(`  server nodeId: ${serverId}`);
+    console.log(`  server addrs:  ${JSON.stringify(serverAddrs)}`);
 
     const ac = new AbortController();
     const handle = server.serve({ signal: ac.signal }, (_req: Request) =>
       new Response("hello from deno", { status: 200 }),
     );
 
-    const resp = await client.fetch(ticket, "httpi://example.com/");
+    const resp = await client.fetch(serverId, "httpi://example.com/", {
+      directAddrs: serverAddrs,
+    });
     assertEquals(resp.status, 200);
     const text = await resp.text();
     assertEquals(text, "hello from deno");
@@ -183,14 +191,14 @@ Deno.test("serve + fetch — basic round-trip", async () => {
     await server.close();
     await client.close();
   }
-});
+}));
 
-Deno.test("serve + fetch — POST with body", async () => {
+Deno.test("serve + fetch — POST with body", () => withTimeout(20_000, async () => {
   const server = await createNode();
   const client = await createNode();
 
   try {
-    const ticket = await server.ticket();
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const ac = new AbortController();
     const handle = server.serve({ signal: ac.signal }, async (req: Request) => {
@@ -198,9 +206,10 @@ Deno.test("serve + fetch — POST with body", async () => {
       return new Response(body.toUpperCase(), { status: 201 });
     });
 
-    const resp = await client.fetch(ticket, "httpi://example.com/echo", {
+    const resp = await client.fetch(serverId, "httpi://example.com/echo", {
       method: "POST",
       body: "ping",
+      directAddrs: serverAddrs,
     });
     assertEquals(resp.status, 201);
     assertEquals(await resp.text(), "PING");
@@ -211,7 +220,7 @@ Deno.test("serve + fetch — POST with body", async () => {
     await server.close();
     await client.close();
   }
-});
+}));
 
 // ── Regression: concurrent FFI call buffer race ────────────────────────────────
 //
@@ -219,12 +228,12 @@ Deno.test("serve + fetch — POST with body", async () => {
 // shared one output buffer — concurrent responses would overwrite each other,
 // producing corrupted JSON ("Unexpected non-whitespace character after JSON").
 
-Deno.test("serve + fetch — concurrent requests return correct bodies (no buffer race)", async () => {
+Deno.test("serve + fetch — concurrent requests return correct bodies (no buffer race)", () => withTimeout(30_000, async () => {
   const server = await createNode();
   const client = await createNode();
 
   try {
-    const ticket = await server.ticket();
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const ac = new AbortController();
     server.serve({ signal: ac.signal }, (req: Request) => {
@@ -238,7 +247,7 @@ Deno.test("serve + fetch — concurrent requests return correct bodies (no buffe
     const texts = await Promise.all(
       paths.map((path) =>
         client
-          .fetch(ticket, path)
+          .fetch(serverId, path, { directAddrs: serverAddrs })
           .then((r) => r.text())
       ),
     );
@@ -252,7 +261,7 @@ Deno.test("serve + fetch — concurrent requests return correct bodies (no buffe
     await server.close();
     await client.close();
   }
-});
+}));
 
 // ── Regression: invalid trailer sender handle for plain responses ──────────────
 //
@@ -261,7 +270,7 @@ Deno.test("serve + fetch — concurrent requests return correct bodies (no buffe
 // response carries no `Trailer:` header.  This produced:
 //   [iroh-http] response body pipe error: IrohHandleError: invalid trailer sender handle
 
-Deno.test("serve + fetch — plain response produces no internal pipe errors", async () => {
+Deno.test("serve + fetch — plain response produces no internal pipe errors", () => withTimeout(20_000, async () => {
   const server = await createNode();
   const client = await createNode();
 
@@ -278,14 +287,16 @@ Deno.test("serve + fetch — plain response produces no internal pipe errors", a
   };
 
   try {
-    const ticket = await server.ticket();
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const ac = new AbortController();
     server.serve({ signal: ac.signal }, (_req: Request) =>
       new Response("hello", { status: 200 })
     );
 
-    const resp = await client.fetch(ticket, "httpi://example.com/");
+    const resp = await client.fetch(serverId, "httpi://example.com/", {
+      directAddrs: serverAddrs,
+    });
     assertEquals(resp.status, 200);
     assertEquals(await resp.text(), "hello");
 
@@ -304,4 +315,4 @@ Deno.test("serve + fetch — plain response produces no internal pipe errors", a
     await server.close();
     await client.close();
   }
-});
+}));
