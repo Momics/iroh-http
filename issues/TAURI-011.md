@@ -1,7 +1,7 @@
 ---
 id: "TAURI-011"
 title: "iroh-http-discovery dependency is not gated to non-mobile targets"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: tauri

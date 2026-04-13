@@ -1,6 +1,9 @@
 mod commands;
 mod state;
 
+#[cfg(mobile)]
+pub mod mobile_mdns;
+
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime,
@@ -50,5 +53,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::session_recv_datagram,
             commands::session_max_datagram_size,
         ])
+        .setup(|_app, _api| {
+            #[cfg(mobile)]
+            {
+                let mdns = mobile_mdns::init(_app, _api)
+                    .expect("failed to initialize mobile mDNS plugin");
+                _app.manage(mdns);
+            }
+            Ok(())
+        })
         .build()
 }
