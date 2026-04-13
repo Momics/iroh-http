@@ -1,7 +1,7 @@
 ---
 id: "TAURI-006"
 title: "npm package name does not follow Tauri scoped naming convention"
-status: open
+status: wont-fix
 priority: P2
 date: 2026-04-13
 area: tauri
@@ -13,7 +13,9 @@ tags: ["packaging", "convention"]
 
 ## Summary
 
-The npm package is named `@momics/iroh-http-tauri` but the Tauri v2 convention for scoped packages is `@scope-name/plugin-{plugin-name}`. The correct name is `@momics/plugin-iroh-http`.
+The npm package is named `@momics/iroh-http-tauri` but the Tauri v2 convention for scoped packages is `@scope-name/plugin-{plugin-name}`. The correct name would be `@momics/plugin-iroh-http`.
+
+**Resolution:** The name `@momics/iroh-http-tauri` is intentionally kept. The `tauri` suffix makes it immediately clear the package is a Tauri plugin, which `plugin-` alone does not convey when the package is encountered outside of a Tauri project context. npm names are freeform; the Tauri convention is a recommendation for public discoverability, not a runtime requirement.
 
 ## Evidence
 
