@@ -176,7 +176,7 @@ test("fetch — rejects https:// URL with TypeError", async () => {
   const node = await createNode({ disableNetworking: true });
   try {
     await assert.rejects(
-      () => node.fetch(node.nodeId, "https://example.com/"),
+      () => node.fetch(node.publicKey, "https://example.com/"),
       (err) => {
         assert.ok(err instanceof TypeError, `Expected TypeError, got ${err.constructor.name}`);
         assert.ok(err.message.includes("httpi://"), `Error should mention httpi://, got: ${err.message}`);
@@ -192,7 +192,7 @@ test("fetch — rejects http:// URL with TypeError", async () => {
   const node = await createNode({ disableNetworking: true });
   try {
     await assert.rejects(
-      () => node.fetch(node.nodeId, "http://example.com/"),
+      () => node.fetch(node.publicKey, "http://example.com/"),
       (err) => {
         assert.ok(err instanceof TypeError, `Expected TypeError, got ${err.constructor.name}`);
         return true;
