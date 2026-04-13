@@ -184,7 +184,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
     let ep = IrohEndpoint::bind(opts).await.map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            iroh_http_core::format_error_json("ENDPOINT_FAILURE", e),
         )
     })?;
 

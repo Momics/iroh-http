@@ -26,6 +26,24 @@ Default permissions for iroh-http plugin
 - `allow-stop-serve`
 - `allow-respond-to-request`
 - `allow-raw-connect`
+- `allow-session-connect`
+- `allow-session-close`
+- `allow-session-closed`
+- `allow-session-create-bidi-stream`
+- `allow-session-create-uni-stream`
+- `allow-session-next-bidi-stream`
+- `allow-session-next-uni-stream`
+- `allow-session-send-datagram`
+- `allow-session-recv-datagram`
+- `allow-session-max-datagram-size`
+- `allow-generate-secret-key`
+- `allow-secret-key-sign`
+- `allow-public-key-verify`
+- `allow-mdns-browse`
+- `allow-mdns-browse-close`
+- `allow-mdns-next-event`
+- `allow-mdns-advertise`
+- `allow-mdns-advertise-close`
 
 ## Permission Table
 

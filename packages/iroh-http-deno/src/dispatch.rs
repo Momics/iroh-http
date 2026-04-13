@@ -67,8 +67,12 @@ fn err(s: impl std::fmt::Display) -> Value {
     json!({ "err": iroh_http_core::format_error_json("UNKNOWN", s) })
 }
 
-fn err_core(e: &iroh_http_core::CoreError) -> Value {
-    json!({ "err": iroh_http_core::core_error_to_json(e) })
+fn err_code(code: &str, s: impl std::fmt::Display) -> Value {
+    json!({ "err": iroh_http_core::format_error_json(code, s) })
+}
+
+fn err_core(e: iroh_http_core::CoreError) -> Value {
+    json!({ "err": iroh_http_core::core_error_to_json(&e) })
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
@@ -226,7 +230,7 @@ async fn create_endpoint(p: Value) -> Value {
         },
     };
     match IrohEndpoint::bind(opts).await {
-        Err(e) => err_core(&e),
+        Err(e) => err_code("ENDPOINT_FAILURE", e),
         Ok(ep) => {
             let node_id = ep.node_id().to_string();
             let keypair: Vec<u8> = ep.secret_key_bytes().to_vec();
@@ -357,7 +361,7 @@ async fn next_chunk_dispatch(p: Value) -> Value {
         None => return err("missing handle"),
     };
     match next_chunk(handle).await {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(None) => ok(json!({ "chunk": null })),
         Ok(Some(b)) => ok(json!({ "chunk": B64.encode(&b[..]) })),
     }
@@ -378,7 +382,7 @@ async fn send_chunk_dispatch(p: Value) -> Value {
     };
     match send_chunk(handle, bytes).await {
         Ok(()) => ok(json!({})),
-        Err(e) => err(e),
+        Err(e) => err_core(e),
     }
 }
 
@@ -389,7 +393,7 @@ fn finish_body_dispatch(p: Value) -> Value {
     };
     match finish_body(handle) {
         Ok(()) => ok(json!({})),
-        Err(e) => err(e),
+        Err(e) => err_core(e),
     }
 }
 
@@ -408,7 +412,7 @@ async fn next_trailer_dispatch(p: Value) -> Value {
         None => return err("missing handle"),
     };
     match next_trailer(handle).await {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(None) => ok(json!({ "trailers": null })),
         Ok(Some(t)) => ok(json!({ "trailers": t })),
     }
@@ -435,7 +439,7 @@ fn send_trailers_dispatch(p: Value) -> Value {
         .collect();
     match send_trailers(handle, pairs) {
         Ok(()) => ok(json!({})),
-        Err(e) => err(e),
+        Err(e) => err_core(e),
     }
 }
 
@@ -491,7 +495,7 @@ async fn raw_fetch(p: Value) -> Value {
     )
     .await
     {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(res) => {
             let headers: Vec<Vec<String>> =
                 res.headers.into_iter().map(|(k, v)| vec![k, v]).collect();
@@ -538,7 +542,7 @@ async fn raw_connect_dispatch(p: Value) -> Value {
         })
         .collect();
     match iroh_http_core::raw_connect(&ep, &args.node_id, &args.path, &pairs).await {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(d) => ok(json!({ "readHandle": d.read_handle, "writeHandle": d.write_handle })),
     }
 }
@@ -655,7 +659,7 @@ fn respond_dispatch(p: Value) -> Value {
         .collect();
     match respond(args.req_handle, args.status, headers) {
         Ok(()) => ok(json!({})),
-        Err(e) => err(e),
+        Err(e) => err_core(e),
     }
 }
 
@@ -770,7 +774,7 @@ async fn mdns_browse_dispatch(p: Value) -> Value {
             None => return err(format!("invalid endpoint handle: {handle}")),
         };
         match iroh_http_discovery::start_browse(ep.raw(), service_name).await {
-            Err(e) => err(e),
+            Err(e) => err_code("REFUSED", e),
             Ok(session) => {
                 let h = browse_slab()
                     .lock()
@@ -840,7 +844,7 @@ fn mdns_advertise_dispatch(p: Value) -> Value {
             None => return err(format!("invalid endpoint handle: {handle}")),
         };
         match iroh_http_discovery::start_advertise(ep.raw(), service_name) {
-            Err(e) => err(e),
+            Err(e) => err_code("REFUSED", e),
             Ok(session) => {
                 let h = advertise_slab().lock().unwrap().insert(session) as u32;
                 ok(json!(h))
@@ -890,7 +894,7 @@ async fn session_connect_dispatch(p: Value) -> Value {
         Err(e) => return err(e),
     };
     match iroh_http_core::session_connect(&ep, &args.node_id, addrs.as_deref()).await {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(handle) => ok(json!({ "sessionHandle": handle })),
     }
 }
@@ -907,7 +911,7 @@ async fn session_create_bidi_stream_dispatch(p: Value) -> Value {
         Err(e) => return err(e),
     };
     match iroh_http_core::session_create_bidi_stream(args.session_handle).await {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(d) => ok(json!({ "readHandle": d.read_handle, "writeHandle": d.write_handle })),
     }
 }
@@ -918,7 +922,7 @@ async fn session_next_bidi_stream_dispatch(p: Value) -> Value {
         Err(e) => return err(e),
     };
     match iroh_http_core::session_next_bidi_stream(args.session_handle).await {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(None) => ok(json!(null)),
         Ok(Some(d)) => ok(json!({ "readHandle": d.read_handle, "writeHandle": d.write_handle })),
     }
@@ -934,7 +938,7 @@ fn session_close_dispatch(p: Value) -> Value {
         args.close_code.unwrap_or(0),
         args.reason.as_deref().unwrap_or(""),
     ) {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(()) => ok(json!({})),
     }
 }
@@ -953,7 +957,7 @@ async fn session_closed_dispatch(p: Value) -> Value {
         Err(e) => return err(e),
     };
     match iroh_http_core::session_closed(args.session_handle).await {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(info) => ok(json!({ "closeCode": info.close_code, "reason": info.reason })),
     }
 }
@@ -964,7 +968,7 @@ async fn session_create_uni_stream_dispatch(p: Value) -> Value {
         Err(e) => return err(e),
     };
     match iroh_http_core::session_create_uni_stream(args.session_handle).await {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(handle) => ok(json!({ "writeHandle": handle })),
     }
 }
@@ -975,7 +979,7 @@ async fn session_next_uni_stream_dispatch(p: Value) -> Value {
         Err(e) => return err(e),
     };
     match iroh_http_core::session_next_uni_stream(args.session_handle).await {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(None) => ok(json!(null)),
         Ok(Some(handle)) => ok(json!({ "readHandle": handle })),
     }
@@ -998,7 +1002,7 @@ fn session_send_datagram_dispatch(p: Value) -> Value {
         Err(e) => return err(format!("base64 decode: {e}")),
     };
     match iroh_http_core::session_send_datagram(args.session_handle, &data) {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(()) => ok(json!({})),
     }
 }
@@ -1009,7 +1013,7 @@ async fn session_recv_datagram_dispatch(p: Value) -> Value {
         Err(e) => return err(e),
     };
     match iroh_http_core::session_recv_datagram(args.session_handle).await {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(None) => ok(json!(null)),
         Ok(Some(data)) => ok(json!({ "data": B64.encode(&data) })),
     }
@@ -1021,7 +1025,7 @@ fn session_max_datagram_size_dispatch(p: Value) -> Value {
         Err(e) => return err(e),
     };
     match iroh_http_core::session_max_datagram_size(args.session_handle) {
-        Err(e) => err(e),
+        Err(e) => err_core(e),
         Ok(size) => ok(json!({ "maxDatagramSize": size })),
     }
 }

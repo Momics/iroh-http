@@ -342,7 +342,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         relayMode,
         relays,
         bindAddrs,
-        dnsDiscovery: discovery.dnsServerUrl ?? null,
+        dnsDiscovery: discovery.dnsServerUrl ?? undefined,
         dnsDiscoveryEnabled: discovery.dnsEnabled,
         channelCapacity: options.advanced?.channelCapacity,
         maxChunkSizeBytes: options.advanced?.maxChunkSizeBytes,
