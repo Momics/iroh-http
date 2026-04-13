@@ -24,7 +24,9 @@ const base32Decode = (s: string): Uint8Array => {
 
 // ── Web Crypto algorithm descriptor ──────────────────────────────────────────
 
-const ED25519: EcKeyAlgorithm = { name: "Ed25519" } as unknown as EcKeyAlgorithm;
+const ED25519: EcKeyAlgorithm = {
+  name: "Ed25519",
+} as unknown as EcKeyAlgorithm;
 
 // ── PublicKey ─────────────────────────────────────────────────────────────────
 
@@ -100,9 +102,14 @@ export class PublicKey {
         this.#bytes,
         ED25519,
         false,
-        ["verify"]
+        ["verify"],
       );
-      return await crypto.subtle.verify(ED25519, key, signature.slice(), data.slice());
+      return await crypto.subtle.verify(
+        ED25519,
+        key,
+        signature.slice(),
+        data.slice(),
+      );
     } catch {
       return false;
     }
@@ -160,7 +167,7 @@ export class SecretKey {
   get publicKey(): PublicKey {
     if (this.#publicKey === null) {
       throw new TypeError(
-        "publicKey not yet available — call await secretKey.derivePublicKey() first"
+        "publicKey not yet available — call await secretKey.derivePublicKey() first",
       );
     }
     return this.#publicKey;
@@ -188,7 +195,10 @@ export class SecretKey {
    * from the endpoint info returned by Rust — avoids an extra async round-trip.
    * @internal
    */
-  static _fromBytesWithPublicKey(bytes: Uint8Array, publicKey: PublicKey): SecretKey {
+  static _fromBytesWithPublicKey(
+    bytes: Uint8Array,
+    publicKey: PublicKey,
+  ): SecretKey {
     const sk = new SecretKey(bytes);
     sk.#publicKey = publicKey;
     return sk;
@@ -205,20 +215,28 @@ export class SecretKey {
     const jwk: JsonWebKey = {
       kty: "OKP",
       crv: "Ed25519",
-      d: btoa(String.fromCharCode(...this.#bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+      d: btoa(String.fromCharCode(...this.#bytes)).replace(/\+/g, "-").replace(
+        /\//g,
+        "_",
+      ).replace(/=+$/, ""),
       key_ops: ["sign"],
     };
-    const cryptoKey = await crypto.subtle.importKey("jwk", jwk, ED25519, true, ["sign"]);
-    const pubJwk = await crypto.subtle.exportKey("jwk", await crypto.subtle.importKey(
+    const cryptoKey = await crypto.subtle.importKey("jwk", jwk, ED25519, true, [
+      "sign",
+    ]);
+    const pubJwk = await crypto.subtle.exportKey(
       "jwk",
-      { ...jwk, d: undefined, key_ops: ["verify"] },
-      ED25519,
-      true,
-      ["verify"]
-    ));
+      await crypto.subtle.importKey(
+        "jwk",
+        { ...jwk, d: undefined, key_ops: ["verify"] },
+        ED25519,
+        true,
+        ["verify"],
+      ),
+    );
     const pubBytes = Uint8Array.from(
       atob((pubJwk.x as string).replace(/-/g, "+").replace(/_/g, "/")),
-      (c) => c.charCodeAt(0)
+      (c) => c.charCodeAt(0),
     );
     void cryptoKey; // used above for type narrowing
     this.#publicKey = PublicKey.fromBytes(pubBytes);
@@ -233,10 +251,19 @@ export class SecretKey {
     const jwk: JsonWebKey = {
       kty: "OKP",
       crv: "Ed25519",
-      d: btoa(String.fromCharCode(...this.#bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+      d: btoa(String.fromCharCode(...this.#bytes)).replace(/\+/g, "-").replace(
+        /\//g,
+        "_",
+      ).replace(/=+$/, ""),
       key_ops: ["sign"],
     };
-    const cryptoKey = await crypto.subtle.importKey("jwk", jwk, ED25519, false, ["sign"]);
+    const cryptoKey = await crypto.subtle.importKey(
+      "jwk",
+      jwk,
+      ED25519,
+      false,
+      ["sign"],
+    );
     const sig = await crypto.subtle.sign(ED25519, cryptoKey, data.slice());
     return new Uint8Array(sig);
   }

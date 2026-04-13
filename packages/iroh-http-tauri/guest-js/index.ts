@@ -13,15 +13,16 @@
  * ```
  */
 
-import { invoke, Channel } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 // ── Base64 helpers ────────────────────────────────────────────────────────────
 
 function encodeBase64(u8: Uint8Array): string {
   const CHUNK = 0x8000; // 32 KB — safe for String.fromCharCode spread
   const parts: string[] = [];
-  for (let i = 0; i < u8.length; i += CHUNK)
+  for (let i = 0; i < u8.length; i += CHUNK) {
     parts.push(String.fromCharCode(...u8.subarray(i, i + CHUNK)));
+  }
   return btoa(parts.join(""));
 }
 
@@ -32,28 +33,28 @@ function decodeBase64(s: string): Uint8Array {
   return out;
 }
 import {
-  buildNode,
-  type NodeOptions,
-  type IrohNode,
   type AddrFunctions,
-  type DiscoveryFunctions,
-  type NodeAddrInfo,
-  type PeerStats,
-  type PeerDiscoveryEvent,
-  type RelayMode,
+  buildNode,
   classifyBindError,
+  type DiscoveryFunctions,
+  type IrohNode,
+  type NodeAddrInfo,
+  type NodeOptions,
+  type PeerDiscoveryEvent,
+  type PeerStats,
+  type RelayMode,
   type SecretKey,
 } from "@momics/iroh-http-shared";
 import type {
+  AllocBodyWriterFn,
   Bridge,
+  FfiDuplexStream,
   FfiResponse,
   FfiResponseHead,
-  FfiDuplexStream,
+  RawConnectFn,
   RawFetchFn,
   RawServeFn,
-  RawConnectFn,
   RawSessionFns,
-  AllocBodyWriterFn,
   RequestPayload,
 } from "@momics/iroh-http-shared/adapter";
 
@@ -63,8 +64,10 @@ const PLUGIN = "plugin:iroh-http";
 
 const bridge: Bridge = {
   nextChunk(handle: bigint): Promise<Uint8Array | null> {
-    return invoke<string | null>(`${PLUGIN}|next_chunk`, { handle: Number(handle) }).then(
-      (b64) => (b64 ? decodeBase64(b64) : null)
+    return invoke<string | null>(`${PLUGIN}|next_chunk`, {
+      handle: Number(handle),
+    }).then(
+      (b64) => (b64 ? decodeBase64(b64) : null),
     );
   },
 
@@ -92,7 +95,9 @@ const bridge: Bridge = {
   },
 
   async nextTrailer(handle: bigint): Promise<[string, string][] | null> {
-    const rows = await invoke<string[][] | null>(`${PLUGIN}|next_trailer`, { handle: Number(handle) });
+    const rows = await invoke<string[][] | null>(`${PLUGIN}|next_trailer`, {
+      handle: Number(handle),
+    });
     return rows ? (rows as [string, string][]) : null;
   },
 
@@ -114,7 +119,7 @@ const rawFetch: RawFetchFn = async (
   headers,
   reqBodyHandle,
   fetchToken,
-  directAddrs
+  directAddrs,
 ) => {
   const res = await invoke<{
     status: number;
@@ -160,7 +165,7 @@ interface TauriRequestPayload {
 const rawServe: RawServeFn = (
   endpointHandle,
   _options,
-  callback: (payload: RequestPayload) => Promise<FfiResponseHead>
+  callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ) => {
   const channel = new Channel<TauriRequestPayload>();
 
@@ -195,9 +200,10 @@ const rawServe: RawServeFn = (
     }
   };
 
-  invoke(`${PLUGIN}|serve`, { endpointHandle: Number(endpointHandle), channel }).catch((err: unknown) =>
-    console.error("[iroh-http-tauri] serve error:", err)
-  );
+  invoke(`${PLUGIN}|serve`, { endpointHandle: Number(endpointHandle), channel })
+    .catch((err: unknown) =>
+      console.error("[iroh-http-tauri] serve error:", err)
+    );
 };
 
 const allocBodyWriter: AllocBodyWriterFn = (): Promise<bigint> => {
@@ -208,13 +214,13 @@ const rawConnect: RawConnectFn = async (
   endpointHandle,
   nodeId,
   path,
-  headers
+  headers,
 ) => {
   const res = await invoke<{ readHandle: number; writeHandle: number }>(
     `${PLUGIN}|raw_connect`,
     {
       args: { endpointHandle: Number(endpointHandle), nodeId, path, headers },
-    }
+    },
   );
   return {
     readHandle: BigInt(res.readHandle),
@@ -227,7 +233,11 @@ const rawConnect: RawConnectFn = async (
 const tauriSessionFns: RawSessionFns = {
   connect: async (endpointHandle, nodeId, directAddrs) => {
     return invoke<number>(`${PLUGIN}|session_connect`, {
-      args: { endpointHandle: Number(endpointHandle), nodeId, directAddrs: directAddrs ?? null },
+      args: {
+        endpointHandle: Number(endpointHandle),
+        nodeId,
+        directAddrs: directAddrs ?? null,
+      },
     }).then(BigInt);
   },
   createBidiStream: async (sessionHandle) => {
@@ -235,28 +245,47 @@ const tauriSessionFns: RawSessionFns = {
       `${PLUGIN}|session_create_bidi_stream`,
       { sessionHandle: Number(sessionHandle) },
     );
-    return { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream;
+    return {
+      readHandle: BigInt(res.readHandle),
+      writeHandle: BigInt(res.writeHandle),
+    } satisfies FfiDuplexStream;
   },
   nextBidiStream: async (sessionHandle) => {
-    const res = await invoke<{ readHandle: number; writeHandle: number } | null>(
+    const res = await invoke<
+      { readHandle: number; writeHandle: number } | null
+    >(
       `${PLUGIN}|session_next_bidi_stream`,
       { sessionHandle: Number(sessionHandle) },
     );
-    return res ? { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream : null;
+    return res
+      ? {
+        readHandle: BigInt(res.readHandle),
+        writeHandle: BigInt(res.writeHandle),
+      } satisfies FfiDuplexStream
+      : null;
   },
   createUniStream: async (sessionHandle) => {
-    return invoke<number>(`${PLUGIN}|session_create_uni_stream`, { sessionHandle: Number(sessionHandle) }).then(BigInt);
+    return invoke<number>(`${PLUGIN}|session_create_uni_stream`, {
+      sessionHandle: Number(sessionHandle),
+    }).then(BigInt);
   },
   nextUniStream: async (sessionHandle) => {
-    const h = await invoke<number | null>(`${PLUGIN}|session_next_uni_stream`, { sessionHandle: Number(sessionHandle) });
+    const h = await invoke<number | null>(`${PLUGIN}|session_next_uni_stream`, {
+      sessionHandle: Number(sessionHandle),
+    });
     return h != null ? BigInt(h) : null;
   },
   sendDatagram: async (sessionHandle, data) => {
     const b64 = btoa(String.fromCharCode(...data));
-    await invoke<void>(`${PLUGIN}|session_send_datagram`, { sessionHandle: Number(sessionHandle), data: b64 });
+    await invoke<void>(`${PLUGIN}|session_send_datagram`, {
+      sessionHandle: Number(sessionHandle),
+      data: b64,
+    });
   },
   recvDatagram: async (sessionHandle) => {
-    const res = await invoke<string | null>(`${PLUGIN}|session_recv_datagram`, { sessionHandle: Number(sessionHandle) });
+    const res = await invoke<string | null>(`${PLUGIN}|session_recv_datagram`, {
+      sessionHandle: Number(sessionHandle),
+    });
     if (res === null) return null;
     const bin = atob(res);
     const out = new Uint8Array(bin.length);
@@ -264,13 +293,22 @@ const tauriSessionFns: RawSessionFns = {
     return out;
   },
   maxDatagramSize: async (sessionHandle) => {
-    return invoke<number | null>(`${PLUGIN}|session_max_datagram_size`, { sessionHandle: Number(sessionHandle) });
+    return invoke<number | null>(`${PLUGIN}|session_max_datagram_size`, {
+      sessionHandle: Number(sessionHandle),
+    });
   },
   closed: async (sessionHandle) => {
-    return invoke<{ closeCode: number; reason: string }>(`${PLUGIN}|session_closed`, { sessionHandle: Number(sessionHandle) });
+    return invoke<{ closeCode: number; reason: string }>(
+      `${PLUGIN}|session_closed`,
+      { sessionHandle: Number(sessionHandle) },
+    );
   },
   close: async (sessionHandle, closeCode?, reason?) => {
-    await invoke<void>(`${PLUGIN}|session_close`, { sessionHandle: Number(sessionHandle), closeCode, reason });
+    await invoke<void>(`${PLUGIN}|session_close`, {
+      sessionHandle: Number(sessionHandle),
+      closeCode,
+      reason,
+    });
   },
 };
 
@@ -297,7 +335,7 @@ function installLifecycleListener(
       } catch {
         retries++;
         if (retries < maxRetries) {
-          await new Promise<void>(r => setTimeout(r, 100 * 2 ** retries));
+          await new Promise<void>((r) => setTimeout(r, 100 * 2 ** retries));
         }
       }
     }
@@ -315,10 +353,18 @@ function normaliseRelayMode(mode?: RelayMode): {
   relays: string[] | null;
   disableNetworking: boolean;
 } {
-  if (mode === "disabled") return { relayMode: "disabled", relays: [], disableNetworking: true };
-  if (mode === "default" || mode === undefined) return { relayMode: undefined, relays: null, disableNetworking: false };
-  if (mode === "staging") return { relayMode: "staging", relays: null, disableNetworking: false };
-  if (Array.isArray(mode)) return { relayMode: "custom", relays: mode, disableNetworking: false };
+  if (mode === "disabled") {
+    return { relayMode: "disabled", relays: [], disableNetworking: true };
+  }
+  if (mode === "default" || mode === undefined) {
+    return { relayMode: undefined, relays: null, disableNetworking: false };
+  }
+  if (mode === "staging") {
+    return { relayMode: "staging", relays: null, disableNetworking: false };
+  }
+  if (Array.isArray(mode)) {
+    return { relayMode: "custom", relays: mode, disableNetworking: false };
+  }
   return { relayMode: "custom", relays: [mode], disableNetworking: false };
 }
 
@@ -338,38 +384,62 @@ function normaliseDiscovery(disc?: NodeOptions["discovery"]): {
 /** Address introspection functions backed by Tauri invoke calls. */
 const tauriAddrFns: AddrFunctions = {
   nodeAddr: async (handle) => {
-    return invoke<NodeAddrInfo>(`${PLUGIN}|node_addr`, { endpointHandle: Number(handle) });
+    return invoke<NodeAddrInfo>(`${PLUGIN}|node_addr`, {
+      endpointHandle: Number(handle),
+    });
   },
   nodeTicket: async (handle) => {
-    return invoke<string>(`${PLUGIN}|node_ticket`, { endpointHandle: Number(handle) });
+    return invoke<string>(`${PLUGIN}|node_ticket`, {
+      endpointHandle: Number(handle),
+    });
   },
   homeRelay: async (handle) => {
-    return invoke<string | null>(`${PLUGIN}|home_relay`, { endpointHandle: Number(handle) });
+    return invoke<string | null>(`${PLUGIN}|home_relay`, {
+      endpointHandle: Number(handle),
+    });
   },
   peerInfo: async (handle, nodeId) => {
-    return invoke<NodeAddrInfo | null>(`${PLUGIN}|peer_info`, { endpointHandle: Number(handle), nodeId });
+    return invoke<NodeAddrInfo | null>(`${PLUGIN}|peer_info`, {
+      endpointHandle: Number(handle),
+      nodeId,
+    });
   },
   peerStats: async (handle, nodeId) => {
-    return invoke<PeerStats | null>(`${PLUGIN}|peer_stats`, { endpointHandle: Number(handle), nodeId });
+    return invoke<PeerStats | null>(`${PLUGIN}|peer_stats`, {
+      endpointHandle: Number(handle),
+      nodeId,
+    });
   },
 };
 
 /** Discovery functions backed by Tauri invoke calls. */
 const tauriDiscoveryFns: DiscoveryFunctions = {
   mdnsBrowse: async (handle, serviceName) => {
-    return invoke<number>(`${PLUGIN}|mdns_browse`, { endpointHandle: Number(handle), serviceName });
+    return invoke<number>(`${PLUGIN}|mdns_browse`, {
+      endpointHandle: Number(handle),
+      serviceName,
+    });
   },
   mdnsNextEvent: async (browseHandle) => {
-    return invoke<PeerDiscoveryEvent | null>(`${PLUGIN}|mdns_next_event`, { browseHandle: Number(browseHandle) });
+    return invoke<PeerDiscoveryEvent | null>(`${PLUGIN}|mdns_next_event`, {
+      browseHandle: Number(browseHandle),
+    });
   },
   mdnsBrowseClose: (browseHandle) => {
-    void invoke(`${PLUGIN}|mdns_browse_close`, { browseHandle: Number(browseHandle) });
+    void invoke(`${PLUGIN}|mdns_browse_close`, {
+      browseHandle: Number(browseHandle),
+    });
   },
   mdnsAdvertise: async (handle, serviceName) => {
-    return invoke<number>(`${PLUGIN}|mdns_advertise`, { endpointHandle: Number(handle), serviceName });
+    return invoke<number>(`${PLUGIN}|mdns_advertise`, {
+      endpointHandle: Number(handle),
+      serviceName,
+    });
   },
   mdnsAdvertiseClose: (advertiseHandle) => {
-    void invoke(`${PLUGIN}|mdns_advertise_close`, { advertiseHandle: Number(advertiseHandle) });
+    void invoke(`${PLUGIN}|mdns_advertise_close`, {
+      advertiseHandle: Number(advertiseHandle),
+    });
   },
 };
 
@@ -378,10 +448,16 @@ const tauriDiscoveryFns: DiscoveryFunctions = {
  */
 export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   const keyBytes: string | null = options?.key
-    ? encodeBase64(options.key instanceof Uint8Array ? options.key : (options.key as SecretKey).toBytes())
+    ? encodeBase64(
+      options.key instanceof Uint8Array
+        ? options.key
+        : (options.key as SecretKey).toBytes(),
+    )
     : null;
 
-  const { relayMode, relays, disableNetworking } = normaliseRelayMode(options?.relayMode);
+  const { relayMode, relays, disableNetworking } = normaliseRelayMode(
+    options?.relayMode,
+  );
   const discovery = normaliseDiscovery(options?.discovery);
   const bindAddrs = options?.bindAddr
     ? (Array.isArray(options.bindAddr) ? options.bindAddr : [options.bindAddr])
@@ -394,36 +470,42 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   }>(`${PLUGIN}|create_endpoint`, {
     args: options
       ? {
-          key: keyBytes,
-          idleTimeout: options.idleTimeout ?? null,
-          relayMode: relayMode ?? null,
-          relays,
-          bindAddrs,
-          dnsDiscovery: discovery.dnsServerUrl ?? options.dnsDiscovery ?? null,
-          dnsDiscoveryEnabled: discovery.dnsEnabled,
-          channelCapacity: options.advanced?.channelCapacity ?? null,
-          maxChunkSizeBytes: options.advanced?.maxChunkSizeBytes ?? null,
-          maxConsecutiveErrors: options.advanced?.maxConsecutiveErrors ?? null,
-          drainTimeout: options.advanced?.drainTimeout ?? null,
-          handleTtl: options.advanced?.handleTtl ?? null,
-          maxPooledConnections: options.maxPooledConnections ?? null,
-          poolIdleTimeoutMs: options.poolIdleTimeoutMs ?? null,
-          disableNetworking,
-          proxyUrl: options.proxyUrl ?? null,
-          proxyFromEnv: options.proxyFromEnv ?? null,
-          keylog: options.keylog ?? null,
-          compressionLevel: typeof options.compression === "object"
-            ? options.compression.level ?? null : options.compression ? 3 : null,
-          compressionMinBodyBytes: typeof options.compression === "object"
-            ? options.compression.minBodyBytes ?? null : null,
-          maxConcurrency: options.maxConcurrency ?? null,
-          maxConnectionsPerPeer: options.maxConnectionsPerPeer ?? null,
-          requestTimeout: options.requestTimeout ?? null,
-          maxRequestBodyBytes: options.maxRequestBodyBytes ?? null,
-          maxHeaderBytes: options.maxHeaderBytes ?? null,
-        }
+        key: keyBytes,
+        idleTimeout: options.idleTimeout ?? null,
+        relayMode: relayMode ?? null,
+        relays,
+        bindAddrs,
+        dnsDiscovery: discovery.dnsServerUrl ?? options.dnsDiscovery ?? null,
+        dnsDiscoveryEnabled: discovery.dnsEnabled,
+        channelCapacity: options.advanced?.channelCapacity ?? null,
+        maxChunkSizeBytes: options.advanced?.maxChunkSizeBytes ?? null,
+        maxConsecutiveErrors: options.advanced?.maxConsecutiveErrors ?? null,
+        drainTimeout: options.advanced?.drainTimeout ?? null,
+        handleTtl: options.advanced?.handleTtl ?? null,
+        maxPooledConnections: options.maxPooledConnections ?? null,
+        poolIdleTimeoutMs: options.poolIdleTimeoutMs ?? null,
+        disableNetworking,
+        proxyUrl: options.proxyUrl ?? null,
+        proxyFromEnv: options.proxyFromEnv ?? null,
+        keylog: options.keylog ?? null,
+        compressionLevel: typeof options.compression === "object"
+          ? options.compression.level ?? null
+          : options.compression
+          ? 3
+          : null,
+        compressionMinBodyBytes: typeof options.compression === "object"
+          ? options.compression.minBodyBytes ?? null
+          : null,
+        maxConcurrency: options.maxConcurrency ?? null,
+        maxConnectionsPerPeer: options.maxConnectionsPerPeer ?? null,
+        requestTimeout: options.requestTimeout ?? null,
+        maxRequestBodyBytes: options.maxRequestBodyBytes ?? null,
+        maxHeaderBytes: options.maxHeaderBytes ?? null,
+      }
       : null,
-  }).catch((e: unknown) => { throw classifyBindError(e); });
+  }).catch((e: unknown) => {
+    throw classifyBindError(e);
+  });
 
   const node = buildNode(
     bridge,
@@ -436,17 +518,29 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawServe,
     rawConnect,
     allocBodyWriter,
-    (handle, force?) => invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: Number(handle), force: force ?? null }),
-    (handle) => { invoke(`${PLUGIN}|stop_serve`, { endpointHandle: Number(handle) }).catch(() => {}); },
+    (handle, force?) =>
+      invoke(`${PLUGIN}|close_endpoint`, {
+        endpointHandle: Number(handle),
+        force: force ?? null,
+      }),
+    (handle) => {
+      invoke(`${PLUGIN}|stop_serve`, { endpointHandle: Number(handle) }).catch(
+        () => {},
+      );
+    },
     tauriAddrFns,
     tauriDiscoveryFns,
     tauriSessionFns,
   );
 
   // Install lifecycle listener for mobile/reconnect support.
-  const reconnect = options?.reconnect ?? (options?.lifecycle
-    ? { auto: options.lifecycle.autoReconnect, maxRetries: options.lifecycle.maxRetries }
-    : undefined);
+  const reconnect = options?.reconnect ??
+    (options?.lifecycle
+      ? {
+        auto: options.lifecycle.autoReconnect,
+        maxRetries: options.lifecycle.maxRetries,
+      }
+      : undefined);
   if (reconnect) {
     installLifecycleListener(
       Number(info.endpointHandle),
@@ -461,4 +555,4 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   return node;
 }
 
-export type { NodeOptions, IrohNode };
+export type { IrohNode, NodeOptions };

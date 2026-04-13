@@ -7,7 +7,7 @@
  */
 
 import type { PublicKey, SecretKey } from "./keys.js";
-import type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
+import type { ServeHandle, ServeHandler, ServeOptions } from "./serve.js";
 import type { IrohSession, WebTransportCloseInfo } from "./session.js";
 
 export interface Bridge {
@@ -21,10 +21,11 @@ export interface Bridge {
 
   // ── §3 AbortSignal cancellation ────────────────────────────────────────────
   /** Drop a body reader from the Rust slab, cancelling an in-flight fetch. */
-  cancelRequest(handle: bigint): Promise<void>;  /**
+  cancelRequest(handle: bigint): Promise<void>; /**
    * Allocate an in-flight cancellation token in the Rust fetch map.
    * Call this before `rawFetch` and wire abort → `cancelFetch(token)`.
    */
+
   allocFetchToken(): Promise<bigint>;
   /**
    * Signal the Rust fetch task to abort.  Safe to call after the fetch has
@@ -456,7 +457,7 @@ export interface IrohNode {
   fetch(
     peer: PublicKey | string,
     input: string | URL,
-    init?: IrohFetchInit
+    init?: IrohFetchInit,
   ): Promise<Response>;
   /**
    * Start listening for incoming HTTP requests.
@@ -489,7 +490,10 @@ export interface IrohNode {
    * @returns An `IrohSession` scoped to the remote peer.
    * @throws {IrohConnectError} If the peer is unreachable.
    */
-  connect(peer: PublicKey | string, init?: { directAddrs?: string[] }): Promise<IrohSession>;
+  connect(
+    peer: PublicKey | string,
+    init?: { directAddrs?: string[] },
+  ): Promise<IrohSession>;
   /**
    * Discover peers on the local network via mDNS.
    *
@@ -503,7 +507,10 @@ export interface IrohNode {
    * }
    * ```
    */
-  browse(options?: MdnsOptions, signal?: AbortSignal): AsyncIterable<PeerDiscoveryEvent>;
+  browse(
+    options?: MdnsOptions,
+    signal?: AbortSignal,
+  ): AsyncIterable<PeerDiscoveryEvent>;
   /**
    * Advertise this node on the local network via mDNS.
    *
@@ -570,7 +577,10 @@ export interface IrohNode {
    * }
    * ```
    */
-  pathChanges(peer: PublicKey | string, pollIntervalMs?: number): AsyncIterable<PathInfo>;
+  pathChanges(
+    peer: PublicKey | string,
+    pollIntervalMs?: number,
+  ): AsyncIterable<PathInfo>;
   /** Close the endpoint and release resources. */
   close(options?: CloseOptions): Promise<void>;
   /** Enables `await using node = await createNode()` (TC39 explicit resource management). */
@@ -643,7 +653,7 @@ export interface PeerDiscoveryEvent {
 export type RawServeFn = (
   endpointHandle: number,
   options: Record<string, unknown>,
-  callback: (payload: RequestPayload) => Promise<FfiResponseHead>
+  callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ) => void;
 
 /** Raw fetch function provided by each platform bridge. */
@@ -655,7 +665,7 @@ export type RawFetchFn = (
   headers: [string, string][],
   reqBodyHandle: bigint | null,
   fetchToken: bigint,
-  directAddrs: string[] | null
+  directAddrs: string[] | null,
 ) => Promise<FfiResponse>;
 
 /** Allocate a body writer handle (may be sync or async). */

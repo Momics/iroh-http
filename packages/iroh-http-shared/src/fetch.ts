@@ -10,8 +10,15 @@
  * ```
  */
 
-import type { Bridge, RawFetchFn, AllocBodyWriterFn, RawConnectFn, BidirectionalStream, IrohFetchInit } from "./bridge.js";
-import { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
+import type {
+  AllocBodyWriterFn,
+  BidirectionalStream,
+  Bridge,
+  IrohFetchInit,
+  RawConnectFn,
+  RawFetchFn,
+} from "./bridge.js";
+import { bodyInitToStream, makeReadable, pipeToWriter } from "./streams.js";
 import type { PublicKey } from "./keys.js";
 import { resolveNodeId } from "./keys.js";
 import { classifyError } from "./errors.js";
@@ -19,7 +26,7 @@ import { classifyError } from "./errors.js";
 export type FetchFn = (
   peer: PublicKey | string,
   input: string | URL,
-  init?: IrohFetchInit
+  init?: IrohFetchInit,
 ) => Promise<Response>;
 
 /**
@@ -45,12 +52,12 @@ export function makeFetch(
   bridge: Bridge,
   endpointHandle: number,
   rawFetch: RawFetchFn,
-  allocBodyWriter: AllocBodyWriterFn
+  allocBodyWriter: AllocBodyWriterFn,
 ): FetchFn {
   return async (
     peer: PublicKey | string,
     input: string | URL,
-    init?: IrohFetchInit
+    init?: IrohFetchInit,
   ): Promise<Response> => {
     const nodeId = resolveNodeId(peer);
     const url = typeof input === "string" ? input : input.toString();
@@ -60,7 +67,7 @@ export function makeFetch(
       const scheme = url.slice(0, url.indexOf("://") + 3);
       throw new TypeError(
         `iroh-http URLs must use the "httpi://" scheme, not "${scheme}". ` +
-        `Example: httpi://nodeId/path — or pass a bare path like "/api/data".`
+          `Example: httpi://nodeId/path — or pass a bare path like "/api/data".`,
       );
     }
 
@@ -105,20 +112,38 @@ export function makeFetch(
     let onAbort: (() => void) | null = null;
     const abortPromise = signal
       ? new Promise<never>((_, reject) => {
-          onAbort = () =>
-            reject(new DOMException("The operation was aborted", "AbortError"));
-          signal.addEventListener("abort", onAbort);
-        })
+        onAbort = () =>
+          reject(new DOMException("The operation was aborted", "AbortError"));
+        signal.addEventListener("abort", onAbort);
+      })
       : null;
 
     let rawRes: Awaited<ReturnType<RawFetchFn>>;
     try {
       rawRes = abortPromise
         ? await Promise.race([
-            rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken, directAddrs),
-            abortPromise,
-          ])
-        : await rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken, directAddrs);
+          rawFetch(
+            endpointHandle,
+            nodeId,
+            url,
+            method,
+            headers,
+            reqBodyHandle,
+            fetchToken,
+            directAddrs,
+          ),
+          abortPromise,
+        ])
+        : await rawFetch(
+          endpointHandle,
+          nodeId,
+          url,
+          method,
+          headers,
+          reqBodyHandle,
+          fetchToken,
+          directAddrs,
+        );
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       throw classifyError(err);
@@ -213,13 +238,19 @@ export function makeFetch(
 export function makeConnect(
   bridge: Bridge,
   endpointHandle: number,
-  rawConnect: RawConnectFn
-): (peer: PublicKey | string, path: string, init?: RequestInit) => Promise<BidirectionalStream> {
+  rawConnect: RawConnectFn,
+): (
+  peer: PublicKey | string,
+  path: string,
+  init?: RequestInit,
+) => Promise<BidirectionalStream> {
   return async (peer, path, init) => {
     const nodeId = resolveNodeId(peer);
     const headers = normaliseHeaders(init?.headers);
     const ffi = await rawConnect(endpointHandle, nodeId, path, headers)
-      .catch((err) => { throw classifyError(err); });
+      .catch((err) => {
+        throw classifyError(err);
+      });
 
     const readable = makeReadable(bridge, ffi.readHandle);
     const writable = new WritableStream<Uint8Array>({
@@ -241,7 +272,7 @@ export function makeConnect(
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function normaliseHeaders(
-  h: HeadersInit | undefined | null
+  h: HeadersInit | undefined | null,
 ): [string, string][] {
   if (!h) return [];
   if (h instanceof Headers) {

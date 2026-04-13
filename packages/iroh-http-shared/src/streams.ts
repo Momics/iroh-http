@@ -18,7 +18,11 @@ import type { Bridge } from "./bridge.js";
  * @param onClose Optional callback invoked when the stream reaches EOF or is cancelled.
  * @returns A `ReadableStream<Uint8Array>` backed by the body channel.
  */
-export function makeReadable(bridge: Bridge, handle: bigint, onClose?: () => void): ReadableStream<Uint8Array> {
+export function makeReadable(
+  bridge: Bridge,
+  handle: bigint,
+  onClose?: () => void,
+): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       const chunk = await bridge.nextChunk(handle);
@@ -50,7 +54,7 @@ export function makeReadable(bridge: Bridge, handle: bigint, onClose?: () => voi
 export async function pipeToWriter(
   bridge: Bridge,
   stream: ReadableStream<Uint8Array>,
-  handle: bigint
+  handle: bigint,
 ): Promise<void> {
   const reader = stream.getReader();
   try {
@@ -81,7 +85,7 @@ export async function pipeToWriter(
  * @throws {TypeError} If `body` is a `FormData` instance.
  */
 export function bodyInitToStream(
-  body: BodyInit | null | undefined
+  body: BodyInit | null | undefined,
 ): ReadableStream<Uint8Array> | null {
   if (body == null) return null;
   if (body instanceof ReadableStream) return body as ReadableStream<Uint8Array>;
@@ -100,7 +104,7 @@ export function bodyInitToStream(
   if (body instanceof FormData) {
     throw new TypeError(
       "FormData request bodies are not supported by iroh-http (v1). " +
-      "Serialise the form data manually and pass a string or Uint8Array body instead."
+        "Serialise the form data manually and pass a string or Uint8Array body instead.",
     );
   }
   if (body instanceof URLSearchParams) {

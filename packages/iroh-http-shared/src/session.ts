@@ -34,7 +34,11 @@ export interface WebTransportDatagramDuplexStream {
 /** Raw session FFI functions provided by each platform adapter. */
 export interface RawSessionFns {
   /** Establish a session to a remote peer. Returns an opaque session handle. */
-  connect(endpointHandle: number, nodeId: string, directAddrs: string[] | null): Promise<bigint>;
+  connect(
+    endpointHandle: number,
+    nodeId: string,
+    directAddrs: string[] | null,
+  ): Promise<bigint>;
   /** Open a new bidi stream on an existing session. */
   createBidiStream(sessionHandle: bigint): Promise<FfiDuplexStream>;
   /** Accept the next incoming bidi stream. Returns `null` when the session closes. */
@@ -52,7 +56,11 @@ export interface RawSessionFns {
   /** Wait for the session to close. Returns close info. */
   closed(sessionHandle: bigint): Promise<WebTransportCloseInfo>;
   /** Close the session with an optional close code and reason. */
-  close(sessionHandle: bigint, closeCode?: number, reason?: string): Promise<void>;
+  close(
+    sessionHandle: bigint,
+    closeCode?: number,
+    reason?: string,
+  ): Promise<void>;
 }
 
 /**
@@ -80,12 +88,16 @@ export interface IrohSession {
   /**
    * Incoming bidirectional streams opened by the remote peer.
    */
-  readonly incomingBidirectionalStreams: ReadableStream<WebTransportBidirectionalStream>;
+  readonly incomingBidirectionalStreams: ReadableStream<
+    WebTransportBidirectionalStream
+  >;
 
   /**
    * Incoming unidirectional streams from the remote peer.
    */
-  readonly incomingUnidirectionalStreams: ReadableStream<ReadableStream<Uint8Array>>;
+  readonly incomingUnidirectionalStreams: ReadableStream<
+    ReadableStream<Uint8Array>
+  >;
 
   /** Datagram duplex stream for unreliable message passing. */
   readonly datagrams: WebTransportDatagramDuplexStream;
@@ -129,10 +141,13 @@ export function buildSession(
   }
 
   // Lazy incoming bidi streams — only one ReadableStream instance.
-  let _incomingBidiStreams: ReadableStream<WebTransportBidirectionalStream> | null = null;
+  let _incomingBidiStreams:
+    | ReadableStream<WebTransportBidirectionalStream>
+    | null = null;
 
   // Lazy incoming uni streams.
-  let _incomingUniStreams: ReadableStream<ReadableStream<Uint8Array>> | null = null;
+  let _incomingUniStreams: ReadableStream<ReadableStream<Uint8Array>> | null =
+    null;
 
   // Lazy datagram duplex stream.
   let _datagrams: WebTransportDatagramDuplexStream | null = null;
@@ -142,7 +157,9 @@ export function buildSession(
 
     ready: Promise.resolve(undefined),
 
-    async createBidirectionalStream(): Promise<WebTransportBidirectionalStream> {
+    async createBidirectionalStream(): Promise<
+      WebTransportBidirectionalStream
+    > {
       const ffi = await rawSession.createBidiStream(sessionHandle);
       return wrapDuplex(ffi);
     },
@@ -162,9 +179,13 @@ export function buildSession(
       });
     },
 
-    get incomingBidirectionalStreams(): ReadableStream<WebTransportBidirectionalStream> {
+    get incomingBidirectionalStreams(): ReadableStream<
+      WebTransportBidirectionalStream
+    > {
       if (!_incomingBidiStreams) {
-        _incomingBidiStreams = new ReadableStream<WebTransportBidirectionalStream>({
+        _incomingBidiStreams = new ReadableStream<
+          WebTransportBidirectionalStream
+        >({
           async pull(controller) {
             const ffi = await rawSession.nextBidiStream(sessionHandle);
             if (ffi === null) {
@@ -178,7 +199,9 @@ export function buildSession(
       return _incomingBidiStreams;
     },
 
-    get incomingUnidirectionalStreams(): ReadableStream<ReadableStream<Uint8Array>> {
+    get incomingUnidirectionalStreams(): ReadableStream<
+      ReadableStream<Uint8Array>
+    > {
       if (!_incomingUniStreams) {
         _incomingUniStreams = new ReadableStream<ReadableStream<Uint8Array>>({
           async pull(controller) {
@@ -215,12 +238,16 @@ export function buildSession(
 
         let maxSize: number | null = null;
         // Eagerly fetch max datagram size (fire-and-forget).
-        void rawSession.maxDatagramSize(sessionHandle).then((s) => { maxSize = s; });
+        void rawSession.maxDatagramSize(sessionHandle).then((s) => {
+          maxSize = s;
+        });
 
         _datagrams = {
           readable,
           writable,
-          get maxDatagramSize() { return maxSize; },
+          get maxDatagramSize() {
+            return maxSize;
+          },
           incomingHighWaterMark: 1,
           outgoingHighWaterMark: 1,
         };
@@ -231,7 +258,11 @@ export function buildSession(
     closed: closedPromise,
 
     close(closeInfo?: WebTransportCloseInfo): void {
-      void rawSession.close(sessionHandle, closeInfo?.closeCode ?? 0, closeInfo?.reason ?? "");
+      void rawSession.close(
+        sessionHandle,
+        closeInfo?.closeCode ?? 0,
+        closeInfo?.reason ?? "",
+      );
     },
 
     [Symbol.asyncDispose]() {

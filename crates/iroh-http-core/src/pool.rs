@@ -49,7 +49,9 @@ impl ConnectionPool {
         if let Some(tti) = idle_timeout {
             builder = builder.time_to_idle(tti);
         }
-        Self { cache: builder.build() }
+        Self {
+            cache: builder.build(),
+        }
     }
 
     /// Get an existing live connection, or establish a new one.
@@ -67,7 +69,10 @@ impl ConnectionPool {
         F: FnOnce() -> Fut + Send,
         Fut: std::future::Future<Output = Result<Connection, String>> + Send,
     {
-        let key = PoolKey { node_id, alpn: alpn.to_vec() };
+        let key = PoolKey {
+            node_id,
+            alpn: alpn.to_vec(),
+        };
 
         // Phase 1: check for a live cached connection (no lock held while awaiting).
         if let Some(pooled) = self.cache.get(&key).await {
@@ -100,9 +105,7 @@ impl ConnectionPool {
                 // Guard against a connection that was closed immediately.
                 if pooled.conn.close_reason().is_some() {
                     self.cache.invalidate(&key).await;
-                    return Err(
-                        "pooled connection closed immediately after connect".to_string(),
-                    );
+                    return Err("pooled connection closed immediately after connect".to_string());
                 }
                 Ok((*pooled).clone())
             }

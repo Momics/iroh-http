@@ -3,21 +3,20 @@
 //! This crate owns the Iroh endpoint and wires HTTP/1.1 framing to QUIC
 //! streams via hyper.  Nothing in here knows about JavaScript.
 
-pub(crate) mod io;
 pub mod client;
 pub mod endpoint;
+pub(crate) mod io;
 pub(crate) mod pool;
 pub mod server;
 pub mod session;
 pub mod stream;
 
 pub use client::{fetch, raw_connect};
-pub use stream::{alloc_fetch_token, cancel_in_flight};
+#[cfg(feature = "compression")]
+pub use endpoint::CompressionOptions;
 pub use endpoint::{
     parse_direct_addrs, IrohEndpoint, NodeAddrInfo, NodeOptions, PathInfo, PeerStats,
 };
-#[cfg(feature = "compression")]
-pub use endpoint::CompressionOptions;
 pub use server::serve;
 pub use server::ServeHandle;
 pub use session::{
@@ -30,6 +29,7 @@ pub use stream::{
     alloc_body_writer, cancel_reader, finish_body, next_chunk, next_trailer, send_chunk,
     send_trailers, BodyReader,
 };
+pub use stream::{alloc_fetch_token, cancel_in_flight};
 
 // ── Structured error types ────────────────────────────────────────────────────
 
@@ -60,19 +60,34 @@ pub struct CoreError {
 
 impl CoreError {
     pub fn invalid_input(detail: impl std::fmt::Display) -> Self {
-        CoreError { code: ErrorCode::InvalidInput, message: detail.to_string() }
+        CoreError {
+            code: ErrorCode::InvalidInput,
+            message: detail.to_string(),
+        }
     }
     pub fn connection_failed(detail: impl std::fmt::Display) -> Self {
-        CoreError { code: ErrorCode::ConnectionFailed, message: detail.to_string() }
+        CoreError {
+            code: ErrorCode::ConnectionFailed,
+            message: detail.to_string(),
+        }
     }
     pub fn timeout(detail: impl std::fmt::Display) -> Self {
-        CoreError { code: ErrorCode::Timeout, message: detail.to_string() }
+        CoreError {
+            code: ErrorCode::Timeout,
+            message: detail.to_string(),
+        }
     }
     pub fn body_too_large(detail: impl std::fmt::Display) -> Self {
-        CoreError { code: ErrorCode::BodyTooLarge, message: detail.to_string() }
+        CoreError {
+            code: ErrorCode::BodyTooLarge,
+            message: detail.to_string(),
+        }
     }
     pub fn internal(detail: impl std::fmt::Display) -> Self {
-        CoreError { code: ErrorCode::Internal, message: detail.to_string() }
+        CoreError {
+            code: ErrorCode::Internal,
+            message: detail.to_string(),
+        }
     }
     pub fn invalid_handle(handle: u32) -> Self {
         CoreError {
@@ -81,7 +96,10 @@ impl CoreError {
         }
     }
     pub fn cancelled() -> Self {
-        CoreError { code: ErrorCode::Cancelled, message: "aborted".to_string() }
+        CoreError {
+            code: ErrorCode::Cancelled,
+            message: "aborted".to_string(),
+        }
     }
 }
 
@@ -250,10 +268,16 @@ pub fn parse_node_addr(s: &str) -> Result<ParsedNodeAddr, CoreError> {
             .iter()
             .filter_map(|a| a.parse::<std::net::SocketAddr>().ok())
             .collect();
-        return Ok(ParsedNodeAddr { node_id, direct_addrs });
+        return Ok(ParsedNodeAddr {
+            node_id,
+            direct_addrs,
+        });
     }
     let node_id = parse_node_id(s)?;
-    Ok(ParsedNodeAddr { node_id, direct_addrs: Vec::new() })
+    Ok(ParsedNodeAddr {
+        node_id,
+        direct_addrs: Vec::new(),
+    })
 }
 
 // ── FFI types ─────────────────────────────────────────────────────────────────

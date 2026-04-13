@@ -71,26 +71,41 @@ pub struct ServeHandle {
 }
 
 impl ServeHandle {
-    pub fn shutdown(&self) { self.shutdown_notify.notify_one(); }
-    pub async fn drain(self) { self.shutdown(); let _ = self.join.await; }
-    pub fn abort(&self) { self.join.abort(); }
-    pub fn drain_timeout(&self) -> std::time::Duration { self.drain_timeout }
+    pub fn shutdown(&self) {
+        self.shutdown_notify.notify_one();
+    }
+    pub async fn drain(self) {
+        self.shutdown();
+        let _ = self.join.await;
+    }
+    pub fn abort(&self) {
+        self.join.abort();
+    }
+    pub fn drain_timeout(&self) -> std::time::Duration {
+        self.drain_timeout
+    }
 }
 
 // ── respond() ────────────────────────────────────────────────────────────────
 
-pub fn respond(req_handle: u64, status: u16, headers: Vec<(String, String)>) -> Result<(), CoreError> {
+pub fn respond(
+    req_handle: u64,
+    status: u16,
+    headers: Vec<(String, String)>,
+) -> Result<(), CoreError> {
     StatusCode::from_u16(status)
         .map_err(|_| CoreError::invalid_input(format!("invalid HTTP status code: {status}")))?;
     for (name, value) in &headers {
-        HeaderName::from_bytes(name.as_bytes())
-            .map_err(|_| CoreError::invalid_input(format!("invalid response header name {:?}", name)))?;
-        HeaderValue::from_str(value)
-            .map_err(|_| CoreError::invalid_input(format!("invalid response header value for {:?}", name)))?;
+        HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+            CoreError::invalid_input(format!("invalid response header name {:?}", name))
+        })?;
+        HeaderValue::from_str(value).map_err(|_| {
+            CoreError::invalid_input(format!("invalid response header value for {:?}", name))
+        })?;
     }
 
-    let sender = take_req_sender(req_handle)
-        .ok_or_else(|| CoreError::invalid_handle(req_handle as u32))?;
+    let sender =
+        take_req_sender(req_handle).ok_or_else(|| CoreError::invalid_handle(req_handle as u32))?;
     sender
         .send(ResponseHeadEntry { status, headers })
         .map_err(|_| CoreError::internal("serve task dropped before respond"))
@@ -111,9 +126,14 @@ impl PeerConnectionGuard {
     ) -> Option<Self> {
         let mut map = counts.lock().unwrap_or_else(|e| e.into_inner());
         let count = map.entry(peer).or_insert(0);
-        if *count >= max { return None; }
+        if *count >= max {
+            return None;
+        }
         *count += 1;
-        Some(PeerConnectionGuard { counts: counts.clone(), peer })
+        Some(PeerConnectionGuard {
+            counts: counts.clone(),
+            peer,
+        })
     }
 }
 
@@ -122,7 +142,9 @@ impl Drop for PeerConnectionGuard {
         let mut map = self.counts.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(c) = map.get_mut(&self.peer) {
             *c = c.saturating_sub(1);
-            if *c == 0 { map.remove(&self.peer); }
+            if *c == 0 {
+                map.remove(&self.peer);
+            }
         }
     }
 }
@@ -274,8 +296,8 @@ impl RequestService {
         // ── Duplex path: send 101 and pipe upgraded IO ────────────────────────
 
         if let Some(upgrade_fut) = upgrade_future {
-            let req_body_writer = duplex_req_body_writer
-                .expect("duplex path always has req_body_writer");
+            let req_body_writer =
+                duplex_req_body_writer.expect("duplex path always has req_body_writer");
             // Spawn the upgrade pump after hyper delivers the 101.
             //
             // Both directions are wired to the channels already sent to JS:
@@ -415,7 +437,9 @@ where
         .unwrap_or(DEFAULT_MAX_CONNECTIONS_PER_PEER);
     let max_request_body_bytes = options.max_request_body_bytes;
     let drain_timeout = std::time::Duration::from_secs(
-        options.drain_timeout_secs.unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS),
+        options
+            .drain_timeout_secs
+            .unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS),
     );
     let max_header_size = endpoint.max_header_size();
     #[cfg(feature = "compression")]
@@ -464,10 +488,15 @@ where
             };
 
             let conn = match incoming.await {
-                Ok(c) => { consecutive_errors = 0; c }
+                Ok(c) => {
+                    consecutive_errors = 0;
+                    c
+                }
                 Err(e) => {
                     consecutive_errors += 1;
-                    tracing::warn!("iroh-http: accept error ({consecutive_errors}/{max_errors}): {e}");
+                    tracing::warn!(
+                        "iroh-http: accept error ({consecutive_errors}/{max_errors}): {e}"
+                    );
                     if consecutive_errors >= max_errors {
                         tracing::error!("iroh-http: too many accept errors — shutting down");
                         break;
@@ -477,17 +506,18 @@ where
             };
 
             let remote_pk = conn.remote_id();
-            let guard = match PeerConnectionGuard::acquire(&peer_counts, remote_pk, max_conns_per_peer) {
-                Some(g) => g,
-                None => {
-                    tracing::warn!(
-                        "iroh-http: peer {} exceeded connection limit",
-                        base32_encode(remote_pk.as_bytes())
-                    );
-                    conn.close(0u32.into(), b"too many connections");
-                    continue;
-                }
-            };
+            let guard =
+                match PeerConnectionGuard::acquire(&peer_counts, remote_pk, max_conns_per_peer) {
+                    Some(g) => g,
+                    None => {
+                        tracing::warn!(
+                            "iroh-http: peer {} exceeded connection limit",
+                            base32_encode(remote_pk.as_bytes())
+                        );
+                        conn.close(0u32.into(), b"too many connections");
+                        continue;
+                    }
+                };
 
             let remote_id = base32_encode(remote_pk.as_bytes());
             let mut peer_svc = base_svc.clone();
@@ -525,7 +555,7 @@ where
                         // CompressionLayer (zstd-only, for responses ≥ 512 bytes).
                         #[cfg(feature = "compression")]
                         let hyper_svc = {
-                            use tower_http::compression::{CompressionLayer, predicate::SizeAbove};
+                            use tower_http::compression::{predicate::SizeAbove, CompressionLayer};
                             TowerToHyperService::new(
                                 tower::ServiceBuilder::new()
                                     .layer(
@@ -563,7 +593,11 @@ where
         }
     });
 
-    ServeHandle { join, shutdown_notify, drain_timeout: drain_dur }
+    ServeHandle {
+        join,
+        shutdown_notify,
+        drain_timeout: drain_dur,
+    }
 }
 
 // ── TimeoutService — thin per-request timeout wrapper ────────────────────────
