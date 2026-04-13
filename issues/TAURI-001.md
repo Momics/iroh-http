@@ -1,7 +1,7 @@
 ---
 id: "TAURI-001"
 title: "Broken CommonJS export path — dist/index.cjs is not produced"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: tauri

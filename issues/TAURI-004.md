@@ -1,7 +1,7 @@
 ---
 id: "TAURI-004"
 title: "Default permission set omits session, mDNS, and crypto command groups"
-status: open
+status: closed
 priority: P2
 date: 2026-04-13
 area: tauri

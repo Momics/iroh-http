@@ -1,7 +1,7 @@
 ---
 id: "DENO-002"
 title: "ServeQueue cannot naturally terminate — stuck nextRequest awaits after shutdown"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: deno

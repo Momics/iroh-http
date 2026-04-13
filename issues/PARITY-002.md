@@ -1,7 +1,7 @@
 ---
 id: "PARITY-002"
 title: "Python missing publicKey / secretKey wrapper objects — only raw strings/bytes exposed"
-status: open
+status: closed
 priority: P2
 date: 2026-04-13
 area: python

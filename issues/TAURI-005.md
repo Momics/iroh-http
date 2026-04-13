@@ -1,7 +1,7 @@
 ---
 id: "TAURI-005"
 title: "Lifecycle listener cleanup unsubscribe function is never stored or called"
-status: open
+status: closed
 priority: P3
 date: 2026-04-13
 area: tauri

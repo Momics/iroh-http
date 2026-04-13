@@ -1,7 +1,7 @@
 ---
 id: "TAURI-002"
 title: "maxPooledConnections and poolIdleTimeoutMs are silently ignored in Tauri"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: tauri

@@ -1,7 +1,7 @@
 ---
 id: "NODE-002"
 title: "Windows packaging path is broken — missing .node binaries and optionalDependencies"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: node

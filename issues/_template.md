@@ -1,7 +1,7 @@
 ---
 id: "ISS-000"
 title: "Short descriptive title"
-status: open
+status: closed
 # status options: open | in-progress | fixed | wont-fix | duplicate
 priority: P1
 # priority options: P0 (critical) | P1 (high) | P2 (medium) | P3 (low)

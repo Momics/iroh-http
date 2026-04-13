@@ -1,7 +1,7 @@
 ---
 id: "PARITY-005"
 title: "Python serve() returns None — no ServeHandle with finished, onListen, or signal-based stop"
-status: open
+status: closed
 priority: P2
 date: 2026-04-13
 area: python
