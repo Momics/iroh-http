@@ -125,7 +125,7 @@ export function makeServe(
   endpointHandle: number,
   rawServe: RawServeFn,
   nodeId: string,
-  finished: Promise<void>,
+  onNodeClose: Promise<void>,
   stopServe: () => void,
 ): ServeFn {
   return ((...args: unknown[]): ServeHandle => {
@@ -267,12 +267,27 @@ export function makeServe(
     // serve loop is immediately live after rawServe returns.
     options.onListen?.({ nodeId });
 
-    // Wire signal → stopServe for graceful shutdown.
+    // ISS-029: create a finished promise scoped to THIS serve loop's lifetime.
+    // It resolves when stopServe() is explicitly called (signal abort or stopServe)
+    // OR when the node closes — whichever comes first.
+    let resolveFinished!: () => void;
+    const finished = new Promise<void>((r) => {
+      resolveFinished = r;
+    });
+    // Belt-and-suspenders: also resolve when the node itself closes.
+    onNodeClose.then(resolveFinished);
+
+    const doStop = (): void => {
+      stopServe();
+      resolveFinished();
+    };
+
+    // Wire signal → doStop for graceful shutdown.
     if (options.signal) {
       if (options.signal.aborted) {
-        stopServe();
+        doStop();
       } else {
-        options.signal.addEventListener("abort", () => stopServe(), {
+        options.signal.addEventListener("abort", () => doStop(), {
           once: true,
         });
       }

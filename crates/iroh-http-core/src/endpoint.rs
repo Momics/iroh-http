@@ -332,7 +332,9 @@ impl IrohEndpoint {
     ///
     /// If no serve loop is running, closes the endpoint immediately.
     pub async fn close(&self) {
-        crate::stream::unregister_endpoint(self.inner.endpoint_idx);
+        // ISS-027: drain in-flight requests *before* unregistering slab entries so
+        // that request handlers can still access their reader/writer/trailer handles
+        // during the drain window.
         let handle = self
             .inner
             .serve_handle
@@ -342,6 +344,7 @@ impl IrohEndpoint {
         if let Some(h) = handle {
             h.drain().await;
         }
+        crate::stream::unregister_endpoint(self.inner.endpoint_idx);
         self.inner.ep.close().await;
     }
 

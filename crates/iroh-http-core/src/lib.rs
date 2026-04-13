@@ -123,8 +123,9 @@ impl std::fmt::Display for CoreError {
 
 impl std::error::Error for CoreError {}
 
-// Adapters still need to classify errors into JSON for the FFI boundary.
-// This helper wraps CoreError into the legacy JSON format used by adapters.
+// Adapters need to classify errors into JSON for the FFI boundary.
+
+/// Serialize a `CoreError` as a structured JSON error object for the FFI boundary.
 pub fn core_error_to_json(e: &CoreError) -> String {
     let code = match e.code {
         ErrorCode::InvalidInput => "INVALID_INPUT",
@@ -140,52 +141,14 @@ pub fn core_error_to_json(e: &CoreError) -> String {
     format!("{{\"code\":\"{code}\",\"message\":{json_msg}}}")
 }
 
-/// Classify a free-form error message into a JSON error object.
-/// Preserved for adapter compatibility — new code should use `core_error_to_json`.
-pub fn classify_error_json(e: impl std::fmt::Display) -> String {
-    let msg = e.to_string();
-    let code = classify_error_code(&msg);
-    let json_msg = serde_json::Value::String(msg);
+/// Serialize any error as a structured JSON error object with an explicit code.
+///
+/// Use this instead of the removed `classify_error_json` — callers that know the
+/// semantic error code at the call site should pass it directly rather than
+/// inferring it from a string.
+pub fn format_error_json(code: &str, msg: impl std::fmt::Display) -> String {
+    let json_msg = serde_json::Value::String(msg.to_string());
     format!("{{\"code\":\"{code}\",\"message\":{json_msg}}}")
-}
-
-fn classify_error_code(msg: &str) -> &'static str {
-    let m = &msg.to_lowercase();
-    if m.contains("timed out") || m.contains("timeout") || m.contains("deadline") {
-        "TIMEOUT"
-    } else if m.contains("dns") || m.contains("resolv") {
-        "DNS_FAILURE"
-    } else if m.contains("alpn") {
-        "ALPN_MISMATCH"
-    } else if (m.contains("upgrade") && m.contains("reject")) || m.contains("non-101") {
-        "UPGRADE_REJECTED"
-    } else if m.contains("parse") && (m.contains("response head") || m.contains("request head")) {
-        "PARSE_FAILURE"
-    } else if m.contains("too many headers") {
-        "TOO_MANY_HEADERS"
-    } else if (m.contains("invalid") || m.contains("unknown")) && m.contains("handle") {
-        "INVALID_HANDLE"
-    } else if m.contains("writer dropped") {
-        "WRITER_DROPPED"
-    } else if m.contains("reader dropped") {
-        "READER_DROPPED"
-    } else if m.contains("stream reset") {
-        "STREAM_RESET"
-    } else if m.contains("connection")
-        && (m.contains("refused") || m.contains("reset") || m.contains("closed"))
-        || m.contains("connect")
-    {
-        "REFUSED"
-    } else if (m.contains("invalid") && m.contains("key"))
-        || m.contains("key bytes")
-        || m.contains("wrong length")
-    {
-        "INVALID_KEY"
-    } else if m.contains("bind") || m.contains("endpoint") {
-        "ENDPOINT_FAILURE"
-    } else {
-        "UNKNOWN"
-    }
 }
 
 // ── ALPN protocol identifiers ─────────────────────────────────────────────────

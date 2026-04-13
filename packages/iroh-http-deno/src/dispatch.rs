@@ -64,7 +64,11 @@ fn ok(v: impl Serialize) -> Value {
 }
 
 fn err(s: impl std::fmt::Display) -> Value {
-    json!({ "err": iroh_http_core::classify_error_json(s) })
+    json!({ "err": iroh_http_core::format_error_json("UNKNOWN", s) })
+}
+
+fn err_core(e: &iroh_http_core::CoreError) -> Value {
+    json!({ "err": iroh_http_core::core_error_to_json(e) })
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
@@ -86,7 +90,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "peerInfo" => peer_info_dispatch(p).await,
         "peerStats" => peer_stats_dispatch(p).await,
         "allocBodyWriter" => alloc_body_writer_dispatch(),
-        "allocFetchToken" => alloc_fetch_token_dispatch(),
+        "allocFetchToken" => alloc_fetch_token_dispatch(p),
         "cancelInFlight" => cancel_in_flight_dispatch(p),
         "nextChunk" => next_chunk_dispatch(p).await,
         "sendChunk" => send_chunk_dispatch(p).await,
@@ -222,7 +226,7 @@ async fn create_endpoint(p: Value) -> Value {
         },
     };
     match IrohEndpoint::bind(opts).await {
-        Err(e) => err(e),
+        Err(e) => err_core(&e),
         Ok(ep) => {
             let node_id = ep.node_id().to_string();
             let keypair: Vec<u8> = ep.secret_key_bytes().to_vec();
@@ -331,8 +335,9 @@ fn alloc_body_writer_dispatch() -> Value {
     ok(json!({ "handle": handle }))
 }
 
-fn alloc_fetch_token_dispatch() -> Value {
-    ok(json!({ "token": iroh_http_core::alloc_fetch_token(0) }))
+fn alloc_fetch_token_dispatch(p: Value) -> Value {
+    let ep_idx = p["endpointHandle"].as_u64().unwrap_or(0) as u32;
+    ok(json!({ "token": iroh_http_core::alloc_fetch_token(ep_idx) }))
 }
 
 fn cancel_in_flight_dispatch(p: Value) -> Value {

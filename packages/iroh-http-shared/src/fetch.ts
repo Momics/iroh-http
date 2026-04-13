@@ -93,7 +93,7 @@ export function makeFetch(
 
     // Allocate a Rust-side cancellation token so that AbortSignal can cancel
     // the transport even before the response head arrives (§3 enhanced).
-    const fetchToken = await bridge.allocFetchToken();
+    const fetchToken = await bridge.allocFetchToken(endpointHandle);
 
     // Wire AbortSignal → cancelFetch as early as possible (fire-and-forget).
     // This fires even if the signal is already aborted.

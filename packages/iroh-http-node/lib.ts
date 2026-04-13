@@ -89,7 +89,7 @@ const bridge: Bridge = {
     jsCancelRequest(handle);
     return Promise.resolve();
   },
-  allocFetchToken: () => Promise.resolve(jsAllocFetchToken()),
+  allocFetchToken: (eh: number) => Promise.resolve(jsAllocFetchToken(eh)),
   cancelFetch: (token: bigint) => {
     jsCancelInFlight(token);
   },
@@ -342,7 +342,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         relayMode,
         relays,
         bindAddrs,
-        dnsDiscovery: discovery.dnsServerUrl ?? options.dnsDiscovery,
+        dnsDiscovery: discovery.dnsServerUrl ?? null,
         dnsDiscoveryEnabled: discovery.dnsEnabled,
         channelCapacity: options.advanced?.channelCapacity,
         maxChunkSizeBytes: options.advanced?.maxChunkSizeBytes,
