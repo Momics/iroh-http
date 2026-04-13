@@ -9,7 +9,6 @@
 export type {
   BidirectionalStream,
   CloseOptions,
-  DuplexStream,
   EndpointInfo,
   IrohFetchInit,
   IrohNode,

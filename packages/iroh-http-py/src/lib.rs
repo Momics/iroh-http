@@ -548,7 +548,9 @@ impl IrohSession {
 struct IrohPathChanges {
     ep: iroh_http_core::endpoint::IrohEndpoint,
     node_id: String,
-    last_relay: Option<Option<String>>,
+    /// The relay URL from the last yielded event; `None` means not yet yielded.
+    last_relay: Option<String>,
+    last_initialized: bool,
 }
 
 #[pymethods]
@@ -560,20 +562,21 @@ impl IrohPathChanges {
     fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let ep = self.ep.clone();
         let node_id = self.node_id.clone();
-        // Clone last known relay so we can capture it in the future.
-        let mut last = self.last_relay.clone();
+        let last = self.last_relay.clone();
+        let initialized = self.last_initialized;
         let ptr = self as *mut IrohPathChanges as usize;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 let stats = ep.peer_stats(&node_id).await;
-                let current_relay = stats.as_ref().map(|s| s.relay_url.clone());
-                if last.as_ref() != Some(&current_relay) {
+                let current_relay: Option<String> = stats.as_ref().and_then(|s| s.relay_url.clone());
+                let changed = !initialized || last != current_relay;
+                if changed {
                     // Update the stored last value through the raw pointer.
                     // SAFETY: IrohPathChanges is pinned on the Python heap.
                     let inner = unsafe { &mut *(ptr as *mut IrohPathChanges) };
-                    inner.last_relay = Some(current_relay.clone());
-                    last = Some(current_relay.clone());
+                    inner.last_relay = current_relay.clone();
+                    inner.last_initialized = true;
                     return Python::with_gil(|py| {
                         let d = pyo3::types::PyDict::new_bound(py);
                         d.set_item("relay", stats.as_ref().map_or(false, |s| s.relay))?;
@@ -870,6 +873,7 @@ impl IrohNode {
             ep: self.ep.clone(),
             node_id,
             last_relay: None,
+            last_initialized: false,
         }
     }
 
