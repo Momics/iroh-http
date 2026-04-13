@@ -8,7 +8,8 @@
   "scripts": {
     "typecheck": "npm run typecheck --workspaces",
     "build:ts": "npm run build --workspaces",
-    "build:rust": "cargo build --release",
-    "build": "npm run build:rust && npm run build:ts"
+    "build:rust": "cargo build --release --workspace",
+    "build": "bash scripts/build.sh",
+    "build:skip-python": "bash scripts/build.sh --skip-python"
   }
 }
