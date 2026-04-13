@@ -1,4 +1,5 @@
-# Tauri-generated iOS Swift API — populated by `tauri ios init` or `scripts/setup-ios.sh`
+# .tauri/tauri-api is populated by `tauri ios init` in the consumer app project.
+# It is resolved relative to the app at build time — not managed by this plugin.
 .tauri/
 
 # Rust build artifacts (own workspace)
