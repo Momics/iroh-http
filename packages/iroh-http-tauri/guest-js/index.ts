@@ -428,7 +428,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   const node = buildNode(
     bridge,
     {
-      endpointHandle: BigInt(info.endpointHandle),
+      endpointHandle: Number(info.endpointHandle),
       nodeId: info.nodeId,
       keypair: new Uint8Array(info.keypair),
     },

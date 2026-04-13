@@ -671,7 +671,10 @@ fn secret_key_sign_dispatch(p: Value) -> Value {
         Ok(v) => v,
         Err(e) => return err(format!("base64 decode data: {e}")),
     };
-    let sig = iroh_http_core::secret_key_sign(&key_bytes, &data_bytes);
+    let sig = match iroh_http_core::secret_key_sign(&key_bytes, &data_bytes) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
     ok(json!(B64.encode(sig)))
 }
 
@@ -714,7 +717,11 @@ fn public_key_verify_dispatch(p: Value) -> Value {
 }
 
 fn generate_secret_key_dispatch() -> Value {
-    ok(json!(B64.encode(iroh_http_core::generate_secret_key())))
+    let key = match iroh_http_core::generate_secret_key() {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    ok(json!(B64.encode(key)))
 }
 
 // ── mDNS browse / advertise ──────────────────────────────────────────────────
