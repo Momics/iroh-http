@@ -1,0 +1,8 @@
+# Tauri-generated iOS Swift API — populated by `tauri ios init` or `scripts/setup-ios.sh`
+.tauri/
+
+# Rust build artifacts (own workspace)
+/target/
+
+# TypeScript output
+/dist/
