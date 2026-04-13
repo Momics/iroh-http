@@ -311,10 +311,10 @@ export const rawServe: RawServeFn = (
   endpointHandle: number,
   _options: Record<string, unknown>,
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
-) => {
-  call<Record<never, never>>("serveStart", { endpointHandle })
+): Promise<void> => {
+  return call<Record<never, never>>("serveStart", { endpointHandle })
     .then(() => {
-      (async () => {
+      return (async () => {
         while (true) {
           const raw = await call<{
             reqHandle: number;
@@ -367,7 +367,7 @@ export const rawServe: RawServeFn = (
         console.error("[iroh-http-deno] serve loop error:", err),
       );
     })
-    .catch((err) => console.error("[iroh-http-deno] serveStart error:", err));
+    .catch((err) => console.error("[iroh-http-deno] serveStart error:", err)) as Promise<void>;
 };
 
 export const allocBodyWriter: AllocBodyWriterFn = () =>

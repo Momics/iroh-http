@@ -633,7 +633,7 @@ export type RawServeFn = (
   endpointHandle: number,
   options: Record<string, unknown>,
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
-) => void;
+) => Promise<void>;
 
 /** Raw fetch function provided by each platform bridge. */
 export type RawFetchFn = (

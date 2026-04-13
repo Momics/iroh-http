@@ -140,7 +140,7 @@ const rawServe: RawServeFn = (
   endpointHandle,
   _options,
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
-) => {
+): Promise<void> => {
   napiRawServe(endpointHandle, (payload: Record<string, unknown>) => {
     const typed = payload as unknown as RequestPayload;
     // napi-rs's ThreadsafeFunction does not await Promise return values,
@@ -158,6 +158,10 @@ const rawServe: RawServeFn = (
         napiRawRespond(typed.reqHandle, 500, []);
       });
   });
+  // The serve loop runs inside Rust (via napi ThreadsafeFunction); there is no
+  // JS-side polling loop to await. Return a resolved promise to satisfy the
+  // RawServeFn contract.
+  return Promise.resolve();
 };
 
 const allocBodyWriter: AllocBodyWriterFn = () => jsAllocBodyWriter();
