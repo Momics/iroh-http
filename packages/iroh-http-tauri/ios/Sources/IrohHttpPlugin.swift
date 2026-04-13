@@ -1,0 +1,260 @@
+import Foundation
+import Network
+import Tauri
+
+// MARK: - Argument Types
+
+struct BrowseStartArgs: Decodable {
+    let serviceName: String
+}
+
+struct BrowsePollArgs: Decodable {
+    let browseId: UInt64
+}
+
+struct BrowseStopArgs: Decodable {
+    let browseId: UInt64
+}
+
+struct AdvertiseStartArgs: Decodable {
+    let serviceName: String
+}
+
+struct AdvertiseStopArgs: Decodable {
+    let advertiseId: UInt64
+}
+
+// MARK: - Session Types
+
+private final class BrowseSession {
+    let id: UInt64
+    let browser: NWBrowser
+    var pendingEvents: [[String: Any]] = []
+    var knownNodes: [String: String] = [:]  // fullServiceName → nodeId
+
+    init(id: UInt64, browser: NWBrowser) {
+        self.id = id
+        self.browser = browser
+    }
+}
+
+private final class AdvertiseSession {
+    let id: UInt64
+    let listener: NWListener
+
+    init(id: UInt64, listener: NWListener) {
+        self.id = id
+        self.listener = listener
+    }
+}
+
+// MARK: - Plugin
+
+@objc(IrohHttpPlugin)
+class IrohHttpPlugin: Plugin {
+    private let queue = DispatchQueue(label: "com.iroh.http.mdns")
+    private var browseSessions: [UInt64: BrowseSession] = [:]
+    private var advertiseSessions: [UInt64: AdvertiseSession] = [:]
+    private var nextBrowseId: UInt64 = 1
+    private var nextAdvertiseId: UInt64 = 1
+
+    // MARK: - Helpers
+
+    private func allocBrowseId() -> UInt64 {
+        defer { nextBrowseId += 1 }
+        return nextBrowseId
+    }
+
+    private func allocAdvertiseId() -> UInt64 {
+        defer { nextAdvertiseId += 1 }
+        return nextAdvertiseId
+    }
+
+    /// Decode a flat DNS-SD TXT record byte blob into key-value pairs.
+    private func parseTxtRecord(_ data: Data?) -> [String: String] {
+        guard let data = data, !data.isEmpty else { return [:] }
+        var result: [String: String] = [:]
+        var idx = 0
+        let bytes = [UInt8](data)
+        while idx < bytes.count {
+            let len = Int(bytes[idx])
+            idx += 1
+            guard len > 0, idx + len <= bytes.count else { break }
+            let slice = bytes[idx ..< (idx + len)]
+            idx += len
+            if let eqIdx = slice.firstIndex(of: UInt8(ascii: "=")) {
+                let key = String(bytes: slice[..<eqIdx], encoding: .utf8) ?? ""
+                let val = String(bytes: slice[(eqIdx + 1)...], encoding: .utf8) ?? ""
+                if !key.isEmpty { result[key] = val }
+            }
+        }
+        return result
+    }
+
+    /// Encode key-value pairs into DNS-SD TXT record data.
+    private func encodeTxtData(_ pairs: [String: String]) -> Data {
+        var result = Data()
+        for (key, value) in pairs {
+            let entry = "\(key)=\(value)"
+            guard let entryData = entry.data(using: .utf8), entryData.count <= 255 else { continue }
+            result.append(UInt8(entryData.count))
+            result.append(entryData)
+        }
+        return result
+    }
+
+    // MARK: - Browse Commands
+
+    @objc public func mdns_browse_start(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(BrowseStartArgs.self)
+        let browseId = allocBrowseId()
+
+        let serviceType = "_\(args.serviceName)._udp"
+        let descriptor = NWBrowser.Descriptor.bonjourWithTXTRecord(type: serviceType, domain: nil)
+        let browser = NWBrowser(for: descriptor, using: .udp)
+        let session = BrowseSession(id: browseId, browser: browser)
+
+        browser.browseResultsChangedHandler = { [weak self] latestResults, _ in
+            guard let self = self else { return }
+            self.queue.async {
+                self.handleBrowseResults(session: session, results: latestResults)
+            }
+        }
+
+        browser.stateUpdateHandler = { [weak self] state in
+            if case .failed(let error) = state {
+                if case .dns(let code) = error, code == -65569 {
+                    browser.cancel()
+                    self?.queue.async { self?.browseSessions.removeValue(forKey: browseId) }
+                } else {
+                    NSLog("[iroh-http-mdns] browse \(browseId) failed: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        queue.async {
+            self.browseSessions[browseId] = session
+            browser.start(queue: self.queue)
+        }
+
+        invoke.resolve(["browseId": browseId])
+    }
+
+    private func handleBrowseResults(session: BrowseSession, results: Set<NWBrowser.Result>) {
+        var currentPks: Set<String> = []
+
+        for result in results {
+            var txt: [String: String] = [:]
+            if case let .bonjour(txtRecord) = result.metadata {
+                if #available(iOS 16.0, *) {
+                    txt = parseTxtRecord(txtRecord.data)
+                } else {
+                    for (key, entry) in txtRecord {
+                        if case .string(let value) = entry { txt[key] = value }
+                    }
+                }
+            }
+            guard let pk = txt["pk"], !pk.isEmpty else { continue }
+            currentPks.insert(pk)
+
+            var addrs: [String] = []
+            if let relay = txt["relay"], !relay.isEmpty { addrs.append(relay) }
+
+            if case .service(let name, _, _, _) = result.endpoint {
+                if session.knownNodes[name] != pk {
+                    session.knownNodes[name] = pk
+                    session.pendingEvents.append([
+                        "type": "discovered",
+                        "nodeId": pk,
+                        "addrs": addrs,
+                    ])
+                }
+            }
+        }
+
+        // Emit "expired" for nodes that vanished from the result set.
+        let expiredNames = session.knownNodes.filter { !currentPks.contains($0.value) }.map { $0.key }
+        for name in expiredNames {
+            if let pk = session.knownNodes.removeValue(forKey: name) {
+                session.pendingEvents.append(["type": "expired", "nodeId": pk, "addrs": []])
+            }
+        }
+    }
+
+    @objc public func mdns_browse_poll(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(BrowsePollArgs.self)
+        queue.async {
+            guard let session = self.browseSessions[args.browseId] else {
+                invoke.resolve(["events": [] as [[String: Any]]])
+                return
+            }
+            let events = session.pendingEvents
+            session.pendingEvents = []
+            invoke.resolve(["events": events])
+        }
+    }
+
+    @objc public func mdns_browse_stop(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(BrowseStopArgs.self)
+        queue.async {
+            if let session = self.browseSessions.removeValue(forKey: args.browseId) {
+                session.browser.cancel()
+            }
+        }
+        invoke.resolve()
+    }
+
+    // MARK: - Advertise Commands
+
+    @objc public func mdns_advertise_start(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(AdvertiseStartArgs.self)
+        let advertiseId = allocAdvertiseId()
+
+        let serviceType = "_\(args.serviceName)._udp"
+        let listener: NWListener
+        do {
+            listener = try NWListener(using: .udp)
+        } catch {
+            invoke.reject("Failed to create listener: \(error.localizedDescription)")
+            return
+        }
+
+        listener.service = NWListener.Service(type: serviceType)
+        listener.newConnectionHandler = { conn in conn.cancel() }
+
+        listener.stateUpdateHandler = { [weak self] state in
+            if case .failed(let error) = state {
+                if case .dns(let code) = error, code == -65569 {
+                    listener.cancel()
+                    self?.queue.async { self?.advertiseSessions.removeValue(forKey: advertiseId) }
+                } else {
+                    NSLog("[iroh-http-mdns] advertise \(advertiseId) failed: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        queue.async {
+            self.advertiseSessions[advertiseId] = AdvertiseSession(id: advertiseId, listener: listener)
+            listener.start(queue: self.queue)
+        }
+
+        invoke.resolve(["advertiseId": advertiseId])
+    }
+
+    @objc public func mdns_advertise_stop(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(AdvertiseStopArgs.self)
+        queue.async {
+            if let session = self.advertiseSessions.removeValue(forKey: args.advertiseId) {
+                session.listener.cancel()
+            }
+        }
+        invoke.resolve()
+    }
+}
+
+// MARK: - Entry point
+
+@_cdecl("init_plugin_iroh_http")
+func initPlugin() -> Plugin {
+    return IrohHttpPlugin()
+}

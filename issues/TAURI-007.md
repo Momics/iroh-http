@@ -1,7 +1,7 @@
 ---
 id: "TAURI-007"
 title: "build.rs does not register android_path or ios_path with tauri-plugin builder"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: tauri

@@ -50,5 +50,7 @@ fn main() {
         "mdns_advertise",
         "mdns_advertise_close",
     ])
+    .android_path("android")
+    .ios_path("ios")
     .build();
 }

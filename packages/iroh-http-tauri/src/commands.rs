@@ -673,7 +673,7 @@ pub struct PeerDiscoveryEventPayload {
 
 /// Start a browse session: discover peers on the local network via mDNS.
 #[command]
-#[cfg(feature = "discovery")]
+#[cfg(all(feature = "discovery", not(mobile)))]
 pub async fn mdns_browse(endpoint_handle: u64, service_name: String) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
@@ -685,14 +685,26 @@ pub async fn mdns_browse(endpoint_handle: u64, service_name: String) -> Result<u
 }
 
 #[command]
-#[cfg(not(feature = "discovery"))]
+#[cfg(all(not(feature = "discovery"), not(mobile)))]
 pub async fn mdns_browse(_endpoint_handle: u64, _service_name: String) -> Result<u64, String> {
     Err(iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"))
 }
 
+#[command]
+#[cfg(mobile)]
+pub async fn mdns_browse<R: tauri::Runtime>(
+    state: tauri::State<'_, crate::mobile_mdns::MobileMdns<R>>,
+    _endpoint_handle: u64,
+    service_name: String,
+) -> Result<u64, String> {
+    state
+        .browse_start(&service_name)
+        .map_err(|e| iroh_http_core::format_error_json("REFUSED", e))
+}
+
 /// Poll the next discovery event from a browse session.
 #[command]
-#[cfg(feature = "discovery")]
+#[cfg(all(feature = "discovery", not(mobile)))]
 pub async fn mdns_next_event(browse_handle: u64) -> Result<Option<PeerDiscoveryEventPayload>, String> {
     let session = {
         browse_slab().lock().unwrap().get(browse_handle as usize).cloned()
@@ -706,13 +718,30 @@ pub async fn mdns_next_event(browse_handle: u64) -> Result<Option<PeerDiscoveryE
 }
 
 #[command]
-#[cfg(not(feature = "discovery"))]
+#[cfg(all(not(feature = "discovery"), not(mobile)))]
 pub async fn mdns_next_event(_browse_handle: u64) -> Result<Option<PeerDiscoveryEventPayload>, String> {
     Err(iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"))
 }
 
+#[command]
+#[cfg(mobile)]
+pub async fn mdns_next_event<R: tauri::Runtime>(
+    state: tauri::State<'_, crate::mobile_mdns::MobileMdns<R>>,
+    browse_handle: u64,
+) -> Result<Option<PeerDiscoveryEventPayload>, String> {
+    let events = state
+        .browse_poll(browse_handle)
+        .map_err(|e| iroh_http_core::format_error_json("INVALID_HANDLE", e))?;
+    Ok(events.into_iter().next().map(|ev| PeerDiscoveryEventPayload {
+        is_active: ev.kind == "discovered",
+        node_id: ev.node_id,
+        addrs: ev.addrs,
+    }))
+}
+
 /// Close a browse session, stopping mDNS discovery.
 #[command]
+#[cfg(not(mobile))]
 pub fn mdns_browse_close(browse_handle: u64) {
     #[cfg(feature = "discovery")]
     {
@@ -723,9 +752,18 @@ pub fn mdns_browse_close(browse_handle: u64) {
     }
 }
 
+#[command]
+#[cfg(mobile)]
+pub fn mdns_browse_close<R: tauri::Runtime>(
+    state: tauri::State<'_, crate::mobile_mdns::MobileMdns<R>>,
+    browse_handle: u64,
+) {
+    let _ = state.browse_stop(browse_handle);
+}
+
 /// Start advertising this node on the local network via mDNS.
 #[command]
-#[cfg(feature = "discovery")]
+#[cfg(all(feature = "discovery", not(mobile)))]
 pub fn mdns_advertise(endpoint_handle: u64, service_name: String) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
@@ -736,13 +774,26 @@ pub fn mdns_advertise(endpoint_handle: u64, service_name: String) -> Result<u64,
 }
 
 #[command]
-#[cfg(not(feature = "discovery"))]
+#[cfg(all(not(feature = "discovery"), not(mobile)))]
 pub fn mdns_advertise(_endpoint_handle: u64, _service_name: String) -> Result<u64, String> {
     Err(iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"))
 }
 
+#[command]
+#[cfg(mobile)]
+pub fn mdns_advertise<R: tauri::Runtime>(
+    state: tauri::State<'_, crate::mobile_mdns::MobileMdns<R>>,
+    _endpoint_handle: u64,
+    service_name: String,
+) -> Result<u64, String> {
+    state
+        .advertise_start(&service_name)
+        .map_err(|e| iroh_http_core::format_error_json("REFUSED", e))
+}
+
 /// Stop advertising this node on the local network.
 #[command]
+#[cfg(not(mobile))]
 pub fn mdns_advertise_close(advertise_handle: u64) {
     #[cfg(feature = "discovery")]
     {
@@ -751,5 +802,14 @@ pub fn mdns_advertise_close(advertise_handle: u64) {
             slab.remove(advertise_handle as usize);
         }
     }
+}
+
+#[command]
+#[cfg(mobile)]
+pub fn mdns_advertise_close<R: tauri::Runtime>(
+    state: tauri::State<'_, crate::mobile_mdns::MobileMdns<R>>,
+    advertise_handle: u64,
+) {
+    let _ = state.advertise_stop(advertise_handle);
 }
 

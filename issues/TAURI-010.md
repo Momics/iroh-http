@@ -1,7 +1,7 @@
 ---
 id: "TAURI-010"
 title: "Android native layer is structurally wrong and missing Gradle project files"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: tauri

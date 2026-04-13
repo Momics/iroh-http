@@ -1,7 +1,7 @@
 ---
 id: "TAURI-009"
 title: "iOS native layer is structurally wrong and missing Package.swift"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: tauri

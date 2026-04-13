@@ -1,7 +1,7 @@
 ---
 id: "TAURI-012"
 title: "mDNS commands.rs unconditionally calls Rust mdns-sd with no mobile dispatch path"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: tauri

@@ -1,7 +1,7 @@
 ---
 id: "TAURI-008"
 title: "Rust plugin has no mobile bridge layer — native iOS/Android code is never registered"
-status: open
+status: closed
 priority: P0
 date: 2026-04-13
 area: tauri
