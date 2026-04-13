@@ -100,7 +100,7 @@ else
   ok "lib.ts → lib.js + lib.d.ts"
 
   # Quick import smoke test
-  if node -e "require('./packages/iroh-http-node/lib.js')" 2>/dev/null; then
+  if node -e "require('./packages/iroh-http-node/lib.js')" >/dev/null 2>&1; then
     ok "require() smoke test passed"
   else
     fail "require() smoke test — lib.js failed to load"
