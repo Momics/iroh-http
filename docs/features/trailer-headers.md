@@ -50,11 +50,13 @@ const checksum = trailers?.get('x-body-checksum');
 
 ## How it works
 
-Trailers are negotiated implicitly: when the ALPN includes a trailers-capable variant (`iroh-http/1-trailers`, `iroh-http/1-full`), both sides exchange a trailer block after the body using the framing crate's `serialize_trailers` / `parse_trailers` functions. The framing is a simple `\r\n`-delimited header block in the same format as the request/response head.
+Trailers use the `iroh-http/2` ALPN framing. Both sides send a trailer block
+after the response body — a `\r\n`-delimited header block in the same format
+as the request/response head, terminated by a double `\r\n`.
 
 On the JS side:
 - `req.trailers` is attached to the `Request` object inside `makeServe` using `Object.defineProperty`.
-- `res.trailers` is read from the `Response` object after the handler returns; if present, its return value is sent via `bridge.sendTrailers` once the response body is fully piped.
+- `res.trailers` is read from the `Response` object after the handler returns; if present, its return value is sent once the response body is fully piped.
 
 ## Limitations
 

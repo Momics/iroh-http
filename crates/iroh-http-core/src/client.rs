@@ -127,7 +127,7 @@ pub async fn fetch(
                 .map_err(|e| format!("connect: {e}"))
         })
         .await
-        .map_err(|e| CoreError::connection_failed(e))?;
+        .map_err(CoreError::connection_failed)?;
 
     let conn = pooled.conn.clone();
 
@@ -174,6 +174,7 @@ async fn do_fetch(
 
     let io = TokioIo::new(IrohStream::new(send, recv));
 
+    #[allow(unused_mut)] // mut only needed without the compression feature
     let (mut sender, conn_task) = hyper::client::conn::http1::Builder::new()
         // hyper requires max_buf_size >= 8192; clamp upward so small
         // max_header_size values don't panic.  Header-size enforcement happens
@@ -293,19 +294,23 @@ pub(crate) async fn pump_hyper_body_to_channel<B>(
     B: http_body::Body<Data = Bytes>,
     B::Error: std::fmt::Debug,
 {
-    pump_hyper_body_to_channel_limited(body, writer, trailer_tx, None, drain_timeout()).await;
+    pump_hyper_body_to_channel_limited(body, writer, trailer_tx, None, drain_timeout(), None).await;
 }
 
 /// Drain with optional byte limit and a per-frame read timeout.
 ///
 /// `frame_timeout` bounds how long we wait for each individual body frame.
 /// A slow-drip peer that stalls indefinitely will be cut off after this deadline.
+///
+/// When a byte limit is set and the body exceeds it, `overflow_tx` is fired
+/// so the caller can return a `413 Content Too Large` response (ISS-004).
 pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
     body: B,
     writer: BodyWriter,
     trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
     max_bytes: Option<usize>,
     frame_timeout: std::time::Duration,
+    overflow_tx: Option<tokio::sync::oneshot::Sender<()>>,
 ) where
     B: http_body::Body<Data = Bytes>,
     B::Error: std::fmt::Debug,
@@ -336,6 +341,10 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
                     if let Some(limit) = max_bytes {
                         if total > limit {
                             tracing::warn!("iroh-http: request body exceeded {limit} bytes");
+                            // ISS-004: signal overflow so the serve path can send 413.
+                            if let Some(tx) = overflow_tx {
+                                let _ = tx.send(());
+                            }
                             break;
                         }
                     }
@@ -458,7 +467,7 @@ pub async fn raw_connect(
                 .map_err(|e| format!("connect duplex: {e}"))
         })
         .await
-        .map_err(|e| CoreError::connection_failed(e))?;
+        .map_err(CoreError::connection_failed)?;
 
     let (send, recv) = pooled
         .conn

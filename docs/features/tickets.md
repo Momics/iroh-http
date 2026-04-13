@@ -27,13 +27,22 @@ expected: bare node ID string, `NodeAddr` object, or ticket string.
 
 ## Format
 
-Tickets encode to Iroh's standard URL-safe base32/bech32 representation and
-are compatible with all Iroh tooling. A ticket string is stable for as long as
-the node's relay URL and direct addresses remain current; stale tickets still
-work via fallback DNS discovery using the embedded public key.
+Tickets are JSON objects serialised to a URL-safe base64 string. They encode
+the node's public key, relay URL, and known direct socket addresses. Example
+decoded form:
+
+```json
+{
+  "nodeId": "q4bsxi2...",
+  "relayUrl": "https://relay.example.com",
+  "addrs": ["192.168.1.5:12345"]
+}
+```
+
+A ticket string is stable for as long as the node's relay URL and direct
+addresses remain current; stale tickets still work by falling back to relay
+discovery using the embedded public key.
 
 ## References
 
-- [Iroh ticket concepts](https://docs.iroh.computer/concepts/tickets)
-
-→ [Patch 26](../patches/26_patch.md)
+- [iroh QUIC transport](https://docs.iroh.computer/)

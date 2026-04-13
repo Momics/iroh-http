@@ -143,7 +143,7 @@ test("serve + fetch — plain response logs no internal pipe errors", async () =
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     const ac = new AbortController();
-    server.serve({ signal: ac.signal }, (_req) =>
+    const handle = server.serve({ signal: ac.signal }, (_req) =>
       new Response("hello", { status: 200 }),
     );
 
@@ -153,15 +153,16 @@ test("serve + fetch — plain response logs no internal pipe errors", async () =
     assert.equal(resp.status, 200);
     assert.equal(await resp.text(), "hello");
 
-    // Yield so any async pipe errors from the serve loop have time to surface.
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // ISS-022: abort and wait for the serve loop to fully drain instead of
+    // sleeping a fixed duration to let pipe errors surface.
+    ac.abort();
+    await handle.finished.catch(() => {});
 
     assert.deepEqual(
       internalErrors,
       [],
       `Unexpected internal errors:\n${internalErrors.join("\n")}`,
     );
-    ac.abort();
   } finally {
     console.error = origConsoleError;
     await server.close();

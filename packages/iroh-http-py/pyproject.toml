@@ -18,7 +18,13 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
-[project.optional-dependencies]
+[project.urls]
+Homepage = "https://github.com/momics/iroh-http"
+Repository = "https://github.com/momics/iroh-http"
+Documentation = "https://github.com/momics/iroh-http/tree/main/packages/iroh-http-py"
+"Bug Tracker" = "https://github.com/momics/iroh-http/issues"
+
+
 dev = [
     "pytest>=7",
     "pytest-asyncio>=0.23",

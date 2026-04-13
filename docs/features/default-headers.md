@@ -31,8 +31,8 @@ Because the header value is derived from the authenticated key, it matches the i
 
 ## Optional headers
 
-The following headers are injected when `NodeOptions.injectHeaders` includes
-the corresponding key:
+The following diagnostic headers can be requested by setting `debugHeaders: true`
+in `NodeOptions`:
 
 | Header | Direction | Value |
 |---|---|---|

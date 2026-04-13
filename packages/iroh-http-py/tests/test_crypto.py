@@ -54,35 +54,52 @@ def test_sign_empty_message():
 
 @pytest.mark.asyncio
 async def test_verify_valid_signature():
-    node = await create_node(disable_networking=True)
-    secret = node.keypair
-    public = bytes.fromhex(node.node_id) if len(node.node_id) == 64 else None
-    # node_id is base32 — derive public key from a sign/verify cycle instead
-    msg = b"test message"
-    sig = secret_key_sign(secret, msg)
-    # Use node_id as the public key identifier by creating a fresh verifiable pair
+    """Valid signature must verify as True."""
+    import base64
+
     key = generate_secret_key()
-    sig2 = secret_key_sign(key, msg)
-    # public_key_verify requires the raw 32-byte public key — derive via create_node
-    node2 = await create_node(key=key, disable_networking=True)
-    # node_id is base32; we need raw bytes for verify — get them from keypair sign cycle
-    # Here we verify the API contract: same key, same msg → True
+    node = await create_node(key=key, disable_networking=True)
+    node_id = node.node_id  # base32-encoded public key
     await node.close()
-    await node2.close()
+
+    # Decode the base32 public key (iroh uses RFC 4648 lower-case, no padding)
+    padding = (8 - len(node_id) % 8) % 8
+    try:
+        pub = base64.b32decode(node_id.upper() + "=" * padding)
+    except Exception:
+        pytest.skip("node_id encoding not compatible with stdlib base32")
+
+    if len(pub) != 32:
+        pytest.skip("decoded public key length unexpected")
+
+    msg = b"test message"
+    sig = secret_key_sign(key, msg)
+    assert public_key_verify(pub, msg, sig) is True, "valid signature must verify True"
 
 
 @pytest.mark.asyncio
 async def test_verify_invalid_signature():
     """Tampered signature must return False."""
+    import base64
+
     key = generate_secret_key()
+    node = await create_node(key=key, disable_networking=True)
+    node_id = node.node_id
+    await node.close()
+
+    padding = (8 - len(node_id) % 8) % 8
+    try:
+        pub = base64.b32decode(node_id.upper() + "=" * padding)
+    except Exception:
+        pytest.skip("node_id encoding not compatible with stdlib base32")
+
+    if len(pub) != 32:
+        pytest.skip("decoded public key length unexpected")
+
     msg = b"original"
     sig = bytearray(secret_key_sign(key, msg))
-    sig[0] ^= 0xFF  # flip a byte
-    node = await create_node(key=key, disable_networking=True)
-    # We can only call public_key_verify with raw 32-byte pubkey.
-    # node.keypair is the private key. To get the public key bytes we derive a second node.
-    # This test documents the intended API; actual verification is exercised via round-trip.
-    await node.close()
+    sig[0] ^= 0xFF  # flip a byte to invalidate
+    assert public_key_verify(pub, msg, bytes(sig)) is False, "tampered signature must verify False"
 
 
 @pytest.mark.asyncio

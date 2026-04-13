@@ -256,8 +256,16 @@ impl IrohUniStream {
 #[pymethods]
 impl IrohBidiStream {
     /// Write bytes to the stream.
+    ///
+    /// Raises `RuntimeError` if called on a receive-only stream (e.g. one returned
+    /// by `next_unidirectional_stream`).  PY-006.
     fn write<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
         let handle = self.write_handle;
+        if handle == 0 {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "write() is not supported on a receive-only unidirectional stream",
+            ));
+        }
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             send_chunk(handle, Bytes::from(data))
                 .await
@@ -280,7 +288,14 @@ impl IrohBidiStream {
     }
 
     /// Close (finish) the write side of the stream.
+    ///
+    /// Raises `RuntimeError` if called on a receive-only stream.  PY-006.
     fn close(&self) -> PyResult<()> {
+        if self.write_handle == 0 {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "close() is not supported on a receive-only unidirectional stream",
+            ));
+        }
         finish_body(self.write_handle).map_err(py_err)
     }
 
@@ -310,7 +325,9 @@ impl IrohBidiStream {
 #[cfg(feature = "mdns")]
 #[pyclass]
 struct IrohBrowseSession {
-    inner: tokio::sync::Mutex<iroh_http_discovery::BrowseSession>,
+    // PY-002: Arc so the mutex can be cheaply cloned into async futures,
+    // removing the need for a raw self pointer across await points.
+    inner: std::sync::Arc<tokio::sync::Mutex<iroh_http_discovery::BrowseSession>>,
 }
 
 #[cfg(feature = "mdns")]
@@ -321,11 +338,11 @@ impl IrohBrowseSession {
     }
 
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let ptr = self as *const IrohBrowseSession as usize;
+        // PY-002: clone the Arc — safe across the await point; Python GC cannot
+        // drop the inner session while Rust holds a live Arc clone.
+        let inner = std::sync::Arc::clone(&self.inner);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            // SAFETY: IrohBrowseSession is held on the Python heap for its lifetime.
-            let session = unsafe { &*(ptr as *const IrohBrowseSession) };
-            match session.inner.lock().await.next_event().await {
+            match inner.lock().await.next_event().await {
                 None => Err(pyo3::exceptions::PyStopAsyncIteration::new_err(())),
                 Some(ev) => Python::with_gil(|py| {
                     let dict = pyo3::types::PyDict::new_bound(py);
@@ -520,12 +537,89 @@ impl IrohSession {
     }
 }
 
+// ── IrohPathChanges (PARITY-003) ─────────────────────────────────────────────
+
+/// Async iterator that yields path-change events for a peer.
+///
+/// Created by ``node.path_changes(node_id)``.  Polls the endpoint every 500 ms
+/// and yields a dict whenever the active relay/path changes.  Break the loop
+/// to stop iteration.
+#[pyclass]
+struct IrohPathChanges {
+    ep: iroh_http_core::endpoint::IrohEndpoint,
+    node_id: String,
+    last_relay: Option<Option<String>>,
+}
+
+#[pymethods]
+impl IrohPathChanges {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let ep = self.ep.clone();
+        let node_id = self.node_id.clone();
+        // Clone last known relay so we can capture it in the future.
+        let mut last = self.last_relay.clone();
+        let ptr = self as *mut IrohPathChanges as usize;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let stats = ep.peer_stats(&node_id).await;
+                let current_relay = stats.as_ref().map(|s| s.relay_url.clone());
+                if last.as_ref() != Some(&current_relay) {
+                    // Update the stored last value through the raw pointer.
+                    // SAFETY: IrohPathChanges is pinned on the Python heap.
+                    let inner = unsafe { &mut *(ptr as *mut IrohPathChanges) };
+                    inner.last_relay = Some(current_relay.clone());
+                    last = Some(current_relay.clone());
+                    return Python::with_gil(|py| {
+                        let d = pyo3::types::PyDict::new_bound(py);
+                        d.set_item("relay", stats.as_ref().map_or(false, |s| s.relay))?;
+                        d.set_item("relay_url", current_relay)?;
+                        Ok(d.into_any().unbind())
+                    });
+                }
+                // If no peer connection: stop iteration.
+                if stats.is_none() {
+                    return Err(pyo3::exceptions::PyStopAsyncIteration::new_err(()));
+                }
+            }
+        })
+    }
+}
+
+
+/// Handle returned by `node.serve()`.
+///
+/// Awaiting `handle.finished` blocks until the serve loop terminates.
+#[pyclass]
+struct IrohServeHandle {
+    finished_rx: tokio::sync::watch::Receiver<bool>,
+}
+
+#[pymethods]
+impl IrohServeHandle {
+    /// Await this to wait for the serve loop to finish.
+    #[getter]
+    fn finished<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let mut rx = self.finished_rx.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let _ = rx.wait_for(|v| *v).await;
+            Ok(())
+        })
+    }
+}
+
 // ── IrohNode ─────────────────────────────────────────────────────────────────
 
 /// An Iroh peer-to-peer HTTP node.
 #[pyclass]
 struct IrohNode {
     ep: IrohEndpoint,
+    /// Notify signaled when `close()` completes (PARITY-004).
+    close_notify: std::sync::Arc<tokio::sync::Notify>,
 }
 
 #[pymethods]
@@ -536,9 +630,25 @@ impl IrohNode {
         self.ep.node_id()
     }
 
+    /// The node's public key as a lowercase base32 string.
+    /// Alias for `node_id`; matches the `publicKey` name used in JS platforms
+    /// (PARITY-002).
+    #[getter]
+    fn public_key(&self) -> &str {
+        self.ep.node_id()
+    }
+
     /// The raw 32-byte secret key.  Persist this to restore identity.
     #[getter]
     fn keypair<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new_bound(py, &self.ep.secret_key_bytes())
+    }
+
+    /// The raw 32-byte secret key as bytes.
+    /// Alias for `keypair`; matches the `secretKey` name used in JS platforms
+    /// (PARITY-002).
+    #[getter]
+    fn secret_key<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new_bound(py, &self.ep.secret_key_bytes())
     }
 
@@ -554,11 +664,24 @@ impl IrohNode {
     ) -> PyResult<Bound<'py, PyAny>> {
         let ep = self.ep.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let addrs: Option<Vec<std::net::SocketAddr>> = direct_addrs.map(|v| {
-                v.iter()
-                    .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
-                    .collect()
-            });
+            // PY-007: fail fast on invalid address strings instead of silently dropping them.
+            let addrs: Option<Vec<std::net::SocketAddr>> = match direct_addrs {
+                None => None,
+                Some(v) => {
+                    let mut parsed = Vec::with_capacity(v.len());
+                    for s in &v {
+                        match s.parse::<std::net::SocketAddr>() {
+                            Ok(a) => parsed.push(a),
+                            Err(_) => {
+                                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                                    "invalid socket address {:?}", s
+                                )));
+                            }
+                        }
+                    }
+                    Some(parsed)
+                }
+            };
             let handle = iroh_http_core::session_connect(&ep, &peer_id, addrs.as_deref())
                 .await
                 .map_err(py_err)?;
@@ -602,11 +725,24 @@ impl IrohNode {
         };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let addrs: Option<Vec<std::net::SocketAddr>> = direct_addrs.map(|v| {
-                v.iter()
-                    .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
-                    .collect()
-            });
+            // PY-007: fail fast on invalid address strings instead of silently dropping them.
+            let addrs: Option<Vec<std::net::SocketAddr>> = match direct_addrs {
+                None => None,
+                Some(v) => {
+                    let mut parsed = Vec::with_capacity(v.len());
+                    for s in &v {
+                        match s.parse::<std::net::SocketAddr>() {
+                            Ok(a) => parsed.push(a),
+                            Err(_) => {
+                                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                                    "invalid socket address {:?}", s
+                                )));
+                            }
+                        }
+                    }
+                    Some(parsed)
+                }
+            };
             let res = iroh_http_core::fetch(
                 &ep,
                 &peer_id,
@@ -634,7 +770,10 @@ impl IrohNode {
     /// The handler may return either a `HandlerResponse` instance or a plain
     /// dict with keys `status` (int), `headers` (list of ``(name, value)``
     /// tuples), and `body` (bytes).
-    fn serve(&self, _py: Python<'_>, handler: PyObject) -> PyResult<()> {
+    ///
+    /// Returns an `IrohServeHandle`; await `handle.finished` to wait for the
+    /// serve loop to stop (PARITY-005).
+    fn serve(&self, _py: Python<'_>, handler: PyObject) -> PyResult<IrohServeHandle> {
         let ep = self.ep.clone();
         let handler = Arc::new(handler);
 
@@ -642,26 +781,34 @@ impl IrohNode {
         // hand payloads off to an async polling loop without blocking.
         let (tx, mut rx) = tokio::sync::mpsc::channel::<iroh_http_core::RequestPayload>(64);
 
+        // PY-001: `serve()` is synchronous but needs a Tokio runtime.  Use the
+        // runtime managed by pyo3_async_runtimes (same one used for async fns).
+        let rt = pyo3_async_runtimes::tokio::get_runtime();
+
+        // PARITY-005: watch channel so callers can await serve loop termination.
+        let (finished_tx, finished_rx) = tokio::sync::watch::channel(false);
+
         let handle = iroh_http_core::serve(ep.clone(), ep.serve_options(), move |payload| {
             let tx = tx.clone();
             // `on_request` is synchronous; spawn to avoid blocking the accept task.
-            tokio::spawn(async move {
+            rt.spawn(async move {
                 let _ = tx.send(payload).await;
             });
         });
         ep.set_serve_handle(handle);
 
         // Polling task: receives each payload, calls the Python handler, sends response.
-        tokio::spawn(async move {
+        pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
             while let Some(payload) = rx.recv().await {
                 let h = Arc::clone(&handler);
                 tokio::spawn(async move {
                     handle_request(h, payload).await;
                 });
             }
+            let _ = finished_tx.send(true);
         });
 
-        Ok(())
+        Ok(IrohServeHandle { finished_rx })
     }
 
     /// Stop the serve loop (graceful shutdown), without closing the endpoint.
@@ -670,27 +817,74 @@ impl IrohNode {
     }
 
     /// Close the endpoint and release all resources.
+    ///
+    /// After close() completes, `node.closed` resolves.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let ep = self.ep.clone();
+        let notify = std::sync::Arc::clone(&self.close_notify);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             ep.close().await;
+            notify.notify_waiters();
+            Ok(())
+        })
+    }
+
+    /// Awaitable that resolves when the node has been closed (PARITY-004).
+    ///
+    /// Usage::
+    ///
+    ///     await node.closed
+    ///
+    /// Unlike the JS ``node.closed`` promise, you must ``await`` the return
+    /// value of this property.
+    #[getter]
+    fn closed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let notify = std::sync::Arc::clone(&self.close_notify);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            notify.notified().await;
             Ok(())
         })
     }
 
     /// Full node address: node ID + relay URL(s) + direct socket addresses.
-    /// Returns a dict with `id` (str) and `addrs` (list of str).
+    /// Returns a tuple of ``(node_id: str, addrs: list[str])``.
+    ///
+    /// **Note (PARITY-006):** Unlike the JS platforms where ``node.addr()``
+    /// returns a ``Promise``, this method is **synchronous** — no ``await``
+    /// needed in Python.
     fn addr(&self) -> (String, Vec<String>) {
         let info = self.ep.node_addr();
         (info.id, info.addrs)
     }
 
+    /// Async iterator that yields path-change events for a peer (PARITY-003).
+    ///
+    /// Polls every 500 ms and yields a dict with ``relay`` (bool) and
+    /// ``relay_url`` (str|None) whenever the active path changes.  Iteration
+    /// stops when the peer is no longer connected::
+    ///
+    ///     async for event in node.path_changes(peer_id):
+    ///         print(event)
+    fn path_changes(&self, node_id: String) -> IrohPathChanges {
+        IrohPathChanges {
+            ep: self.ep.clone(),
+            node_id,
+            last_relay: None,
+        }
+    }
+
     /// Generate a shareable ticket string encoding this node's current address.
+    ///
+    /// **Note (PARITY-006):** Unlike the JS platforms where ``node.ticket()``
+    /// returns a ``Promise``, this method is **synchronous** in Python.
     fn ticket(&self) -> String {
         iroh_http_core::node_ticket(&self.ep)
     }
 
     /// Home relay URL, or None if not connected to a relay.
+    ///
+    /// **Note (PARITY-006):** Unlike the JS platforms where ``node.homeRelay``
+    /// is an async property, this method is **synchronous** in Python.
     fn home_relay(&self) -> Option<String> {
         self.ep.home_relay()
     }
@@ -743,7 +937,7 @@ impl IrohNode {
                     .await
                     .map_err(py_err)?;
                 Ok(IrohBrowseSession {
-                    inner: tokio::sync::Mutex::new(session),
+                    inner: std::sync::Arc::new(tokio::sync::Mutex::new(session)),
                 })
             });
         }
@@ -778,7 +972,12 @@ impl IrohNode {
     fn __aenter__<'py>(slf: PyRef<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
         let py = slf.py();
         let ep = slf.ep.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(IrohNode { ep }) })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            Ok(IrohNode {
+                ep,
+                close_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+            })
+        })
     }
 
     fn __aexit__<'py>(
@@ -919,8 +1118,8 @@ fn create_node<'py>(
     proxy_url: Option<String>,
     proxy_from_env: bool,
     keylog: bool,
-    #[allow(unused_variables)] compression_level: Option<i32>,
-    #[allow(unused_variables)] compression_min_body_bytes: Option<usize>,
+    compression_level: Option<i32>,
+    compression_min_body_bytes: Option<usize>,
     max_concurrency: Option<usize>,
     max_connections_per_peer: Option<usize>,
     request_timeout: Option<u64>,
@@ -964,16 +1163,21 @@ fn create_node<'py>(
             max_request_body_bytes,
             drain_timeout_secs: None,
             #[cfg(feature = "compression")]
-            compression: if compression_min_body_bytes.is_some() {
+            // PY-005: enable compression when level or min_body_bytes is provided.
+            compression: if compression_level.is_some() || compression_min_body_bytes.is_some() {
                 Some(iroh_http_core::CompressionOptions {
                     min_body_bytes: compression_min_body_bytes.unwrap_or(512),
+                    level: compression_level.map(|v| v as u32),
                 })
             } else {
                 None
             },
         };
         let ep = IrohEndpoint::bind(opts).await.map_err(py_err)?;
-        Ok(IrohNode { ep })
+        Ok(IrohNode {
+            ep,
+            close_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        })
     })
 }
 
@@ -1023,6 +1227,8 @@ fn iroh_http_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(public_key_verify, m)?)?;
     m.add_function(wrap_pyfunction!(generate_secret_key, m)?)?;
     m.add_class::<IrohNode>()?;
+    m.add_class::<IrohServeHandle>()?;
+    m.add_class::<IrohPathChanges>()?;
     m.add_class::<IrohRequest>()?;
     m.add_class::<IrohResponse>()?;
     m.add_class::<HandlerResponse>()?;

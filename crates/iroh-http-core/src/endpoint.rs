@@ -37,9 +37,9 @@ pub struct NodeOptions {
     pub dns_discovery_enabled: bool,
 
     // ── Capabilities ────────────────────────────────────────────────────────
-    /// Capabilities to advertise via ALPN.  When empty, all supported capabilities
-    /// are advertised in preference order: `iroh-http/1-full`, `-duplex`,
-    /// `-trailers`, `iroh-http/1`.
+    /// ALPN capabilities to advertise.  When empty, the endpoint advertises
+    /// `iroh-http/2` (HTTP) and `iroh-http/2-duplex` (duplex/session) in
+    /// preference order.
     pub capabilities: Vec<String>,
 
     // ── Power-user options ──────────────────────────────────────────────────
@@ -70,8 +70,8 @@ pub struct NodeOptions {
     /// `None` (default) keeps connections indefinitely (until closed or the pool
     /// reaches `max_pooled_connections`).
     pub pool_idle_timeout_ms: Option<u64>,
-    /// Maximum byte size of a QPACK-encoded request or response head.
-    /// Default: 65536 (64 KB).
+    /// Maximum byte size of the HTTP/1.1 request or response head (status line + headers).
+    /// Default: 65536 (64 KB).  Set to 0 to use the default.
     pub max_header_size: Option<usize>,
 
     // ── Server limits ───────────────────────────────────────────────────────
@@ -101,6 +101,8 @@ pub struct NodeOptions {
 pub struct CompressionOptions {
     /// Minimum body size in bytes before compression is applied. Default: 512.
     pub min_body_bytes: usize,
+    /// Zstd compression level (1–22). `None` uses the zstd default (3).
+    pub level: Option<u32>,
 }
 
 /// A shared Iroh endpoint.
@@ -275,7 +277,12 @@ impl IrohEndpoint {
                     opts.pool_idle_timeout_ms
                         .map(std::time::Duration::from_millis),
                 ),
-                max_header_size: opts.max_header_size.unwrap_or(64 * 1024),
+                // ISS-020: treat 0 as "use default" — it would otherwise underflow
+                // the hyper minimum (ISS-001).  None also defaults to 64 KB.
+                max_header_size: match opts.max_header_size {
+                    None | Some(0) => 64 * 1024,
+                    Some(n) => n,
+                },
                 max_concurrency: opts.max_concurrency,
                 max_connections_per_peer: opts.max_connections_per_peer,
                 request_timeout_ms: opts.request_timeout_ms,

@@ -44,6 +44,9 @@ pub struct CreateEndpointArgs {
     pub request_timeout: Option<u64>,
     pub max_request_body_bytes: Option<usize>,
     pub max_header_bytes: Option<usize>,
+    /// TAURI-002: pool-tuning options previously ignored.
+    pub max_pooled_connections: Option<usize>,
+    pub pool_idle_timeout_ms: Option<u64>,
 }
 
 /// Info returned after a successful endpoint bind.
@@ -85,8 +88,9 @@ pub async fn create_endpoint(
             disable_networking: a.disable_networking.unwrap_or(false),
             drain_timeout_ms: a.drain_timeout,
             handle_ttl_ms: a.handle_ttl,
-            max_pooled_connections: None,
-            pool_idle_timeout_ms: None,
+            // TAURI-002: wire through pool-tuning options.
+            max_pooled_connections: a.max_pooled_connections,
+            pool_idle_timeout_ms: a.pool_idle_timeout_ms,
             max_header_size: a.max_header_bytes,
             proxy_url: a.proxy_url,
             proxy_from_env: a.proxy_from_env.unwrap_or(false),
@@ -470,11 +474,22 @@ pub async fn session_connect(args: SessionConnectArgs) -> Result<u64, String> {
     let ep = state::get_endpoint(args.endpoint_handle)
         .ok_or_else(|| iroh_http_core::classify_error_json(format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
 
-    let addrs: Option<Vec<std::net::SocketAddr>> = args.direct_addrs.as_ref().map(|v| {
-        v.iter()
-            .filter_map(|s| s.parse::<std::net::SocketAddr>().ok())
-            .collect()
-    });
+    // TAURI-003: fail fast on invalid address strings rather than silently discarding them.
+    let addrs: Option<Vec<std::net::SocketAddr>> = match args.direct_addrs.as_ref() {
+        None => None,
+        Some(v) => {
+            let mut parsed = Vec::with_capacity(v.len());
+            for s in v {
+                match s.parse::<std::net::SocketAddr>() {
+                    Ok(a) => parsed.push(a),
+                    Err(_) => return Err(iroh_http_core::classify_error_json(format!(
+                        "invalid socket address {:?}", s
+                    ))),
+                }
+            }
+            Some(parsed)
+        }
+    };
 
     iroh_http_core::session_connect(&ep, &args.node_id, addrs.as_deref())
         .await.map_err(iroh_http_core::classify_error_json)

@@ -41,10 +41,9 @@ await node.close();
 ```ts
 const node = await createNode({
   key: savedKey,                // SecretKey or Uint8Array — restore identity
-  idleTimeout: 30_000,          // ms before idle connection cleanup
   relays: ["https://my-relay"], // custom relay URLs
   discovery: { mdns: true, serviceName: "my-app.iroh-http" }, // local discovery
-  drainTimeout: 30_000,         // ms to wait for slow body readers
+  advanced: { drainTimeout: 30_000 },  // ms to wait for slow body readers
 });
 ```
 

@@ -15,9 +15,10 @@ iroh-http provides two complementary layers of rate control:
 node.serve({ maxConnectionsPerPeer: 3 }, handler);
 ```
 
-When a peer exceeds the limit, the connection is refused at the Rust accept
-loop — no JS overhead, no `Request` object created. Returns a `429` at the
-QUIC level before HTTP framing begins.
+When a peer exceeds the limit, the excess connection is **closed at the QUIC
+level** — no JS overhead, no `Request` object created. The remote receives a
+transport-level close rather than an HTTP response (the connection was never
+fully upgraded to HTTP).
 
 This is the only rate control that lives inside `ServeOptions`. Everything
 else is middleware.

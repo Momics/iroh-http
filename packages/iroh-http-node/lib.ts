@@ -322,10 +322,14 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
       : (options.key as SecretKey).toBytes()
     : undefined;
 
+  // NODE-001: merge the relay-mode-derived value with the explicit option so
+  // that createNode({ disableNetworking: true }) is respected regardless of relayMode.
   const { relayMode, relays, disableNetworking } = normaliseRelayMode(
     options?.relayMode,
   );
   const discovery = normaliseDiscovery(options?.discovery);
+  const disableNetworkingFinal =
+    disableNetworking || (options?.disableNetworking ?? false);
   const bindAddrs = options?.bindAddr
     ? Array.isArray(options.bindAddr) ? options.bindAddr : [options.bindAddr]
     : undefined;
@@ -347,7 +351,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         handleTtl: options.advanced?.handleTtl,
         maxPooledConnections: options.maxPooledConnections,
         poolIdleTimeoutMs: options.poolIdleTimeoutMs,
-        disableNetworking,
+        disableNetworking: disableNetworkingFinal,
         proxyUrl: options.proxyUrl,
         proxyFromEnv: options.proxyFromEnv,
         keylog: options.keylog,

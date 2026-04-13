@@ -8,16 +8,17 @@ signed responses, capability tokens, and caching patterns.
 
 ```ts
 // Sign arbitrary bytes with a secret key:
-const sig: Uint8Array = secretKey.sign(data);
+const sig: Uint8Array = await secretKey.sign(data);
 
 // Verify a signature against a public key:
-const ok: boolean = publicKey.verify(data, sig);
+const ok: boolean = await publicKey.verify(data, sig);
 
 // Generate a fresh key without starting a node:
 const key = SecretKey.generate();
 ```
 
-Both `sign` and `verify` are synchronous — Ed25519 is fast and non-blocking.
+Both `sign` and `verify` are **async** — they use the WebCrypto subtle API
+which returns `Promise` values. Always `await` them.
 
 ## Types
 
@@ -26,7 +27,4 @@ Signatures are 64-byte `Uint8Array` values. `PublicKey.verify` returns
 
 ## See also
 
-- [Capability tokens](packages/capability-tokens.md) — uses sign/verify for token issuance
-- [Signed response caching](packages/caching.md) — uses sign/verify for cache validity
-
-→ [Patch 25](../patches/25_patch.md)
+- [Recipes index](../recipes/index.md) — sealed messages, capability tokens, and other sign/verify patterns

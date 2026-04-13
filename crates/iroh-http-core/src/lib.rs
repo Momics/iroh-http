@@ -83,6 +83,18 @@ impl CoreError {
             message: detail.to_string(),
         }
     }
+    pub fn header_too_large(detail: impl std::fmt::Display) -> Self {
+        CoreError {
+            code: ErrorCode::HeaderTooLarge,
+            message: detail.to_string(),
+        }
+    }
+    pub fn peer_rejected(detail: impl std::fmt::Display) -> Self {
+        CoreError {
+            code: ErrorCode::PeerRejected,
+            message: detail.to_string(),
+        }
+    }
     pub fn internal(detail: impl std::fmt::Display) -> Self {
         CoreError {
             code: ErrorCode::Internal,
@@ -231,7 +243,7 @@ pub(crate) fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
 
 /// Parse a base32 node-id string into an `iroh::PublicKey`.
 pub(crate) fn parse_node_id(s: &str) -> Result<iroh::PublicKey, CoreError> {
-    let bytes = base32_decode(s).map_err(|e| CoreError::invalid_input(e))?;
+    let bytes = base32_decode(s).map_err(CoreError::invalid_input)?;
     let arr: [u8; 32] = bytes
         .try_into()
         .map_err(|_| CoreError::invalid_input("node-id must be 32 bytes"))?;

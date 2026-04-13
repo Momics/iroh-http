@@ -158,6 +158,7 @@ struct RequestService {
     own_node_id: Arc<String>,
     remote_node_id: Option<String>,
     max_request_body_bytes: Option<usize>,
+    max_header_size: Option<usize>,
     #[cfg(feature = "compression")]
     compression: Option<crate::endpoint::CompressionOptions>,
 }
@@ -186,6 +187,7 @@ impl RequestService {
         let own_node_id = &*self.own_node_id;
         let remote_node_id = self.remote_node_id.clone().unwrap_or_default();
         let max_request_body_bytes = self.max_request_body_bytes;
+        let max_header_size = self.max_header_size;
 
         let method = req.method().to_string();
         let path_and_query = req
@@ -206,6 +208,26 @@ impl RequestService {
                 remote_node_id.clone(),
             )))
             .collect();
+
+        // ISS-003: Post-parse header byte enforcement. Hyper's parser limit guards
+        // during parsing, but we also check the measured size here so that 431 is
+        // returned as an HTTP response rather than a transport error.
+        if let Some(limit) = max_header_size {
+            let header_bytes: usize = req_headers
+                .iter()
+                .map(|(k, v)| k.len() + v.len() + 4) // ": " + "\r\n"
+                .sum::<usize>()
+                + req.uri().to_string().len()
+                + method.len()
+                + 12; // "HTTP/1.1 \r\n\r\n" overhead
+            if header_bytes > limit {
+                let resp = hyper::Response::builder()
+                    .status(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE)
+                    .body(box_body(http_body_util::Empty::new()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
 
         let url = format!("httpi://{own_node_id}{path_and_query}");
 
@@ -254,6 +276,15 @@ impl RequestService {
 
         // For duplex: keep req_body_writer to move into the upgrade spawn below.
         // For regular: consume it immediately into the pump task.
+        // ISS-004: create an overflow channel so the serve path can return 413.
+        let (body_overflow_tx, body_overflow_rx) = if !is_bidi && max_request_body_bytes.is_some()
+        {
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
+
         let duplex_req_body_writer = if !is_bidi {
             let body = req.into_body();
             let trailer_tx = req_trailer_tx.expect("non-duplex has req_trailer_tx");
@@ -263,6 +294,7 @@ impl RequestService {
                 trailer_tx,
                 max_request_body_bytes,
                 drain_timeout(),
+                body_overflow_tx,
             ));
             None
         } else {
@@ -287,17 +319,61 @@ impl RequestService {
             is_bidi,
         );
 
-        // ── Await response head from JS ──────────────────────────────────────
+        // ── Await response head from JS (race against body overflow) ─────────
+        //
+        // ISS-004: if the request body exceeds maxRequestBodyBytes, return 413
+        // immediately without waiting for the JS handler to respond.
 
-        let response_head = head_rx
-            .await
-            .map_err(|_| -> BoxError { "JS handler dropped without responding".into() })?;
+        let response_head = if let Some(overflow_rx) = body_overflow_rx {
+            tokio::select! {
+                biased;
+                _ = overflow_rx => {
+                    // Body too large: head_rx is dropped automatically on return,
+                    // causing the JS respond() call to fail gracefully.
+                    let resp = hyper::Response::builder()
+                        .status(StatusCode::PAYLOAD_TOO_LARGE)
+                        .body(box_body(http_body_util::Full::new(Bytes::from_static(
+                            b"request body too large",
+                        ))))
+                        .expect("valid 413 response");
+                    return Ok(resp);
+                }
+                head = head_rx => {
+                    head.map_err(|_| -> BoxError { "JS handler dropped without responding".into() })?
+                }
+            }
+        } else {
+            head_rx
+                .await
+                .map_err(|_| -> BoxError { "JS handler dropped without responding".into() })?
+        };
 
-        // ── Duplex path: send 101 and pipe upgraded IO ────────────────────────
+        // ── Duplex path: honor handler status, upgrade only on 101 ──────────────
+        //
+        // ISS-002: the handler may reject the duplex request by returning any
+        // non-101 status.  Only perform the QUIC stream pump when the handler
+        // explicitly returns 101 Switching Protocols.
 
         if let Some(upgrade_fut) = upgrade_future {
             let req_body_writer =
                 duplex_req_body_writer.expect("duplex path always has req_body_writer");
+
+            // If the handler returned a non-101 status, send that response and
+            // do NOT perform the upgrade.  Drop the upgrade future and writer.
+            if response_head.status != StatusCode::SWITCHING_PROTOCOLS.as_u16() {
+                drop(upgrade_fut);
+                drop(req_body_writer);
+                let mut resp_builder =
+                    hyper::Response::builder().status(response_head.status);
+                for (k, v) in &response_head.headers {
+                    resp_builder = resp_builder.header(k.as_str(), v.as_str());
+                }
+                let resp = resp_builder
+                    .body(box_body(http_body_util::Empty::new()))
+                    .map_err(|e| -> BoxError { e.into() })?;
+                return Ok(resp);
+            }
+
             // Spawn the upgrade pump after hyper delivers the 101.
             //
             // Both directions are wired to the channels already sent to JS:
@@ -461,6 +537,11 @@ where
         own_node_id,
         remote_node_id: None,
         max_request_body_bytes,
+        max_header_size: if max_header_size == 0 {
+            None
+        } else {
+            Some(max_header_size)
+        },
         #[cfg(feature = "compression")]
         compression,
     };
@@ -552,17 +633,24 @@ where
                     tokio::spawn(async move {
                         let _permit = permit;
                         // Build the hyper-facing service, optionally wrapping with
-                        // CompressionLayer (zstd-only, for responses ≥ 512 bytes).
+                        // CompressionLayer (zstd-only, for responses ≥ min_body_bytes).
                         #[cfg(feature = "compression")]
                         let hyper_svc = {
                             use tower_http::compression::{predicate::SizeAbove, CompressionLayer};
+                            let min_bytes = svc
+                                .compression
+                                .as_ref()
+                                .map(|c| c.min_body_bytes)
+                                .unwrap_or(512);
+                            let mut layer = CompressionLayer::new().zstd(true);
+                            if let Some(level) = svc.compression.as_ref().and_then(|c| c.level) {
+                                use tower_http::compression::CompressionLevel;
+                                layer = layer
+                                    .quality(CompressionLevel::Precise(level as i32));
+                            }
                             TowerToHyperService::new(
                                 tower::ServiceBuilder::new()
-                                    .layer(
-                                        CompressionLayer::new()
-                                            .zstd(true)
-                                            .compress_when(SizeAbove::new(512)),
-                                    )
+                                    .layer(layer.compress_when(SizeAbove::new(min_bytes as u16)))
                                     .service(TimeoutService::new(svc, timeout_dur)),
                             )
                         };
@@ -570,8 +658,15 @@ where
                         let hyper_svc =
                             TowerToHyperService::new(TimeoutService::new(svc, timeout_dur));
 
+                        // ISS-001: clamp to hyper's minimum safe buffer size of 8192.
+                        // ISS-020: a stored value of 0 means "use the default" (64 KB).
+                        let effective_header_limit = if max_header_size == 0 {
+                            64 * 1024
+                        } else {
+                            max_header_size.max(8192)
+                        };
                         let result = hyper::server::conn::http1::Builder::new()
-                            .max_buf_size(max_header_size)
+                            .max_buf_size(effective_header_limit)
                             .max_headers(128)
                             .serve_connection(io, hyper_svc)
                             .with_upgrades()
@@ -616,11 +711,13 @@ impl<S> TimeoutService<S> {
 
 impl<S, Req> Service<Req> for TimeoutService<S>
 where
-    S: Service<Req>,
+    // ISS-007: constrain S::Response to hyper::Response<BoxBody> so we can return
+    // a concrete 408 response on timeout rather than a generic error string.
+    S: Service<Req, Response = hyper::Response<BoxBody>>,
     S::Future: Send + 'static,
     S::Error: Into<BoxError>,
 {
-    type Response = S::Response;
+    type Response = hyper::Response<BoxBody>;
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -635,7 +732,16 @@ where
             match tokio::time::timeout(timeout, fut).await {
                 Ok(Ok(r)) => Ok(r),
                 Ok(Err(e)) => Err(e.into()),
-                Err(_) => Err("request timed out".into()),
+                Err(_) => {
+                    // ISS-007: return a proper HTTP 408 Request Timeout instead of a
+                    // generic error string so adapters can relay the status code.
+                    Ok(hyper::Response::builder()
+                        .status(StatusCode::REQUEST_TIMEOUT)
+                        .body(box_body(http_body_util::Full::new(Bytes::from_static(
+                            b"request timed out",
+                        ))))
+                        .expect("valid 408 response"))
+                }
             }
         })
     }
