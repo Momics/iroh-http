@@ -29,6 +29,25 @@ cargo check -p iroh-http-deno --no-default-features
 
 ---
 
+## Python
+
+`iroh-http-py` is a PyO3 extension module and **cannot** be built with plain
+`cargo build` — the macOS linker rejects undefined Python symbols in dylibs at
+link time. Use `maturin` instead, which passes the correct linker flags:
+
+```sh
+cd packages/iroh-http-py
+pip install maturin               # once
+maturin develop                   # build + install into current Python venv
+# or
+maturin build --release           # build a wheel
+```
+
+`iroh-http-py` is therefore excluded from the Cargo workspace. `cargo build
+--release` at the repo root builds only the Node, Deno, and core crates.
+
+---
+
 ## TypeScript
 
 ```sh
