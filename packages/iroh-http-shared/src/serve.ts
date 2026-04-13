@@ -156,7 +156,9 @@ export function makeServe(
 
     const onError = options.onError ?? defaultOnError;
 
-    rawServe(
+    // rawServe returns a Promise<void> that resolves when its internal polling
+    // loop exits (i.e. after stopServe() causes nextRequest to drain to null).
+    const loopDone = rawServe(
       endpointHandle,
       {},
       async (payload: RequestPayload): Promise<FfiResponseHead> => {
@@ -270,6 +272,8 @@ export function makeServe(
     // ISS-029: create a finished promise scoped to THIS serve loop's lifetime.
     // It resolves when stopServe() is explicitly called (signal abort or stopServe)
     // OR when the node closes — whichever comes first.
+    // Note: rawServe returns a loopDone Promise<void> that resolves when the
+    // polling loop exits — useful if callers need to await full loop teardown.
     let resolveFinished!: () => void;
     const finished = new Promise<void>((r) => {
       resolveFinished = r;

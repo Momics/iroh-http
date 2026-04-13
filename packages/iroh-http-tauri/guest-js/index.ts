@@ -166,7 +166,7 @@ const rawServe: RawServeFn = (
   endpointHandle,
   _options,
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
-) => {
+): Promise<void> => {
   const channel = new Channel<TauriRequestPayload>();
 
   channel.onmessage = async (raw: TauriRequestPayload) => {
@@ -204,6 +204,10 @@ const rawServe: RawServeFn = (
     .catch((err: unknown) =>
       console.error("[iroh-http-tauri] serve error:", err)
     );
+
+  // The serve loop is driven by the Tauri Channel (event-based, no JS polling).
+  // Return a resolved promise to satisfy the RawServeFn contract.
+  return Promise.resolve();
 };
 
 const allocBodyWriter: AllocBodyWriterFn = (): Promise<bigint> => {
