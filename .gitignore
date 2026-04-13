@@ -37,6 +37,7 @@ Thumbs.db
 !.vscode/extensions.json
 !.vscode/tasks.json
 !.vscode/launch.json
+!.vscode/settings.json
 *.swp
 *.swo
 
