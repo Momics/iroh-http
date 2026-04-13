@@ -161,10 +161,9 @@ export function makeServe(
         ? makeReadable(bridge, payload.reqBodyHandle)
         : null;
 
-      const headers: [string, string][] = [
-        ...payload.headers,
-        ["iroh-node-id", payload.remoteNodeId],
-      ];
+      // iroh-node-id is stripped (spoof prevention) and re-injected from the
+      // authenticated QUIC connection identity in Rust core. No duplication here.
+      const headers: [string, string][] = [...payload.headers];
 
       const reqInit: RequestInit & { duplex?: "half" } = {
         method: payload.method,
