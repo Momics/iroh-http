@@ -62,14 +62,14 @@ Client                              Server
 
 ### ALPN identifiers
 
-The QUIC connection uses ALPN (Application-Layer Protocol Negotiation) to agree on capabilities:
+The QUIC connection uses ALPN (Application-Layer Protocol Negotiation) to identify the protocol version:
 
 | ALPN | Meaning |
 |------|---------|
-| `iroh-http/1` | Basic request/response |
-| `iroh-http/1+duplex` | Bidirectional streaming |
-| `iroh-http/1+trailers` | Response trailers |
-| `iroh-http/1+full` | All features |
+| `iroh-http/2` | Standard request/response (current) |
+| `iroh-http/2-duplex` | Raw bidirectional stream via HTTP Upgrade (`raw_connect`) |
+
+The version number changed from 1 to 2 when the wire format migrated from custom framing to standard HTTP/1.1 over QUIC. Old and new builds refuse to connect to each other — the ALPN mismatch is intentional and is the correct way to signal breaking wire-format changes. See [internals/wire-format.md](internals/wire-format.md) for details.
 
 ### Request identity
 

@@ -185,4 +185,4 @@ package. Could be written by any user given iroh-http's primitives.
 
 **Core** — features that require Rust-level stream interception or protocol
 negotiation (compression, framing, trailers, identity injection). See
-[guidelines.md](../guidelines.md#3-primitives-not-policies).
+[principles.md](../principles.md#4-primitives-not-policies).
