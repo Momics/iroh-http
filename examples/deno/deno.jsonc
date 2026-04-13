@@ -1,5 +1,4 @@
 {
-  "name": "iroh-http-example-deno",
   "version": "0.1.0",
   "tasks": {
     "server": "deno run --allow-ffi --allow-read --allow-env main.ts server",
