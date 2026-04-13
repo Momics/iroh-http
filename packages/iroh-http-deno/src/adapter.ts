@@ -26,15 +26,21 @@ import type {
   RawSessionFns,
 } from "@momics/iroh-http-shared/adapter";
 import { classifyError, classifyBindError } from "@momics/iroh-http-shared";
-import type { AddrFunctions, DiscoveryFunctions } from "@momics/iroh-http-shared";
+import type {
+  AddrFunctions,
+  DiscoveryFunctions,
+} from "@momics/iroh-http-shared";
 
 // ── Platform library resolution ───────────────────────────────────────────────
 
 function libExtension(): string {
   switch (Deno.build.os) {
-    case "darwin":  return "dylib";
-    case "windows": return "dll";
-    default:        return "so";
+    case "darwin":
+      return "dylib";
+    case "windows":
+      return "dll";
+    default:
+      return "so";
   }
 }
 
@@ -42,7 +48,7 @@ function libName(): string {
   return `libiroh_http_deno.${Deno.build.os}-${Deno.build.arch}.${libExtension()}`;
 }
 
-const LIB_DIR  = resolve(dirname(fromFileUrl(import.meta.url)), "..", "lib");
+const LIB_DIR = resolve(dirname(fromFileUrl(import.meta.url)), "..", "lib");
 const LIB_PATH = resolve(LIB_DIR, libName());
 
 // ── FFI symbols ───────────────────────────────────────────────────────────────
@@ -90,48 +96,68 @@ let outBufHint = 128 * 1024;
 /** Pre-encoded method name buffers (UTF-8). */
 const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
   [
-    "nextChunk", "sendChunk", "finishBody", "cancelRequest",
-    "nextTrailer", "sendTrailers", "rawFetch", "rawConnect",
-    "serveStart", "nextRequest", "respond", "allocBodyWriter",
-    "createEndpoint", "closeEndpoint", "allocFetchToken", "cancelInFlight",
-    "nodeAddr", "homeRelay", "peerInfo",
-  ].map(m => [m, enc.encode(m)])
+    "nextChunk",
+    "sendChunk",
+    "finishBody",
+    "cancelRequest",
+    "nextTrailer",
+    "sendTrailers",
+    "rawFetch",
+    "rawConnect",
+    "serveStart",
+    "nextRequest",
+    "respond",
+    "allocBodyWriter",
+    "createEndpoint",
+    "closeEndpoint",
+    "allocFetchToken",
+    "cancelInFlight",
+    "nodeAddr",
+    "homeRelay",
+    "peerInfo",
+  ].map((m) => [m, enc.encode(m)]),
 );
 
 /** Reusable buffer for raw chunk reads via iroh_http_next_chunk. */
 const chunkBuf = new Uint8Array(65536);
 
 async function call<T>(method: string, payload: unknown): Promise<T> {
-  const methodBuf  = METHOD_BUFS[method] ?? enc.encode(method);
+  const methodBuf = METHOD_BUFS[method] ?? enc.encode(method);
   // JSON.stringify throws on bigint; convert bigint values to numbers at the
   // JSON boundary (handle indices are slotmap u64 keys, safe within f64 range).
-  const payloadBuf = enc.encode(JSON.stringify(payload, (_k, v) =>
-    typeof v === "bigint" ? Number(v) : v
-  ));
+  const payloadBuf = enc.encode(
+    JSON.stringify(payload, (_k, v) => (typeof v === "bigint" ? Number(v) : v)),
+  );
   // Deno's FFI types require Uint8Array<ArrayBuffer>; TextEncoder returns
   // Uint8Array<ArrayBufferLike>. The backing store is always a plain ArrayBuffer
   // in practice — cast to satisfy the stricter type.
-  const mb = methodBuf  as Uint8Array<ArrayBuffer>;
+  const mb = methodBuf as Uint8Array<ArrayBuffer>;
   const pb = payloadBuf as Uint8Array<ArrayBuffer>;
 
   // Per-call buffer: concurrent nonblocking FFI calls must not share memory.
   // Use the global hint as the initial capacity so most calls allocate once.
   let buf = new Uint8Array(outBufHint) as Uint8Array<ArrayBuffer>;
 
-  let n = await lib.symbols.iroh_http_call(
-    mb,  BigInt(mb.byteLength),
-    pb,  BigInt(pb.byteLength),
-    buf, BigInt(buf.byteLength),
-  ) as number;
+  let n = (await lib.symbols.iroh_http_call(
+    mb,
+    BigInt(mb.byteLength),
+    pb,
+    BigInt(pb.byteLength),
+    buf,
+    BigInt(buf.byteLength),
+  )) as number;
 
   if (n < 0) {
     // Output buffer too small; grow and retry once.
     buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
-    n = await lib.symbols.iroh_http_call(
-      mb,  BigInt(mb.byteLength),
-      pb,  BigInt(pb.byteLength),
-      buf, BigInt(buf.byteLength),
-    ) as number;
+    n = (await lib.symbols.iroh_http_call(
+      mb,
+      BigInt(mb.byteLength),
+      pb,
+      BigInt(pb.byteLength),
+      buf,
+      BigInt(buf.byteLength),
+    )) as number;
     // Raise the hint so future calls start with a large enough buffer.
     if (buf.byteLength > outBufHint) outBufHint = buf.byteLength;
   }
@@ -150,21 +176,28 @@ async function call<T>(method: string, payload: unknown): Promise<T> {
 
 export const bridge: Bridge = {
   async nextChunk(handle: bigint): Promise<Uint8Array | null> {
-    let n = await lib.symbols.iroh_http_next_chunk(
-      handle, chunkBuf, BigInt(chunkBuf.byteLength),
-    ) as number;
+    let n = (await lib.symbols.iroh_http_next_chunk(
+      handle,
+      chunkBuf,
+      BigInt(chunkBuf.byteLength),
+    )) as number;
     if (n < 0) {
       // Chunk too large for shared buffer; grow and retry once.
       const grown = new Uint8Array(-n);
-      n = await lib.symbols.iroh_http_next_chunk(
-        handle, grown, BigInt(grown.byteLength),
-      ) as number;
+      n = (await lib.symbols.iroh_http_next_chunk(
+        handle,
+        grown,
+        BigInt(grown.byteLength),
+      )) as number;
       return n > 0 ? grown.subarray(0, n) : null;
     }
     return n > 0 ? chunkBuf.slice(0, n) : null;
   },
   async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
-    await call<Record<never, never>>("sendChunk", { handle, chunk: encodeBase64(chunk) });
+    await call<Record<never, never>>("sendChunk", {
+      handle,
+      chunk: encodeBase64(chunk),
+    });
   },
   async finishBody(handle: bigint): Promise<void> {
     await call<Record<never, never>>("finishBody", { handle });
@@ -181,10 +214,16 @@ export const bridge: Bridge = {
     void call<Record<never, never>>("cancelInFlight", { token });
   },
   async nextTrailer(handle: bigint): Promise<[string, string][] | null> {
-    const res = await call<{ trailers: [string, string][] | null }>("nextTrailer", { handle });
+    const res = await call<{ trailers: [string, string][] | null }>(
+      "nextTrailer",
+      { handle },
+    );
     return res.trailers;
   },
-  async sendTrailers(handle: bigint, trailers: [string, string][]): Promise<void> {
+  async sendTrailers(
+    handle: bigint,
+    trailers: [string, string][],
+  ): Promise<void> {
     await call<Record<never, never>>("sendTrailers", { handle, trailers });
   },
 };
@@ -218,10 +257,10 @@ export const rawFetch: RawFetchFn = async (
     directAddrs: directAddrs ?? null,
   });
   return {
-    status:         res.status,
-    headers:        res.headers,
-    bodyHandle:     BigInt(res.bodyHandle),
-    url:            res.url,
+    status: res.status,
+    headers: res.headers,
+    bodyHandle: BigInt(res.bodyHandle),
+    url: res.url,
     trailersHandle: BigInt(res.trailersHandle),
   } satisfies FfiResponse;
 };
@@ -237,7 +276,7 @@ export const rawConnect: RawConnectFn = async (
     { endpointHandle, nodeId, path, headers },
   );
   return {
-    readHandle:  BigInt(res.readHandle),
+    readHandle: BigInt(res.readHandle),
     writeHandle: BigInt(res.writeHandle),
   } satisfies FfiDuplexStream;
 };
@@ -261,23 +300,29 @@ export const rawServe: RawServeFn = (
       (async () => {
         while (true) {
           const raw = await call<{
-            reqHandle: number; reqBodyHandle: number; resBodyHandle: number;
-            reqTrailersHandle: number; resTrailersHandle: number;
-            method: string; url: string; headers: [string, string][];
-            remoteNodeId: string; isBidi: boolean;
+            reqHandle: number;
+            reqBodyHandle: number;
+            resBodyHandle: number;
+            reqTrailersHandle: number;
+            resTrailersHandle: number;
+            method: string;
+            url: string;
+            headers: [string, string][];
+            remoteNodeId: string;
+            isBidi: boolean;
           } | null>("nextRequest", { endpointHandle });
           if (raw === null) break;
           const payload: RequestPayload = {
-            reqHandle:          BigInt(raw.reqHandle),
-            reqBodyHandle:      BigInt(raw.reqBodyHandle),
-            resBodyHandle:      BigInt(raw.resBodyHandle),
-            reqTrailersHandle:  BigInt(raw.reqTrailersHandle),
-            resTrailersHandle:  BigInt(raw.resTrailersHandle),
-            method:             raw.method,
-            url:                raw.url,
-            headers:            raw.headers,
-            remoteNodeId:       raw.remoteNodeId,
-            isBidi:             raw.isBidi,
+            reqHandle: BigInt(raw.reqHandle),
+            reqBodyHandle: BigInt(raw.reqBodyHandle),
+            resBodyHandle: BigInt(raw.resBodyHandle),
+            reqTrailersHandle: BigInt(raw.reqTrailersHandle),
+            resTrailersHandle: BigInt(raw.resTrailersHandle),
+            method: raw.method,
+            url: raw.url,
+            headers: raw.headers,
+            remoteNodeId: raw.remoteNodeId,
+            isBidi: raw.isBidi,
           };
 
           // Handle in the background — do not await.
@@ -286,21 +331,23 @@ export const rawServe: RawServeFn = (
               const head = await callback(payload);
               await call<Record<never, never>>("respond", {
                 reqHandle: payload.reqHandle,
-                status:    head.status,
-                headers:   head.headers,
+                status: head.status,
+                headers: head.headers,
               });
             } catch (err) {
               console.error("[iroh-http-deno] handler error:", err);
               await call<Record<never, never>>("respond", {
                 reqHandle: payload.reqHandle,
-                status:    500,
-                headers:   [],
-              }).catch(() => { /* ignore */ });
+                status: 500,
+                headers: [],
+              }).catch(() => {
+                /* ignore */
+              });
             }
           })();
         }
       })().catch((err) =>
-        console.error("[iroh-http-deno] serve loop error:", err)
+        console.error("[iroh-http-deno] serve loop error:", err),
       );
     })
     .catch((err) => console.error("[iroh-http-deno] serveStart error:", err));
@@ -312,20 +359,28 @@ export const allocBodyWriter: AllocBodyWriterFn = () =>
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 
 /** Normalise `relayMode` into flat fields for the Rust adapter. */
-function normaliseRelayMode(mode?: import("@momics/iroh-http-shared").RelayMode): {
+function normaliseRelayMode(
+  mode?: import("@momics/iroh-http-shared").RelayMode,
+): {
   relayMode: string | undefined;
   relays: string[] | null;
   disableNetworking: boolean;
 } {
-  if (mode === "disabled") return { relayMode: "disabled", relays: [], disableNetworking: true };
-  if (mode === "default" || mode === undefined) return { relayMode: undefined, relays: null, disableNetworking: false };
-  if (mode === "staging") return { relayMode: "staging", relays: null, disableNetworking: false };
-  if (Array.isArray(mode)) return { relayMode: "custom", relays: mode, disableNetworking: false };
+  if (mode === "disabled")
+    return { relayMode: "disabled", relays: [], disableNetworking: true };
+  if (mode === "default" || mode === undefined)
+    return { relayMode: undefined, relays: null, disableNetworking: false };
+  if (mode === "staging")
+    return { relayMode: "staging", relays: null, disableNetworking: false };
+  if (Array.isArray(mode))
+    return { relayMode: "custom", relays: mode, disableNetworking: false };
   return { relayMode: "custom", relays: [mode], disableNetworking: false };
 }
 
 /** Normalise the `discovery` option into flat fields for the Rust adapter. */
-function normaliseDiscovery(disc?: import("@momics/iroh-http-shared").NodeOptions["discovery"]): {
+function normaliseDiscovery(
+  disc?: import("@momics/iroh-http-shared").NodeOptions["discovery"],
+): {
   dnsEnabled: boolean;
   dnsServerUrl?: string;
 } {
@@ -337,84 +392,119 @@ function normaliseDiscovery(disc?: import("@momics/iroh-http-shared").NodeOption
   return { dnsEnabled: true };
 }
 
-export async function createEndpointInfo(options?: NodeOptions): Promise<EndpointInfo> {
+export async function createEndpointInfo(
+  options?: NodeOptions,
+): Promise<EndpointInfo> {
   const keyBytes: string | null = options?.key
-    ? encodeBase64(options.key instanceof Uint8Array ? options.key : options.key.toBytes())
+    ? encodeBase64(
+        options.key instanceof Uint8Array ? options.key : options.key.toBytes(),
+      )
     : null;
 
-  const { relayMode, relays, disableNetworking } = normaliseRelayMode(options?.relayMode);
+  const { relayMode, relays, disableNetworking } = normaliseRelayMode(
+    options?.relayMode,
+  );
   const discovery = normaliseDiscovery(options?.discovery);
   const bindAddrs = options?.bindAddr
-    ? (Array.isArray(options.bindAddr) ? options.bindAddr : [options.bindAddr])
+    ? Array.isArray(options.bindAddr)
+      ? options.bindAddr
+      : [options.bindAddr]
     : null;
 
-  const res = await call<{ endpointHandle: number; nodeId: string; keypair: number[] }>(
-    "createEndpoint",
-    {
-      key:                  keyBytes,
-      idleTimeout:          options?.idleTimeout ?? null,
-      relayMode:            relayMode ?? null,
-      relays:               relays ?? null,
-      bindAddrs,
-      dnsDiscovery:         discovery.dnsServerUrl ?? options?.dnsDiscovery ?? null,
-      dnsDiscoveryEnabled:  discovery.dnsEnabled,
-      channelCapacity:      options?.advanced?.channelCapacity ?? null,
-      maxChunkSizeBytes:    options?.advanced?.maxChunkSizeBytes ?? null,
-      maxConsecutiveErrors: options?.advanced?.maxConsecutiveErrors ?? null,
-      drainTimeout:         options?.advanced?.drainTimeout ?? null,
-      handleTtl:            options?.advanced?.handleTtl ?? null,
-      maxPooledConnections: options?.maxPooledConnections ?? null,
-      poolIdleTimeoutMs:    options?.poolIdleTimeoutMs ?? null,
-      disableNetworking,
-      proxyUrl:             options?.proxyUrl ?? null,
-      proxyFromEnv:         options?.proxyFromEnv ?? null,
-      keylog:               options?.keylog ?? null,
-      compressionLevel:     typeof options?.compression === "object"
-        ? options.compression.level ?? null : options?.compression ? 3 : null,
-      compressionMinBodyBytes: typeof options?.compression === "object"
-        ? options.compression.minBodyBytes ?? null : null,
-      maxConcurrency:       options?.maxConcurrency ?? null,
-      maxConnectionsPerPeer: options?.maxConnectionsPerPeer ?? null,
-      requestTimeout:       options?.requestTimeout ?? null,
-      maxRequestBodyBytes:  options?.maxRequestBodyBytes ?? null,
-      maxHeaderBytes:       options?.maxHeaderBytes ?? null,
-    },
-  ).catch((e: unknown) => { throw classifyBindError(e); });
+  const res = await call<{
+    endpointHandle: number;
+    nodeId: string;
+    keypair: number[];
+  }>("createEndpoint", {
+    key: keyBytes,
+    idleTimeout: options?.idleTimeout ?? null,
+    relayMode: relayMode ?? null,
+    relays: relays ?? null,
+    bindAddrs,
+    dnsDiscovery: discovery.dnsServerUrl ?? options?.dnsDiscovery ?? null,
+    dnsDiscoveryEnabled: discovery.dnsEnabled,
+    channelCapacity: options?.advanced?.channelCapacity ?? null,
+    maxChunkSizeBytes: options?.advanced?.maxChunkSizeBytes ?? null,
+    maxConsecutiveErrors: options?.advanced?.maxConsecutiveErrors ?? null,
+    drainTimeout: options?.advanced?.drainTimeout ?? null,
+    handleTtl: options?.advanced?.handleTtl ?? null,
+    maxPooledConnections: options?.maxPooledConnections ?? null,
+    poolIdleTimeoutMs: options?.poolIdleTimeoutMs ?? null,
+    disableNetworking,
+    proxyUrl: options?.proxyUrl ?? null,
+    proxyFromEnv: options?.proxyFromEnv ?? null,
+    keylog: options?.keylog ?? null,
+    compressionLevel:
+      typeof options?.compression === "object"
+        ? (options.compression.level ?? null)
+        : options?.compression
+          ? 3
+          : null,
+    compressionMinBodyBytes:
+      typeof options?.compression === "object"
+        ? (options.compression.minBodyBytes ?? null)
+        : null,
+    maxConcurrency: options?.maxConcurrency ?? null,
+    maxConnectionsPerPeer: options?.maxConnectionsPerPeer ?? null,
+    requestTimeout: options?.requestTimeout ?? null,
+    maxRequestBodyBytes: options?.maxRequestBodyBytes ?? null,
+    maxHeaderBytes: options?.maxHeaderBytes ?? null,
+  }).catch((e: unknown) => {
+    throw classifyBindError(e);
+  });
   return {
     endpointHandle: res.endpointHandle,
-    nodeId:         res.nodeId,
-    keypair:        new Uint8Array(res.keypair),
+    nodeId: res.nodeId,
+    keypair: new Uint8Array(res.keypair),
   };
 }
 
-export async function closeEndpoint(handle: number, force?: boolean): Promise<void> {
-  await call<Record<never, never>>("closeEndpoint", { endpointHandle: handle, force: force ?? null });
+export async function closeEndpoint(
+  handle: number,
+  force?: boolean,
+): Promise<void> {
+  await call<Record<never, never>>("closeEndpoint", {
+    endpointHandle: handle,
+    force: force ?? null,
+  });
 }
 
 export function stopServe(handle: number): void {
-  call<Record<never, never>>("stopServe", { endpointHandle: handle }).catch(() => {});
+  call<Record<never, never>>("stopServe", { endpointHandle: handle }).catch(
+    () => {},
+  );
 }
 
 // ── Address introspection ──────────────────────────────────────────────────────
 
 export const denoAddrFns: AddrFunctions = {
   nodeAddr: async (handle) => {
-    const res = await call<NodeAddrInfo>("nodeAddr", { endpointHandle: handle });
+    const res = await call<NodeAddrInfo>("nodeAddr", {
+      endpointHandle: handle,
+    });
     return res;
   },
   nodeTicket: async (handle) => {
     return call<string>("nodeTicket", { endpointHandle: handle });
   },
   homeRelay: async (handle) => {
-    const res = await call<string | null>("homeRelay", { endpointHandle: handle });
+    const res = await call<string | null>("homeRelay", {
+      endpointHandle: handle,
+    });
     return res;
   },
   peerInfo: async (handle, nodeId) => {
-    const res = await call<NodeAddrInfo | null>("peerInfo", { endpointHandle: handle, nodeId });
+    const res = await call<NodeAddrInfo | null>("peerInfo", {
+      endpointHandle: handle,
+      nodeId,
+    });
     return res;
   },
   peerStats: async (handle, nodeId) => {
-    return call<PeerStats | null>("peerStats", { endpointHandle: handle, nodeId });
+    return call<PeerStats | null>("peerStats", {
+      endpointHandle: handle,
+      nodeId,
+    });
   },
 };
 
@@ -427,13 +517,20 @@ export const denoDiscoveryFns: DiscoveryFunctions = {
     return call<PeerDiscoveryEvent | null>("mdnsNextEvent", { browseHandle });
   },
   mdnsBrowseClose: (browseHandle) => {
-    call<Record<never, never>>("mdnsBrowseClose", { browseHandle }).catch(() => {});
+    call<Record<never, never>>("mdnsBrowseClose", { browseHandle }).catch(
+      () => {},
+    );
   },
   mdnsAdvertise: async (handle, serviceName) => {
-    return call<number>("mdnsAdvertise", { endpointHandle: handle, serviceName });
+    return call<number>("mdnsAdvertise", {
+      endpointHandle: handle,
+      serviceName,
+    });
   },
   mdnsAdvertiseClose: (advertiseHandle) => {
-    call<Record<never, never>>("mdnsAdvertiseClose", { advertiseHandle }).catch(() => {});
+    call<Record<never, never>>("mdnsAdvertiseClose", { advertiseHandle }).catch(
+      () => {},
+    );
   },
 };
 
@@ -453,21 +550,34 @@ export const denoSessionFns: RawSessionFns = {
       "sessionCreateBidiStream",
       { sessionHandle },
     );
-    return { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream;
+    return {
+      readHandle: BigInt(res.readHandle),
+      writeHandle: BigInt(res.writeHandle),
+    } satisfies FfiDuplexStream;
   },
   nextBidiStream: async (sessionHandle) => {
     const res = await call<{ readHandle: number; writeHandle: number } | null>(
       "sessionNextBidiStream",
       { sessionHandle },
     );
-    return res ? { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream : null;
+    return res
+      ? ({
+          readHandle: BigInt(res.readHandle),
+          writeHandle: BigInt(res.writeHandle),
+        } satisfies FfiDuplexStream)
+      : null;
   },
   createUniStream: async (sessionHandle) => {
-    const res = await call<{ writeHandle: number }>("sessionCreateUniStream", { sessionHandle });
+    const res = await call<{ writeHandle: number }>("sessionCreateUniStream", {
+      sessionHandle,
+    });
     return BigInt(res.writeHandle);
   },
   nextUniStream: async (sessionHandle) => {
-    const res = await call<{ readHandle: number } | null>("sessionNextUniStream", { sessionHandle });
+    const res = await call<{ readHandle: number } | null>(
+      "sessionNextUniStream",
+      { sessionHandle },
+    );
     return res ? BigInt(res.readHandle) : null;
   },
   sendDatagram: async (sessionHandle, data) => {
@@ -477,18 +587,29 @@ export const denoSessionFns: RawSessionFns = {
     });
   },
   recvDatagram: async (sessionHandle) => {
-    const res = await call<{ data: string } | null>("sessionRecvDatagram", { sessionHandle });
+    const res = await call<{ data: string } | null>("sessionRecvDatagram", {
+      sessionHandle,
+    });
     return res ? decodeBase64(res.data) : null;
   },
   maxDatagramSize: async (sessionHandle) => {
-    const res = await call<{ maxDatagramSize: number | null }>("sessionMaxDatagramSize", { sessionHandle });
+    const res = await call<{ maxDatagramSize: number | null }>(
+      "sessionMaxDatagramSize",
+      { sessionHandle },
+    );
     return res.maxDatagramSize;
   },
   closed: async (sessionHandle) => {
-    return call<{ closeCode: number; reason: string }>("sessionClosed", { sessionHandle });
+    return call<{ closeCode: number; reason: string }>("sessionClosed", {
+      sessionHandle,
+    });
   },
   close: async (sessionHandle, closeCode?, reason?) => {
-    await call<Record<never, never>>("sessionClose", { sessionHandle, closeCode, reason });
+    await call<Record<never, never>>("sessionClose", {
+      sessionHandle,
+      closeCode,
+      reason,
+    });
   },
 };
 
@@ -498,10 +619,13 @@ export const denoSessionFns: RawSessionFns = {
  * Sign `data` with a 32-byte Ed25519 secret key.
  * Returns a 64-byte signature.
  */
-export async function secretKeySign(secretKey: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+export async function secretKeySign(
+  secretKey: Uint8Array,
+  data: Uint8Array,
+): Promise<Uint8Array> {
   const b64 = await call<string>("secretKeySign", {
     secretKey: encodeBase64(secretKey),
-    data:      encodeBase64(data),
+    data: encodeBase64(data),
   });
   return decodeBase64(b64);
 }
@@ -520,7 +644,7 @@ export async function publicKeyVerify(
 ): Promise<boolean> {
   return call<boolean>("publicKeyVerify", {
     publicKey: encodeBase64(publicKey),
-    data:      encodeBase64(data),
+    data: encodeBase64(data),
     signature: encodeBase64(signature),
   });
 }
