@@ -137,8 +137,10 @@ else
     (cd packages/iroh-http-py && maturin develop --release 2>&1 | tail -5)
     ok "maturin develop --release"
 
-    # Quick import smoke test
-    if python3 -c "import iroh_http; print(f'  module: {iroh_http.__name__}')" 2>/dev/null; then
+    # Quick import smoke test — use the venv python if one exists, else fall back to python3
+    PY_BIN="${ROOT}/packages/iroh-http-py/.venv/bin/python"
+    [[ ! -x "$PY_BIN" ]] && PY_BIN="python3"
+    if "$PY_BIN" -c "import iroh_http; print(f'  module: {iroh_http.__name__}')" 2>/dev/null; then
       ok "python3 import smoke test passed"
     else
       fail "python3 import smoke test"
