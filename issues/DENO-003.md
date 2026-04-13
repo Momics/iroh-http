@@ -1,7 +1,7 @@
 ---
 id: "DENO-003"
 title: "Compression options effectively ignored in Deno adapter unless minBodyBytes is set"
-status: open
+status: closed
 priority: P2
 date: 2026-04-13
 area: deno

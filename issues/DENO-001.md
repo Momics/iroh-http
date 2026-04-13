@@ -1,7 +1,7 @@
 ---
 id: "DENO-001"
 title: "Shared buffer in nonblocking nextChunk can corrupt concurrent body reads"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: deno

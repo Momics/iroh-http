@@ -1,7 +1,7 @@
 ---
 id: "PARITY-001"
 title: "Tauri missing top-level crypto utilities (generateSecretKey, secretKeySign, publicKeyVerify)"
-status: open
+status: closed
 priority: P2
 date: 2026-04-13
 area: tauri

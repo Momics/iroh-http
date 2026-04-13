@@ -1,7 +1,7 @@
 ---
 id: "DRIFT-C"
 title: "server-limits.md contains stale Status note about serve() not passing limits"
-status: open
+status: closed
 priority: P3
 date: 2026-04-13
 area: docs

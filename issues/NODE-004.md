@@ -1,7 +1,7 @@
 ---
 id: "NODE-004"
 title: "Node README options example is out of sync with actual API shape"
-status: open
+status: closed
 priority: P3
 date: 2026-04-13
 area: node

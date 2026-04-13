@@ -1,7 +1,7 @@
 ---
 id: "PARITY-004"
 title: "Python missing closed property / node lifecycle signal"
-status: open
+status: closed
 priority: P2
 date: 2026-04-13
 area: python

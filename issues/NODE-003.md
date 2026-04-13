@@ -1,7 +1,7 @@
 ---
 id: "NODE-003"
 title: "Compression options are partially wired — compressionLevel is accepted but unused"
-status: open
+status: closed
 priority: P2
 date: 2026-04-13
 area: node

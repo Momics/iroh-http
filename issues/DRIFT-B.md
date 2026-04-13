@@ -1,7 +1,7 @@
 ---
 id: "DRIFT-B"
 title: "architecture.md security defaults table uses stale request_timeout_secs naming"
-status: open
+status: closed
 priority: P3
 date: 2026-04-13
 area: docs

@@ -1,7 +1,7 @@
 ---
 id: "PARITY-006"
 title: "Python addr(), ticket(), and home_relay() are synchronous; all JS platforms are async"
-status: open
+status: closed
 priority: P2
 date: 2026-04-13
 area: python

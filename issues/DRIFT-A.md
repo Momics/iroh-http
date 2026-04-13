@@ -1,7 +1,7 @@
 ---
 id: "DRIFT-A"
 title: "sign-verify.md has broken relative doc links in See Also section"
-status: open
+status: closed
 priority: P3
 date: 2026-04-13
 area: docs

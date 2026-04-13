@@ -1,7 +1,7 @@
 ---
 id: "NODE-001"
 title: "disableNetworking option is ignored in Node adapter unless relayMode is disabled"
-status: open
+status: closed
 priority: P1
 date: 2026-04-13
 area: node

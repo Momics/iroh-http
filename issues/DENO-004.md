@@ -1,7 +1,7 @@
 ---
 id: "DENO-004"
 title: "Deno README example uses stale drainTimeout shape"
-status: open
+status: closed
 priority: P3
 date: 2026-04-13
 area: deno

@@ -1,7 +1,7 @@
 ---
 id: "PARITY-003"
 title: "Python missing pathChanges() method"
-status: open
+status: closed
 priority: P2
 date: 2026-04-13
 area: python

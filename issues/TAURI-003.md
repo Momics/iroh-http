@@ -1,7 +1,7 @@
 ---
 id: "TAURI-003"
 title: "session_connect drops invalid direct_addrs instead of rejecting them"
-status: open
+status: closed
 priority: P2
 date: 2026-04-13
 area: tauri
