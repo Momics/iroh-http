@@ -177,7 +177,168 @@ label {
   overflow-y: auto;
 }
 
-/* ── Dark mode ──────────────────────────────────────────────────────────────── */
+/* ── App header ─────────────────────────────────────────────────────────────── */
+
+.app-header {
+  display: flex;
+  align-items: baseline;
+  gap: 1.5rem;
+}
+
+/* ── Tabs ───────────────────────────────────────────────────────────────────── */
+
+.tab-nav {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid #e4e4e7;
+  flex-wrap: wrap;
+}
+
+.tab-btn {
+  background: transparent;
+  color: #555;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 0.5em 1em;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab-btn:hover:not(:disabled) {
+  background: transparent;
+  color: #6366f1;
+  border-bottom-color: #c7d2fe;
+}
+
+.tab-btn.active {
+  color: #6366f1;
+  border-bottom-color: #6366f1;
+  background: transparent;
+}
+
+.panel {
+  display: none;
+}
+
+.panel.active {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* ── Layout helpers ─────────────────────────────────────────────────────────── */
+
+.input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+
+.input-row input,
+.input-row code {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: #555;
+  border-color: #d1d5db;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #f4f4f5;
+  border-color: #9ca3af;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: #888;
+  margin-bottom: 0.6rem;
+  line-height: 1.5;
+}
+
+.overflow {
+  overflow: auto;
+  white-space: nowrap;
+}
+
+select {
+  font-family: inherit;
+  font-size: 0.9rem;
+  border-radius: 7px;
+  border: 1px solid #d1d5db;
+  padding: 0.5em 0.75em;
+  background: #fafafa;
+  color: inherit;
+  width: 100%;
+  margin-bottom: 0.6rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  cursor: pointer;
+}
+
+select:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+/* ── Dark mode additions ────────────────────────────────────────────────────── */
+
+@media (prefers-color-scheme: dark) {
+  .tab-nav {
+    border-bottom-color: #3f3f46;
+  }
+
+  .tab-btn {
+    color: #a1a1aa;
+  }
+
+  .tab-btn.active {
+    color: #818cf8;
+    border-bottom-color: #818cf8;
+  }
+
+  .tab-btn:hover:not(:disabled) {
+    color: #818cf8;
+    border-bottom-color: #4338ca;
+    background: transparent;
+  }
+
+  .btn-secondary {
+    color: #a1a1aa;
+    border-color: #3f3f46;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: #3f3f46;
+  }
+
+  select {
+    background: #18181b;
+    color: #e8e8e8;
+    border-color: #3f3f46;
+  }
+
+  .hint {
+    color: #71717a;
+  }
+}
 
 @media (prefers-color-scheme: dark) {
   :root {

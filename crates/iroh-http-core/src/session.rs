@@ -14,7 +14,7 @@ use crate::{
         make_body_channel, pump_body_to_quic_send, pump_quic_recv_to_body,
         remove_session, session_ep_idx, SessionEntry,
     },
-    FfiDuplexStream, IrohEndpoint, ALPN_DUPLEX,
+    CoreError, FfiDuplexStream, IrohEndpoint, ALPN_DUPLEX,
 };
 
 /// Returns `true` if the connection error means "connection ended" rather
@@ -37,14 +37,14 @@ pub struct CloseInfo {
 
 // ── Session registry ──────────────────────────────────────────────────────────
 
-fn get_conn(handle: u64) -> Result<Connection, String> {
+fn get_conn(handle: u64) -> Result<Connection, CoreError> {
     lookup_session(handle)
         .map(|s| s.conn.clone())
-        .ok_or_else(|| format!("invalid session handle: {handle}"))
+        .ok_or_else(|| CoreError::invalid_handle(handle as u32))
 }
 
 /// Return the remote peer's public key for a session.
-pub fn session_remote_id(handle: u64) -> Result<iroh::PublicKey, String> {
+pub fn session_remote_id(handle: u64) -> Result<iroh::PublicKey, CoreError> {
     get_conn(handle).map(|c| c.remote_id())
 }
 
@@ -63,7 +63,7 @@ pub async fn session_connect(
     endpoint: &IrohEndpoint,
     remote_node_id: &str,
     direct_addrs: Option<&[std::net::SocketAddr]>,
-) -> Result<u64, String> {
+) -> Result<u64, CoreError> {
     let parsed = parse_node_addr(remote_node_id)?;
     let node_id = parsed.node_id;
     let mut addr = iroh::EndpointAddr::new(node_id);
@@ -80,7 +80,7 @@ pub async fn session_connect(
         .raw()
         .connect(addr, ALPN_DUPLEX)
         .await
-        .map_err(|e| format!("connect session: {e}"))?;
+        .map_err(|e| CoreError::connection_failed(format!("connect session: {e}")))?;
 
     let handle = insert_session_for(endpoint.inner.endpoint_idx, SessionEntry { conn });
 
@@ -91,10 +91,10 @@ pub async fn session_connect(
 ///
 /// Returns `FfiDuplexStream` with `read_handle` / `write_handle` backed by
 /// body channels — the same interface used by fetch and raw_connect.
-pub async fn session_create_bidi_stream(session_handle: u64) -> Result<FfiDuplexStream, String> {
+pub async fn session_create_bidi_stream(session_handle: u64) -> Result<FfiDuplexStream, CoreError> {
     let conn = get_conn(session_handle)?;
 
-    let (send, recv) = conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
+    let (send, recv) = conn.open_bi().await.map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
 
     let ep_idx = session_ep_idx(session_handle).unwrap_or(0);
     Ok(wrap_bidi_stream(ep_idx, send, recv))
@@ -104,7 +104,7 @@ pub async fn session_create_bidi_stream(session_handle: u64) -> Result<FfiDuplex
 /// connection is closed.
 pub async fn session_next_bidi_stream(
     session_handle: u64,
-) -> Result<Option<FfiDuplexStream>, String> {
+) -> Result<Option<FfiDuplexStream>, CoreError> {
     let conn = get_conn(session_handle)?;
 
     match conn.accept_bi().await {
@@ -113,7 +113,7 @@ pub async fn session_next_bidi_stream(
             Ok(Some(wrap_bidi_stream(ep_idx, send, recv)))
         }
         Err(e) if is_connection_closed(&e) => Ok(None),
-        Err(e) => Err(format!("accept_bi: {e}")),
+        Err(e) => Err(CoreError::connection_failed(format!("accept_bi: {e}"))),
     }
 }
 
@@ -121,13 +121,13 @@ pub async fn session_next_bidi_stream(
 ///
 /// Blocks until a peer connects.  Returns an opaque session handle, or
 /// `None` if the endpoint is shutting down.
-pub async fn session_accept(endpoint: &IrohEndpoint) -> Result<Option<u64>, String> {
+pub async fn session_accept(endpoint: &IrohEndpoint) -> Result<Option<u64>, CoreError> {
     let incoming = match endpoint.raw().accept().await {
         Some(inc) => inc,
         None => return Ok(None),
     };
 
-    let conn = incoming.await.map_err(|e| format!("accept session: {e}"))?;
+    let conn = incoming.await.map_err(|e| CoreError::connection_failed(format!("accept session: {e}")))?;
 
     let handle = insert_session_for(endpoint.inner.endpoint_idx, SessionEntry { conn });
 
@@ -138,9 +138,9 @@ pub async fn session_accept(endpoint: &IrohEndpoint) -> Result<Option<u64>, Stri
 ///
 /// `close_code` is an application-level error code (maps to QUIC VarInt).
 /// `reason` is a human-readable string sent to the peer.
-pub fn session_close(session_handle: u64, close_code: u32, reason: &str) -> Result<(), String> {
+pub fn session_close(session_handle: u64, close_code: u32, reason: &str) -> Result<(), CoreError> {
     let entry = remove_session(session_handle)
-        .ok_or_else(|| format!("invalid session handle: {session_handle}"))?;
+        .ok_or_else(|| CoreError::invalid_handle(session_handle as u32))?;
     entry.conn.close(close_code.into(), reason.as_bytes());
     Ok(())
 }
@@ -148,7 +148,7 @@ pub fn session_close(session_handle: u64, close_code: u32, reason: &str) -> Resu
 /// Wait for the QUIC handshake to complete on a session.
 ///
 /// Resolves immediately if the handshake has already completed.
-pub async fn session_ready(_session_handle: u64) -> Result<(), String> {
+pub async fn session_ready(_session_handle: u64) -> Result<(), CoreError> {
     // iroh connections are fully established by the time session_connect returns,
     // so ready always resolves immediately. Kept for WebTransport API compatibility.
     Ok(())
@@ -158,7 +158,7 @@ pub async fn session_ready(_session_handle: u64) -> Result<(), String> {
 ///
 /// Blocks until the connection is closed by either side.  Removes the
 /// session from the registry so resources are freed.
-pub async fn session_closed(session_handle: u64) -> Result<CloseInfo, String> {
+pub async fn session_closed(session_handle: u64) -> Result<CloseInfo, CoreError> {
     let conn = get_conn(session_handle)?;
     let err = conn.closed().await;
     // Connection is dead — clean up the registry entry.
@@ -172,12 +172,12 @@ pub async fn session_closed(session_handle: u64) -> Result<CloseInfo, String> {
 /// Open a new unidirectional (send-only) stream on an existing session.
 ///
 /// Returns a write handle backed by a body channel.
-pub async fn session_create_uni_stream(session_handle: u64) -> Result<u64, String> {
+pub async fn session_create_uni_stream(session_handle: u64) -> Result<u64, CoreError> {
     let conn = get_conn(session_handle)?;
     let send = conn
         .open_uni()
         .await
-        .map_err(|e| format!("open_uni: {e}"))?;
+        .map_err(|e| CoreError::connection_failed(format!("open_uni: {e}")))?;
 
     let ep_idx = session_ep_idx(session_handle).unwrap_or(0);
     let (send_writer, send_reader) = make_body_channel();
@@ -190,7 +190,7 @@ pub async fn session_create_uni_stream(session_handle: u64) -> Result<u64, Strin
 /// Accept the next incoming unidirectional (receive-only) stream.
 ///
 /// Returns a read handle, or `None` when the connection is closed.
-pub async fn session_next_uni_stream(session_handle: u64) -> Result<Option<u64>, String> {
+pub async fn session_next_uni_stream(session_handle: u64) -> Result<Option<u64>, CoreError> {
     let conn = get_conn(session_handle)?;
 
     match conn.accept_uni().await {
@@ -202,7 +202,7 @@ pub async fn session_next_uni_stream(session_handle: u64) -> Result<Option<u64>,
             Ok(Some(read_handle))
         }
         Err(e) if is_connection_closed(&e) => Ok(None),
-        Err(e) => Err(format!("accept_uni: {e}")),
+        Err(e) => Err(CoreError::connection_failed(format!("accept_uni: {e}"))),
     }
 }
 
@@ -211,28 +211,28 @@ pub async fn session_next_uni_stream(session_handle: u64) -> Result<Option<u64>,
 /// Send a datagram on the session.
 ///
 /// Fails if `data.len()` exceeds `session_max_datagram_size`.
-pub fn session_send_datagram(session_handle: u64, data: &[u8]) -> Result<(), String> {
+pub fn session_send_datagram(session_handle: u64, data: &[u8]) -> Result<(), CoreError> {
     let conn = get_conn(session_handle)?;
     conn.send_datagram(bytes::Bytes::copy_from_slice(data))
-        .map_err(|e| format!("send_datagram: {e}"))
+        .map_err(|e| CoreError::internal(format!("send_datagram: {e}")))
 }
 
 /// Receive the next datagram from the session.
 ///
 /// Blocks until a datagram arrives, or returns `None` when the connection closes.
-pub async fn session_recv_datagram(session_handle: u64) -> Result<Option<Vec<u8>>, String> {
+pub async fn session_recv_datagram(session_handle: u64) -> Result<Option<Vec<u8>>, CoreError> {
     let conn = get_conn(session_handle)?;
     match conn.read_datagram().await {
         Ok(data) => Ok(Some(data.to_vec())),
         Err(e) if is_connection_closed(&e) => Ok(None),
-        Err(e) => Err(format!("recv_datagram: {e}")),
+        Err(e) => Err(CoreError::connection_failed(format!("recv_datagram: {e}"))),
     }
 }
 
 /// Return the current maximum datagram payload size for this session.
 ///
 /// Returns `None` if datagrams are not supported on the current path.
-pub fn session_max_datagram_size(session_handle: u64) -> Result<Option<usize>, String> {
+pub fn session_max_datagram_size(session_handle: u64) -> Result<Option<usize>, CoreError> {
     let conn = get_conn(session_handle)?;
     Ok(conn.max_datagram_size())
 }

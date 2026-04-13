@@ -650,7 +650,7 @@ async fn fetch_cancelled_via_token() {
     )
     .await;
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), "aborted");
+    assert_eq!(result.unwrap_err().code, iroh_http_core::ErrorCode::Cancelled);
 }
 
 // -- Endpoint basics ----------------------------------------------------------
@@ -1042,7 +1042,7 @@ async fn pool_different_peers_get_separate_connections() {
     // Helper: retry a fetch up to 5 times with exponential back-off.
     macro_rules! fetch_retry {
         ($id:expr, $addrs:expr) => {{
-            let mut result = Err(String::new());
+            let mut result: Result<_, iroh_http_core::CoreError> = Err(iroh_http_core::CoreError::internal("not started"));
             for attempt in 0u64..5 {
                 tokio::time::sleep(std::time::Duration::from_millis(200 * (1 + attempt))).await;
                 result = fetch(&client, $id, "/", "GET", &[], None, None, Some($addrs)).await;
@@ -1850,7 +1850,7 @@ async fn serve_concurrency_limit() {
 #[tokio::test]
 async fn fetch_unknown_peer() {
     // Generate a random keypair — nobody is listening on it.
-    let fake_key = iroh_http_core::generate_secret_key();
+    let fake_key = iroh_http_core::generate_secret_key().unwrap();
     let fake_pk = iroh::SecretKey::from_bytes(&fake_key).public();
     let fake_id = iroh_http_core::base32_encode(fake_pk.as_bytes());
 
@@ -2060,7 +2060,7 @@ async fn fetch_rejects_https_scheme() {
     let err = fetch(&client_ep, server_ep.node_id(), "https://example.com/", "GET", &[], None, None, None)
         .await
         .unwrap_err();
-    assert!(err.contains("httpi://"), "error should mention httpi://, got: {err}");
+    assert!(err.message.contains("httpi://"), "error should mention httpi://, got: {err}");
 }
 
 #[tokio::test]
@@ -2069,5 +2069,5 @@ async fn fetch_rejects_http_scheme() {
     let err = fetch(&client_ep, server_ep.node_id(), "http://example.com/path", "GET", &[], None, None, None)
         .await
         .unwrap_err();
-    assert!(err.contains("httpi://"), "error should mention httpi://, got: {err}");
+    assert!(err.message.contains("httpi://"), "error should mention httpi://, got: {err}");
 }

@@ -205,7 +205,7 @@ pub async fn peer_stats(endpoint_handle: u64, node_id: String) -> Result<Option<
 /// Read the next chunk from a body reader handle (base64-encoded).
 #[command]
 pub async fn next_chunk(handle: u64) -> Result<Option<String>, String> {
-    let chunk = iroh_http_core::stream::next_chunk(handle).await.map_err(|e| iroh_http_core::classify_error_json(e))?;
+    let chunk = iroh_http_core::stream::next_chunk(handle).await.map_err(|e| iroh_http_core::core_error_to_json(&e))?;
     Ok(chunk.map(|b| B64.encode(&b[..])))
 }
 
@@ -213,13 +213,13 @@ pub async fn next_chunk(handle: u64) -> Result<Option<String>, String> {
 #[command]
 pub async fn send_chunk(handle: u64, chunk: String) -> Result<(), String> {
     let bytes = B64.decode(&chunk).map_err(|e| iroh_http_core::classify_error_json(format!("base64 decode: {e}")))?;
-    iroh_http_core::stream::send_chunk(handle, Bytes::from(bytes)).await.map_err(|e| iroh_http_core::classify_error_json(e))
+    iroh_http_core::stream::send_chunk(handle, Bytes::from(bytes)).await.map_err(|e| iroh_http_core::core_error_to_json(&e))
 }
 
 /// Signal end-of-body for a writer handle.
 #[command]
 pub fn finish_body(handle: u64) -> Result<(), String> {
-    iroh_http_core::stream::finish_body(handle).map_err(|e| iroh_http_core::classify_error_json(e))
+    iroh_http_core::stream::finish_body(handle).map_err(|e| iroh_http_core::core_error_to_json(&e))
 }
 
 /// Cancel a body reader, signalling EOF.
@@ -231,7 +231,7 @@ pub fn cancel_request(handle: u64) {
 /// Await and retrieve trailer headers from a completed request/response.
 #[command]
 pub async fn next_trailer(handle: u64) -> Result<Option<Vec<Vec<String>>>, String> {
-    let trailers = iroh_http_core::stream::next_trailer(handle).await.map_err(|e| iroh_http_core::classify_error_json(e))?;
+    let trailers = iroh_http_core::stream::next_trailer(handle).await.map_err(|e| iroh_http_core::core_error_to_json(&e))?;
     Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
 }
 
@@ -242,7 +242,7 @@ pub fn send_trailers(handle: u64, trailers: Vec<Vec<String>>) -> Result<(), Stri
         .into_iter()
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
-    iroh_http_core::stream::send_trailers(handle, pairs).map_err(|e| iroh_http_core::classify_error_json(e))
+    iroh_http_core::stream::send_trailers(handle, pairs).map_err(|e| iroh_http_core::core_error_to_json(&e))
 }
 
 /// Allocate a body writer handle for streaming request bodies.
@@ -409,7 +409,7 @@ pub fn respond_to_request(args: RespondArgs) -> Result<(), String> {
         .into_iter()
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
-    respond(args.req_handle, args.status, headers).map_err(|e| iroh_http_core::classify_error_json(e))
+    respond(args.req_handle, args.status, headers).map_err(|e| iroh_http_core::core_error_to_json(&e))
 }
 
 // ── rawConnect ────────────────────────────────────────────────────────────────
@@ -593,7 +593,8 @@ pub fn secret_key_sign(secret_key: String, data: String) -> Result<String, Strin
         .map_err(|_| "secret key must be 32 bytes".to_string())?;
     let data_bytes = B64.decode(&data)
         .map_err(|e| format!("base64 decode data: {e}"))?;
-    let sig = iroh_http_core::secret_key_sign(&key_bytes, &data_bytes);
+    let sig = iroh_http_core::secret_key_sign(&key_bytes, &data_bytes)
+        .map_err(|e| e.to_string())?;
     Ok(B64.encode(sig))
 }
 
@@ -616,8 +617,9 @@ pub fn public_key_verify(public_key: String, data: String, signature: String) ->
 
 /// Generate a fresh Ed25519 secret key. Returns 32 raw bytes as base64.
 #[command]
-pub fn generate_secret_key() -> String {
-    B64.encode(iroh_http_core::generate_secret_key())
+pub fn generate_secret_key() -> Result<String, String> {
+    let key = iroh_http_core::generate_secret_key().map_err(|e| e.to_string())?;
+    Ok(B64.encode(key))
 }
 
 // ── mDNS browse / advertise ──────────────────────────────────────────────────
