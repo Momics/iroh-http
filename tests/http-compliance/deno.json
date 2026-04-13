@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "@momics/iroh-http-deno": "../../packages/iroh-http-deno/mod.ts",
+    "@std/path": "jsr:@std/path@^1",
+    "@std/fs": "jsr:@std/fs@^1"
+  }
+}

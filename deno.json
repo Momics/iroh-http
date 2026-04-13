@@ -2,7 +2,8 @@
   "workspace": [
     "packages/iroh-http-shared",
     "packages/iroh-http-deno",
-    "examples/deno"
+    "examples/deno",
+    "tests/http-compliance"
   ],
   "unstable": ["sloppy-imports"],
   "exclude": [
