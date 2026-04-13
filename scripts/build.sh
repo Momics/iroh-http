@@ -99,11 +99,13 @@ else
   (cd packages/iroh-http-node && npx tsc 2>&1)
   ok "lib.ts → lib.js + lib.d.ts"
 
-  # Quick import smoke test
-  if node -e "require('./packages/iroh-http-node/lib.js')" >/dev/null 2>&1; then
+  # Quick import smoke test — capture output, show only on failure
+  SMOKE_OUT=$(node -e "require('./packages/iroh-http-node/lib.js')" 2>&1)
+  if [[ $? -eq 0 ]]; then
     ok "require() smoke test passed"
   else
     fail "require() smoke test — lib.js failed to load"
+    echo "$SMOKE_OUT"
   fi
 fi
 
@@ -140,10 +142,13 @@ else
     # Quick import smoke test — use the venv python if one exists, else fall back to python3
     PY_BIN="${ROOT}/packages/iroh-http-py/.venv/bin/python"
     [[ ! -x "$PY_BIN" ]] && PY_BIN="python3"
-    if "$PY_BIN" -c "import iroh_http; print(f'  module: {iroh_http.__name__}')" 2>/dev/null; then
+    PY_SMOKE_OUT=$("$PY_BIN" -c "import iroh_http; print(f'  module: {iroh_http.__name__}')" 2>&1)
+    if [[ $? -eq 0 ]]; then
       ok "python3 import smoke test passed"
+      echo "$PY_SMOKE_OUT"
     else
       fail "python3 import smoke test"
+      echo "$PY_SMOKE_OUT"
     fi
   else
     skip "maturin not installed (pip install maturin)"
