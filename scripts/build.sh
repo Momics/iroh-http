@@ -51,7 +51,7 @@ if [[ "$SKIP_RUST" == true ]]; then
   skip "cargo build"
 else
   # Build workspace excluding Python (PyO3 needs maturin, not bare cargo build)
-  if cargo build --release --workspace --exclude iroh-http-py 2>&1; then
+  if cargo build --release --workspace 2>&1; then
     ok "cargo build --release (workspace, excl. python)"
   else
     fail "cargo build --release"
