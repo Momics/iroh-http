@@ -11,6 +11,13 @@ fail() { echo "  ✗ $1"; }
 echo ""
 echo "═══ Tauri plugin ═══"
 
+# Ensure the vendored Tauri Swift API is present (required for iOS builds).
+# On non-macOS CI this is a no-op since the directory won't exist and the
+# script exits cleanly.
+if [[ "$(uname)" == "Darwin" ]]; then
+  bash packages/iroh-http-tauri/scripts/setup-ios.sh
+fi
+
 if (cd packages/iroh-http-tauri && cargo check 2>&1); then
   ok "cargo check (tauri plugin)"
 else
