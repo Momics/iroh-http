@@ -1,3 +1,32 @@
+## Default Permission
+
+Default permissions for iroh-http plugin
+
+#### This default permission set includes the following:
+
+- `allow-create-endpoint`
+- `allow-close-endpoint`
+- `allow-ping`
+- `allow-node-addr`
+- `allow-node-ticket`
+- `allow-home-relay`
+- `allow-peer-info`
+- `allow-peer-stats`
+- `allow-next-chunk`
+- `allow-send-chunk`
+- `allow-finish-body`
+- `allow-alloc-body-writer`
+- `allow-next-trailer`
+- `allow-send-trailers`
+- `allow-cancel-request`
+- `allow-raw-fetch`
+- `allow-alloc-fetch-token`
+- `allow-cancel-in-flight`
+- `allow-serve`
+- `allow-stop-serve`
+- `allow-respond-to-request`
+- `allow-raw-connect`
+
 ## Permission Table
 
 <table>
@@ -1043,19 +1072,6 @@ Enables the stop_serve command without any pre-configured scope.
 <td>
 
 Denies the stop_serve command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:default`
-
-</td>
-<td>
-
-Default permissions for iroh-http plugin
 
 </td>
 </tr>
