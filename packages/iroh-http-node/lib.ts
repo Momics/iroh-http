@@ -79,31 +79,28 @@ import type {
 // ── Bridge implementation ─────────────────────────────────────────────────────
 
 const bridge: Bridge = {
-  // napi-rs maps Rust u32 handles to JS `number`; shared Bridge interface uses
-  // `bigint`. Convert at this boundary — Number() is safe for u32 (< 2^32).
-  nextChunk: (handle: bigint) => jsNextChunk(Number(handle)),
-  sendChunk: (handle: bigint, chunk: Uint8Array) =>
-    jsSendChunk(Number(handle), chunk),
+  nextChunk: (handle: bigint) => jsNextChunk(handle),
+  sendChunk: (handle: bigint, chunk: Uint8Array) => jsSendChunk(handle, chunk),
   finishBody: (handle: bigint) => {
-    jsFinishBody(Number(handle));
+    jsFinishBody(handle);
     return Promise.resolve();
   },
   cancelRequest: (handle: bigint) => {
-    jsCancelRequest(Number(handle));
+    jsCancelRequest(handle);
     return Promise.resolve();
   },
-  allocFetchToken: () => Promise.resolve(BigInt(jsAllocFetchToken())),
+  allocFetchToken: () => Promise.resolve(jsAllocFetchToken()),
   cancelFetch: (token: bigint) => {
-    jsCancelInFlight(Number(token));
+    jsCancelInFlight(token);
   },
   nextTrailer: async (handle: bigint) => {
-    const rows = await jsNextTrailer(Number(handle));
+    const rows = await jsNextTrailer(handle);
     return rows
       ? (rows as string[][]).map((p) => [p[0], p[1]] as [string, string])
       : null;
   },
   sendTrailers: (handle: bigint, trailers: [string, string][]) => {
-    jsSendTrailers(Number(handle), trailers as string[][]);
+    jsSendTrailers(handle, trailers as string[][]);
     return Promise.resolve();
   },
 };
@@ -126,16 +123,16 @@ const rawFetch: RawFetchFn = async (
     url,
     method,
     headers as string[][],
-    reqBodyHandle != null ? Number(reqBodyHandle) : null,
-    Number(fetchToken),
+    reqBodyHandle ?? null,
+    fetchToken,
     directAddrs ?? null,
   );
   return {
     status: res.status,
     headers: res.headers as [string, string][],
-    bodyHandle: BigInt(res.bodyHandle),
+    bodyHandle: res.bodyHandle,
     url: res.url,
-    trailersHandle: BigInt(res.trailersHandle),
+    trailersHandle: res.trailersHandle,
   } satisfies FfiResponse;
 };
 
@@ -151,19 +148,19 @@ const rawServe: RawServeFn = (
     callback(typed)
       .then((head) => {
         napiRawRespond(
-          Number(typed.reqHandle),
+          typed.reqHandle,
           head.status,
           head.headers as string[][],
         );
       })
       .catch((err: unknown) => {
         console.error("[iroh-http-node] serve handler error:", err);
-        napiRawRespond(Number(typed.reqHandle), 500, []);
+        napiRawRespond(typed.reqHandle, 500, []);
       });
   });
 };
 
-const allocBodyWriter: AllocBodyWriterFn = () => BigInt(jsAllocBodyWriter());
+const allocBodyWriter: AllocBodyWriterFn = () => jsAllocBodyWriter();
 
 const rawConnect: RawConnectFn = async (
   endpointHandle,
@@ -178,8 +175,8 @@ const rawConnect: RawConnectFn = async (
     headers as string[][],
   );
   return {
-    readHandle: BigInt(ffi.readHandle),
-    writeHandle: BigInt(ffi.writeHandle),
+    readHandle: ffi.readHandle,
+    writeHandle: ffi.writeHandle,
   } satisfies FfiDuplexStream;
 };
 
@@ -277,49 +274,40 @@ const discoveryFns: DiscoveryFunctions = {
 /** Session functions backed by napi bindings. */
 const nodeSessionFns: RawSessionFns = {
   connect: async (endpointHandle, nodeId, directAddrs) =>
-    BigInt(
-      await napiSessionConnect(
-        endpointHandle,
-        nodeId,
-        directAddrs ?? undefined,
-      ),
-    ),
+    napiSessionConnect(endpointHandle, nodeId, directAddrs ?? undefined),
   createBidiStream: async (sessionHandle) => {
-    const ffi = await napiSessionCreateBidiStream(Number(sessionHandle));
+    const ffi = await napiSessionCreateBidiStream(sessionHandle);
     return {
-      readHandle: BigInt(ffi.readHandle),
-      writeHandle: BigInt(ffi.writeHandle),
+      readHandle: ffi.readHandle,
+      writeHandle: ffi.writeHandle,
     } satisfies FfiDuplexStream;
   },
   nextBidiStream: async (sessionHandle) => {
-    const ffi = await napiSessionNextBidiStream(Number(sessionHandle));
+    const ffi = await napiSessionNextBidiStream(sessionHandle);
     return ffi
-      ? ({
-        readHandle: BigInt(ffi.readHandle),
-        writeHandle: BigInt(ffi.writeHandle),
-      } satisfies FfiDuplexStream)
+      ? ({ readHandle: ffi.readHandle, writeHandle: ffi.writeHandle } satisfies FfiDuplexStream)
       : null;
   },
   createUniStream: async (sessionHandle: bigint) =>
-    BigInt(await napiSessionCreateUniStream(Number(sessionHandle))),
+    napiSessionCreateUniStream(sessionHandle),
   nextUniStream: async (sessionHandle: bigint) => {
-    const h = await napiSessionNextUniStream(Number(sessionHandle));
-    return h != null ? BigInt(h) : null;
+    const h = await napiSessionNextUniStream(sessionHandle);
+    return h ?? null;
   },
   sendDatagram: async (sessionHandle: bigint, data: Uint8Array) =>
-    napiSessionSendDatagram(Number(sessionHandle), data),
+    napiSessionSendDatagram(sessionHandle, data),
   recvDatagram: async (sessionHandle: bigint) => {
-    const buf = await napiSessionRecvDatagram(Number(sessionHandle));
+    const buf = await napiSessionRecvDatagram(sessionHandle);
     return buf ? new Uint8Array(buf) : null;
   },
   maxDatagramSize: async (sessionHandle: bigint) =>
-    napiSessionMaxDatagramSize(Number(sessionHandle)) ?? null,
+    napiSessionMaxDatagramSize(sessionHandle) ?? null,
   closed: async (sessionHandle: bigint) => {
-    const info = await napiSessionClosed(Number(sessionHandle));
+    const info = await napiSessionClosed(sessionHandle);
     return { closeCode: info.closeCode, reason: info.reason };
   },
   close: async (sessionHandle: bigint, closeCode?: number, reason?: string) =>
-    napiSessionClose(Number(sessionHandle), closeCode, reason),
+    napiSessionClose(sessionHandle, closeCode, reason),
 };
 
 /**
