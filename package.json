@@ -10,6 +10,11 @@
     "build:ts": "npm run build --workspaces",
     "build:rust": "cargo build --release --workspace",
     "build": "bash scripts/build.sh",
-    "build:skip-python": "bash scripts/build.sh --skip-python"
+    "build:skip-python": "bash scripts/build.sh --skip-python",
+    "test:rust": "cargo test --workspace",
+    "test:node": "npm test --workspace=packages/iroh-http-node",
+    "test:deno": "deno task --config packages/iroh-http-deno/deno.jsonc test",
+    "test:interop": "bash tests/http-compliance/run.sh",
+    "test": "npm run test:rust && npm run test:node && npm run test:deno"
   }
 }
