@@ -6,25 +6,47 @@
  */
 
 // ── Public types ────────────────────────────────────────────────────────────
-export type { CloseOptions, NodeOptions, IrohNode, EndpointInfo,
-              RelayMode, IrohFetchInit,
-              NodeAddrInfo, PeerDiscoveryEvent, PeerStats, PathInfo,
-              BidirectionalStream, DuplexStream } from "./bridge.js";
-export type { IrohSession, WebTransportBidirectionalStream, WebTransportCloseInfo, WebTransportDatagramDuplexStream } from "./session.js";
-export type { ServeHandler, ServeOptions, ServeHandle } from "./serve.js";
+export type {
+  BidirectionalStream,
+  CloseOptions,
+  DuplexStream,
+  EndpointInfo,
+  IrohFetchInit,
+  IrohNode,
+  NodeAddrInfo,
+  NodeOptions,
+  PathInfo,
+  PeerDiscoveryEvent,
+  PeerStats,
+  RelayMode,
+} from "./bridge.js";
+export type {
+  IrohSession,
+  WebTransportBidirectionalStream,
+  WebTransportCloseInfo,
+  WebTransportDatagramDuplexStream,
+} from "./session.js";
+export type { ServeHandle, ServeHandler, ServeOptions } from "./serve.js";
 
 // ── Internal types (used by platform adapters, not end users) ───────────────
 // Adapter packages import these from "@momics/iroh-http-shared/adapter" instead.
 // Bridge is kept here for use by buildNode() below.
 export { buildSession } from "./session.js";
-export { makeReadable, pipeToWriter, bodyInitToStream } from "./streams.js";
-export { makeFetch, makeConnect } from "./fetch.js";
+export { bodyInitToStream, makeReadable, pipeToWriter } from "./streams.js";
+export { makeConnect, makeFetch } from "./fetch.js";
 export { makeServe } from "./serve.js";
-export { PublicKey, SecretKey, resolveNodeId } from "./keys.js";
+export { PublicKey, resolveNodeId, SecretKey } from "./keys.js";
 export {
-  IrohError, IrohBindError, IrohConnectError, IrohStreamError, IrohProtocolError,
-  IrohAbortError, IrohArgumentError, IrohHandleError,
-  classifyError, classifyBindError,
+  classifyBindError,
+  classifyError,
+  IrohAbortError,
+  IrohArgumentError,
+  IrohBindError,
+  IrohConnectError,
+  IrohError,
+  IrohHandleError,
+  IrohProtocolError,
+  IrohStreamError,
 } from "./errors.js";
 
 /**
@@ -43,12 +65,27 @@ export function ticketNodeId(ticket: string): string {
   return ticket;
 }
 
-import type { Bridge, CloseOptions, EndpointInfo, NodeOptions, IrohNode, MdnsOptions, NodeAddrInfo, PeerDiscoveryEvent, PeerStats, PathInfo, RawServeFn, RawFetchFn, AllocBodyWriterFn, RawConnectFn } from "./bridge.js";
+import type {
+  AllocBodyWriterFn,
+  Bridge,
+  CloseOptions,
+  EndpointInfo,
+  IrohNode,
+  MdnsOptions,
+  NodeAddrInfo,
+  NodeOptions,
+  PathInfo,
+  PeerDiscoveryEvent,
+  PeerStats,
+  RawConnectFn,
+  RawFetchFn,
+  RawServeFn,
+} from "./bridge.js";
 import type { RawSessionFns, WebTransportCloseInfo } from "./session.js";
 import { buildSession } from "./session.js";
-import { makeFetch, makeConnect } from "./fetch.js";
+import { makeConnect, makeFetch } from "./fetch.js";
 import { makeServe } from "./serve.js";
-import { PublicKey, SecretKey, resolveNodeId } from "./keys.js";
+import { PublicKey, resolveNodeId, SecretKey } from "./keys.js";
 
 /** Platform-specific address introspection functions. */
 export interface AddrFunctions {
@@ -59,7 +96,10 @@ export interface AddrFunctions {
   /** Home relay URL, or null if not connected to a relay. */
   homeRelay(endpointHandle: number): Promise<string | null>;
   /** Known addresses for a remote peer, or null if unknown. */
-  peerInfo(endpointHandle: number, nodeId: string): Promise<NodeAddrInfo | null>;
+  peerInfo(
+    endpointHandle: number,
+    nodeId: string,
+  ): Promise<NodeAddrInfo | null>;
   /** Per-peer connection statistics with path information. */
   peerStats(endpointHandle: number, nodeId: string): Promise<PeerStats | null>;
 }
@@ -130,17 +170,35 @@ export function buildNode(
     nodeId: info.nodeId,
     keypair: info.keypair,
     fetch: makeFetch(bridge, info.endpointHandle, rawFetch, allocBodyWriter),
-    serve: makeServe(bridge, info.endpointHandle, rawServe, info.nodeId, closedPromise.then(() => {}), () => stopServe(info.endpointHandle)),
+    serve: makeServe(
+      bridge,
+      info.endpointHandle,
+      rawServe,
+      info.nodeId,
+      closedPromise.then(() => {}),
+      () => stopServe(info.endpointHandle),
+    ),
     async connect(peer, init?) {
-      if (!sessionFns) throw new Error("connect() not supported by this platform adapter");
+      if (!sessionFns) {
+        throw new Error("connect() not supported by this platform adapter");
+      }
       const nodeId = resolveNodeId(peer);
       const directAddrs = init?.directAddrs ?? null;
-      const sessionHandle = await sessionFns.connect(info.endpointHandle, nodeId, directAddrs);
+      const sessionHandle = await sessionFns.connect(
+        info.endpointHandle,
+        nodeId,
+        directAddrs,
+      );
       const remotePk = PublicKey.fromString(nodeId);
       return buildSession(bridge, sessionHandle, remotePk, sessionFns);
     },
-    browse(options?: MdnsOptions, signal?: AbortSignal): AsyncIterable<PeerDiscoveryEvent> {
-      if (!discoveryFns) throw new Error("browse() not supported by this platform adapter");
+    browse(
+      options?: MdnsOptions,
+      signal?: AbortSignal,
+    ): AsyncIterable<PeerDiscoveryEvent> {
+      if (!discoveryFns) {
+        throw new Error("browse() not supported by this platform adapter");
+      }
       const fns = discoveryFns;
       const handle = info.endpointHandle;
       const svcName = options?.serviceName ?? "iroh-http";
@@ -158,7 +216,9 @@ export function buildNode(
                 return { done: true as const, value: undefined };
               }
               const event = await fns.mdnsNextEvent(browseHandle);
-              if (event === null) return { done: true as const, value: undefined };
+              if (event === null) {
+                return { done: true as const, value: undefined };
+              }
               return { done: false as const, value: event };
             },
             return() {
@@ -172,10 +232,18 @@ export function buildNode(
         },
       };
     },
-    async advertise(options?: MdnsOptions, signal?: AbortSignal): Promise<void> {
-      if (!discoveryFns) throw new Error("advertise() not supported by this platform adapter");
+    async advertise(
+      options?: MdnsOptions,
+      signal?: AbortSignal,
+    ): Promise<void> {
+      if (!discoveryFns) {
+        throw new Error("advertise() not supported by this platform adapter");
+      }
       const svcName = options?.serviceName ?? "iroh-http";
-      const advHandle = await discoveryFns.mdnsAdvertise(info.endpointHandle, svcName);
+      const advHandle = await discoveryFns.mdnsAdvertise(
+        info.endpointHandle,
+        svcName,
+      );
       if (signal) {
         return new Promise<void>((resolve) => {
           signal.addEventListener("abort", () => {
@@ -191,11 +259,15 @@ export function buildNode(
       // No signal — advertise until the node closes.
     },
     addr: async () => {
-      if (!addrFns) throw new Error("addr() not supported by this platform adapter");
+      if (!addrFns) {
+        throw new Error("addr() not supported by this platform adapter");
+      }
       return addrFns.nodeAddr(info.endpointHandle);
     },
     ticket: async () => {
-      if (!addrFns) throw new Error("ticket() not supported by this platform adapter");
+      if (!addrFns) {
+        throw new Error("ticket() not supported by this platform adapter");
+      }
       return addrFns.nodeTicket(info.endpointHandle);
     },
     homeRelay: async () => {
@@ -212,7 +284,10 @@ export function buildNode(
       const nodeId = resolveNodeId(peer);
       return addrFns.peerStats(info.endpointHandle, nodeId);
     },
-    pathChanges(peer: PublicKey | string, pollIntervalMs = 500): AsyncIterable<PathInfo> {
+    pathChanges(
+      peer: PublicKey | string,
+      pollIntervalMs = 500,
+    ): AsyncIterable<PathInfo> {
       const nodeId = resolveNodeId(peer);
       const endpointHandle = info.endpointHandle;
       return {
@@ -233,7 +308,10 @@ export function buildNode(
           }
 
           function cancelWake() {
-            if (timeoutId !== null) { clearTimeout(timeoutId); timeoutId = null; }
+            if (timeoutId !== null) {
+              clearTimeout(timeoutId);
+              timeoutId = null;
+            }
             const r = wakeResolve;
             wakeResolve = null;
             r?.();
@@ -247,7 +325,7 @@ export function buildNode(
                   : null;
 
                 if (stats) {
-                  const selected = stats.paths.find(p => p.active);
+                  const selected = stats.paths.find((p) => p.active);
                   if (selected) {
                     const key = `${selected.relay}:${selected.addr}`;
                     if (key !== lastPath) {
@@ -259,7 +337,7 @@ export function buildNode(
                 }
 
                 // Wait for the next poll interval.
-                await new Promise<void>(resolve => {
+                await new Promise<void>((resolve) => {
                   wakeResolve = resolve;
                   scheduleWake();
                 });
@@ -280,7 +358,9 @@ export function buildNode(
       await closeEndpoint(info.endpointHandle, options?.force);
       resolveClosed({ closeCode: 0, reason: "" });
     },
-    [Symbol.asyncDispose]() { return node.close(); },
+    [Symbol.asyncDispose]() {
+      return node.close();
+    },
   };
   return node;
 }

@@ -650,7 +650,10 @@ async fn fetch_cancelled_via_token() {
     )
     .await;
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err().code, iroh_http_core::ErrorCode::Cancelled);
+    assert_eq!(
+        result.unwrap_err().code,
+        iroh_http_core::ErrorCode::Cancelled
+    );
 }
 
 // -- Endpoint basics ----------------------------------------------------------
@@ -1042,11 +1045,14 @@ async fn pool_different_peers_get_separate_connections() {
     // Helper: retry a fetch up to 5 times with exponential back-off.
     macro_rules! fetch_retry {
         ($id:expr, $addrs:expr) => {{
-            let mut result: Result<_, iroh_http_core::CoreError> = Err(iroh_http_core::CoreError::internal("not started"));
+            let mut result: Result<_, iroh_http_core::CoreError> =
+                Err(iroh_http_core::CoreError::internal("not started"));
             for attempt in 0u64..5 {
                 tokio::time::sleep(std::time::Duration::from_millis(200 * (1 + attempt))).await;
                 result = fetch(&client, $id, "/", "GET", &[], None, None, Some($addrs)).await;
-                if result.is_ok() { break; }
+                if result.is_ok() {
+                    break;
+                }
             }
             result.expect("fetch failed after 5 attempts")
         }};
@@ -2057,17 +2063,41 @@ async fn request_timeout_fires() {
 #[tokio::test]
 async fn fetch_rejects_https_scheme() {
     let (server_ep, client_ep) = make_pair().await;
-    let err = fetch(&client_ep, server_ep.node_id(), "https://example.com/", "GET", &[], None, None, None)
-        .await
-        .unwrap_err();
-    assert!(err.message.contains("httpi://"), "error should mention httpi://, got: {err}");
+    let err = fetch(
+        &client_ep,
+        server_ep.node_id(),
+        "https://example.com/",
+        "GET",
+        &[],
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.message.contains("httpi://"),
+        "error should mention httpi://, got: {err}"
+    );
 }
 
 #[tokio::test]
 async fn fetch_rejects_http_scheme() {
     let (server_ep, client_ep) = make_pair().await;
-    let err = fetch(&client_ep, server_ep.node_id(), "http://example.com/path", "GET", &[], None, None, None)
-        .await
-        .unwrap_err();
-    assert!(err.message.contains("httpi://"), "error should mention httpi://, got: {err}");
+    let err = fetch(
+        &client_ep,
+        server_ep.node_id(),
+        "http://example.com/path",
+        "GET",
+        &[],
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.message.contains("httpi://"),
+        "error should mention httpi://, got: {err}"
+    );
 }

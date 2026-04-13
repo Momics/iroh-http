@@ -1,8 +1,6 @@
 //! Diagnostic test — captures iroh trace output during a connect timeout.
 
-use iroh_http_core::{
-    session_connect, session_accept, IrohEndpoint, NodeOptions,
-};
+use iroh_http_core::{session_accept, session_connect, IrohEndpoint, NodeOptions};
 
 /// Reproduce exactly what bidi_stream.rs does, in this binary — NO tracing.
 #[tokio::test]
@@ -28,7 +26,8 @@ async fn diag_session_connect() {
     let connect_result = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         session_connect(&a, &b_id, Some(&b_addrs)),
-    ).await;
+    )
+    .await;
 
     match &connect_result {
         Ok(Ok(handle)) => eprintln!("=== session_connect succeeded! handle={handle}"),
@@ -36,6 +35,9 @@ async fn diag_session_connect() {
         Err(_) => eprintln!("=== session_connect TIMED OUT after 10s"),
     }
 
-    assert!(connect_result.is_ok() && connect_result.unwrap().is_ok(), "session_connect failed");
+    assert!(
+        connect_result.is_ok() && connect_result.unwrap().is_ok(),
+        "session_connect failed"
+    );
     b_handle.abort();
 }

@@ -9,11 +9,11 @@
  */
 
 import type {
+  BidirectionalStream,
   Bridge,
   FfiResponseHead,
   RawServeFn,
   RequestPayload,
-  BidirectionalStream,
 } from "./bridge.js";
 import { makeReadable, pipeToWriter } from "./streams.js";
 import { classifyError } from "./errors.js";
@@ -140,7 +140,9 @@ export function makeServe(
       // serve(options, handler)
       options = (args[0] as ServeOptions) ?? {};
       handler = args[1] as ServeHandler;
-    } else if (args.length === 1 && typeof args[0] === "object" && args[0] !== null) {
+    } else if (
+      args.length === 1 && typeof args[0] === "object" && args[0] !== null
+    ) {
       // serve({ handler, ...options })
       const opts = args[0] as ServeOptions & { handler: ServeHandler };
       if (typeof opts.handler !== "function") {
@@ -154,105 +156,112 @@ export function makeServe(
 
     const onError = options.onError ?? defaultOnError;
 
-    rawServe(endpointHandle, {}, async (payload: RequestPayload): Promise<FfiResponseHead> => {
-      // Build a web-standard Request.
-      const hasBody = METHODS_WITH_BODY.has(payload.method.toUpperCase());
-      const reqBody = (hasBody && !payload.isBidi)
-        ? makeReadable(bridge, payload.reqBodyHandle)
-        : null;
+    rawServe(
+      endpointHandle,
+      {},
+      async (payload: RequestPayload): Promise<FfiResponseHead> => {
+        // Build a web-standard Request.
+        const hasBody = METHODS_WITH_BODY.has(payload.method.toUpperCase());
+        const reqBody = (hasBody && !payload.isBidi)
+          ? makeReadable(bridge, payload.reqBodyHandle)
+          : null;
 
-      // iroh-node-id is stripped (spoof prevention) and re-injected from the
-      // authenticated QUIC connection identity in Rust core. No duplication here.
-      const headers: [string, string][] = [...payload.headers];
+        // iroh-node-id is stripped (spoof prevention) and re-injected from the
+        // authenticated QUIC connection identity in Rust core. No duplication here.
+        const headers: [string, string][] = [...payload.headers];
 
-      const reqInit: RequestInit & { duplex?: "half" } = {
-        method: payload.method,
-        headers,
-        body: reqBody,
-      };
-      if (reqBody) reqInit.duplex = "half";
+        const reqInit: RequestInit & { duplex?: "half" } = {
+          method: payload.method,
+          headers,
+          body: reqBody,
+        };
+        if (reqBody) reqInit.duplex = "half";
 
-      const req = new Request(
-        payload.url.replace(/^httpi:/, "http:"),
-        reqInit
-      );
+        const req = new Request(
+          payload.url.replace(/^httpi:/, "http:"),
+          reqInit,
+        );
 
-      if (!payload.isBidi) {
-        Object.defineProperty(req, "trailers", {
-          value: bridge
-            .nextTrailer(payload.reqTrailersHandle)
-            .then((pairs) => (pairs ? new Headers(pairs) : new Headers())),
-          configurable: true,
-        });
-      }
-
-      if (payload.isBidi) {
-        const acceptWebTransportFn = (): BidirectionalStream => ({
-          readable: makeReadable(bridge, payload.reqBodyHandle),
-          writable: new WritableStream<Uint8Array>({
-            async write(chunk) {
-              await bridge.sendChunk(payload.resBodyHandle, chunk);
-            },
-            async close() {
-              await bridge.finishBody(payload.resBodyHandle);
-            },
-            async abort() {
-              await bridge.finishBody(payload.resBodyHandle);
-            },
-          }),
-        });
-        Object.defineProperty(req, "acceptWebTransport", {
-          value: acceptWebTransportFn,
-          configurable: true,
-        });
-      }
-
-      // Invoke the user handler with onError fallback.
-      let res: Response;
-      try {
-        res = await Promise.resolve(handler(req));
-      } catch (err) {
-        try {
-          res = await Promise.resolve(onError(err));
-        } catch {
-          res = new Response(null, { status: 500 });
+        if (!payload.isBidi) {
+          Object.defineProperty(req, "trailers", {
+            value: bridge
+              .nextTrailer(payload.reqTrailersHandle)
+              .then((pairs) => (pairs ? new Headers(pairs) : new Headers())),
+            configurable: true,
+          });
         }
-      }
 
-      if (payload.isBidi) {
+        if (payload.isBidi) {
+          const acceptWebTransportFn = (): BidirectionalStream => ({
+            readable: makeReadable(bridge, payload.reqBodyHandle),
+            writable: new WritableStream<Uint8Array>({
+              async write(chunk) {
+                await bridge.sendChunk(payload.resBodyHandle, chunk);
+              },
+              async close() {
+                await bridge.finishBody(payload.resBodyHandle);
+              },
+              async abort() {
+                await bridge.finishBody(payload.resBodyHandle);
+              },
+            }),
+          });
+          Object.defineProperty(req, "acceptWebTransport", {
+            value: acceptWebTransportFn,
+            configurable: true,
+          });
+        }
+
+        // Invoke the user handler with onError fallback.
+        let res: Response;
+        try {
+          res = await Promise.resolve(handler(req));
+        } catch (err) {
+          try {
+            res = await Promise.resolve(onError(err));
+          } catch {
+            res = new Response(null, { status: 500 });
+          }
+        }
+
+        if (payload.isBidi) {
+          return {
+            status: res.status,
+            headers: [...res.headers] as [string, string][],
+          };
+        }
+
+        const trailersFn = (res as unknown as Record<string, unknown>)
+          .trailers as (() => Headers | Promise<Headers>) | undefined;
+
+        const bodyStream = res.body ?? emptyStream();
+        const doPipe = async () => {
+          await pipeToWriter(bridge, bodyStream, payload.resBodyHandle);
+          // The server only keeps the trailer sender handle live when the response
+          // includes a `Trailer:` header — if that header is absent it removes the
+          // handle from the slab before JS gets to call sendTrailers.
+          // Also skip in bidi mode (resTrailersHandle === 0).
+          const hasTrailerHeader = res.headers.has("trailer");
+          if (payload.resTrailersHandle !== 0n && hasTrailerHeader) {
+            const trailerPairs: [string, string][] = trailersFn
+              ? [...(await trailersFn())] as [string, string][]
+              : [];
+            await bridge.sendTrailers(payload.resTrailersHandle, trailerPairs);
+          }
+        };
+        doPipe().catch((err) =>
+          console.error(
+            "[iroh-http] response body pipe error:",
+            classifyError(err),
+          )
+        );
+
         return {
           status: res.status,
           headers: [...res.headers] as [string, string][],
         };
-      }
-
-      const trailersFn = (res as unknown as Record<string, unknown>)
-        .trailers as (() => Headers | Promise<Headers>) | undefined;
-
-      const bodyStream = res.body ?? emptyStream();
-      const doPipe = async () => {
-        await pipeToWriter(bridge, bodyStream, payload.resBodyHandle);
-        // The server only keeps the trailer sender handle live when the response
-        // includes a `Trailer:` header — if that header is absent it removes the
-        // handle from the slab before JS gets to call sendTrailers.
-        // Also skip in bidi mode (resTrailersHandle === 0).
-        const hasTrailerHeader = res.headers.has("trailer");
-        if (payload.resTrailersHandle !== 0n && hasTrailerHeader) {
-          const trailerPairs: [string, string][] = trailersFn
-            ? [...(await trailersFn())] as [string, string][]
-            : [];
-          await bridge.sendTrailers(payload.resTrailersHandle, trailerPairs);
-        }
-      };
-      doPipe().catch((err) =>
-        console.error("[iroh-http] response body pipe error:", classifyError(err))
-      );
-
-      return {
-        status: res.status,
-        headers: [...res.headers] as [string, string][],
-      };
-    });
+      },
+    );
 
     // Fire onListen synchronously — iroh binds during createNode, so the
     // serve loop is immediately live after rawServe returns.
@@ -263,7 +272,9 @@ export function makeServe(
       if (options.signal.aborted) {
         stopServe();
       } else {
-        options.signal.addEventListener("abort", () => stopServe(), { once: true });
+        options.signal.addEventListener("abort", () => stopServe(), {
+          once: true,
+        });
       }
     }
 

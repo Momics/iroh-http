@@ -5,6 +5,8 @@ edition = "2021"
 description = "Python bindings for iroh-http (PyO3 + maturin)"
 license = "MIT OR Apache-2.0"
 
+[workspace]
+
 [lib]
 name = "iroh_http_py"
 crate-type = ["cdylib"]

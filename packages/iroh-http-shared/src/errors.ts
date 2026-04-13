@@ -176,9 +176,11 @@ export function classifyError(raw: string | unknown): IrohError {
     if (raw.startsWith("{")) {
       try {
         const parsed = JSON.parse(raw) as Record<string, unknown>;
-        if (typeof parsed.code === "string" && typeof parsed.message === "string") {
+        if (
+          typeof parsed.code === "string" && typeof parsed.message === "string"
+        ) {
           code = parsed.code;
-          msg  = parsed.message;
+          msg = parsed.message;
         } else {
           msg = raw;
         }
@@ -194,9 +196,11 @@ export function classifyError(raw: string | unknown): IrohError {
     if (m.startsWith("{")) {
       try {
         const parsed = JSON.parse(m) as Record<string, unknown>;
-        if (typeof parsed.code === "string" && typeof parsed.message === "string") {
+        if (
+          typeof parsed.code === "string" && typeof parsed.message === "string"
+        ) {
           code = parsed.code;
-          msg  = parsed.message;
+          msg = parsed.message;
         } else {
           msg = m;
         }
@@ -220,55 +224,84 @@ export function classifyError(raw: string | unknown): IrohError {
 
 function classifyByCode(code: string, msg: string): IrohError {
   switch (code) {
-    case "TIMEOUT":          return new IrohConnectError(msg, code);
-    case "DNS_FAILURE":      return new IrohConnectError(msg, code);
-    case "ALPN_MISMATCH":    return new IrohConnectError(msg, code);
-    case "REFUSED":          return new IrohConnectError(msg, code);
-    case "UPGRADE_REJECTED": return new IrohProtocolError(msg, code);
-    case "PARSE_FAILURE":    return new IrohProtocolError(msg, code);
-    case "TOO_MANY_HEADERS": return new IrohProtocolError(msg, code);
-    case "INVALID_HANDLE":   return new IrohHandleError(msg, code);
-    case "WRITER_DROPPED":   return new IrohStreamError(msg, code);
-    case "READER_DROPPED":   return new IrohStreamError(msg, code);
-    case "STREAM_RESET":     return new IrohStreamError(msg, code);
-    case "INVALID_KEY":      return new IrohBindError(msg, code);
-    case "ENDPOINT_FAILURE": return new IrohBindError(msg, code);
-    case "ABORTED":          return new IrohAbortError(msg);
-    case "INVALID_ARGUMENT": return new IrohArgumentError(msg);
-    default:                 return new IrohError(msg, code);
+    case "TIMEOUT":
+      return new IrohConnectError(msg, code);
+    case "DNS_FAILURE":
+      return new IrohConnectError(msg, code);
+    case "ALPN_MISMATCH":
+      return new IrohConnectError(msg, code);
+    case "REFUSED":
+      return new IrohConnectError(msg, code);
+    case "UPGRADE_REJECTED":
+      return new IrohProtocolError(msg, code);
+    case "PARSE_FAILURE":
+      return new IrohProtocolError(msg, code);
+    case "TOO_MANY_HEADERS":
+      return new IrohProtocolError(msg, code);
+    case "INVALID_HANDLE":
+      return new IrohHandleError(msg, code);
+    case "WRITER_DROPPED":
+      return new IrohStreamError(msg, code);
+    case "READER_DROPPED":
+      return new IrohStreamError(msg, code);
+    case "STREAM_RESET":
+      return new IrohStreamError(msg, code);
+    case "INVALID_KEY":
+      return new IrohBindError(msg, code);
+    case "ENDPOINT_FAILURE":
+      return new IrohBindError(msg, code);
+    case "ABORTED":
+      return new IrohAbortError(msg);
+    case "INVALID_ARGUMENT":
+      return new IrohArgumentError(msg);
+    default:
+      return new IrohError(msg, code);
   }
 }
 
 function classifyByRegex(msg: string): IrohError {
   // ── Connect errors ──────────────────────────────────────────────────────────
   if (/\bconnect\b/i.test(msg)) {
-    if (/timed?\s*out/i.test(msg))         return new IrohConnectError(msg, "TIMEOUT");
-    if (/dns|resolv/i.test(msg))           return new IrohConnectError(msg, "DNS_FAILURE");
-    if (/reset|refused|closed/i.test(msg)) return new IrohConnectError(msg, "REFUSED");
-    if (/alpn/i.test(msg))                 return new IrohConnectError(msg, "ALPN_MISMATCH");
+    if (/timed?\s*out/i.test(msg)) return new IrohConnectError(msg, "TIMEOUT");
+    if (/dns|resolv/i.test(msg)) {
+      return new IrohConnectError(msg, "DNS_FAILURE");
+    }
+    if (/reset|refused|closed/i.test(msg)) {
+      return new IrohConnectError(msg, "REFUSED");
+    }
+    if (/alpn/i.test(msg)) return new IrohConnectError(msg, "ALPN_MISMATCH");
     return new IrohConnectError(msg, "REFUSED");
   }
-  if (/timed?\s*out/i.test(msg))           return new IrohConnectError(msg, "TIMEOUT");
-  if (/alpn/i.test(msg))                   return new IrohConnectError(msg, "ALPN_MISMATCH");
-  if (/upgrade\s*rejected|non-101|101/i.test(msg))
-                                           return new IrohProtocolError(msg, "UPGRADE_REJECTED");
+  if (/timed?\s*out/i.test(msg)) return new IrohConnectError(msg, "TIMEOUT");
+  if (/alpn/i.test(msg)) return new IrohConnectError(msg, "ALPN_MISMATCH");
+  if (/upgrade\s*rejected|non-101|101/i.test(msg)) {
+    return new IrohProtocolError(msg, "UPGRADE_REJECTED");
+  }
 
   // ── Protocol errors ─────────────────────────────────────────────────────────
-  if (/parse\s*(response|request)?\s*head/i.test(msg))
-                                           return new IrohProtocolError(msg, "PARSE_FAILURE");
-  if (/too\s*many\s*headers/i.test(msg))   return new IrohProtocolError(msg, "TOO_MANY_HEADERS");
+  if (/parse\s*(response|request)?\s*head/i.test(msg)) {
+    return new IrohProtocolError(msg, "PARSE_FAILURE");
+  }
+  if (/too\s*many\s*headers/i.test(msg)) {
+    return new IrohProtocolError(msg, "TOO_MANY_HEADERS");
+  }
 
   // ── Stream / handle errors ──────────────────────────────────────────────────
-  if (/invalid\b.*handle|unknown\b.*handle/i.test(msg))
-                                           return new IrohStreamError(msg, "INVALID_HANDLE");
-  if (/writer\s*dropped|reader\s*dropped/i.test(msg))
-                                           return new IrohStreamError(msg, "WRITER_DROPPED");
-  if (/stream\s*reset/i.test(msg))         return new IrohStreamError(msg, "STREAM_RESET");
-  if (/chunk|body/i.test(msg))             return new IrohStreamError(msg, "STREAM_RESET");
+  if (/invalid\b.*handle|unknown\b.*handle/i.test(msg)) {
+    return new IrohStreamError(msg, "INVALID_HANDLE");
+  }
+  if (/writer\s*dropped|reader\s*dropped/i.test(msg)) {
+    return new IrohStreamError(msg, "WRITER_DROPPED");
+  }
+  if (/stream\s*reset/i.test(msg)) {
+    return new IrohStreamError(msg, "STREAM_RESET");
+  }
+  if (/chunk|body/i.test(msg)) return new IrohStreamError(msg, "STREAM_RESET");
 
   // ── Bind errors ─────────────────────────────────────────────────────────────
-  if (/bind|endpoint|invalid\s*key|key\s*bytes/i.test(msg))
-                                           return new IrohBindError(msg, "ENDPOINT_FAILURE");
+  if (/bind|endpoint|invalid\s*key|key\s*bytes/i.test(msg)) {
+    return new IrohBindError(msg, "ENDPOINT_FAILURE");
+  }
 
   // ── Fallback ────────────────────────────────────────────────────────────────
   return new IrohError(msg, "UNKNOWN");

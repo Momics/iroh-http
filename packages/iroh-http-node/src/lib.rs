@@ -666,8 +666,14 @@ pub fn raw_serve(endpoint_handle: u32, handler: JsFunction) -> napi::Result<()> 
 
             let mut obj = env.create_object()?;
             obj.set("reqHandle", env.create_bigint_from_u64(p.req_handle)?)?;
-            obj.set("reqBodyHandle", env.create_bigint_from_u64(p.req_body_handle)?)?;
-            obj.set("resBodyHandle", env.create_bigint_from_u64(p.res_body_handle)?)?;
+            obj.set(
+                "reqBodyHandle",
+                env.create_bigint_from_u64(p.req_body_handle)?,
+            )?;
+            obj.set(
+                "resBodyHandle",
+                env.create_bigint_from_u64(p.res_body_handle)?,
+            )?;
             obj.set(
                 "reqTrailersHandle",
                 env.create_bigint_from_u64(p.req_trailers_handle)?,
@@ -803,7 +809,9 @@ pub struct JsSessionBidiStream {
 }
 
 #[napi]
-pub async fn session_create_bidi_stream(session_handle: BigInt) -> napi::Result<JsSessionBidiStream> {
+pub async fn session_create_bidi_stream(
+    session_handle: BigInt,
+) -> napi::Result<JsSessionBidiStream> {
     let duplex = iroh_http_core::session_create_bidi_stream(session_handle.get_u64().1)
         .await
         .map_err(|e| {
@@ -938,12 +946,13 @@ pub async fn session_recv_datagram(session_handle: BigInt) -> napi::Result<Optio
 /// Returns null if datagrams are not supported.
 #[napi]
 pub fn session_max_datagram_size(session_handle: BigInt) -> napi::Result<Option<u32>> {
-    let result = iroh_http_core::session_max_datagram_size(session_handle.get_u64().1).map_err(|e| {
-        napi::Error::new(
-            Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
-        )
-    })?;
+    let result =
+        iroh_http_core::session_max_datagram_size(session_handle.get_u64().1).map_err(|e| {
+            napi::Error::new(
+                Status::GenericFailure,
+                iroh_http_core::core_error_to_json(&e),
+            )
+        })?;
     Ok(result.map(|s| s as u32))
 }
 

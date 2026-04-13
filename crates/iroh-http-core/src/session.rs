@@ -10,9 +10,9 @@ use serde::Serialize;
 use crate::{
     parse_node_addr,
     stream::{
-        insert_reader, insert_session_for, insert_writer, lookup_session,
-        make_body_channel, pump_body_to_quic_send, pump_quic_recv_to_body,
-        remove_session, session_ep_idx, SessionEntry,
+        insert_reader, insert_session_for, insert_writer, lookup_session, make_body_channel,
+        pump_body_to_quic_send, pump_quic_recv_to_body, remove_session, session_ep_idx,
+        SessionEntry,
     },
     CoreError, FfiDuplexStream, IrohEndpoint, ALPN_DUPLEX,
 };
@@ -94,7 +94,10 @@ pub async fn session_connect(
 pub async fn session_create_bidi_stream(session_handle: u64) -> Result<FfiDuplexStream, CoreError> {
     let conn = get_conn(session_handle)?;
 
-    let (send, recv) = conn.open_bi().await.map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
+    let (send, recv) = conn
+        .open_bi()
+        .await
+        .map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
 
     let ep_idx = session_ep_idx(session_handle).unwrap_or(0);
     Ok(wrap_bidi_stream(ep_idx, send, recv))
@@ -127,7 +130,9 @@ pub async fn session_accept(endpoint: &IrohEndpoint) -> Result<Option<u64>, Core
         None => return Ok(None),
     };
 
-    let conn = incoming.await.map_err(|e| CoreError::connection_failed(format!("accept session: {e}")))?;
+    let conn = incoming
+        .await
+        .map_err(|e| CoreError::connection_failed(format!("accept session: {e}")))?;
 
     let handle = insert_session_for(endpoint.inner.endpoint_idx, SessionEntry { conn });
 
@@ -272,4 +277,3 @@ fn parse_connection_error(err: &iroh::endpoint::ConnectionError) -> (u32, String
         other => (0, other.to_string()),
     }
 }
-

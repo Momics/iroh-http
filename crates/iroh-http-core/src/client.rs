@@ -3,7 +3,6 @@
 //! HTTP/1.1 framing is delegated entirely to hyper.  Iroh's QUIC stream pair
 //! is wrapped in `IrohStream` and handed to hyper's client connection API.
 
-
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, Method, StatusCode};
 use http_body_util::{BodyExt, StreamBody};
@@ -11,12 +10,12 @@ use hyper::body::Frame;
 use hyper_util::rt::TokioIo;
 
 use crate::{
-    base32_encode, parse_node_addr,
+    base32_encode,
     io::IrohStream,
+    parse_node_addr,
     stream::{
-        drain_timeout, get_fetch_cancel_notify, insert_reader,
-        insert_trailer_receiver, insert_writer, make_body_channel, remove_fetch_token,
-        BodyReader, BodyWriter,
+        drain_timeout, get_fetch_cancel_notify, insert_reader, insert_trailer_receiver,
+        insert_writer, make_body_channel, remove_fetch_token, BodyReader, BodyWriter,
     },
     CoreError, FfiDuplexStream, FfiResponse, IrohEndpoint, ALPN, ALPN_DUPLEX,
 };
@@ -95,8 +94,9 @@ pub async fn fetch(
     for (name, value) in headers {
         HeaderName::from_bytes(name.as_bytes())
             .map_err(|_| CoreError::invalid_input(format!("invalid header name {:?}", name)))?;
-        HeaderValue::from_str(value)
-            .map_err(|_| CoreError::invalid_input(format!("invalid header value for {:?}", name)))?;
+        HeaderValue::from_str(value).map_err(|_| {
+            CoreError::invalid_input(format!("invalid header value for {:?}", name))
+        })?;
     }
 
     let cancel_notify = fetch_token.and_then(get_fetch_cancel_notify);
@@ -121,7 +121,10 @@ pub async fn fetch(
     let pooled = endpoint
         .pool()
         .get_or_connect(node_id, ALPN, || async move {
-            ep_raw.connect(addr_clone, ALPN).await.map_err(|e| format!("connect: {e}"))
+            ep_raw
+                .connect(addr_clone, ALPN)
+                .await
+                .map_err(|e| format!("connect: {e}"))
         })
         .await
         .map_err(|e| CoreError::connection_failed(e))?;
@@ -164,7 +167,10 @@ async fn do_fetch(
     req_body_reader: Option<BodyReader>,
     max_header_size: usize,
 ) -> Result<FfiResponse, CoreError> {
-    let (send, recv) = conn.open_bi().await.map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
+    let (send, recv) = conn
+        .open_bi()
+        .await
+        .map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
 
     let io = TokioIo::new(IrohStream::new(send, recv));
 
@@ -210,7 +216,9 @@ async fn do_fetch(
         box_body(http_body_util::Empty::new())
     };
 
-    let req = req_builder.body(req_body).map_err(|e| CoreError::internal(format!("build request: {e}")))?;
+    let req = req_builder
+        .body(req_body)
+        .map_err(|e| CoreError::internal(format!("build request: {e}")))?;
 
     // Dispatch: with compression, wrap sender in DecompressionLayer so the
     // response body is transparently decompressed before reaching the channel pump.
@@ -220,10 +228,15 @@ async fn do_fetch(
         let svc = tower::ServiceBuilder::new()
             .layer(tower_http::decompression::DecompressionLayer::new())
             .service(HyperClientSvc(sender));
-        svc.oneshot(req).await.map_err(|e| CoreError::connection_failed(format!("send_request: {e}")))?
+        svc.oneshot(req)
+            .await
+            .map_err(|e| CoreError::connection_failed(format!("send_request: {e}")))?
     };
     #[cfg(not(feature = "compression"))]
-    let resp = sender.send_request(req).await.map_err(|e| CoreError::connection_failed(format!("send_request: {e}")))?;
+    let resp = sender
+        .send_request(req)
+        .await
+        .map_err(|e| CoreError::connection_failed(format!("send_request: {e}")))?;
 
     let status = resp.status().as_u16();
     let resp_headers: Vec<(String, String)> = resp
@@ -377,10 +390,7 @@ pub(crate) fn body_from_reader(
                                 }
                             }
                             if !map.is_empty() {
-                                return Some((
-                                    Ok(Frame::trailers(map)),
-                                    (reader, None, true),
-                                ));
+                                return Some((Ok(Frame::trailers(map)), (reader, None, true)));
                             }
                         }
                     }
@@ -423,8 +433,9 @@ pub async fn raw_connect(
     for (name, value) in headers {
         HeaderName::from_bytes(name.as_bytes())
             .map_err(|_| CoreError::invalid_input(format!("invalid header name {:?}", name)))?;
-        HeaderValue::from_str(value)
-            .map_err(|_| CoreError::invalid_input(format!("invalid header value for {:?}", name)))?;
+        HeaderValue::from_str(value).map_err(|_| {
+            CoreError::invalid_input(format!("invalid header value for {:?}", name))
+        })?;
     }
 
     let parsed = parse_node_addr(remote_node_id)?;
@@ -441,12 +452,19 @@ pub async fn raw_connect(
     let pooled = endpoint
         .pool()
         .get_or_connect(node_id, ALPN_DUPLEX, || async move {
-            ep_raw.connect(addr_clone, ALPN_DUPLEX).await.map_err(|e| format!("connect duplex: {e}"))
+            ep_raw
+                .connect(addr_clone, ALPN_DUPLEX)
+                .await
+                .map_err(|e| format!("connect duplex: {e}"))
         })
         .await
         .map_err(|e| CoreError::connection_failed(e))?;
 
-    let (send, recv) = pooled.conn.open_bi().await.map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
+    let (send, recv) = pooled
+        .conn
+        .open_bi()
+        .await
+        .map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
     let io = TokioIo::new(IrohStream::new(send, recv));
 
     let (mut sender, conn_task) = hyper::client::conn::http1::Builder::new()
@@ -471,11 +489,16 @@ pub async fn raw_connect(
         .body(box_body(http_body_util::Empty::new()))
         .map_err(|e| CoreError::internal(format!("build duplex request: {e}")))?;
 
-    let resp = sender.send_request(req).await.map_err(|e| CoreError::connection_failed(format!("send duplex request: {e}")))?;
+    let resp = sender
+        .send_request(req)
+        .await
+        .map_err(|e| CoreError::connection_failed(format!("send duplex request: {e}")))?;
 
     let status = resp.status();
     if status != StatusCode::SWITCHING_PROTOCOLS {
-        return Err(CoreError::connection_failed(format!("server rejected duplex: expected 101, got {status}")));
+        return Err(CoreError::connection_failed(format!(
+            "server rejected duplex: expected 101, got {status}"
+        )));
     }
 
     // Perform the protocol upgrade to get raw bidirectional IO.
@@ -493,14 +516,17 @@ pub async fn raw_connect(
     // Pipe upgraded IO to/from body channels.
     tokio::spawn(pump_upgraded(upgraded, server_write, client_read));
 
-    Ok(FfiDuplexStream { read_handle, write_handle })
+    Ok(FfiDuplexStream {
+        read_handle,
+        write_handle,
+    })
 }
 
 /// Pump data between an upgraded hyper IO object and body channels.
 async fn pump_upgraded(
     upgraded: hyper::upgrade::Upgraded,
-    writer: BodyWriter,   // server→client: write incoming data here
-    reader: BodyReader,   // client→server: read outgoing data from here
+    writer: BodyWriter, // server→client: write incoming data here
+    reader: BodyReader, // client→server: read outgoing data from here
 ) {
     let io = TokioIo::new(upgraded);
     let (mut recv, mut send) = tokio::io::split(io);
@@ -513,7 +539,11 @@ async fn pump_upgraded(
                 match recv.read(&mut buf).await {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        if writer.send_chunk(bytes::Bytes::copy_from_slice(&buf[..n])).await.is_err() {
+                        if writer
+                            .send_chunk(bytes::Bytes::copy_from_slice(&buf[..n]))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                     }

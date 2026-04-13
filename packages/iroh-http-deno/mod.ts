@@ -11,21 +11,29 @@
  * ```
  */
 
-import { buildNode, type NodeOptions, type IrohNode } from "@momics/iroh-http-shared";
 import {
-  bridge,
-  rawFetch,
-  rawServe,
-  rawConnect,
+  buildNode,
+  type IrohNode,
+  type NodeOptions,
+} from "@momics/iroh-http-shared";
+import {
   allocBodyWriter,
-  createEndpointInfo,
+  bridge,
   closeEndpoint,
-  stopServe,
+  createEndpointInfo,
   denoAddrFns,
   denoDiscoveryFns,
   denoSessionFns,
+  rawConnect,
+  rawFetch,
+  rawServe,
+  stopServe,
 } from "./src/adapter.ts";
-export { secretKeySign, publicKeyVerify, generateSecretKey } from "./src/adapter.ts";
+export {
+  generateSecretKey,
+  publicKeyVerify,
+  secretKeySign,
+} from "./src/adapter.ts";
 
 /**
  * Create an Iroh node for peer-to-peer HTTP.
@@ -49,4 +57,4 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   );
 }
 
-export type { NodeOptions, IrohNode };
+export type { IrohNode, NodeOptions };

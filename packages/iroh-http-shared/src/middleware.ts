@@ -52,8 +52,8 @@ export type Middleware = (handler: ServeHandler) => ServeHandler;
 interface Bucket {
   tokens: number;
   lastRefill: number; // ms timestamp
-  rate: number;       // tokens per ms
-  capacity: number;   // max tokens
+  rate: number; // tokens per ms
+  capacity: number; // max tokens
 }
 
 function createBucket(requestsPerSecond: number, burst: number): Bucket {
@@ -68,7 +68,10 @@ function createBucket(requestsPerSecond: number, burst: number): Bucket {
 function consume(bucket: Bucket): boolean {
   const now = Date.now();
   const elapsed = now - bucket.lastRefill;
-  bucket.tokens = Math.min(bucket.capacity, bucket.tokens + elapsed * bucket.rate);
+  bucket.tokens = Math.min(
+    bucket.capacity,
+    bucket.tokens + elapsed * bucket.rate,
+  );
   bucket.lastRefill = now;
 
   if (bucket.tokens >= 1) {
@@ -114,49 +117,50 @@ export function rateLimit(options: RateLimitOptions): Middleware {
   const buckets = new Map<string, Bucket>();
 
   return (handler: ServeHandler): ServeHandler =>
-    (req: Request): Response | Promise<Response> => {
-      const nodeId = req.headers.get("iroh-node-id") ?? "";
+  (req: Request): Response | Promise<Response> => {
+    const nodeId = req.headers.get("iroh-node-id") ?? "";
 
-      const peerConfig = forPeer ? forPeer(nodeId) : null;
+    const peerConfig = forPeer ? forPeer(nodeId) : null;
 
-      if (peerConfig === "block") {
-        return new Response("Forbidden", { status: 403 });
-      }
+    if (peerConfig === "block") {
+      return new Response("Forbidden", { status: 403 });
+    }
 
-      if (peerConfig === "unlimited") {
-        return handler(req);
-      }
-
-      // Resolve effective rate/burst for this peer.
-      const effectiveRate =
-        peerConfig != null ? peerConfig.requestsPerSecond : requestsPerSecond;
-      const effectiveBurst =
-        peerConfig != null ? (peerConfig.burst ?? effectiveRate) : burst;
-
-      // Look up or create the bucket for this peer.
-      // Use a composite key when per-peer config differs so peers with
-      // different configs don't share buckets.
-      const bucketKey =
-        peerConfig != null
-          ? `${nodeId}:${effectiveRate}:${effectiveBurst}`
-          : nodeId;
-
-      let bucket = buckets.get(bucketKey);
-      if (!bucket) {
-        bucket = createBucket(effectiveRate, effectiveBurst);
-        buckets.set(bucketKey, bucket);
-      }
-
-      if (!consume(bucket)) {
-        const retryAfter = retryAfterSeconds(bucket);
-        return new Response("Too Many Requests", {
-          status: 429,
-          headers: { "Retry-After": String(retryAfter) },
-        });
-      }
-
+    if (peerConfig === "unlimited") {
       return handler(req);
-    };
+    }
+
+    // Resolve effective rate/burst for this peer.
+    const effectiveRate = peerConfig != null
+      ? peerConfig.requestsPerSecond
+      : requestsPerSecond;
+    const effectiveBurst = peerConfig != null
+      ? (peerConfig.burst ?? effectiveRate)
+      : burst;
+
+    // Look up or create the bucket for this peer.
+    // Use a composite key when per-peer config differs so peers with
+    // different configs don't share buckets.
+    const bucketKey = peerConfig != null
+      ? `${nodeId}:${effectiveRate}:${effectiveBurst}`
+      : nodeId;
+
+    let bucket = buckets.get(bucketKey);
+    if (!bucket) {
+      bucket = createBucket(effectiveRate, effectiveBurst);
+      buckets.set(bucketKey, bucket);
+    }
+
+    if (!consume(bucket)) {
+      const retryAfter = retryAfterSeconds(bucket);
+      return new Response("Too Many Requests", {
+        status: 429,
+        headers: { "Retry-After": String(retryAfter) },
+      });
+    }
+
+    return handler(req);
+  };
 }
 
 // ── compose ───────────────────────────────────────────────────────────────────
@@ -181,9 +185,12 @@ export function compose(
   ...middlewaresAndHandler: [...Middleware[], ServeHandler]
 ): ServeHandler {
   if (middlewaresAndHandler.length === 0) {
-    throw new TypeError("compose: at least one argument (the handler) is required");
+    throw new TypeError(
+      "compose: at least one argument (the handler) is required",
+    );
   }
-  const handler = middlewaresAndHandler[middlewaresAndHandler.length - 1] as ServeHandler;
+  const handler =
+    middlewaresAndHandler[middlewaresAndHandler.length - 1] as ServeHandler;
   const middlewares = middlewaresAndHandler.slice(0, -1) as Middleware[];
 
   return middlewares.reduceRight(

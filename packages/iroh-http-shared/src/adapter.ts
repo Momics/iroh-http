@@ -9,16 +9,16 @@
  */
 
 export type {
-  Bridge,
-  FfiRequest,
-  FfiResponseHead,
-  FfiResponse,
-  RequestPayload,
-  RawServeFn,
-  RawFetchFn,
   AllocBodyWriterFn,
+  Bridge,
   FfiDuplexStream,
+  FfiRequest,
+  FfiResponse,
+  FfiResponseHead,
   RawConnectFn,
+  RawFetchFn,
+  RawServeFn,
+  RequestPayload,
 } from "./bridge.js";
 
 export type { RawSessionFns } from "./session.js";

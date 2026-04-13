@@ -25,10 +25,7 @@ pub(crate) struct IrohStream {
 }
 
 impl IrohStream {
-    pub(crate) fn new(
-        send: iroh::endpoint::SendStream,
-        recv: iroh::endpoint::RecvStream,
-    ) -> Self {
+    pub(crate) fn new(send: iroh::endpoint::SendStream, recv: iroh::endpoint::RecvStream) -> Self {
         Self { send, recv }
     }
 }
@@ -54,17 +51,11 @@ impl AsyncWrite for IrohStream {
             .map(|r| r.map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e)))
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.send).poll_flush(cx)
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         // Calls SendStream::finish() — sends FIN on the QUIC stream.
         Pin::new(&mut self.send).poll_shutdown(cx)
     }
