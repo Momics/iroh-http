@@ -775,10 +775,10 @@
           "markdownDescription": "Denies the stop_serve command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for iroh-http plugin",
+          "description": "Default permissions for iroh-http plugin\n#### This default permission set includes:\n\n- `allow-create-endpoint`\n- `allow-close-endpoint`\n- `allow-ping`\n- `allow-node-addr`\n- `allow-node-ticket`\n- `allow-home-relay`\n- `allow-peer-info`\n- `allow-peer-stats`\n- `allow-next-chunk`\n- `allow-send-chunk`\n- `allow-finish-body`\n- `allow-alloc-body-writer`\n- `allow-next-trailer`\n- `allow-send-trailers`\n- `allow-cancel-request`\n- `allow-raw-fetch`\n- `allow-alloc-fetch-token`\n- `allow-cancel-in-flight`\n- `allow-serve`\n- `allow-stop-serve`\n- `allow-respond-to-request`\n- `allow-raw-connect`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for iroh-http plugin"
+          "markdownDescription": "Default permissions for iroh-http plugin\n#### This default permission set includes:\n\n- `allow-create-endpoint`\n- `allow-close-endpoint`\n- `allow-ping`\n- `allow-node-addr`\n- `allow-node-ticket`\n- `allow-home-relay`\n- `allow-peer-info`\n- `allow-peer-stats`\n- `allow-next-chunk`\n- `allow-send-chunk`\n- `allow-finish-body`\n- `allow-alloc-body-writer`\n- `allow-next-trailer`\n- `allow-send-trailers`\n- `allow-cancel-request`\n- `allow-raw-fetch`\n- `allow-alloc-fetch-token`\n- `allow-cancel-in-flight`\n- `allow-serve`\n- `allow-stop-serve`\n- `allow-respond-to-request`\n- `allow-raw-connect`"
         }
       ]
     }

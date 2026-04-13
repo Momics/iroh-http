@@ -1,7 +1,6 @@
 "$schema" = "../schemas/schema.json"
 
-[[permission]]
-identifier = "default"
+[default]
 description = "Default permissions for iroh-http plugin"
 permissions = [
   # Endpoint lifecycle
