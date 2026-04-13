@@ -1,0 +1,89 @@
+[
+  {
+    "id": "get-200",
+    "description": "Basic GET returns 200",
+    "request": { "method": "GET", "path": "/status/200", "headers": {}, "body": null },
+    "response": { "status": 200 }
+  },
+  {
+    "id": "get-404",
+    "description": "GET /status/404 returns 404",
+    "request": { "method": "GET", "path": "/status/404", "headers": {}, "body": null },
+    "response": { "status": 404 }
+  },
+  {
+    "id": "post-echo-body",
+    "description": "POST body is echoed back",
+    "request": { "method": "POST", "path": "/echo", "headers": {}, "body": "hello iroh" },
+    "response": { "status": 200, "bodyExact": "hello iroh" }
+  },
+  {
+    "id": "custom-request-header-forwarded",
+    "description": "Custom request header arrives at handler",
+    "request": {
+      "method": "GET",
+      "path": "/header/x-test",
+      "headers": { "x-test": "ping" },
+      "body": null
+    },
+    "response": { "status": 200, "bodyExact": "ping" }
+  },
+  {
+    "id": "custom-response-header",
+    "description": "Handler can set custom response headers",
+    "request": { "method": "GET", "path": "/set-header/x-reply/pong", "headers": {}, "body": null },
+    "response": { "status": 200, "headers": { "x-reply": "pong" } }
+  },
+  {
+    "id": "iroh-node-id-present",
+    "description": "iroh-node-id header is injected and non-empty",
+    "request": { "method": "GET", "path": "/header/iroh-node-id", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyNotEmpty": true }
+  },
+  {
+    "id": "iroh-node-id-not-spoofable",
+    "description": "Client-supplied iroh-node-id is stripped; the value reflects the real peer identity",
+    "request": {
+      "method": "GET",
+      "path": "/header/iroh-node-id",
+      "headers": { "iroh-node-id": "SPOOFED" },
+      "body": null
+    },
+    "response": { "status": 200, "bodyNot": "SPOOFED" }
+  },
+  {
+    "id": "path-preserved",
+    "description": "Request path is preserved verbatim at the handler",
+    "request": { "method": "GET", "path": "/echo-path", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "/echo-path" }
+  },
+  {
+    "id": "put-method",
+    "description": "PUT method reaches handler correctly",
+    "request": { "method": "PUT", "path": "/echo-method", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "PUT" }
+  },
+  {
+    "id": "delete-method",
+    "description": "DELETE method reaches handler correctly",
+    "request": { "method": "DELETE", "path": "/echo-method", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "DELETE" }
+  },
+  {
+    "id": "large-response-body",
+    "description": "Streaming a 64 KiB response body",
+    "request": { "method": "GET", "path": "/stream/65536", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyLengthExact": 65536 }
+  },
+  {
+    "id": "large-request-body",
+    "description": "Uploading a 64 KiB request body",
+    "request": {
+      "method": "POST",
+      "path": "/echo-length",
+      "headers": {},
+      "body": { "fill": 65536 }
+    },
+    "response": { "status": 200, "bodyExact": "65536" }
+  }
+]

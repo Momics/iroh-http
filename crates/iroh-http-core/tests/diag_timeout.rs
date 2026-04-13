@@ -3,7 +3,12 @@
 use iroh_http_core::{session_accept, session_connect, IrohEndpoint, NodeOptions};
 
 /// Reproduce exactly what bidi_stream.rs does, in this binary — NO tracing.
+///
+/// Marked `#[ignore]` because it is a diagnostic/investigative test used to
+/// reproduce connect-timeout scenarios.  Run explicitly with:
+///   cargo test -p iroh-http-core diag_session_connect -- --ignored
 #[tokio::test]
+#[ignore = "diagnostic only — run explicitly when investigating connect timeouts"]
 async fn diag_session_connect() {
     let opts = || NodeOptions {
         disable_networking: true,

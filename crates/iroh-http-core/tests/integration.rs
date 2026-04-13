@@ -55,7 +55,6 @@ async fn basic_get_200() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let res = fetch(
         &client_ep,
@@ -111,7 +110,6 @@ async fn get_with_body() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let res = fetch(
         &client_ep,
@@ -168,7 +166,6 @@ async fn post_with_request_body() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let (writer_handle, body_reader) = stream::alloc_body_writer();
     let body_data = b"hello, world!".to_vec();
@@ -231,7 +228,6 @@ async fn custom_response_headers() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let res = fetch(
         &client_ep,
@@ -276,7 +272,6 @@ async fn request_headers_and_method() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let res = fetch(
         &client_ep,
@@ -314,7 +309,6 @@ async fn url_uses_httpi_scheme() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let res = fetch(
         &client_ep,
@@ -367,7 +361,6 @@ async fn remote_node_id_is_populated() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let _res = fetch(
         &client_ep,
         &server_id,
@@ -413,7 +406,6 @@ async fn multiple_sequential_requests() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     for i in 0..3u32 {
         let res = fetch(
@@ -469,7 +461,6 @@ async fn response_trailers() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let res = fetch(
         &client_ep,
@@ -526,7 +517,6 @@ async fn post_empty_body() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Create body writer but immediately finish without sending data
     let (writer_handle, body_reader) = stream::alloc_body_writer();
@@ -569,7 +559,6 @@ async fn concurrent_requests() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Fire 5 requests concurrently
     let mut handles = Vec::new();
@@ -628,7 +617,6 @@ async fn fetch_cancelled_via_token() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let token = alloc_fetch_token(0);
 
@@ -777,7 +765,6 @@ async fn url_with_query_params() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let res = fetch(
         &client_ep,
@@ -839,7 +826,6 @@ async fn response_without_trailer_header_still_works() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let res = fetch(
         &client_ep,
@@ -901,7 +887,6 @@ async fn pool_reuses_connection_for_sequential_requests() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // First request — establishes connection and caches it.
     let res1 = fetch(
@@ -976,7 +961,6 @@ async fn pool_concurrent_requests_share_connection() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Fire 10 concurrent requests to the same peer.
     let mut handles = Vec::new();
@@ -1112,7 +1096,6 @@ async fn header_bomb_rejected() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Build headers that exceed 256 bytes when QPACK-encoded.
     let big_value = "X".repeat(300);
@@ -1168,7 +1151,6 @@ async fn response_header_bomb_rejected() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // The client has max_header_size=128, so the server's big response header should be rejected.
     let result = fetch(
@@ -1218,7 +1200,6 @@ async fn default_limits_allow_normal_traffic() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Should work fine with default 64KB header limit.
     let res = fetch(
@@ -1279,7 +1260,6 @@ async fn body_limit_exceeded_resets_stream() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Send a 256-byte body, which exceeds the 64-byte limit.
     let (writer, reader) = iroh_http_core::stream::make_body_channel();
@@ -1397,7 +1377,6 @@ async fn graceful_shutdown_drains_in_flight() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Start a request that will take 1s to complete.
     let fetch_task = {
@@ -1446,7 +1425,6 @@ async fn force_close_aborts_immediately() {
         move |_payload: RequestPayload| {},
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let start = std::time::Instant::now();
     server_ep.close_force().await;
@@ -1501,7 +1479,6 @@ async fn shutdown_rejects_new_requests() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // First request should succeed.
     let res = fetch(
@@ -1555,7 +1532,6 @@ async fn shutdown_returns_immediately() {
         move |_payload: RequestPayload| {},
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let start = std::time::Instant::now();
     handle.shutdown();
@@ -1597,7 +1573,6 @@ async fn large_body_round_trip() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // 1 MB of patterned data.
     let data: Vec<u8> = (0u8..=255).cycle().take(1024 * 1024).collect();
@@ -1667,7 +1642,6 @@ async fn mutual_fetch() {
         );
     }
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // A fetches from B, B fetches from A — concurrently.
     let (res_ab, res_ba) = tokio::join!(
@@ -1739,7 +1713,6 @@ async fn fetch_json_post() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let json_body = b"{\"hello\":\"world\"}";
     let (writer_handle, body_reader) = stream::alloc_body_writer();
@@ -1811,7 +1784,6 @@ async fn serve_concurrency_limit() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Fire 3 concurrent requests — all should succeed.
     let (r1, r2, r3) = tokio::join!(
@@ -1918,7 +1890,6 @@ async fn node_close_drains_in_flight() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Start a request in the background.
     let fetch_task = tokio::spawn({
@@ -1976,7 +1947,6 @@ async fn body_exceeds_limit_resets_stream() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Send a 10KB body — well over the 100-byte limit.
     let big_body = vec![b'x'; 10_000];
@@ -2033,7 +2003,6 @@ async fn request_timeout_fires() {
         },
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // The fetch should come back (either with an error or with whatever the
     // server managed to send before timeout killed the task).
