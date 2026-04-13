@@ -447,7 +447,7 @@ pub async fn js_next_chunk(handle: BigInt) -> napi::Result<Option<Buffer>> {
     let chunk = next_chunk(handle.get_u64().1).await.map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::core_error_to_json(&e),
         )
     })?;
     Ok(chunk.map(|b| Buffer::from(b.to_vec())))
@@ -462,7 +462,7 @@ pub async fn js_send_chunk(handle: BigInt, chunk: Uint8Array) -> napi::Result<()
     send_chunk(handle.get_u64().1, bytes).await.map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::core_error_to_json(&e),
         )
     })
 }
@@ -475,7 +475,7 @@ pub fn js_finish_body(handle: BigInt) -> napi::Result<()> {
     finish_body(handle.get_u64().1).map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::core_error_to_json(&e),
         )
     })
 }
@@ -494,7 +494,7 @@ pub async fn js_next_trailer(handle: BigInt) -> napi::Result<Option<Vec<Vec<Stri
     let trailers = next_trailer(handle.get_u64().1).await.map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::core_error_to_json(&e),
         )
     })?;
     Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
@@ -516,7 +516,7 @@ pub fn js_send_trailers(handle: BigInt, trailers: Vec<Vec<String>>) -> napi::Res
     send_trailers(handle.get_u64().1, pairs).map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::core_error_to_json(&e),
         )
     })
 }
@@ -613,7 +613,7 @@ pub async fn raw_fetch(
     .map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::core_error_to_json(&e),
         )
     })?;
 
@@ -761,7 +761,7 @@ pub async fn raw_connect(
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::classify_error_json(e),
+                iroh_http_core::core_error_to_json(&e),
             )
         })?;
 
@@ -789,7 +789,7 @@ pub async fn session_connect(
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::classify_error_json(e),
+                iroh_http_core::core_error_to_json(&e),
             )
         })?;
     Ok(handle)
@@ -809,7 +809,7 @@ pub async fn session_create_bidi_stream(session_handle: BigInt) -> napi::Result<
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::classify_error_json(e),
+                iroh_http_core::core_error_to_json(&e),
             )
         })?;
     Ok(JsSessionBidiStream {
@@ -829,7 +829,7 @@ pub async fn session_next_bidi_stream(
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::classify_error_json(e),
+                iroh_http_core::core_error_to_json(&e),
             )
         })?;
     Ok(result.map(|d| JsSessionBidiStream {
@@ -853,7 +853,7 @@ pub async fn session_close_handle(
     .map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::core_error_to_json(&e),
         )
     })
 }
@@ -872,7 +872,7 @@ pub async fn session_closed(session_handle: BigInt) -> napi::Result<JsCloseInfo>
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::classify_error_json(e),
+                iroh_http_core::core_error_to_json(&e),
             )
         })?;
     Ok(JsCloseInfo {
@@ -890,7 +890,7 @@ pub async fn session_create_uni_stream(session_handle: BigInt) -> napi::Result<u
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::classify_error_json(e),
+                iroh_http_core::core_error_to_json(&e),
             )
         })
 }
@@ -904,7 +904,7 @@ pub async fn session_next_uni_stream(session_handle: BigInt) -> napi::Result<Opt
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::classify_error_json(e),
+                iroh_http_core::core_error_to_json(&e),
             )
         })
 }
@@ -915,7 +915,7 @@ pub async fn session_send_datagram(session_handle: BigInt, data: Uint8Array) -> 
     iroh_http_core::session_send_datagram(session_handle.get_u64().1, data.as_ref()).map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::core_error_to_json(&e),
         )
     })
 }
@@ -928,7 +928,7 @@ pub async fn session_recv_datagram(session_handle: BigInt) -> napi::Result<Optio
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::classify_error_json(e),
+                iroh_http_core::core_error_to_json(&e),
             )
         })?;
     Ok(result.map(Buffer::from))
@@ -941,7 +941,7 @@ pub fn session_max_datagram_size(session_handle: BigInt) -> napi::Result<Option<
     let result = iroh_http_core::session_max_datagram_size(session_handle.get_u64().1).map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::core_error_to_json(&e),
         )
     })?;
     Ok(result.map(|s| s as u32))
@@ -957,7 +957,8 @@ pub fn secret_key_sign(secret_key: Uint8Array, data: Uint8Array) -> napi::Result
         .as_ref()
         .try_into()
         .map_err(|_| napi::Error::new(Status::InvalidArg, "secret key must be 32 bytes"))?;
-    let sig = iroh_http_core::secret_key_sign(&key_bytes, data.as_ref());
+    let sig = iroh_http_core::secret_key_sign(&key_bytes, data.as_ref())
+        .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
     Ok(Buffer::from(sig.to_vec()))
 }
 
@@ -976,6 +977,8 @@ pub fn public_key_verify(public_key: Uint8Array, data: Uint8Array, signature: Ui
 
 /// Generate a fresh Ed25519 secret key. Returns 32 raw bytes.
 #[napi]
-pub fn generate_secret_key() -> Buffer {
-    Buffer::from(iroh_http_core::generate_secret_key().to_vec())
+pub fn generate_secret_key() -> napi::Result<Buffer> {
+    let key = iroh_http_core::generate_secret_key()
+        .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
+    Ok(Buffer::from(key.to_vec()))
 }

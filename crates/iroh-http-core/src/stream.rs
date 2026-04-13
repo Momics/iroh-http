@@ -8,7 +8,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU32, AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant},
@@ -17,6 +17,8 @@ use std::{
 use bytes::Bytes;
 use slotmap::{KeyData, SlotMap};
 use tokio::sync::mpsc;
+
+use crate::CoreError;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -281,15 +283,20 @@ fn request_head_registry(
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 
 static NEXT_EP_IDX_COUNTER: AtomicU32 = AtomicU32::new(1);
+/// Number of live endpoints. Used to stop the sweep task when the last one closes.
+static ACTIVE_ENDPOINT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub fn alloc_endpoint_idx() -> u32 {
     NEXT_EP_IDX_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-/// No-op: global registries need no per-endpoint initialisation.
-pub fn register_endpoint(_ep_idx: u32) {}
+/// Increment the active endpoint count. Called when an endpoint is bound.
+pub fn register_endpoint(_ep_idx: u32) {
+    ACTIVE_ENDPOINT_COUNT.fetch_add(1, Ordering::Relaxed);
+}
 
 /// Remove all registry entries that belong to this endpoint.
+/// When the last endpoint closes, the sweep task is also stopped.
 pub fn unregister_endpoint(ep_idx: u32) {
     reader_registry()
         .lock()
@@ -319,6 +326,12 @@ pub fn unregister_endpoint(ep_idx: u32) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .retain(|_, e| e.ep_idx != ep_idx);
+
+    // Stop the sweep task when the last endpoint closes.
+    let prev = ACTIVE_ENDPOINT_COUNT.fetch_sub(1, Ordering::Relaxed);
+    if prev == 1 {
+        stop_slab_sweep();
+    }
 }
 
 // ── Body reader / writer ──────────────────────────────────────────────────────
@@ -376,12 +389,12 @@ pub fn claim_pending_reader(writer_handle: u64) -> Option<BodyReader> {
 /// Returns `Ok(None)` at EOF.  The handle remains valid until EOF so JS can
 /// safely call `nextChunk` again after partial reads.  After returning `None`
 /// the handle is cleaned up from the registry automatically.
-pub async fn next_chunk(handle: u64) -> Result<Option<Bytes>, String> {
+pub async fn next_chunk(handle: u64) -> Result<Option<Bytes>, CoreError> {
     // Clone the Arc — allows awaiting without holding the registry mutex.
     let rx_arc = {
         let reg = reader_registry().lock().unwrap_or_else(|e| e.into_inner());
         reg.get(handle_to_reader_key(handle))
-            .ok_or_else(|| format!("invalid reader handle: {handle}"))?
+            .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
             .value
             .rx
             .clone()
@@ -404,12 +417,12 @@ pub async fn next_chunk(handle: u64) -> Result<Option<Bytes>, String> {
 ///
 /// Chunks larger than the configured `MAX_CHUNK_SIZE` are split automatically
 /// so individual messages stay within the backpressure budget.
-pub async fn send_chunk(handle: u64, chunk: Bytes) -> Result<(), String> {
+pub async fn send_chunk(handle: u64, chunk: Bytes) -> Result<(), CoreError> {
     // Clone the Sender (cheap) and release the lock before awaiting.
     let tx = {
         let reg = writer_registry().lock().unwrap_or_else(|e| e.into_inner());
         reg.get(handle_to_writer_key(handle))
-            .ok_or_else(|| format!("invalid writer handle: {handle}"))?
+            .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
             .value
             .tx
             .clone()
@@ -418,8 +431,8 @@ pub async fn send_chunk(handle: u64, chunk: Bytes) -> Result<(), String> {
     if chunk.len() <= max {
         tokio::time::timeout(drain_timeout(), tx.send(chunk))
             .await
-            .map_err(|_| "drain timeout: body reader is too slow".to_string())?
-            .map_err(|_| "body reader dropped".to_string())
+            .map_err(|_| CoreError::timeout("drain timeout: body reader is too slow"))?
+            .map_err(|_| CoreError::internal("body reader dropped"))
     } else {
         // Split into max-size pieces.
         let mut offset = 0;
@@ -427,8 +440,8 @@ pub async fn send_chunk(handle: u64, chunk: Bytes) -> Result<(), String> {
             let end = (offset + max).min(chunk.len());
             tokio::time::timeout(drain_timeout(), tx.send(chunk.slice(offset..end)))
                 .await
-                .map_err(|_| "drain timeout: body reader is too slow".to_string())?
-                .map_err(|_| "body reader dropped".to_string())?;
+                .map_err(|_| CoreError::timeout("drain timeout: body reader is too slow"))?
+                .map_err(|_| CoreError::internal("body reader dropped"))?;
             offset = end;
         }
         Ok(())
@@ -438,12 +451,12 @@ pub async fn send_chunk(handle: u64, chunk: Bytes) -> Result<(), String> {
 /// Signal end-of-body by dropping the writer from the registry.
 ///
 /// The associated `BodyReader` will return `None` on its next poll.
-pub fn finish_body(handle: u64) -> Result<(), String> {
+pub fn finish_body(handle: u64) -> Result<(), CoreError> {
     writer_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(handle_to_writer_key(handle))
-        .ok_or_else(|| format!("invalid writer handle: {handle}"))?;
+        .ok_or_else(|| CoreError::invalid_handle(handle as u32))?;
     Ok(())
 }
 
@@ -488,24 +501,24 @@ pub(crate) fn remove_trailer_sender(handle: u64) {
 }
 
 /// Deliver trailers from the JS side to the waiting Rust pump task.
-pub fn send_trailers(handle: u64, trailers: Vec<(String, String)>) -> Result<(), String> {
+pub fn send_trailers(handle: u64, trailers: Vec<(String, String)>) -> Result<(), CoreError> {
     let tx = trailer_tx_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(handle_to_trailer_tx_key(handle))
-        .ok_or_else(|| format!("invalid trailer sender handle: {handle}"))?
+        .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
         .value;
     tx.send(trailers)
-        .map_err(|_| "trailer receiver dropped".to_string())
+        .map_err(|_| CoreError::internal("trailer receiver dropped"))
 }
 
 /// Await and retrieve trailers produced by the Rust pump task.
-pub async fn next_trailer(handle: u64) -> Result<Option<Vec<(String, String)>>, String> {
+pub async fn next_trailer(handle: u64) -> Result<Option<Vec<(String, String)>>, CoreError> {
     let rx = trailer_rx_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(handle_to_trailer_rx_key(handle))
-        .ok_or_else(|| format!("invalid trailer receiver handle: {handle}"))?
+        .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
         .value;
     match rx.await {
         Ok(trailers) => Ok(Some(trailers)),
@@ -581,6 +594,9 @@ pub(crate) fn take_req_sender(
 /// Ensures at most one sweep task is running process-wide.
 static SWEEP_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Shutdown signal for the sweep task.  Initialised when the task starts.
+static SWEEP_SHUTDOWN: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
+
 /// Start a background task that sweeps expired registry entries every 60 seconds.
 /// Pass `ttl_ms = 0` to disable sweeping.
 ///
@@ -601,14 +617,36 @@ pub fn start_slab_sweep(ttl_ms: u64) {
     {
         return; // already running
     }
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    // Store the notify so stop_slab_sweep() can signal it.  If two callers race
+    // on the very first start, one will win the compare_exchange above and the
+    // other will have returned early, so set() here is guaranteed to succeed.
+    let _ = SWEEP_SHUTDOWN.set(shutdown.clone());
+
     let ttl = Duration::from_millis(ttl_ms);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(60));
         loop {
-            ticker.tick().await;
-            sweep_all(ttl);
+            tokio::select! {
+                _ = ticker.tick() => sweep_all(ttl),
+                _ = shutdown.notified() => {
+                    tracing::debug!("[iroh-http] slab sweep task stopped");
+                    break;
+                }
+            }
         }
     });
+}
+
+/// Signal the sweep task to stop.  Safe to call even if no sweep is running.
+///
+/// After this returns, `start_slab_sweep` may be called again to restart.
+pub fn stop_slab_sweep() {
+    if let Some(notify) = SWEEP_SHUTDOWN.get() {
+        notify.notify_one();
+    }
+    // Reset so the next endpoint bind can restart the sweep.
+    SWEEP_STARTED.store(false, std::sync::atomic::Ordering::Release);
 }
 
 fn sweep_all(ttl: Duration) {
@@ -751,7 +789,7 @@ mod tests {
     async fn next_chunk_invalid_handle() {
         let result = next_chunk(999999).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid reader handle"));
+        assert_eq!(result.unwrap_err().code, crate::ErrorCode::InvalidInput);
     }
 
     #[tokio::test]
@@ -772,14 +810,14 @@ mod tests {
     async fn send_chunk_invalid_handle() {
         let result = send_chunk(999999, Bytes::from("nope")).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid writer handle"));
+        assert_eq!(result.unwrap_err().code, crate::ErrorCode::InvalidInput);
     }
 
     #[test]
     fn finish_body_invalid_handle() {
         let result = finish_body(999999);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid writer handle"));
+        assert_eq!(result.unwrap_err().code, crate::ErrorCode::InvalidInput);
     }
 
     #[test]
@@ -843,18 +881,14 @@ mod tests {
     fn send_trailers_invalid_handle() {
         let result = send_trailers(999999, vec![]);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("invalid trailer sender handle"));
+        assert_eq!(result.unwrap_err().code, crate::ErrorCode::InvalidInput);
     }
 
     #[tokio::test]
     async fn next_trailer_invalid_handle() {
         let result = next_trailer(999999).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("invalid trailer receiver handle"));
+        assert_eq!(result.unwrap_err().code, crate::ErrorCode::InvalidInput);
     }
 
     #[tokio::test]

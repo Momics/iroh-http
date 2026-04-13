@@ -14,7 +14,7 @@ use crate::{
     base32_encode, parse_node_addr,
     io::IrohStream,
     stream::{
-        get_fetch_cancel_notify, insert_reader,
+        drain_timeout, get_fetch_cancel_notify, insert_reader,
         insert_trailer_receiver, insert_writer, make_body_channel, remove_fetch_token,
         BodyReader, BodyWriter,
     },
@@ -75,31 +75,28 @@ pub async fn fetch(
     req_body_reader: Option<BodyReader>,
     fetch_token: Option<u64>,
     direct_addrs: Option<&[std::net::SocketAddr]>,
-) -> Result<FfiResponse, String> {
+) -> Result<FfiResponse, CoreError> {
     // Reject standard web schemes.
     {
         let lower = url.to_ascii_lowercase();
         if lower.starts_with("https://") || lower.starts_with("http://") {
             let scheme_end = lower.find("://").map(|i| i + 3).unwrap_or(lower.len());
-            return Err(format!(
+            return Err(CoreError::invalid_input(format!(
                 "iroh-http URLs must use the \"httpi://\" scheme, not \"{}\". \
                  Example: httpi://nodeId/path",
                 &url[..scheme_end]
-            ));
+            )));
         }
     }
 
     // Validate method and headers at the FFI boundary.
-    let http_method = Method::from_bytes(method.as_bytes()).map_err(|_| {
-        CoreError::invalid_input(format!("invalid HTTP method {:?}", method)).to_string()
-    })?;
+    let http_method = Method::from_bytes(method.as_bytes())
+        .map_err(|_| CoreError::invalid_input(format!("invalid HTTP method {:?}", method)))?;
     for (name, value) in headers {
-        HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
-            CoreError::invalid_input(format!("invalid header name {:?}", name)).to_string()
-        })?;
-        HeaderValue::from_str(value).map_err(|_| {
-            CoreError::invalid_input(format!("invalid header value for {:?}", name)).to_string()
-        })?;
+        HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| CoreError::invalid_input(format!("invalid header name {:?}", name)))?;
+        HeaderValue::from_str(value)
+            .map_err(|_| CoreError::invalid_input(format!("invalid header value for {:?}", name)))?;
     }
 
     let cancel_notify = fetch_token.and_then(get_fetch_cancel_notify);
@@ -126,7 +123,8 @@ pub async fn fetch(
         .get_or_connect(node_id, ALPN, || async move {
             ep_raw.connect(addr_clone, ALPN).await.map_err(|e| format!("connect: {e}"))
         })
-        .await?;
+        .await
+        .map_err(|e| CoreError::connection_failed(e))?;
 
     let conn = pooled.conn.clone();
 
@@ -142,7 +140,7 @@ pub async fn fetch(
 
     let out = if let Some(notify) = cancel_notify {
         tokio::select! {
-            _ = notify.notified() => Err("aborted".to_string()),
+            _ = notify.notified() => Err(CoreError::cancelled()),
             r = result => r,
         }
     } else {
@@ -165,8 +163,8 @@ async fn do_fetch(
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
     max_header_size: usize,
-) -> Result<FfiResponse, String> {
-    let (send, recv) = conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
+) -> Result<FfiResponse, CoreError> {
+    let (send, recv) = conn.open_bi().await.map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
 
     let io = TokioIo::new(IrohStream::new(send, recv));
 
@@ -179,7 +177,7 @@ async fn do_fetch(
         .max_headers(128)
         .handshake::<_, BoxBody>(io)
         .await
-        .map_err(|e| format!("hyper handshake: {e}"))?;
+        .map_err(|e| CoreError::connection_failed(format!("hyper handshake: {e}")))?;
 
     // Drive the connection state machine in the background.
     tokio::spawn(conn_task);
@@ -212,7 +210,7 @@ async fn do_fetch(
         box_body(http_body_util::Empty::new())
     };
 
-    let req = req_builder.body(req_body).map_err(|e| format!("build request: {e}"))?;
+    let req = req_builder.body(req_body).map_err(|e| CoreError::internal(format!("build request: {e}")))?;
 
     // Dispatch: with compression, wrap sender in DecompressionLayer so the
     // response body is transparently decompressed before reaching the channel pump.
@@ -222,10 +220,10 @@ async fn do_fetch(
         let svc = tower::ServiceBuilder::new()
             .layer(tower_http::decompression::DecompressionLayer::new())
             .service(HyperClientSvc(sender));
-        svc.oneshot(req).await.map_err(|e| format!("send_request: {e}"))?
+        svc.oneshot(req).await.map_err(|e| CoreError::connection_failed(format!("send_request: {e}")))?
     };
     #[cfg(not(feature = "compression"))]
-    let resp = sender.send_request(req).await.map_err(|e| format!("send_request: {e}"))?;
+    let resp = sender.send_request(req).await.map_err(|e| CoreError::connection_failed(format!("send_request: {e}")))?;
 
     let status = resp.status().as_u16();
     let resp_headers: Vec<(String, String)> = resp
@@ -245,9 +243,9 @@ async fn do_fetch(
         .sum::<usize>()
         + 16; // approximate status line
     if header_bytes > max_header_size {
-        return Err(format!(
+        return Err(CoreError::internal(format!(
             "response header size {header_bytes} exceeds limit {max_header_size}"
-        ));
+        )));
     }
 
     // Allocate channels for streaming the response body to JS.
@@ -282,15 +280,19 @@ pub(crate) async fn pump_hyper_body_to_channel<B>(
     B: http_body::Body<Data = Bytes>,
     B::Error: std::fmt::Debug,
 {
-    pump_hyper_body_to_channel_limited(body, writer, trailer_tx, None).await;
+    pump_hyper_body_to_channel_limited(body, writer, trailer_tx, None, drain_timeout()).await;
 }
 
-/// Drain with optional byte limit.
+/// Drain with optional byte limit and a per-frame read timeout.
+///
+/// `frame_timeout` bounds how long we wait for each individual body frame.
+/// A slow-drip peer that stalls indefinitely will be cut off after this deadline.
 pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
     body: B,
     writer: BodyWriter,
     trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
     max_bytes: Option<usize>,
+    frame_timeout: std::time::Duration,
 ) where
     B: http_body::Body<Data = Bytes>,
     B::Error: std::fmt::Debug,
@@ -300,7 +302,15 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
     let mut total = 0usize;
     let mut trailers_vec: Vec<(String, String)> = Vec::new();
 
-    while let Some(frame_result) = body.frame().await {
+    loop {
+        let frame_result = match tokio::time::timeout(frame_timeout, body.frame()).await {
+            Err(_elapsed) => {
+                tracing::warn!("iroh-http: body frame read timed out after {frame_timeout:?}");
+                break;
+            }
+            Ok(None) => break,
+            Ok(Some(r)) => r,
+        };
         match frame_result {
             Err(e) => {
                 tracing::warn!("iroh-http: body frame error: {e:?}");
@@ -408,15 +418,13 @@ pub async fn raw_connect(
     remote_node_id: &str,
     path: &str,
     headers: &[(String, String)],
-) -> Result<FfiDuplexStream, String> {
+) -> Result<FfiDuplexStream, CoreError> {
     // Validate headers.
     for (name, value) in headers {
-        HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
-            CoreError::invalid_input(format!("invalid header name {:?}", name)).to_string()
-        })?;
-        HeaderValue::from_str(value).map_err(|_| {
-            CoreError::invalid_input(format!("invalid header value for {:?}", name)).to_string()
-        })?;
+        HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| CoreError::invalid_input(format!("invalid header name {:?}", name)))?;
+        HeaderValue::from_str(value)
+            .map_err(|_| CoreError::invalid_input(format!("invalid header value for {:?}", name)))?;
     }
 
     let parsed = parse_node_addr(remote_node_id)?;
@@ -435,16 +443,17 @@ pub async fn raw_connect(
         .get_or_connect(node_id, ALPN_DUPLEX, || async move {
             ep_raw.connect(addr_clone, ALPN_DUPLEX).await.map_err(|e| format!("connect duplex: {e}"))
         })
-        .await?;
+        .await
+        .map_err(|e| CoreError::connection_failed(e))?;
 
-    let (send, recv) = pooled.conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
+    let (send, recv) = pooled.conn.open_bi().await.map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
     let io = TokioIo::new(IrohStream::new(send, recv));
 
     let (mut sender, conn_task) = hyper::client::conn::http1::Builder::new()
         .max_buf_size(max_header_size.max(8192))
         .handshake::<_, BoxBody>(io)
         .await
-        .map_err(|e| format!("hyper handshake (duplex): {e}"))?;
+        .map_err(|e| CoreError::connection_failed(format!("hyper handshake (duplex): {e}")))?;
 
     tokio::spawn(conn_task);
 
@@ -460,19 +469,19 @@ pub async fn raw_connect(
 
     let req = req_builder
         .body(box_body(http_body_util::Empty::new()))
-        .map_err(|e| format!("build duplex request: {e}"))?;
+        .map_err(|e| CoreError::internal(format!("build duplex request: {e}")))?;
 
-    let resp = sender.send_request(req).await.map_err(|e| format!("send duplex request: {e}"))?;
+    let resp = sender.send_request(req).await.map_err(|e| CoreError::connection_failed(format!("send duplex request: {e}")))?;
 
     let status = resp.status();
     if status != StatusCode::SWITCHING_PROTOCOLS {
-        return Err(format!("server rejected duplex: expected 101, got {status}"));
+        return Err(CoreError::connection_failed(format!("server rejected duplex: expected 101, got {status}")));
     }
 
     // Perform the protocol upgrade to get raw bidirectional IO.
     let upgraded = hyper::upgrade::on(resp)
         .await
-        .map_err(|e| format!("upgrade error: {e}"))?;
+        .map_err(|e| CoreError::connection_failed(format!("upgrade error: {e}")))?;
 
     let ep_idx = endpoint.inner.endpoint_idx;
     let (server_write, server_read) = make_body_channel();

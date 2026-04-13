@@ -26,7 +26,7 @@ use crate::{
     client::{body_from_reader, pump_hyper_body_to_channel_limited},
     io::IrohStream,
     stream::{
-        allocate_req_handle, insert_reader, insert_trailer_receiver,
+        allocate_req_handle, drain_timeout, insert_reader, insert_trailer_receiver,
         insert_trailer_sender, insert_writer, make_body_channel, remove_trailer_sender,
         take_req_sender, ResponseHeadEntry,
     },
@@ -79,25 +79,21 @@ impl ServeHandle {
 
 // ── respond() ────────────────────────────────────────────────────────────────
 
-pub fn respond(req_handle: u64, status: u16, headers: Vec<(String, String)>) -> Result<(), String> {
-    StatusCode::from_u16(status).map_err(|_| {
-        CoreError::invalid_input(format!("invalid HTTP status code: {status}")).to_string()
-    })?;
+pub fn respond(req_handle: u64, status: u16, headers: Vec<(String, String)>) -> Result<(), CoreError> {
+    StatusCode::from_u16(status)
+        .map_err(|_| CoreError::invalid_input(format!("invalid HTTP status code: {status}")))?;
     for (name, value) in &headers {
-        HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
-            CoreError::invalid_input(format!("invalid response header name {:?}", name)).to_string()
-        })?;
-        HeaderValue::from_str(value).map_err(|_| {
-            CoreError::invalid_input(format!("invalid response header value for {:?}", name))
-                .to_string()
-        })?;
+        HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| CoreError::invalid_input(format!("invalid response header name {:?}", name)))?;
+        HeaderValue::from_str(value)
+            .map_err(|_| CoreError::invalid_input(format!("invalid response header value for {:?}", name)))?;
     }
 
     let sender = take_req_sender(req_handle)
-        .ok_or_else(|| format!("unknown req_handle: {req_handle}"))?;
+        .ok_or_else(|| CoreError::invalid_handle(req_handle as u32))?;
     sender
         .send(ResponseHeadEntry { status, headers })
-        .map_err(|_| "serve task dropped before respond".to_string())
+        .map_err(|_| CoreError::internal("serve task dropped before respond"))
 }
 
 // ── PeerConnectionGuard ───────────────────────────────────────────────────────
@@ -237,6 +233,7 @@ impl RequestService {
                 req_body_writer,
                 trailer_tx,
                 max_request_body_bytes,
+                drain_timeout(),
             ));
             None
         } else {

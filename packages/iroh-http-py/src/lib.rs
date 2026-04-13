@@ -986,7 +986,9 @@ fn secret_key_sign(secret_key: Vec<u8>, data: Vec<u8>) -> PyResult<Vec<u8>> {
     let key_bytes: [u8; 32] = secret_key
         .try_into()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("secret key must be 32 bytes"))?;
-    Ok(iroh_http_core::secret_key_sign(&key_bytes, &data).to_vec())
+    iroh_http_core::secret_key_sign(&key_bytes, &data)
+        .map(|sig| sig.to_vec())
+        .map_err(|e| py_err(e))
 }
 
 /// Verify a 64-byte Ed25519 signature against a 32-byte public key.
@@ -1006,8 +1008,10 @@ fn public_key_verify(public_key: Vec<u8>, data: Vec<u8>, signature: Vec<u8>) -> 
 
 /// Generate a fresh Ed25519 secret key. Returns 32 raw bytes.
 #[pyfunction]
-fn generate_secret_key() -> Vec<u8> {
-    iroh_http_core::generate_secret_key().to_vec()
+fn generate_secret_key() -> PyResult<Vec<u8>> {
+    iroh_http_core::generate_secret_key()
+        .map(|key| key.to_vec())
+        .map_err(|e| py_err(e))
 }
 
 // ── Module ────────────────────────────────────────────────────────────────────

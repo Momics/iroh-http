@@ -3,48 +3,230 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>iroh-http Tauri Example</title>
+    <title>iroh-http Tauri Dev Console</title>
     <link rel="stylesheet" href="/src/styles.css" />
     <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body>
     <main class="container">
-      <h1>iroh-http</h1>
-      <p class="subtitle">peer-to-peer HTTP over QUIC &mdash; Tauri example</p>
-
-      <section class="card">
-        <h2>Node Identity</h2>
-        <div class="node-id-row">
-          <code id="node-id">initializing&hellip;</code>
-          <button id="copy-btn" disabled>Copy ID</button>
+      <header class="app-header">
+        <div>
+          <h1>iroh-http</h1>
+          <p class="subtitle">peer-to-peer HTTP over QUIC &mdash; dev console</p>
         </div>
-      </section>
+      </header>
 
-      <div class="columns">
+      <nav class="tab-nav">
+        <button class="tab-btn active" data-tab="identity">Identity</button>
+        <button class="tab-btn" data-tab="http">HTTP</button>
+        <button class="tab-btn" data-tab="peer">Peer</button>
+        <button class="tab-btn" data-tab="discovery">Discovery</button>
+        <button class="tab-btn" data-tab="sessions">Sessions</button>
+        <button class="tab-btn" data-tab="crypto">Crypto</button>
+      </nav>
+
+      <!-- ── Identity ──────────────────────────────────────────────────────── -->
+      <div class="panel active" data-panel="identity">
         <section class="card">
-          <h2>Server</h2>
-          <button id="serve-btn">Start serving</button>
-          <p id="server-status" class="status"></p>
-          <pre id="server-log" class="log"></pre>
+          <h2>Node Identity</h2>
+          <label>Node ID</label>
+          <div class="input-row">
+            <code id="node-id">initializing&hellip;</code>
+            <button id="copy-id-btn">Copy</button>
+          </div>
+          <label>Ticket (shareable address)</label>
+          <div class="input-row">
+            <code id="node-ticket" class="overflow">&hellip;</code>
+            <button id="copy-ticket-btn">Copy</button>
+          </div>
+          <label>Home relay</label>
+          <code id="home-relay">&hellip;</code>
         </section>
 
         <section class="card">
-          <h2>Client</h2>
-          <form id="fetch-form">
-            <label for="peer-input">Peer Node ID</label>
+          <h2>Full Address</h2>
+          <pre id="node-addr" class="log">&hellip;</pre>
+        </section>
+
+        <section class="card">
+          <h2>Key Persistence</h2>
+          <p id="key-status" class="status"></p>
+          <div class="btn-row">
+            <button id="save-key-btn">Save key to storage</button>
+            <button id="clear-key-btn" class="btn-secondary">Clear saved key</button>
+          </div>
+          <p class="hint">
+            Saving persists this node's identity across restarts.
+            Clearing generates a new identity on the next launch.
+          </p>
+        </section>
+      </div>
+
+      <!-- ── HTTP ──────────────────────────────────────────────────────────── -->
+      <div class="panel" data-panel="http">
+        <div class="columns">
+          <section class="card">
+            <h2>Server</h2>
+            <p class="hint">
+              Also accepts WebTransport bidi streams and echoes them back —
+              useful for testing the Sessions tab from a remote peer.
+            </p>
+            <button id="serve-btn">Start serving</button>
+            <p id="server-status" class="status"></p>
+            <pre id="server-log" class="log"></pre>
+          </section>
+
+          <section class="card">
+            <h2>Client</h2>
+            <form id="fetch-form">
+              <label for="peer-input">Peer node ID or ticket</label>
+              <input
+                id="peer-input"
+                type="text"
+                placeholder="paste a node ID or ticket&hellip;"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <label for="path-input">Path</label>
+              <input id="path-input" type="text" value="/hello" />
+              <label for="method-select">Method</label>
+              <select id="method-select">
+                <option>GET</option>
+                <option>POST</option>
+                <option>PUT</option>
+                <option>DELETE</option>
+                <option>HEAD</option>
+              </select>
+              <button type="submit">Fetch</button>
+            </form>
+            <p id="response-status" class="status"></p>
+            <pre id="response-body" class="log"></pre>
+          </section>
+        </div>
+      </div>
+
+      <!-- ── Peer ───────────────────────────────────────────────────────────── -->
+      <div class="panel" data-panel="peer">
+        <section class="card">
+          <h2>Peer Lookup</h2>
+          <p class="hint">
+            Address info is populated after any connection to the peer.
+            Stats are only available once a QUIC connection has been established.
+          </p>
+          <label for="peer-lookup-input">Peer node ID</label>
+          <input
+            id="peer-lookup-input"
+            type="text"
+            placeholder="paste a node ID&hellip;"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="btn-row">
+            <button id="peer-info-btn">Get address info</button>
+            <button id="peer-stats-btn">Get connection stats</button>
+          </div>
+          <pre id="peer-info-output" class="log"></pre>
+        </section>
+      </div>
+
+      <!-- ── Discovery ─────────────────────────────────────────────────────── -->
+      <div class="panel" data-panel="discovery">
+        <div class="columns">
+          <section class="card">
+            <h2>Advertise (mDNS)</h2>
+            <p class="hint">Broadcast this node on the local network.</p>
+            <label for="advertise-service">Service name</label>
+            <input id="advertise-service" type="text" value="iroh-http" />
+            <button id="advertise-btn">Start advertising</button>
+            <p id="advertise-status" class="status"></p>
+          </section>
+
+          <section class="card">
+            <h2>Browse (mDNS)</h2>
+            <p class="hint">Discover peers advertising on the local network.</p>
+            <label for="browse-service">Service name</label>
+            <input id="browse-service" type="text" value="iroh-http" />
+            <button id="browse-btn">Start browsing</button>
+            <pre id="browse-log" class="log"></pre>
+          </section>
+        </div>
+      </div>
+
+      <!-- ── Sessions ──────────────────────────────────────────────────────── -->
+      <div class="panel" data-panel="sessions">
+        <section class="card">
+          <h2>QUIC Session</h2>
+          <p class="hint">
+            Connects a raw QUIC session to a remote peer. The remote peer's
+            HTTP server (see HTTP tab) echoes bidi stream messages back.
+          </p>
+          <label for="session-peer-input">Peer node ID</label>
+          <div class="input-row">
             <input
-              id="peer-input"
+              id="session-peer-input"
               type="text"
               placeholder="paste a node ID&hellip;"
               autocomplete="off"
               spellcheck="false"
             />
-            <label for="path-input">Path</label>
-            <input id="path-input" type="text" value="/hello" />
-            <button type="submit">Fetch</button>
-          </form>
-          <p id="response-status" class="status"></p>
-          <pre id="response-body" class="log"></pre>
+            <button id="session-connect-btn">Connect</button>
+          </div>
+          <p id="session-status" class="status"></p>
+        </section>
+
+        <section class="card hidden" id="session-controls">
+          <h2>Bidi Stream</h2>
+          <div class="input-row">
+            <input id="session-message-input" type="text" placeholder="type a message&hellip;" />
+            <button id="session-send-btn">Send</button>
+          </div>
+          <h2 style="margin-top: 1rem">Datagrams</h2>
+          <div class="input-row">
+            <input id="datagram-input" type="text" placeholder="type a datagram&hellip;" />
+            <button id="datagram-send-btn">Send datagram</button>
+          </div>
+          <pre id="session-log" class="log"></pre>
+          <button id="session-close-btn" class="btn-secondary" style="margin-top: 0.75rem">
+            Close session
+          </button>
+        </section>
+      </div>
+
+      <!-- ── Crypto ─────────────────────────────────────────────────────────── -->
+      <div class="panel" data-panel="crypto">
+        <section class="card">
+          <h2>Sign</h2>
+          <p class="hint">Sign arbitrary data with this node's Ed25519 secret key.</p>
+          <label for="sign-data-input">Data (plain text)</label>
+          <div class="input-row">
+            <input id="sign-data-input" type="text" value="Hello, iroh-http!" />
+            <button id="sign-btn">Sign with own key</button>
+          </div>
+          <label>Signature (hex)</label>
+          <pre id="signature-output" class="log"></pre>
+        </section>
+
+        <section class="card">
+          <h2>Verify</h2>
+          <p class="hint">
+            Signing pre-fills these fields for a quick round-trip check.
+            Paste any public key + data + signature to verify independently.
+          </p>
+          <label for="verify-key-input">Public key (node ID, base32)</label>
+          <input id="verify-key-input" type="text" placeholder="base32 public key&hellip;" autocomplete="off" spellcheck="false" />
+          <label for="verify-data-input">Data</label>
+          <input id="verify-data-input" type="text" placeholder="original data&hellip;" />
+          <label for="verify-sig-input">Signature (hex)</label>
+          <input id="verify-sig-input" type="text" placeholder="hex-encoded 64-byte signature&hellip;" />
+          <button id="verify-btn">Verify</button>
+          <p id="verify-result" class="status"></p>
+        </section>
+
+        <section class="card">
+          <h2>Generate Key</h2>
+          <p class="hint">Generate a fresh random Ed25519 keypair for use with <code>createNode({ key })</code>.</p>
+          <button id="gen-key-btn">Generate new random key</button>
+          <pre id="gen-key-output" class="log"></pre>
         </section>
       </div>
     </main>
