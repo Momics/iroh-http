@@ -1129,6 +1129,9 @@ fn create_node<'py>(
     request_timeout: Option<u64>,
     max_request_body_bytes: Option<usize>,
 ) -> PyResult<Bound<'py, PyAny>> {
+    // When the compression feature is disabled the two params have no use site; silence the warning.
+    #[cfg(not(feature = "compression"))]
+    let _ = (compression_level, compression_min_body_bytes);
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let opts = NodeOptions {
             key: match key {
