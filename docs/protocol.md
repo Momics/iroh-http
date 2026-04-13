@@ -82,3 +82,35 @@ Requests with `Upgrade: iroh-duplex` initiate a full-duplex stream. The server r
 ### Trailers
 
 Response trailers are sent after the chunked body using standard HTTP/1.1 trailer encoding. The client accesses them via the non-standard `res.trailers` promise. On the server side, attach a `trailers()` function to the `Response` object.
+
+---
+
+## Standards compliance
+
+iroh-http is built on standards wherever they provide the right abstraction. Where it deviates, it does so deliberately and for documented reasons. The goal is that the *developer-facing API* feels entirely standard; the *transport* is where the differences live.
+
+### Where we comply
+
+| Standard | Where it applies | Notes |
+|----------|-----------------|-------|
+| HTTP/1.1 semantics (RFC 7230–7235) | All requests and responses | Methods, status codes, headers, chunked encoding, trailers — delegated entirely to hyper v1 |
+| WHATWG Fetch API | `node.fetch()` | The `fetch()` contract is the API contract; deviations are bugs |
+| Deno.serve contract | `node.serve()` | Handler signature, `onListen`, `signal` shutdown, `onError` — all follow Deno.serve exactly |
+| WHATWG `Request` / `Response` / `Headers` / `ReadableStream` | All platform adapters | Native platform types are used throughout; no custom wrappers |
+| WHATWG WebTransport API | `IrohSession` | `IrohSession` satisfies the full `WebTransport` interface: `ready`, `closed`, `datagrams`, `createBidirectionalStream()`, `incomingBidirectionalStreams`, etc. |
+| HTTP Upgrade (RFC 7230 §6.7) | `raw_connect` / duplex streams | Standard `Upgrade: iroh-duplex` + `101 Switching Protocols` handshake via hyper |
+| HTTP compression negotiation | Compression | `Accept-Encoding` / `Content-Encoding` / `Vary` headers follow standard HTTP negotiation rules, including quality value (`q=`) preference ordering |
+| HTTP trailer encoding | Response trailers | Standard HTTP/1.1 chunked trailer encoding, delivered via hyper |
+
+### Where we deviate, and why
+
+| Area | Standard | Our approach | Reason |
+|------|----------|-------------|--------|
+| Transport | TCP | QUIC via Iroh | QUIC provides multiplexing, 0-RTT, flow control, and NAT traversal that TCP cannot. The deviation is the whole point of the library. |
+| TLS / identity | Certificate-based TLS (CA-signed) | Keypair-based encryption built into QUIC | No certificate infrastructure needed. Identity is a permanent Ed25519 keypair, not a certificate with an expiry and a CA chain. Iroh handles the encryption. |
+| Addressing | DNS hostname | Ed25519 public key (base32) | Nodes are addressed by cryptographic identity, not by DNS name. No servers required. |
+| URL scheme | `http://` / `https://` | `httpi://` | `http://` would be misleading (no TCP, no DNS). `http+iroh://` breaks some URL parsers (the `+` is not universally accepted). `httpi://` is clean, parseable everywhere, and signals the distinction. |
+| ALPN | `http/1.1`, `h2` | `iroh-http/2`, `iroh-http/2-duplex` | The protocol runs over iroh's QUIC, not standard TLS. Custom ALPN strings correctly identify the iroh-http wire format and prevent accidental connection to unrelated services. |
+| Connection model | Persistent TCP connection reused across requests (keep-alive) | One HTTP/1.1 exchange per QUIC stream | QUIC provides multiplexing at the connection level; HTTP keep-alive is unnecessary and disabled. Multiple concurrent requests share one QUIC connection via separate streams. |
+| WebTransport wire negotiation | WHATWG WebTransport spec: HTTP/3 QUIC streams or HTTP/2 extended CONNECT (RFC 8441) | HTTP/1.1 `Upgrade: iroh-duplex` → `101 Switching Protocols` | iroh-http currently runs HTTP/1.1 over QUIC streams, not HTTP/3. The `IrohSession` API is spec-compliant; the wire negotiation differs. When HTTP/3 support arrives (`h3-noq`), this will converge with the spec. See [roadmap.md](roadmap.md#horizon-3----embedded-and-http3). |
+| Compression algorithm policy | Web convention: gzip, brotli, zstd | zstd only | Both sides of an iroh-http connection run this library, so there is no legacy browser or CDN to support. zstd consistently outperforms gzip and brotli in compression ratio and speed. Starting without legacy baggage, we chose the best available algorithm. Negotiation mechanics (headers, quality values) remain standard HTTP. |
