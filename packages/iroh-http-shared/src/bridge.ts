@@ -26,7 +26,7 @@ export interface Bridge {
    * Call this before `rawFetch` and wire abort → `cancelFetch(token)`.
    */
 
-  allocFetchToken(): Promise<bigint>;
+  allocFetchToken(endpointHandle: number): Promise<bigint>;
   /**
    * Signal the Rust fetch task to abort.  Safe to call after the fetch has
    * already completed.  Fire-and-forget (do not await).
@@ -217,12 +217,6 @@ export interface NodeOptions {
     mdns?: boolean | { serviceName?: string };
   };
 
-  /**
-   * @deprecated Pass `discovery: { dns: { serverUrl } }` instead.
-   * Will be removed in a future release.
-   */
-  dnsDiscovery?: string;
-
   // ── Power-user options ────────────────────────────────────────────────────
   /**
    * HTTP proxy URL for relay traffic.  For corporate networks that route
@@ -361,17 +355,6 @@ export interface NodeOptions {
     maxRetries?: number;
   };
 
-  /**
-   * @deprecated Use {@link NodeOptions.reconnect} instead.
-   * Will be removed in a future release.
-   */
-  lifecycle?: {
-    /** @deprecated Use `reconnect.auto` instead. */
-    autoReconnect?: boolean;
-    /** @deprecated Use `reconnect.maxRetries` instead. */
-    maxRetries?: number;
-  };
-
   // ── Testing / CI ──────────────────────────────────────────────────────────
   /**
    * Bind to local addresses only; no relay, no DNS discovery.
@@ -436,10 +419,6 @@ export interface IrohNode {
    * across restarts.
    */
   secretKey: SecretKey;
-  /** @deprecated Use `publicKey.toString()` instead. */
-  nodeId: string;
-  /** @deprecated Use `secretKey.toBytes()` instead. */
-  keypair: Uint8Array;
   /**
    * Send an HTTP request to a remote node.
    * Signature mirrors `globalThis.fetch` with `peer` prepended.
@@ -688,9 +667,6 @@ export interface BidirectionalStream {
   /** Send data to the server. */
   writable: WritableStream<Uint8Array>;
 }
-
-/** @deprecated Use {@link BidirectionalStream} instead. */
-export type DuplexStream = BidirectionalStream;
 
 /** Raw connect function provided by each platform bridge. */
 export type RawConnectFn = (

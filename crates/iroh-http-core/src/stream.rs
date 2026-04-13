@@ -594,8 +594,9 @@ pub(crate) fn take_req_sender(
 /// Ensures at most one sweep task is running process-wide.
 static SWEEP_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Shutdown signal for the sweep task.  Initialised when the task starts.
-static SWEEP_SHUTDOWN: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
+/// Shutdown signal for the active sweep task.
+/// ISS-028: use Mutex<Option<...>> so the notify can be replaced on restart cycles.
+static SWEEP_SHUTDOWN: Mutex<Option<Arc<tokio::sync::Notify>>> = Mutex::new(None);
 
 /// Start a background task that sweeps expired registry entries every 60 seconds.
 /// Pass `ttl_ms = 0` to disable sweeping.
@@ -618,10 +619,8 @@ pub fn start_slab_sweep(ttl_ms: u64) {
         return; // already running
     }
     let shutdown = Arc::new(tokio::sync::Notify::new());
-    // Store the notify so stop_slab_sweep() can signal it.  If two callers race
-    // on the very first start, one will win the compare_exchange above and the
-    // other will have returned early, so set() here is guaranteed to succeed.
-    let _ = SWEEP_SHUTDOWN.set(shutdown.clone());
+    // Replace any stale notify from a prior stop/start cycle.
+    *SWEEP_SHUTDOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown.clone());
 
     let ttl = Duration::from_millis(ttl_ms);
     tokio::spawn(async move {
@@ -642,8 +641,13 @@ pub fn start_slab_sweep(ttl_ms: u64) {
 ///
 /// After this returns, `start_slab_sweep` may be called again to restart.
 pub fn stop_slab_sweep() {
-    if let Some(notify) = SWEEP_SHUTDOWN.get() {
-        notify.notify_one();
+    // Take (not just peek) so a future start_slab_sweep can install a fresh notify.
+    let notify = SWEEP_SHUTDOWN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
+    if let Some(n) = notify {
+        n.notify_one();
     }
     // Reset so the next endpoint bind can restart the sweep.
     SWEEP_STARTED.store(false, std::sync::atomic::Ordering::Release);

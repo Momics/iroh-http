@@ -14,33 +14,33 @@ import { secretKeySign, publicKeyVerify, generateSecretKey } from "../mod.ts";
 
 // ── Node creation ──────────────────────────────────────────────────────────────
 
-Deno.test("createNode — nodeId is a non-empty base32 string", async () => {
+Deno.test("createNode — publicKey is a non-empty base32 string", async () => {
   const node = await createNode({ disableNetworking: true });
   try {
-    assertExists(node.nodeId, "nodeId must exist");
-    assert(node.nodeId.length > 10, `nodeId too short: ${node.nodeId}`);
-    console.log(`  nodeId = ${node.nodeId}`);
+    assertExists(node.publicKey, "publicKey must exist");
+    assert(node.publicKey.toString().length > 10, `publicKey too short: ${node.publicKey}`);
+    console.log(`  publicKey = ${node.publicKey}`);
   } finally {
     await node.close();
   }
 });
 
-Deno.test("createNode — keypair is a 32-byte Uint8Array", async () => {
+Deno.test("createNode — secretKey is 32 bytes", async () => {
   const node = await createNode({ disableNetworking: true });
   try {
-    assertInstanceOf(node.keypair, Uint8Array, "keypair must be Uint8Array");
-    assertEquals(node.keypair.length, 32, "keypair must be 32 bytes");
+    assertInstanceOf(node.secretKey.toBytes(), Uint8Array, "secretKey.toBytes() must be Uint8Array");
+    assertEquals(node.secretKey.toBytes().length, 32, "secretKey must be 32 bytes");
   } finally {
     await node.close();
   }
 });
 
-Deno.test("createNode — same key bytes produce same nodeId", async () => {
+Deno.test("createNode — same key bytes produce same publicKey", async () => {
   const key = new Uint8Array(32).fill(0xab);
   const n1 = await createNode({ key, disableNetworking: true });
   const n2 = await createNode({ key, disableNetworking: true });
   try {
-    assertEquals(n1.nodeId, n2.nodeId, "deterministic key must yield deterministic nodeId");
+    assertEquals(n1.publicKey.toString(), n2.publicKey.toString(), "deterministic key must yield deterministic publicKey");
   } finally {
     await n1.close();
     await n2.close();
@@ -127,7 +127,7 @@ Deno.test("fetch — rejects https:// URL with TypeError", async () => {
     let threw = false;
     try {
       // Should throw before any network activity.
-      await node.fetch(node.nodeId, "https://example.com/");
+      await node.fetch(node.publicKey.toString(), "https://example.com/");
     } catch (e) {
       threw = true;
       assert(e instanceof TypeError, `Expected TypeError, got ${(e as Error).constructor.name}`);
@@ -144,7 +144,7 @@ Deno.test("fetch — rejects http:// URL with TypeError", async () => {
   try {
     let threw = false;
     try {
-      await node.fetch(node.nodeId, "http://example.com/");
+      await node.fetch(node.publicKey.toString(), "http://example.com/");
     } catch (e) {
       threw = true;
       assert(e instanceof TypeError, `Expected TypeError, got ${(e as Error).constructor.name}`);

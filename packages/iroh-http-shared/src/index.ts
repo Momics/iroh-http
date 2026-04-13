@@ -167,8 +167,6 @@ export function buildNode(
   const node: IrohNode = {
     publicKey,
     secretKey,
-    nodeId: info.nodeId,
-    keypair: info.keypair,
     fetch: makeFetch(bridge, info.endpointHandle, rawFetch, allocBodyWriter),
     serve: makeServe(
       bridge,

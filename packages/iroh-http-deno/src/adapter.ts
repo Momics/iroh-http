@@ -120,10 +120,21 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
 
 /** Reusable buffer hint for estimating output size of `call()` responses. */async function call<T>(method: string, payload: unknown): Promise<T> {
   const methodBuf = METHOD_BUFS[method] ?? enc.encode(method);
-  // JSON.stringify throws on bigint; convert bigint values to numbers at the
-  // JSON boundary (handle indices are slotmap u64 keys, safe within f64 range).
+  // ISS-032: bigint handles are slotmap u64 keys (32-bit slot + 32-bit version);
+  // practical values are well within Number.MAX_SAFE_INTEGER. Throw early if a
+  // handle ever exceeds the safe range rather than silently corrupting identity.
   const payloadBuf = enc.encode(
-    JSON.stringify(payload, (_k, v) => (typeof v === "bigint" ? Number(v) : v)),
+    JSON.stringify(payload, (_k, v) => {
+      if (typeof v === "bigint") {
+        if (v > BigInt(Number.MAX_SAFE_INTEGER)) {
+          throw new RangeError(
+            `[iroh-http] handle value ${v} exceeds safe integer range and cannot be safely serialised`,
+          );
+        }
+        return Number(v);
+      }
+      return v;
+    }),
   );
   // Deno's FFI types require Uint8Array<ArrayBuffer>; TextEncoder returns
   // Uint8Array<ArrayBufferLike>. The backing store is always a plain ArrayBuffer
@@ -211,8 +222,8 @@ export const bridge: Bridge = {
   async cancelRequest(handle: bigint): Promise<void> {
     await call<Record<never, never>>("cancelRequest", { handle });
   },
-  async allocFetchToken(): Promise<bigint> {
-    const res = await call<{ token: number }>("allocFetchToken", {});
+  async allocFetchToken(endpointHandle: number): Promise<bigint> {
+    const res = await call<{ token: number }>("allocFetchToken", { endpointHandle });
     return BigInt(res.token);
   },
   cancelFetch(token: bigint): void {
@@ -427,7 +438,7 @@ export async function createEndpointInfo(
     relayMode: relayMode ?? null,
     relays: relays ?? null,
     bindAddrs,
-    dnsDiscovery: discovery.dnsServerUrl ?? options?.dnsDiscovery ?? null,
+    dnsDiscovery: discovery.dnsServerUrl ?? null,
     dnsDiscoveryEnabled: discovery.dnsEnabled,
     channelCapacity: options?.advanced?.channelCapacity ?? null,
     maxChunkSizeBytes: options?.advanced?.maxChunkSizeBytes ?? null,

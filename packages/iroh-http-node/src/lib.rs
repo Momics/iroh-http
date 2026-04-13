@@ -46,7 +46,7 @@ fn get_endpoint(handle: u32) -> napi::Result<IrohEndpoint> {
     slab.get(handle as usize).cloned().ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
-            iroh_http_core::classify_error_json(format!("invalid endpoint handle: {handle}")),
+            iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {handle}")),
         )
     })
 }
@@ -184,7 +184,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
     let ep = IrohEndpoint::bind(opts).await.map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::core_error_to_json(&e),
         )
     })?;
 
@@ -210,7 +210,7 @@ pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> napi::
         if !slab.contains(endpoint_handle as usize) {
             return Err(napi::Error::new(
                 Status::InvalidArg,
-                iroh_http_core::classify_error_json("invalid endpoint handle"),
+                iroh_http_core::format_error_json("INVALID_HANDLE", "invalid endpoint handle"),
             ));
         }
         slab.remove(endpoint_handle as usize)
@@ -247,7 +247,7 @@ pub async fn mdns_browse(endpoint_handle: u32, service_name: String) -> napi::Re
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::classify_error_json(e),
+                iroh_http_core::format_error_json("REFUSED", e),
             )
         })?;
     let handle = browse_slab()
@@ -262,7 +262,7 @@ pub async fn mdns_browse(endpoint_handle: u32, service_name: String) -> napi::Re
 pub async fn mdns_browse(_endpoint_handle: u32, _service_name: String) -> napi::Result<u32> {
     Err(napi::Error::new(
         Status::GenericFailure,
-        iroh_http_core::classify_error_json("discovery feature not enabled in this build"),
+        iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"),
     ))
 }
 
@@ -281,7 +281,7 @@ pub async fn mdns_next_event(browse_handle: u32) -> napi::Result<Option<JsPeerDi
     .ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
-            iroh_http_core::classify_error_json(format!("invalid browse handle: {browse_handle}")),
+            iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid browse handle: {browse_handle}")),
         )
     })?;
     let event = session.lock().await.next_event().await;
@@ -297,7 +297,7 @@ pub async fn mdns_next_event(browse_handle: u32) -> napi::Result<Option<JsPeerDi
 pub async fn mdns_next_event(_browse_handle: u32) -> napi::Result<Option<JsPeerDiscoveryEvent>> {
     Err(napi::Error::new(
         Status::GenericFailure,
-        iroh_http_core::classify_error_json("discovery feature not enabled in this build"),
+        iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"),
     ))
 }
 
@@ -324,7 +324,7 @@ pub fn mdns_advertise(endpoint_handle: u32, service_name: String) -> napi::Resul
     let session = iroh_http_discovery::start_advertise(ep.raw(), &service_name).map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::classify_error_json(e),
+            iroh_http_core::format_error_json("REFUSED", e),
         )
     })?;
     let handle = advertise_slab().lock().unwrap().insert(session) as u32;
@@ -336,7 +336,7 @@ pub fn mdns_advertise(endpoint_handle: u32, service_name: String) -> napi::Resul
 pub fn mdns_advertise(_endpoint_handle: u32, _service_name: String) -> napi::Result<u32> {
     Err(napi::Error::new(
         Status::GenericFailure,
-        iroh_http_core::classify_error_json("discovery feature not enabled in this build"),
+        iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"),
     ))
 }
 
@@ -540,8 +540,8 @@ pub fn js_alloc_body_writer() -> u64 {
 ///
 /// Wire `AbortSignal → cancelInFlight(token)` for request cancellation.
 #[napi]
-pub fn js_alloc_fetch_token() -> u64 {
-    iroh_http_core::alloc_fetch_token(0)
+pub fn js_alloc_fetch_token(endpoint_handle: u32) -> u64 {
+    iroh_http_core::alloc_fetch_token(endpoint_handle)
 }
 
 /// Cancel an in-flight fetch by its cancellation token.

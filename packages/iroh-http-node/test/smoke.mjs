@@ -13,18 +13,17 @@ import { strict as assert } from "node:assert";
 async function main() {
   console.log("1. createNode...");
   const node = await createNode({ disableNetworking: true });
-  assert.ok(node.nodeId, "nodeId should be a non-empty string");
-  assert.ok(node.nodeId.length > 10, "nodeId should be base32-encoded");
-  console.log(`   nodeId = ${node.nodeId}`);
+  assert.ok(node.publicKey, "publicKey should exist");
+  assert.ok(node.publicKey.toString().length > 10, "publicKey should be base32-encoded");
+  console.log(`   publicKey = ${node.publicKey}`);
 
-  console.log("2. keypair...");
-  const kp = node.keypair;
-  assert.ok(kp instanceof Uint8Array, "keypair should be Uint8Array");
-  assert.equal(kp.length, 32, "keypair should be 32 bytes");
+  console.log("2. secretKey...");
+  const kp = node.secretKey.toBytes();
+  assert.ok(kp instanceof Uint8Array, "secretKey bytes should be Uint8Array");
+  assert.equal(kp.length, 32, "secretKey should be 32 bytes");
 
   console.log("3. publicKey...");
   assert.ok(node.publicKey, "publicKey should exist");
-  assert.equal(node.publicKey.toString(), node.nodeId, "publicKey.toString() should match nodeId");
 
   console.log("4. secretKey...");
   assert.ok(node.secretKey, "secretKey should exist");

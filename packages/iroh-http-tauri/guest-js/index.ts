@@ -86,8 +86,8 @@ const bridge: Bridge = {
     return invoke(`${PLUGIN}|cancel_request`, { handle: Number(handle) });
   },
 
-  allocFetchToken(): Promise<bigint> {
-    return invoke<number>(`${PLUGIN}|alloc_fetch_token`).then(BigInt);
+  allocFetchToken(endpointHandle: number): Promise<bigint> {
+    return invoke<number>(`${PLUGIN}|alloc_fetch_token`, { endpointHandle }).then(BigInt);
   },
 
   cancelFetch(token: bigint): void {
@@ -475,7 +475,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         relayMode: relayMode ?? null,
         relays,
         bindAddrs,
-        dnsDiscovery: discovery.dnsServerUrl ?? options.dnsDiscovery ?? null,
+        dnsDiscovery: discovery.dnsServerUrl ?? null,
         dnsDiscoveryEnabled: discovery.dnsEnabled,
         channelCapacity: options.advanced?.channelCapacity ?? null,
         maxChunkSizeBytes: options.advanced?.maxChunkSizeBytes ?? null,
@@ -535,13 +535,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
 
   // TAURI-005: install lifecycle listener and store the unsubscribe function
   // so it can be called when the node closes, preventing stale callbacks.
-  const reconnect = options?.reconnect ??
-    (options?.lifecycle
-      ? {
-        auto: options.lifecycle.autoReconnect,
-        maxRetries: options.lifecycle.maxRetries,
-      }
-      : undefined);
+  const reconnect = options?.reconnect;
   if (reconnect) {
     const unsubscribe = installLifecycleListener(
       Number(info.endpointHandle),
