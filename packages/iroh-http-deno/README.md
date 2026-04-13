@@ -38,7 +38,7 @@ The native library is placed in `lib/`.
 const node = await createNode({
   key: savedKey,
   discovery: { mdns: true, serviceName: "my-app.iroh-http" },
-  drainTimeout: 30_000,
+  advanced: { drainTimeout: 30_000 },
 });
 ```
 

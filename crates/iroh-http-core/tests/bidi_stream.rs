@@ -151,12 +151,18 @@ async fn session_bidi_stream_backpressure() {
     let b_id = node_id(&b_ep);
     let b_addrs = direct_addrs(&b_ep);
 
+    // ISS-022: replace sleep-based coordination with a notify signal.
+    // The reader (B) waits until the writer (A) has sent all chunks, creating
+    // genuine backpressure without relying on wall-clock timing.
+    let (all_written_tx, all_written_rx) = tokio::sync::oneshot::channel::<()>();
+
     let b_handle = tokio::spawn(async move {
         let session_b = session_accept(&b_ep).await.unwrap().unwrap();
         let stream = session_next_bidi_stream(session_b).await.unwrap().unwrap();
 
-        // Deliberately delay reading to create backpressure.
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // Deliberately delay reading to create backpressure — but use a signal
+        // rather than a sleep so the test completes as fast as the pipe allows.
+        let _ = all_written_rx.await;
 
         let mut total = 0usize;
         while let Some(chunk) = next_chunk(stream.read_handle).await.unwrap() {
@@ -179,6 +185,8 @@ async fn session_bidi_stream_backpressure() {
             .unwrap();
     }
     finish_body(stream.write_handle).unwrap();
+    // Signal the reader that all chunks have been written.
+    let _ = all_written_tx.send(());
 
     let (session_b, total) = b_handle.await.unwrap();
     assert_eq!(total, 1024 * num_chunks);

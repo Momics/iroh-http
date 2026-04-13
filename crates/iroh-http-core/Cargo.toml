@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Iroh QUIC endpoint, HTTP/1.1 over hyper, fetch/serve with FFI-friendly types"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/momics/iroh-http"
+documentation = "https://docs.rs/iroh-http-core"
+keywords = ["iroh", "p2p", "quic", "http", "peer-to-peer"]
+categories = ["network-programming", "web-programming::http-client", "web-programming::http-server"]
 
 [features]
 default = []

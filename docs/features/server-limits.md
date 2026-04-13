@@ -1,13 +1,13 @@
 # Server Limits
 
-`node.serve` accepts resource limit options that are enforced in Rust before
-any JavaScript runs. These protect the serve loop against misbehaving or
-hostile peers at the transport level.
+All resource limits are configured at **`createNode(options)`** and enforced
+in Rust before any JavaScript handler runs. They protect the serve loop
+against misbehaving or hostile peers at the transport level.
 
 ## Options
 
 ```ts
-node.serve({
+const node = await createNode({
   /** Maximum simultaneous in-flight requests across all peers. Default: 64. */
   maxConcurrency: 64,
 
@@ -24,11 +24,10 @@ node.serve({
   /** Maximum request header block size in bytes. Requests with larger headers
    *  are rejected with 431. Default: 64 KB. */
   maxHeaderBytes: 64 * 1024,
-}, handler);
+});
 ```
 
 All limits are optional. Omitting a limit uses the default shown above.
-Set to `0` or `null` to disable a limit entirely.
 
 ## Why at the Rust layer
 
@@ -43,18 +42,11 @@ occurs.
 
 ## What each limit protects against
 
-| Option | Attack vector | Response |
+| Option | Attack vector | Behavior |
 |---|---|---|
-| `maxConcurrency` | Request flood from many peers | 503 Service Unavailable |
-| `maxConnectionsPerPeer` | Connection flood from one peer | 429 Too Many Requests |
+| `maxConcurrency` | Request flood from many peers | Excess requests queue until a slot is free; if none frees before `requestTimeout`, they receive a `408 Request Timeout` |
+| `maxConnectionsPerPeer` | Connection flood from one peer | Excess connections are closed at the QUIC level (transport close, not an HTTP response) |
 | `requestTimeout` | Slow request / stalled handler | 408 Request Timeout |
 | `maxRequestBodyBytes` | Oversized body exhausting memory | 413 Content Too Large |
 | `maxHeaderBytes` | Header flood exhausting memory | 431 Request Header Fields Too Large |
 
-## Status
-
-The Rust `ServeOptions` struct implements all five limits. The TypeScript
-`serve()` call does not yet pass these options through to Rust — they all
-fall through to their defaults.
-
-→ [Patch 28](../patches/28_patch.md)

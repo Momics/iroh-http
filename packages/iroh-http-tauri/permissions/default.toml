@@ -36,4 +36,28 @@ permissions = [
 
   # Raw / duplex connect
   "allow-raw-connect",
+
+  # TAURI-004: session commands were omitted from the default set.
+  "allow-session-connect",
+  "allow-session-close",
+  "allow-session-closed",
+  "allow-session-create-bidi-stream",
+  "allow-session-create-uni-stream",
+  "allow-session-next-bidi-stream",
+  "allow-session-next-uni-stream",
+  "allow-session-send-datagram",
+  "allow-session-recv-datagram",
+  "allow-session-max-datagram-size",
+
+  # TAURI-004: crypto commands were omitted from the default set.
+  "allow-generate-secret-key",
+  "allow-secret-key-sign",
+  "allow-public-key-verify",
+
+  # TAURI-004: mDNS discovery commands were omitted from the default set.
+  "allow-mdns-browse",
+  "allow-mdns-browse-close",
+  "allow-mdns-next-event",
+  "allow-mdns-advertise",
+  "allow-mdns-advertise-close",
 ]

@@ -16,7 +16,7 @@ const QUEUE_CAPACITY: usize = 256;
 /// A queued request ready to be delivered to the TypeScript polling loop.
 pub type QueuedRequest = serde_json::Value;
 
-/// Sender stored in Rust, used by the serve accept loop.
+/// Receiver half — held in the registry, polled by `nextRequest`.
 pub struct ServeQueue {
     pub tx: mpsc::Sender<QueuedRequest>,
     pub rx: tokio::sync::Mutex<mpsc::Receiver<QueuedRequest>>,
@@ -28,7 +28,7 @@ fn registry() -> &'static Mutex<HashMap<u32, std::sync::Arc<ServeQueue>>> {
 }
 
 /// Create and register a serve queue for an endpoint.
-/// Returns a clone of the `Arc` so the serve loop can hold its own reference.
+/// Returns a clone of the `Arc` so the serve loop can hold its own `tx` reference.
 pub fn register(endpoint_handle: u32) -> std::sync::Arc<ServeQueue> {
     let (tx, rx) = mpsc::channel(QUEUE_CAPACITY);
     let queue = std::sync::Arc::new(ServeQueue {
@@ -47,7 +47,13 @@ pub fn get(endpoint_handle: u32) -> Option<std::sync::Arc<ServeQueue>> {
     registry().lock().unwrap().get(&endpoint_handle).cloned()
 }
 
-/// Remove and drop the queue for an endpoint (called on `closeEndpoint`).
+/// Remove the queue for an endpoint.
+///
+/// Dropping the `Arc` from the registry while serve_start still holds a clone
+/// of the queue's `tx` is safe — the channel stays live until both are dropped.
+/// When `stopServe` is called, the serve accept loop ends, dropping the closure
+/// that holds `tx`.  Once that `Arc` is also released the sender count drops to
+/// zero, the channel closes, and `nextRequest`'s `recv()` returns `None`.
 pub fn remove(endpoint_handle: u32) {
     registry().lock().unwrap().remove(&endpoint_handle);
 }

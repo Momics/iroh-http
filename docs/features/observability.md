@@ -8,31 +8,17 @@ connection.
 
 ```ts
 // On IrohNode:
-stats(): Promise<NodeStats>
 peerStats(nodeId: string): Promise<PeerStats | null>  // null if not connected
 ```
 
 ```ts
-interface NodeStats {
-  /** Number of active connections. */
-  connections: number;
-  /** Total bytes sent across all connections since node start. */
-  bytesSent: number;
-  /** Total bytes received across all connections since node start. */
-  bytesReceived: number;
-}
-
 interface PeerStats {
-  /** Round-trip time to this peer in milliseconds. */
-  rttMs: number;
-  /** Active network path to this peer. */
-  path: PathInfo;
+  /** Whether the active path goes through a relay server. */
+  relay: boolean;
+  /** Active relay URL, or null if using a direct path. */
+  relayUrl: string | null;
   /** All known paths to this peer. */
   paths: PathInfo[];
-  /** Total bytes sent to this peer. */
-  bytesSent: number;
-  /** Total bytes received from this peer. */
-  bytesReceived: number;
 }
 
 interface PathInfo {
@@ -42,8 +28,6 @@ interface PathInfo {
   relayUrl?: string;
   /** The remote socket address for this path. */
   addr: string;
-  /** Round-trip time for this specific path in milliseconds, if known. */
-  rttMs: number | null;
   /** Whether this is the currently selected (active) path. */
   selected: boolean;
 }
@@ -61,7 +45,5 @@ node.pathChanges(nodeId: string): AsyncIterable<PathInfo>
 - `peerStats` returns `null` when there is no active connection to that peer,
   rather than throwing.
 - `pathChanges` is cancelled by breaking the `for await` loop.
-- Stream-level stats (per-request `bytesSent`) are out of scope for the first
-  version.
-
-→ [Patch 23](../patches/23_patch.md)
+- A top-level `stats()` method (node-wide aggregate metrics) is planned but
+  not yet implemented. Use `peerStats` for per-peer information.

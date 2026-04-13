@@ -165,9 +165,9 @@ Handles cross FFI as `u64`. In JavaScript: transmitted as `BigInt`, converted at
 | Limit | Default | Config |
 |-------|---------|--------|
 | Max concurrent requests | 64 | `ServeOptions::max_concurrency` |
-| Per-request timeout | 60s | `ServeOptions::request_timeout_secs` |
+| Per-request timeout | 60 000 ms | `ServeOptions::request_timeout_ms` |
 | Per-peer connection limit | 8 | `ServeOptions::max_connections_per_peer` |
-| Max request head size | 64 KB | `ServeOptions::max_header_bytes` |
+| Max request head size | 64 KB | `ServeOptions::max_header_bytes` / `NodeOptions::max_header_size` |
 | Max request body size | none | `ServeOptions::max_request_body_bytes` |
 | Drain timeout | 30s | `ServeOptions::drain_timeout_secs` |
 

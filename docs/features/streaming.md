@@ -25,7 +25,10 @@ const res = await node.fetch(peer, '/upload', {
 });
 ```
 
-Any `BodyInit` accepted by the standard `fetch` API works: `string`, `Uint8Array`, `Blob`, `FormData`, `URLSearchParams`, or `ReadableStream<Uint8Array>`.
+Any `BodyInit` accepted by the standard `fetch` API works: `string`, `Uint8Array`, `Blob`, `URLSearchParams`, or `ReadableStream<Uint8Array>`.
+
+> **Note**: `FormData` is not supported in v1. Serialise the form data manually
+> and pass a `string` or `Uint8Array` body instead.
 
 ## Receiving a streaming response body
 

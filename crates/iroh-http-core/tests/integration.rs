@@ -594,35 +594,32 @@ async fn concurrent_requests() {
 
 // -- Fetch cancellation -------------------------------------------------------
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn fetch_cancelled_via_token() {
     let (server_ep, client_ep) = make_pair().await;
     let server_id = node_id(&server_ep);
     let addrs = server_addrs(&server_ep);
 
-    // Server: accept connection but delay response indefinitely
+    // Server: signal when the request arrives, then hang indefinitely.
+    let (request_arrived_tx, request_arrived_rx) = tokio::sync::oneshot::channel::<()>();
+    let request_arrived_tx = std::sync::Mutex::new(Some(request_arrived_tx));
+
     serve(
         server_ep.clone(),
         ServeOptions::default(),
-        move |payload: RequestPayload| {
-            let req_handle = payload.req_handle;
-            let body_handle = payload.res_body_handle;
-            tokio::spawn(async move {
-                // Wait a long time before responding — with start_paused=true
-                // this doesn't add wall-clock time to the test.
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                let _ = respond(req_handle, 200, vec![]);
-                let _ = stream::finish_body(body_handle);
-            });
+        move |_payload: RequestPayload| {
+            if let Some(tx) = request_arrived_tx.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+            // Never respond — the client should cancel.
         },
     );
 
-
     let token = alloc_fetch_token(0);
 
-    // Cancel after 100ms
+    // Cancel as soon as the server has received the request — no sleep needed.
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let _ = request_arrived_rx.await;
         cancel_in_flight(token);
     });
 
@@ -1113,11 +1110,12 @@ async fn header_bomb_rejected() {
     )
     .await;
 
-    // The server should reject the oversized head and the client will see an error.
-    assert!(
-        result.is_err(),
-        "expected error for oversized header, got: {:?}",
-        result
+    // ISS-003: The server post-parse header check should return 431.
+    let resp = result.expect("expected a 431 response, not a transport error");
+    assert_eq!(
+        resp.status, 431,
+        "expected 431 Request Header Fields Too Large, got: {}",
+        resp.status
     );
 }
 

@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Optional mDNS peer discovery for iroh-http (desktop platforms)"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/momics/iroh-http"
+documentation = "https://docs.rs/iroh-http-discovery"
+keywords = ["iroh", "p2p", "mdns", "discovery", "peer-to-peer"]
+categories = ["network-programming"]
 
 [features]
 default = ["mdns"]

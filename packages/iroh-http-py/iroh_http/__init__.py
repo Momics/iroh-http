@@ -29,11 +29,13 @@ Usage::
 from .iroh_http_py import (  # noqa: F401
     create_node,
     IrohNode,
+    IrohServeHandle,
     IrohRequest,
     IrohResponse,
     IrohSession,
     IrohBidiStream,
     IrohUniStream,
+    HandlerResponse,
     secret_key_sign,
     public_key_verify,
     generate_secret_key,
@@ -41,19 +43,25 @@ from .iroh_http_py import (  # noqa: F401
 
 try:
     from .iroh_http_py import IrohBrowseSession  # noqa: F401
+    _has_browse_session = True
 except ImportError:
-    pass  # mdns feature not enabled
+    _has_browse_session = False  # mdns feature not enabled
 
 __all__ = [
     "create_node",
     "IrohNode",
+    "IrohServeHandle",
     "IrohRequest",
     "IrohResponse",
     "IrohSession",
     "IrohBidiStream",
     "IrohUniStream",
+    "HandlerResponse",
     "secret_key_sign",
     "public_key_verify",
     "generate_secret_key",
-    "IrohBrowseSession",
+    # IrohBrowseSession appended below when the mdns feature is present
 ]
+
+if _has_browse_session:
+    __all__.append("IrohBrowseSession")

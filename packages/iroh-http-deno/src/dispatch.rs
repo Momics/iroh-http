@@ -209,9 +209,13 @@ async fn create_endpoint(p: Value) -> Value {
         max_request_body_bytes: args.max_request_body_bytes,
         drain_timeout_secs: None,
         #[cfg(feature = "compression")]
-        compression: if args.compression_min_body_bytes.is_some() {
+        compression: if args.compression_min_body_bytes.is_some()
+            || args.compression_level.is_some()
+        {
+            // DENO-003: enable compression when either minBodyBytes or level is set.
             Some(iroh_http_core::CompressionOptions {
                 min_body_bytes: args.compression_min_body_bytes.unwrap_or(512),
+                level: args.compression_level.map(|v| v as u32),
             })
         } else {
             None
@@ -600,6 +604,10 @@ async fn stop_serve(p: Value) -> Value {
         None => return err(format!("invalid endpoint handle: {handle}")),
     };
     ep.stop_serve();
+    // DENO-002: drop the registry entry so the tx inside ServeQueue is freed.
+    // Once the serve closure also drops its cloned tx, the channel closes and
+    // nextRequest's recv() returns None, allowing the polling loop to exit.
+    serve_registry::remove(handle);
     ok(json!({}))
 }
 

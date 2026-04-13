@@ -118,10 +118,7 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
   ].map((m) => [m, enc.encode(m)]),
 );
 
-/** Reusable buffer for raw chunk reads via iroh_http_next_chunk. */
-const chunkBuf = new Uint8Array(65536);
-
-async function call<T>(method: string, payload: unknown): Promise<T> {
+/** Reusable buffer hint for estimating output size of `call()` responses. */async function call<T>(method: string, payload: unknown): Promise<T> {
   const methodBuf = METHOD_BUFS[method] ?? enc.encode(method);
   // JSON.stringify throws on bigint; convert bigint values to numbers at the
   // JSON boundary (handle indices are slotmap u64 keys, safe within f64 range).
@@ -172,26 +169,35 @@ async function call<T>(method: string, payload: unknown): Promise<T> {
   return result.ok;
 }
 
+/** Module-global hint: set to the size of the last successfully-read chunk
+ * so subsequent calls begin with a right-sized allocation. */
+let chunkBufHint = 65536;
+
 // ── Bridge implementation ─────────────────────────────────────────────────────
 
 export const bridge: Bridge = {
   async nextChunk(handle: bigint): Promise<Uint8Array | null> {
+    // DENO-001: allocate a per-call buffer so concurrent reads on different
+    // handles do not share memory and corrupt each other's data.
+    let buf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
     let n = (await lib.symbols.iroh_http_next_chunk(
       handle,
-      chunkBuf,
-      BigInt(chunkBuf.byteLength),
+      buf,
+      BigInt(buf.byteLength),
     )) as number;
     if (n < 0) {
-      // Chunk too large for shared buffer; grow and retry once.
-      const grown = new Uint8Array(-n);
+      // Chunk too large for current hint; grow and retry once.
+      buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
       n = (await lib.symbols.iroh_http_next_chunk(
         handle,
-        grown,
-        BigInt(grown.byteLength),
+        buf,
+        BigInt(buf.byteLength),
       )) as number;
-      return n > 0 ? grown.subarray(0, n) : null;
     }
-    return n > 0 ? chunkBuf.slice(0, n) : null;
+    if (n <= 0) return null;
+    // Update hint so future calls start with a better-sized buffer.
+    chunkBufHint = Math.max(chunkBufHint, n);
+    return buf.slice(0, n);
   },
   async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
     await call<Record<never, never>>("sendChunk", {

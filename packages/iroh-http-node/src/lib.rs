@@ -162,12 +162,16 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                 max_request_body_bytes: o.max_request_body_bytes.map(|v| v as usize),
                 drain_timeout_secs: None,
                 #[cfg(feature = "compression")]
-                compression: if o.compression_min_body_bytes.is_some() {
+                // NODE-003: enable compression when level or minBodyBytes is provided.
+                compression: if o.compression_min_body_bytes.is_some()
+                    || o.compression_level.is_some()
+                {
                     Some(iroh_http_core::CompressionOptions {
                         min_body_bytes: o
                             .compression_min_body_bytes
                             .map(|v| v as usize)
                             .unwrap_or(512),
+                        level: o.compression_level.map(|v| v as u32),
                     })
                 } else {
                     None

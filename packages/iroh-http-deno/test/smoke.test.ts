@@ -155,18 +155,19 @@ Deno.test("fetch — rejects http:// URL with TypeError", async () => {
   }
 });
 //
+// BUG-003: clear the timer in a finally block to prevent Deno leak-detection
+// warnings when the inner promise rejects before the timeout fires.
 function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T> {
-  return Promise.race([
-    fn(),
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`Test timed out after ${ms}ms`)), ms)
-    ),
-  ]);
+  let id: ReturnType<typeof setTimeout>;
+  const timer = new Promise<never>(
+    (_, reject) => { id = setTimeout(() => reject(new Error(`Test timed out after ${ms}ms`)), ms); }
+  );
+  return Promise.race([fn().finally(() => clearTimeout(id!)), timer]);
 }
 
 Deno.test("serve + fetch — basic round-trip", () => withTimeout(20_000, async () => {
-  const server = await createNode();
-  const client = await createNode();
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
 
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
@@ -194,8 +195,8 @@ Deno.test("serve + fetch — basic round-trip", () => withTimeout(20_000, async 
 }));
 
 Deno.test("serve + fetch — POST with body", () => withTimeout(20_000, async () => {
-  const server = await createNode();
-  const client = await createNode();
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
 
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
@@ -229,8 +230,8 @@ Deno.test("serve + fetch — POST with body", () => withTimeout(20_000, async ()
 // producing corrupted JSON ("Unexpected non-whitespace character after JSON").
 
 Deno.test("serve + fetch — concurrent requests return correct bodies (no buffer race)", () => withTimeout(30_000, async () => {
-  const server = await createNode();
-  const client = await createNode();
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
 
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
@@ -271,8 +272,8 @@ Deno.test("serve + fetch — concurrent requests return correct bodies (no buffe
 //   [iroh-http] response body pipe error: IrohHandleError: invalid trailer sender handle
 
 Deno.test("serve + fetch — plain response produces no internal pipe errors", () => withTimeout(20_000, async () => {
-  const server = await createNode();
-  const client = await createNode();
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
 
   // Intercept console.error to catch any [iroh-http] internal errors.
   const internalErrors: string[] = [];
@@ -290,7 +291,7 @@ Deno.test("serve + fetch — plain response produces no internal pipe errors", (
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const ac = new AbortController();
-    server.serve({ signal: ac.signal }, (_req: Request) =>
+    const handle = server.serve({ signal: ac.signal }, (_req: Request) =>
       new Response("hello", { status: 200 })
     );
 
@@ -300,16 +301,15 @@ Deno.test("serve + fetch — plain response produces no internal pipe errors", (
     assertEquals(resp.status, 200);
     assertEquals(await resp.text(), "hello");
 
-    // Yield briefly so any async pipe errors from doPipe() have time to surface.
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // ISS-022: abort and await drain instead of sleeping a fixed duration.
+    ac.abort();
+    await handle.finished.catch(() => {});
 
     assertEquals(
       internalErrors,
       [],
       `Unexpected internal errors:\n${internalErrors.join("\n")}`,
     );
-
-    ac.abort();
   } finally {
     console.error = origConsoleError;
     await server.close();
