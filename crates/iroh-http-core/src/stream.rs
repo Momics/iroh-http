@@ -46,8 +46,9 @@ static BACKPRESSURE_CONFIGURED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Configure backpressure parameters.  Only the **first** call takes effect;
-/// subsequent calls are silently ignored so that a second endpoint bind does
-/// not clobber the config of an already-running endpoint.
+/// subsequent calls log a warning if the requested values differ from the
+/// active configuration. This is a process-global setting because all slab
+/// registries are process-global.
 ///
 /// Clamps `channel_capacity` to a minimum of 1 (zero would panic in
 /// `tokio::sync::mpsc::channel`) and `max_chunk_bytes` to a minimum of 1
@@ -57,6 +58,9 @@ pub fn configure_backpressure(
     max_chunk_bytes: usize,
     drain_timeout_ms: u64,
 ) {
+    let cap = channel_capacity.max(1);
+    let chunk = max_chunk_bytes.max(1);
+
     if BACKPRESSURE_CONFIGURED
         .compare_exchange(
             false,
@@ -66,9 +70,22 @@ pub fn configure_backpressure(
         )
         .is_ok()
     {
-        CHANNEL_CAPACITY.store(channel_capacity.max(1), std::sync::atomic::Ordering::Relaxed);
-        MAX_CHUNK_SIZE.store(max_chunk_bytes.max(1), std::sync::atomic::Ordering::Relaxed);
+        CHANNEL_CAPACITY.store(cap, std::sync::atomic::Ordering::Relaxed);
+        MAX_CHUNK_SIZE.store(chunk, std::sync::atomic::Ordering::Relaxed);
         DRAIN_TIMEOUT_MS.store(drain_timeout_ms, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        // Warn if the caller requested different values than the active config.
+        let active_cap = CHANNEL_CAPACITY.load(std::sync::atomic::Ordering::Relaxed);
+        let active_chunk = MAX_CHUNK_SIZE.load(std::sync::atomic::Ordering::Relaxed);
+        let active_drain = DRAIN_TIMEOUT_MS.load(std::sync::atomic::Ordering::Relaxed);
+        if cap != active_cap || chunk != active_chunk || drain_timeout_ms != active_drain {
+            tracing::warn!(
+                "iroh-http: backpressure config already set (capacity={active_cap}, \
+                 chunk={active_chunk}, drain={active_drain}ms); ignoring new values \
+                 (capacity={cap}, chunk={chunk}, drain={drain_timeout_ms}ms). \
+                 Backpressure parameters are process-global."
+            );
+        }
     }
 }
 

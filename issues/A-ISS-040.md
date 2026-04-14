@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-040"
 title: "Process-global backpressure prevents independent multi-endpoint configuration"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-14
 area: core
