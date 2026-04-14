@@ -65,6 +65,11 @@ struct BrowseStopPayload {
 struct AdvertiseStartPayload<'a> {
     #[serde(rename = "serviceName")]
     service_name: &'a str,
+    /// base32-encoded Ed25519 public key — required by browse parsers.
+    pk: &'a str,
+    /// Relay URL, if any. Optional.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relay: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -132,12 +137,12 @@ impl<R: Runtime> MobileMdns<R> {
     }
 
     /// Start advertising on the native layer. Returns an `advertise_id` handle.
-    pub fn advertise_start(&self, service_name: &str) -> Result<u64, String> {
+    pub fn advertise_start(&self, service_name: &str, pk: &str, relay: Option<&str>) -> Result<u64, String> {
         let resp: AdvertiseStartResponse = self
             .0
             .run_mobile_plugin(
                 "mdns_advertise_start",
-                AdvertiseStartPayload { service_name },
+                AdvertiseStartPayload { service_name, pk, relay },
             )
             .map_err(|e| e.to_string())?;
         Ok(resp.advertise_id)

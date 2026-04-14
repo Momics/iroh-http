@@ -820,11 +820,17 @@ pub fn mdns_advertise(_endpoint_handle: u64, _service_name: String) -> Result<u6
 #[cfg(mobile)]
 pub fn mdns_advertise<R: tauri::Runtime>(
     state: tauri::State<'_, crate::mobile_mdns::MobileMdns<R>>,
-    _endpoint_handle: u64,
+    endpoint_handle: u64,
     service_name: String,
 ) -> Result<u64, String> {
+    // TAURI-014: Resolve node identity so native advertise can publish TXT
+    // metadata (pk, relay) that browse expects.
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    let node_id = ep.node_id().to_string();
+    let relay = ep.home_relay();
     state
-        .advertise_start(&service_name)
+        .advertise_start(&service_name, &node_id, relay.as_deref())
         .map_err(|e| iroh_http_core::format_error_json("REFUSED", e))
 }
 
