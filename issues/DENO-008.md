@@ -1,7 +1,7 @@
 ---
 id: "DENO-008"
 title: "Deno dispatch.rs is a 700-line business logic layer, not a thin FFI shim"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-14
 area: deno
