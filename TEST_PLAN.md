@@ -1,446 +1,347 @@
-# TEST_PLAN.md — iroh-http Cross-Runtime Test Strategy
+# TEST_PLAN.md — iroh-http Test Strategy
 
-This document is the authoritative plan for building a robust, automated test
-suite across all iroh-http platform adapters (Rust core, Node.js, Deno, Python,
-Tauri). It explains what already exists, what is missing, and defines the exact
-work required to reach a state where recurring issues cannot regress silently.
+Test where the bugs are. This plan is derived from analysing 106 closed issues
+and their root causes based on the actual bug history of this codebase.
 
 ---
 
-## 1. Current State
+## 1. Bug Profile
 
-### What exists
-
-| Layer | Tool | Coverage |
+| Root cause | Count | Best defence |
 |---|---|---|
-| Rust core (unit) | `cargo test --workspace` | Happy-path fetch/serve, trailers, streams, sign/verify, WebTransport |
-| Cross-runtime compliance runner | `tests/http-compliance/runner.ts` | Shared TS runner; used by Node + Deno same-process tests |
-| Cross-runtime compliance cases | `tests/http-compliance/cases.json` | 12 cases — all happy-path only |
-| Cross-runtime orchestrator | `tests/http-compliance/run.sh` | node→deno and deno→node pairs only |
-| Node in-process compliance | `packages/iroh-http-node/test/compliance.mjs` | Runs cases.json against Node adapter (same process) |
-| Deno in-process compliance | `packages/iroh-http-deno/test/compliance.ts` | Runs cases.json against Deno adapter (same process) |
-| Node E2E | `packages/iroh-http-node/test/e2e.mjs` | ~10 round-trip tests, in CI |
-| Deno smoke | `packages/iroh-http-deno/test/smoke.test.ts` | Minimal smoke, in CI |
-| Python unit | `packages/iroh-http-py/tests/` | Node-level tests; no compliance bridge |
-| CI | `.github/workflows/ci.yml` | Rust + TS check, Node E2E, Deno smoke — **no cross-runtime pairs, no Python** |
+| docs-drift | 25 | Not a testing problem — specification.md now exists |
+| ffi-boundary | 19 | **Per-adapter integration tests** |
+| api-surface | 15 | Per-adapter integration tests + type checking |
+| missing-feature | 14 | Not a testing problem — feature work |
+| config-default | 13 | Rust core unit tests + per-adapter tests |
+| type-safety | 9 | Static type checking (tsc, pyright, clippy) |
+| code-duplication | 6 | Not a testing problem — refactoring |
+| architecture | 5 | Rust core integration tests |
+
+**Key insight:** Zero closed issues were caused by wire protocol incompatibility
+between runtimes. All adapters share the same Rust core for framing,
+serialisation, and QUIC transport. If adapter A serialises correctly and adapter
+B serialises correctly, A→B works. The real pain point is the FFI boundary in
+each individual adapter.
+
+---
+
+## 2. Current State
+
+### What exists and works
+
+| Layer | Files | Tests | In CI |
+|---|---|---|---|
+| Rust core integration | `integration.rs` (2039 lines) | ~30 scenarios | ✅ |
+| Rust WebTransport | `bidi_stream.rs`, `session_webtransport.rs` | ~10 scenarios | ✅ |
+| Rust unit | `sign_verify.rs`, `ticket.rs` | 6 tests | ✅ |
+| Node integration | `e2e.mjs` | 7 tests | ✅ |
+| Node smoke | `smoke.mjs` | 3 tests | ❌ |
+| Deno integration + smoke | `smoke.test.ts` | 17 tests | ✅ |
+| Python integration | `test_node.py`, `test_session.py` | ~20 tests | ❌ |
+| Python unit | `test_crypto.py`, `test_mdns.py`, `smoke.py` | ~15 tests | ❌ |
+| Cross-runtime compliance | `cases.json` (12 cases), `run.sh` | node↔deno | ❌ |
+| TypeScript type check | `npm run typecheck` | — | ✅ |
 
 ### What is missing
 
-1. **Python compliance scripts** — no `server.py` / `client.py` counterparts to the Node/Deno ones.
-2. **Rust ground-truth server** — no standalone binary that implements compliance routes in native Rust so adapters can be tested against the canonical implementation.
-3. **Cross-runtime pairs involving Python** — `run.sh` skips Python entirely.
-4. **Tauri excluded from compliance matrix** — no server/client scripts for Tauri headless mode.
-5. **cases.json covers only happy paths** — no error propagation, boundary values, invalid inputs, or regression cases from the 80+ closed issues.
-6. **`run.sh` is not in CI** — the cross-runtime orchestrator never runs automatically.
-7. **No issue→test policy** — closed issues leave no permanent test receipt.
+1. **Python tests are not in CI** — 35+ tests exist but never run automatically.
+2. **Node adapter has thin integration coverage** — 7 tests vs Deno's 17.
+   Missing: crypto, cancellation, error classification, concurrent streams.
+3. **Deno adapter has no dedicated integration tests** — `smoke.test.ts` mixes
+   smoke checks and integration tests. No error path or limit tests.
+4. **No static type checking for Python** — pyright/mypy is not in CI.
+5. **Rust core edge cases** — missing: mid-stream cancellation, pool exhaustion
+   under contention, malformed input rejection, zero-config boundary values.
+6. **Cross-runtime compliance not in CI** — `run.sh` exists but never runs
+   automatically.
+7. **No regression test policy** — closed issues leave no permanent test receipt.
 
 ---
 
-## 2. Goal
+## 3. Strategy
 
-Every issue resolved in this repository must leave a permanent automated test.
-Every adapter must be tested not just in isolation but against every other
-adapter over a real QUIC connection. A review agent finding a "new" issue that
-was already closed should be impossible because CI would have caught a regression.
+### Test at the right layer
+
+```
+┌────────────────────────────────────────────────────────┐
+│  Static analysis (tsc, pyright, clippy)                │ ← Cheapest. Catches
+│  Catches: type mismatches, missing exports, API drift  │   type-safety + api-surface
+├────────────────────────────────────────────────────────┤
+│  Rust core tests (cargo test)                          │ ← Fast. Catches
+│  Catches: config defaults, edge cases, concurrency     │   config-default + architecture
+├────────────────────────────────────────────────────────┤
+│  Per-adapter integration tests                         │ ← The workhorse. Catches
+│  (same-process, two nodes, serve+fetch)                │   ffi-boundary + api-surface
+│  Catches: type coercion, handle leaks, error mapping   │
+├────────────────────────────────────────────────────────┤
+│  Cross-runtime compliance (run.sh)                     │ ← Smoke check only.
+│  Catches: wire protocol bugs (never seen one yet)      │   One pair is sufficient.
+└────────────────────────────────────────────────────────┘
+```
+
+### Principles
+
+1. **Test where the bugs are.** FFI boundaries produce the most bugs → invest
+   most in per-adapter integration tests.
+2. **Static analysis is free.** Add pyright to CI. tsc and clippy already gate.
+3. **Cross-runtime is a smoke check, not a matrix.** One pair (node↔deno) in CI
+   validates wire compatibility. Add pairs only when a wire bug motivates it.
+4. **Regression tests go in the right layer.** A Python FFI bug → pytest. A Rust
+   config edge case → `cargo test`. A protocol behavior → `cases.json`. Never
+   force a regression into the wrong layer.
+5. **Every fixed issue leaves a test.** But in the test suite that matches its
+   root cause, not always in `cases.json`.
 
 ---
 
-## 3. Phase 1 — Python Compliance Bridge
+## 4. Phase 1 — Per-Adapter Integration Depth
 
-**Goal:** Python participates in the cross-runtime matrix.
+**Goal:** Each adapter has integration tests covering error paths, limits,
+cancellation, and crypto — not just happy-path fetch/serve.
 
-### 3.1 `tests/http-compliance/server.py`
+This is the highest-leverage investment. The 19 FFI-boundary bugs would have
+been caught by same-process adapter tests.
 
-A standalone script that:
-- Calls `asyncio.run(main())`
-- Creates an iroh node via `await create_node()`
-- Calls `node.serve(handler)` with the compliance echo handler
-- Implements all compliance routes: `/status/:code`, `/echo`, `/echo-path`,
-  `/echo-method`, `/echo-length`, `/header/:name`, `/set-header/:name/:val`, `/stream/:n`
-- Prints `READY:{"nodeId":"...","addrs":["..."]}` to stdout (one line, no buffering —
-  use `flush=True`)
-- Blocks until SIGTERM / SIGINT
+### 4.1 Node integration tests (`packages/iroh-http-node/test/e2e.mjs`)
 
-Handler routing mirrors `server.mjs` exactly. Use `urllib.parse.urlparse` for
-path parsing.
+Add tests for:
+- **Error classification:** handler throws → client gets 500;
+  handler rejects → client gets 500; verify error is `IrohError` subclass
+- **Crypto round-trip:** `SecretKey.generate()`, `sign()`, `verify()` via
+  the re-exported classes (validates A-ISS-050 fix)
+- **Cancellation:** fetch with `AbortSignal.timeout(1)` against a slow handler
+  → throws `AbortError`
+- **Server limits:** `maxRequestBodyBytes` exceeded → 413 response
+- **Concurrent streams:** 10 concurrent fetches, all return correct bodies
+  (already exists — verify it covers the buffer race from DENO-001)
+- **Node ID header:** `iroh-node-id` header is present, valid base32, and
+  consistent across requests
+- **Handle lifecycle:** double-close does not throw; close during active
+  serve completes gracefully
 
-### 3.2 `tests/http-compliance/client.py`
+Target: ≥ 15 tests (currently 7).
 
-A standalone script that:
-- Accepts `SERVER_JSON` as `sys.argv[1]` (same pattern as `client.mjs`)
-- Parses `nodeId` and `addrs` from the JSON
-- Loads `cases.json` from a path relative to its own `__file__`
-- Creates an iroh node, calls `client.fetch(nodeId, url, direct_addrs=addrs)` for each case
-- Asserts using the same logic as `client.mjs`: status, bodyExact, bodyNot,
-  bodyNotEmpty, bodyLengthExact, headers
-- Prints `pass <id>` or `FAIL <id>: <reason>` per case to stdout
-- Exits non-zero if any case fails
+### 4.2 Deno integration tests (`packages/iroh-http-deno/test/smoke.test.ts`)
 
-### 3.3 `run.sh` additions
+Add tests for:
+- **Error classification:** same as Node — handler throws → 500
+- **Cancellation:** `AbortSignal.timeout()` against slow handler
+- **Server limits:** body too large → 413
+- **Serve lifecycle:** `serveHandle.close()` during active serving
+- **PublicKey/SecretKey imports:** verify re-exports work
+  (`import { PublicKey } from "@momics/iroh-http-deno"`)
 
-Add to the pair definitions section (after the existing `deno→node` pair):
+Target: ≥ 22 tests (currently 17).
 
-```
-# Python server ↔ Node client
-python → node
+### 4.3 Python integration tests (`packages/iroh-http-py/tests/test_node.py`)
 
-# Node server ↔ Python client
-node → python
+Add tests for:
+- **Error on invalid input:** fetch with invalid node ID → raises
+- **Handler exception → 500:** `async def handler` that raises → client
+  gets status 500
+- **Large body round-trip:** 1 MiB POST body → echoed back correctly
+- **Concurrent requests:** 5 concurrent fetches, all correct
+- **Server limits:** body too large → appropriate error
+- **Session:** connect, bidi stream, send+recv (extend `test_session.py`)
+- **Context manager:** `async with create_node() as node:` → close is called
 
-# Python server ↔ Deno client
-python → deno
-
-# Deno server ↔ Python client
-deno → python
-```
-
-Each pair guarded by `command -v python3 && command -v node/deno` availability
-check, consistent with the existing pattern. Use `python3` as the interpreter
-name throughout.
+Target: ≥ 25 tests (currently ~20).
 
 ### Verification
 
-- `bash tests/http-compliance/run.sh` with Python available passes all 4 new pairs
-- `bash tests/http-compliance/run.sh --pairs python-node` runs a single pair
+Each adapter's test suite passes locally. No cross-runtime infrastructure
+needed.
 
 ---
 
-## 4. Phase 2 — Rust Ground-Truth Compliance Server
+## 5. Phase 2 — Rust Core Edge Cases
 
-**Goal:** Adapters can be tested against the canonical Rust implementation,
-isolating bugs to specific adapter boundaries with certainty.
+**Goal:** The Rust core rejects bad inputs and handles concurrency edge cases
+that config-default and architecture bugs emerge from.
 
-### 4.1 New binary target
+### 5.1 New test cases in `crates/iroh-http-core/tests/integration.rs`
 
-Add `[[bin]]` to `crates/iroh-http-core/Cargo.toml`:
-
-```toml
-[[bin]]
-name = "compliance-server"
-path = "src/bin/compliance_server.rs"
-```
-
-### 4.2 `crates/iroh-http-core/src/bin/compliance_server.rs`
-
-A `#[tokio::main]` binary that:
-- Binds an `IrohEndpoint` with `bind_addrs: vec!["0.0.0.0:0".into()]`
-- Calls `serve()` with a handler implementing all compliance routes in native
-  Rust mirroring the handler logic in `server.mjs`
-- Prints `READY:{"nodeId":"...","addrs":["..."]}` to stdout, then flushes stdout
-  (`use std::io::Write; std::io::stdout().flush().unwrap();`)
-- Blocks on `tokio::signal::ctrl_c().await`
-
-All compliance routes use `iroh_http_core` primitives: `respond()`,
-`stream::send_chunk()`, `stream::finish_body()`.
-
-### 4.3 `run.sh` additions
-
-After Phase 1 pairs, add:
-
-```
-# Rust server ↔ Node client
-rust → node
-
-# Rust server ↔ Deno client
-rust → deno
-
-# Rust server ↔ Python client
-rust → python
-```
-
-The Rust server binary is built by the CI `cargo build` step already; `run.sh`
-references `target/release/compliance-server`.
-
-### 4.4 Optional: Rust compliance client binary
-
-A second binary, `compliance-client`, that:
-- Accepts `SERVER_JSON` as first CLI argument
-- Accepts `CASES_PATH` as second CLI argument
-- Runs all cases using `fetch()` from `iroh_http_core`
-- Exits non-zero on any failure
-
-This enables `node→rust`, `deno→rust`, `python→rust` pairs, completing the
-full N×N matrix.
+- **Zero-value configs:** `max_chunk_size = 0`, `channel_capacity = 0` →
+  either rejected at construction or handled gracefully (A-ISS-034, A-ISS-035)
+- **Cancellation mid-stream:** client cancels fetch while body is streaming →
+  server observes broken pipe, no panic
+- **Pool exhaustion:** `max_pooled_connections = 1`, rapidly open 10 connections
+  → oldest evicted cleanly, no deadlock
+- **Timeout during body transfer:** `request_timeout = 100ms`, handler sleeps
+  during body write → 408 response
+- **Concurrent serve handlers:** 20 concurrent requests to same endpoint →
+  all complete (stress test for `max_concurrency`)
+- **Invalid handle after close:** use endpoint handle after `close()` →
+  returns error, no panic
 
 ### Verification
 
-- `cargo build -p iroh-http-core` produces `compliance-server` binary
-- `bash tests/http-compliance/run.sh --pairs rust-node` passes all cases
-- A deliberate bug in the Node adapter causes `rust→node` to fail
+`cargo test --workspace` passes. No new dependencies.
 
 ---
 
-## 5. Phase 3 — Expand cases.json
+## 6. Phase 3 — Static Analysis in CI
 
-**Goal:** `cases.json` is a living regression database, not just a hello-world
-suite.
+**Goal:** Type mismatches and missing exports are caught before any test runs.
 
-### 5.1 New case categories
+### 6.1 Add pyright to CI
 
-All categories below map directly to known issue clusters from the archive.
+```yaml
+- name: Python type check
+  run: |
+    pip install pyright
+    cd packages/iroh-http-py && pyright iroh_http/
+```
 
-**Error propagation** (maps to DENO-006, NODE-series)
-- `handler-throws-returns-500` — handler throws synchronously; client receives 500
-- `handler-async-rejects-returns-500` — handler async rejects; client receives 500
+### 6.2 Add Python tests to CI
 
-**Boundary values**
-- `empty-request-body` — POST 0-byte body; `/echo-length` returns `"0"`
-- `single-byte-request-body` — POST 1-byte body; `/echo-length` returns `"1"`
-- `status-code-100` — GET `/status/100`; client sees 100
-- `status-code-599` — GET `/status/599`; client sees 599
+```yaml
+- name: Python tests
+  run: |
+    cd packages/iroh-http-py
+    pip install maturin pytest pytest-asyncio
+    maturin develop
+    python -m pytest tests/ -v
+```
 
-**Numeric / type coercion at FFI boundary** (maps to NODE-007, PY-series)
-- `body-length-zero-content-length` — response with `content-length: 0`; client reads empty body cleanly
-- `large-header-value` — request header value of 4096 bytes; echoed back exactly
+### 6.3 Add Node compliance to CI
 
-**Identity and security** (maps to A-ISS-series)
-- `iroh-node-id-is-valid-base32` — `iroh-node-id` value passes base32 validation and is ≥ 52 chars
-- `iroh-node-id-consistent` — two consecutive requests to same server return same `iroh-node-id`
+The existing `compliance.mjs` (same-process, 12 cases) should run in CI alongside `e2e.mjs`:
 
-**Compression** (maps to TAURI-015, compression feature)
-- `zstd-response-requested` — GET with `accept-encoding: zstd`; server sends zstd-compressed
-  response; client decompresses correctly
-- `gzip-request-accepted` — POST with `content-encoding: gzip` compressed body; server
-  decompresses, `/echo-length` returns uncompressed byte count
+```yaml
+- name: Node compliance
+  run: node packages/iroh-http-node/test/compliance.mjs
+```
 
-**Streaming**
-- `chunked-response-1mb` — GET `/stream/1048576`; client receives exactly 1 MiB
-- `chunked-request-1mb` — POST 1 MiB body; `/echo-length` returns `"1048576"`
+### 6.4 Gate cross-runtime (node↔deno only)
 
-**Regression cases from closed issues** (one entry per resolved issue)
-Name convention: `reg-<issue-id>-<slug>`. Examples:
-- `reg-node-007-nan-body-size` — NaN passed as body size option; server rejects, no panic
-- `reg-deno-006-serve-error-propagates` — handler throws; outer promise rejects cleanly
-- `reg-py-014-path-changes-stubs` — path_changes type is accessible; no AttributeError
+Add `run.sh` to CI with the existing two pairs only. No Python pairs needed —
+Python's FFI boundary is tested by pytest, and python↔node would not catch any
+wire bug that node↔deno doesn't already catch.
 
-### 5.2 Case schema extensions
+```yaml
+- name: Cross-runtime compliance (node↔deno)
+  run: bash tests/http-compliance/run.sh --pairs node-deno,deno-node
+```
 
-The current schema supports: `status`, `bodyExact`, `bodyNot`, `bodyNotEmpty`,
-`bodyLengthExact`, `headers`. Add these backwards-compatible optional fields:
+### Verification
 
-| Field | Type | Meaning |
-|---|---|---|
-| `expectThrow` | `boolean` | Fetch is expected to throw/reject |
-| `requestCompression` | `"gzip" \| "zstd"` | Runner compresses request body before sending |
-| `responseCompression` | `"gzip" \| "zstd"` | Runner verifies response is decompressed |
-| `minBodyLength` | `number` | Response body must be at least N bytes |
-| `concurrent` | `number` | Run N times concurrently; all must pass |
+CI pipeline: `rust-check` → `typescript-check` → `python-check` → `e2e` →
+`cross-runtime` (node↔deno only).
 
-The runner (`runner.ts`, `client.mjs`, `client.deno.ts`, `client.py`) must be
-updated to handle the new fields.
+---
 
-### 5.3 Policy: every closed issue gets a case
+## 7. Phase 4 — Regression Test Policy
 
-When an issue is closed as `fixed`, the issue file must reference the new case
-ID. Add to `issues/_template.md`:
+**Goal:** Every fixed issue leaves a test in the right layer.
+
+### 7.1 Update `issues/_template.md`
+
+Add a `## Regression test` section:
 
 ```markdown
 ## Regression test
 
-- `cases.json` case ID: `reg-<issue-id>-<slug>`
-- Verified failing before fix: yes / N/A
+- Layer: rust-core | node | deno | python | cross-runtime | type-check | N/A
+- Test: `test name or file path`
+- Verified failing before fix: yes | N/A
 ```
 
-If no runtime test is applicable (docs, build config, CI), write `N/A — not a
-runtime behavior fix`.
+### 7.2 Update `.github/copilot-instructions.md`
 
-### Verification
-
-- `node test/compliance.mjs` passes all new cases for Node
-- `deno run --allow-read --allow-ffi test/compliance.ts` passes all new cases for Deno
-- Python compliance client passes all new cases against Python server
-- Deliberately revert a closed-issue fix; confirm the `reg-*` case catches it
-
----
-
-## 6. Phase 4 — CI Integration
-
-**Goal:** The full cross-runtime matrix runs on every push and pull request.
-
-### 6.1 New CI job: `cross-runtime-compliance`
-
-Add to `.github/workflows/ci.yml` after the existing `e2e` job:
-
-```yaml
-cross-runtime-compliance:
-  name: Cross-runtime compliance (Node × Deno × Python × Rust)
-  runs-on: ubuntu-latest
-  needs: [e2e]
-  steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@stable
-    - uses: Swatinem/rust-cache@v2
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 20
-    - uses: denoland/setup-deno@v2
-      with:
-        deno-version: v2.x
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-    - name: Install Python deps
-      run: |
-        pip install maturin
-        cd packages/iroh-http-py && maturin develop
-    - name: Build native libs
-      run: |
-        cargo build --release -p iroh-http-node -p iroh-http-deno
-        cargo build --release -p iroh-http-core
-    - name: Build Node adapter
-      run: |
-        cd packages/iroh-http-node
-        npx napi build --platform --release
-        npx tsc
-    - name: Copy Deno native lib
-      run: |
-        mkdir -p packages/iroh-http-deno/lib
-        cp target/release/libiroh_http_deno.so \
-           packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
-    - name: Run cross-runtime compliance
-      run: bash tests/http-compliance/run.sh
-```
-
-### 6.2 Job dependency
-
-`needs: [e2e]` ensures the new job only runs if individual adapter tests already
-pass, preserving fast feedback for simple failures without blocking on the longer
-cross-runtime suite.
-
-### 6.3 Reporting
-
-`run.sh` already prints a summary with pass/fail counts. If any pair fails,
-`run.sh` exits non-zero and CI marks the job failed. The failing pair name is
-visible in the CI log output.
-
-### 6.4 `docs/build-and-test.md` update
-
-Add a section documenting the cross-runtime compliance command:
-
-```sh
-bash tests/http-compliance/run.sh              # all pairs
-bash tests/http-compliance/run.sh --pairs rust-node  # single pair
-```
-
-### Verification
-
-- Open a PR that breaks Python↔Node interop; CI fails on `cross-runtime-compliance`
-- Open a PR that only breaks Rust compilation; CI fails on `rust-check` before
-  reaching the compliance job
-- Green CI on main with all pairs passing
-
----
-
-## 7. Phase 5 — Issue Resolution Policy
-
-**Goal:** Future issues cannot be silently re-introduced.
-
-### 7.1 `issues/_template.md` update
-
-Add mandatory `## Regression test` section (see §5.3).
-
-### 7.2 `.github/copilot-instructions.md` update
-
-Add a short section:
+Add:
 
 ```markdown
 ## Issue Resolution Policy
 
-Before closing any issue as `fixed`:
-1. Write a new entry in `tests/http-compliance/cases.json` that reproduces the
-   bug (name it `reg-<issue-id>-<slug>`).
-2. Verify the case fails against the unfixed code (or document why not possible
-   for this issue type).
-3. Apply the fix.
-4. Verify the case passes.
-5. Record the case ID in the issue file under `## Regression test`.
-
-No issue may be marked `fixed` without completing step 1 unless it cannot
-produce a runtime test (e.g., CI config, docs, build scripts).
+Every fixed issue must leave a regression test in the appropriate layer:
+- FFI boundary bugs → per-adapter integration test (e2e.mjs, smoke.test.ts, test_node.py)
+- Rust core bugs → cargo test (integration.rs or new test file)
+- Type/export bugs → verified by tsc/pyright (no new test needed if CI gates it)
+- Protocol behavior → cases.json entry
+- Docs/build/config → N/A (document in issue)
 ```
+
+### 7.3 Backfill high-value regressions
+
+Not every closed issue needs a retroactive test. Prioritise the 19
+ffi-boundary issues — scan for any whose fix is not covered by existing tests.
+Write regression tests only for those.
 
 ### Verification
 
-- Pick a recently closed issue (e.g., DENO-006); add `reg-deno-006-*` to
-  `cases.json`; run compliance against a pre-fix snapshot and confirm it fails.
+Template is updated. Future issues follow the policy. 5–10 high-value
+regression tests are backfilled.
 
 ---
 
-## 8. Execution Order & Dependencies
+## 8. What We Explicitly Do Not Do
 
-```
-Phase 1 — Python compliance bridge
-  │  Independent. Start immediately.
-  │
-Phase 2 — Rust ground-truth server
-  │  Independent of Phase 1. Can run in parallel.
-  │
-Phase 3 — Expand cases.json (base cases)
-  │  Independent of Phase 1+2. Can run in parallel.
-  │  Compression cases require Phase 3 runner schema extension before
-  │  Phase 1 Python client can assert them.
-  │
-Phase 4 — CI integration
-  │  Requires Phase 1 + 2 complete (all server/client scripts must exist).
-  │  Phase 3 can continue after Phase 4 ships; new cases auto-run in CI.
-  │
-Phase 5 — Policy
-     Requires Phase 3 partially done (to establish the reg-* naming pattern).
-     Apply incrementally as future issues are resolved.
-```
+1. **Full N×N cross-runtime matrix.** 4 runtimes × 4 = 12 pairs. Each pair
+   spawns two processes, does QUIC handshake, runs cases. Three minutes per
+   pair in CI. The added bug-finding value over node↔deno is near zero because
+   all adapters share the same Rust wire layer.
 
-Phases 1, 2, and 3 are all independently executable and can be worked in
-parallel by separate agents.
+2. **Rust ground-truth server binary.** With 2,039 lines of Rust integration
+   tests already covering the core, a separate compliance binary is redundant.
+   If adapter A is broken, same-process adapter tests catch it faster than
+   `rust→A`.
+
+3. **Compression and streaming in `cases.json`.** These require schema
+   extensions, 4× client updates, and server handler changes. The Rust core
+   already tests compression and streaming directly. Per-adapter tests can
+   cover adapter-specific compression wiring without cross-runtime overhead.
+
+4. **Tauri in the compliance matrix.** Tauri requires a webview runtime and
+   cannot run as a headless CLI process. Test Tauri through its Rust plugin
+   tests and manual QA.
 
 ---
 
-## 9. File Inventory
+## 9. Execution Order
 
-### Files to create
+```
+Phase 1 — Per-adapter integration depth    ← Start here. Highest leverage.
+  │
+Phase 2 — Rust core edge cases             ← Can run in parallel with Phase 1.
+  │
+Phase 3 — Static analysis in CI            ← Requires Phase 1 tests to exist.
+  │
+Phase 4 — Regression test policy           ← Apply incrementally from day one.
+```
 
-| File | Phase | Description |
-|---|---|---|
-| `tests/http-compliance/server.py` | 1 | Python compliance server |
-| `tests/http-compliance/client.py` | 1 | Python compliance client |
-| `crates/iroh-http-core/src/bin/compliance_server.rs` | 2 | Rust ground-truth server |
-| `crates/iroh-http-core/src/bin/compliance_client.rs` | 2 | Rust compliance client (optional) |
+Phases 1 and 2 are independent. Phase 3 depends on Phase 1 (tests must exist
+to gate on). Phase 4 is a process change applied continuously.
 
-### Files to modify
+---
+
+## 10. Files to Modify
 
 | File | Phase | Change |
 |---|---|---|
-| `tests/http-compliance/run.sh` | 1, 2 | Add Python and Rust pairs |
-| `tests/http-compliance/cases.json` | 3 | Add ~20 new cases across all categories |
-| `tests/http-compliance/runner.ts` | 3 | Handle new schema fields |
-| `tests/http-compliance/client.mjs` | 3 | Handle new schema fields |
-| `tests/http-compliance/client.deno.ts` | 3 | Handle new schema fields |
-| `.github/workflows/ci.yml` | 4 | Add `cross-runtime-compliance` job |
-| `crates/iroh-http-core/Cargo.toml` | 2 | Add `[[bin]]` for compliance-server |
-| `issues/_template.md` | 5 | Add `## Regression test` section |
-| `.github/copilot-instructions.md` | 5 | Add issue resolution policy |
-| `docs/build-and-test.md` | 4 | Document new compliance run command |
+| `packages/iroh-http-node/test/e2e.mjs` | 1 | Add ~8 integration tests |
+| `packages/iroh-http-deno/test/smoke.test.ts` | 1 | Add ~5 integration tests |
+| `packages/iroh-http-py/tests/test_node.py` | 1 | Add ~5 integration tests |
+| `crates/iroh-http-core/tests/integration.rs` | 2 | Add ~6 edge-case tests |
+| `.github/workflows/ci.yml` | 3 | Add pyright, pytest, compliance, cross-runtime jobs |
+| `docs/build-and-test.md` | 3 | Document new CI jobs |
+| `issues/_template.md` | 4 | Add `## Regression test` section |
+| `.github/copilot-instructions.md` | 4 | Add issue resolution policy |
+
+No new files needed except potentially a `pyright` config if needed.
 
 ---
 
-## 10. Success Criteria
+## 11. Success Criteria
 
-The plan is complete when all of the following are true:
-
-1. `bash tests/http-compliance/run.sh` passes all pairs:
-   - `node→deno`, `deno→node` (already working)
-   - `python→node`, `node→python`, `python→deno`, `deno→python`
-   - `rust→node`, `rust→deno`, `rust→python`
-   - (optional) `node→rust`, `deno→rust`, `python→rust`
-
-2. `cases.json` contains at least 35 cases, including at least one `reg-*`
-   regression case for each of the 10 most recent closed issues.
-
-3. CI has a `cross-runtime-compliance` job that passes on the `main` branch.
-
-4. `issues/_template.md` includes the `## Regression test` field.
-
-5. `.github/copilot-instructions.md` includes the issue resolution policy.
-
-6. A new agent review cannot find an issue that already has a `reg-*` case in
-   `cases.json` — because the compliance suite would catch any regression before
-   the review runs.
+1. Each adapter has ≥ 15 same-process integration tests covering error paths,
+   limits, cancellation, and crypto.
+2. Rust core has edge-case tests for zero-value configs, mid-stream
+   cancellation, pool exhaustion, and concurrent limits.
+3. CI gates on: `cargo test`, `cargo clippy`, `tsc`, `pyright`, Node e2e +
+   compliance, Deno smoke, Python pytest, cross-runtime node↔deno.
+4. `issues/_template.md` has a `## Regression test` section.
+5. A new FFI boundary bug is caught by per-adapter tests before it reaches
+   cross-runtime — because the bug is in one adapter's type conversion, not
+   in the wire protocol.
