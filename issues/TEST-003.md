@@ -1,7 +1,7 @@
 ---
 id: "TEST-003"
 title: "Python adapter: expand integration tests for error paths, limits, concurrency, and large bodies"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-14
 area: python
