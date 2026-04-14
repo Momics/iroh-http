@@ -395,6 +395,12 @@ pub struct JsPeerStats {
     pub relay: bool,
     pub relay_url: Option<String>,
     pub paths: Vec<JsPathInfo>,
+    pub rtt_ms: Option<f64>,
+    pub bytes_sent: Option<i64>,
+    pub bytes_received: Option<i64>,
+    pub lost_packets: Option<i64>,
+    pub sent_packets: Option<i64>,
+    pub congestion_window: Option<i64>,
 }
 
 /// Full node address: node ID + relay URL(s) + direct socket addresses.
@@ -457,6 +463,12 @@ pub async fn peer_stats(
                 active: p.active,
             })
             .collect(),
+        rtt_ms: s.rtt_ms,
+        bytes_sent: s.bytes_sent.map(|v| v as i64),
+        bytes_received: s.bytes_received.map(|v| v as i64),
+        lost_packets: s.lost_packets.map(|v| v as i64),
+        sent_packets: s.sent_packets.map(|v| v as i64),
+        congestion_window: s.congestion_window.map(|v| v as i64),
     }))
 }
 

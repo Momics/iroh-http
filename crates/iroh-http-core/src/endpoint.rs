@@ -177,7 +177,7 @@ impl IrohEndpoint {
                         .iter()
                         .map(|u| {
                             u.parse::<iroh::RelayUrl>()
-                                .map_err(|e| crate::CoreError::invalid_input(e))
+                                .map_err(crate::CoreError::invalid_input)
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     RelayMode::custom(urls)

@@ -230,6 +230,12 @@ const addrFns: AddrFunctions = {
       relay: stats.relay,
       relayUrl: stats.relayUrl ?? null,
       paths: stats.paths,
+      rttMs: stats.rttMs ?? null,
+      bytesSent: stats.bytesSent ?? null,
+      bytesReceived: stats.bytesReceived ?? null,
+      lostPackets: stats.lostPackets ?? null,
+      sentPackets: stats.sentPackets ?? null,
+      congestionWindow: stats.congestionWindow ?? null,
     };
   },
 };
