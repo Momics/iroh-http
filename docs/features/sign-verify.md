@@ -103,55 +103,16 @@ All cryptographic operations are **async** — always `await` them.
 > This matches PyO3 conventions where lightweight wrappers expose the
 > underlying Rust functions directly.
 
-## Python
-
-Python uses module-level functions with `bytes` arguments — there are no
-`PublicKey`/`SecretKey` class objects. The node's keys are accessible as plain bytes.
-
-```python
-from iroh_http import sign, verify, encrypt, decrypt, generate_secret_key
-
-# Sign with the node's own secret key:
-sig: bytes = sign(node.secret_key, data)
-
-# Verify against any peer's public key (derive bytes from their node ID):
-import base64
-def node_id_to_bytes(node_id: str) -> bytes:
-    pad = (8 - len(node_id) % 8) % 8
-    return base64.b32decode(node_id.upper() + "=" * pad)
-
-ok: bool = verify(node_id_to_bytes(peer_node_id), data, sig)
-
-# Generate a standalone key (not tied to a node):
-key: bytes = generate_secret_key()  # 32 bytes
-
-# Encrypt a message to a peer:
-ciphertext: bytes = encrypt(node_id_to_bytes(recipient_node_id), plaintext)
-
-# Decrypt with own secret key:
-plaintext: bytes = decrypt(node.secret_key, ciphertext)
-```
-
-`verify` returns `False` on an invalid signature — it does not raise.
-`decrypt` raises `ValueError` on authentication failure.
-
-**Cross-platform interop:** The ciphertext format is identical between JS and
-Python. A message encrypted with `encrypt(...)` in Python can be decrypted with
-`await node.secretKey.decrypt(ciphertext)` in Node/Deno/Tauri and vice versa.
-
 ## What to avoid
 
-**JS:** Do not use the lower-level `secretKeySign` / `publicKeyVerify` functions
-that older adapter versions exported. Those take raw `Uint8Array` keys instead of
-typed class instances, are inconsistently available across adapters, and are
+Do not use the lower-level `secretKeySign` / `publicKeyVerify` functions that
+some older adapter versions exported. Those take raw `Uint8Array` keys instead
+of typed class instances, are inconsistently available across adapters, and are
 removed in the current API. Use the class methods above instead.
-
-**Python:** `secret_key_sign` and `public_key_verify` are deprecated aliases for
-`sign` and `verify`. They still work but emit `DeprecationWarning`. Use `sign` and
-`verify` instead.
 
 ## See also
 
 - [sealed-messages](../recipes/sealed-messages.md) — encrypt messages for offline delivery
 - [capability-tokens](../recipes/capability-tokens.md) — signed access tokens
+- [sign-verify (feature)](sign-verify.md) — this page
 - [witness-receipts](../recipes/witness-receipts.md) — tamper-evident audit logs
