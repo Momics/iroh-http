@@ -88,6 +88,21 @@ The ciphertext format is self-contained: `[32B ephemeral pub] [12B IV] [cipherte
 
 All cryptographic operations are **async** — always `await` them.
 
+## Platform support
+
+| Feature | Node / Deno / Tauri | Python |
+|---------|:---:|:---:|
+| **Sign** (`secretKey.sign`) | ✅ class method | ✅ `secret_key_sign(key, data)` module function |
+| **Verify** (`publicKey.verify`) | ✅ class method | ✅ `public_key_verify(key, data, sig)` module function |
+| **Generate key** (`SecretKey.generate`) | ✅ class method | ✅ `generate_secret_key()` module function |
+| **Encrypt** (`publicKey.encrypt`) | ✅ | ❌ not implemented |
+| **Decrypt** (`secretKey.decrypt`) | ✅ | ❌ not implemented |
+
+> **Python note:** Sign/verify/generate are module-level functions accepting
+> raw `bytes` keys, not class methods on `PublicKey`/`SecretKey` objects.
+> This matches PyO3 conventions where lightweight wrappers expose the
+> underlying Rust functions directly.
+
 ## What to avoid
 
 Do not use the lower-level `secretKeySign` / `publicKeyVerify` functions that

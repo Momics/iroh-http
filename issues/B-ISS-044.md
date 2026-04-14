@@ -1,7 +1,7 @@
 ---
 id: "B-ISS-044"
 title: "Python adapter missing session API, key operations, and mDNS — docs imply complete"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-14
 area: python
