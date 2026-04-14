@@ -47,6 +47,28 @@ const node = await createNode({
 // Use node.browse() / node.advertise() for mDNS peer discovery.
 ```
 
+## Supported Platforms
+
+Pre-built native binaries are published for:
+
+| Platform | Architecture | Status |
+|----------|:----------:|:------:|
+| macOS | x86_64 | ✅ |
+| macOS | aarch64 (Apple Silicon) | ✅ |
+| Linux (glibc) | x86_64 | ✅ |
+| Linux (glibc) | aarch64 | ✅ |
+
+Other platforms (Windows, Linux musl, FreeBSD, Android) are **not** currently
+supported. The auto-generated loader may attempt to load bindings for these
+platforms but will fail with a `MODULE_NOT_FOUND` error.
+
+To build from source for an unlisted platform, clone the repository and run:
+
+```sh
+cd packages/iroh-http-node
+npx napi build --platform --release
+```
+
 ## License
 
 MIT OR Apache-2.0
