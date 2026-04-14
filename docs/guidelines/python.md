@@ -81,6 +81,36 @@ Build system: `maturin` (PEP 517). The pure-Python wrapper `iroh_http/__init__.p
 
 ---
 
+## Feature Flags
+
+The Python wheel is compiled with optional Cargo features that gate certain
+APIs at the Rust level:
+
+| Feature | Default | APIs gated |
+|---------|:-------:|------------|
+| `mdns` | off | `node.browse()`, `node.advertise()` — raise `RuntimeError` if missing |
+| `compression` | off | `compression_level` / `compression_min_body_bytes` in `create_node()` — silently ignored if missing |
+
+Document feature availability when shipping pre-built wheels.
+
+---
+
+## API Differences from JS/TS
+
+Python exposes Rust functions directly via PyO3. Some APIs differ from the
+class-method style used in the JavaScript adapters:
+
+| JS/TS | Python | Notes |
+|-------|--------|-------|
+| `node.secretKey.sign(data)` | `secret_key_sign(key, data)` | Module-level, takes raw `bytes` key |
+| `node.publicKey.verify(data, sig)` | `public_key_verify(key, data, sig)` | Module-level, takes raw `bytes` key |
+| `SecretKey.generate()` | `generate_secret_key()` | Module-level, returns 32 `bytes` |
+| `publicKey.encrypt(plaintext)` | ❌ not implemented | |
+| `secretKey.decrypt(ciphertext)` | ❌ not implemented | |
+| `AbortSignal` cancellation | `async for … break` or node close | |
+
+---
+
 ## Testing
 
 - Use `pytest` with `pytest-asyncio`.
