@@ -147,15 +147,23 @@ const rawServe: RawServeFn = (
     // so we handle the async work here and call rawRespond explicitly.
     callback(typed)
       .then((head) => {
-        napiRawRespond(
-          typed.reqHandle,
-          head.status,
-          head.headers as string[][],
-        );
+        try {
+          napiRawRespond(
+            typed.reqHandle,
+            head.status,
+            head.headers as string[][],
+          );
+        } catch (respondErr) {
+          console.error("[iroh-http-node] rawRespond failed:", respondErr);
+        }
       })
       .catch((err: unknown) => {
         console.error("[iroh-http-node] serve handler error:", err);
-        napiRawRespond(typed.reqHandle, 500, []);
+        try {
+          napiRawRespond(typed.reqHandle, 500, []);
+        } catch (respondErr) {
+          console.error("[iroh-http-node] rawRespond (fallback 500) failed:", respondErr);
+        }
       });
   });
   // The serve loop runs inside Rust (via napi ThreadsafeFunction); there is no
