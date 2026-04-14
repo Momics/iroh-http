@@ -340,8 +340,15 @@ fn alloc_body_writer_dispatch() -> Value {
 }
 
 fn alloc_fetch_token_dispatch(p: Value) -> Value {
-    let ep_idx = p["endpointHandle"].as_u64().unwrap_or(0) as u32;
-    ok(json!({ "token": iroh_http_core::alloc_fetch_token(ep_idx) }))
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    let ep = match get_endpoint(handle) {
+        Some(ep) => ep,
+        None => return err("invalid endpointHandle"),
+    };
+    ok(json!({ "token": iroh_http_core::alloc_fetch_token(ep.endpoint_idx()) }))
 }
 
 fn cancel_in_flight_dispatch(p: Value) -> Value {

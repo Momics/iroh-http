@@ -257,8 +257,10 @@ pub fn alloc_body_writer() -> u64 {
 
 /// Allocate a cancellation token for an upcoming fetch call.
 #[command]
-pub fn alloc_fetch_token(endpoint_handle: u32) -> u64 {
-    iroh_http_core::alloc_fetch_token(endpoint_handle)
+pub fn alloc_fetch_token(endpoint_handle: u32) -> Result<u64, String> {
+    let ep = state::get_endpoint(endpoint_handle as u64)
+        .ok_or_else(|| format!("invalid endpoint handle {endpoint_handle}"))?;
+    Ok(iroh_http_core::alloc_fetch_token(ep.endpoint_idx()))
 }
 
 /// Cancel an in-flight fetch by its token.

@@ -540,8 +540,9 @@ pub fn js_alloc_body_writer() -> u64 {
 ///
 /// Wire `AbortSignal → cancelInFlight(token)` for request cancellation.
 #[napi]
-pub fn js_alloc_fetch_token(endpoint_handle: u32) -> u64 {
-    iroh_http_core::alloc_fetch_token(endpoint_handle)
+pub fn js_alloc_fetch_token(endpoint_handle: u32) -> napi::Result<u64> {
+    let ep = get_endpoint(endpoint_handle)?;
+    Ok(iroh_http_core::alloc_fetch_token(ep.endpoint_idx()))
 }
 
 /// Cancel an in-flight fetch by its cancellation token.
