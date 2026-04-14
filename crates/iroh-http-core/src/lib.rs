@@ -18,6 +18,7 @@ pub use endpoint::CompressionOptions;
 pub use endpoint::{
     parse_direct_addrs, IrohEndpoint, NodeAddrInfo, NodeOptions, PathInfo, PeerStats,
 };
+pub use registry::{get_endpoint, insert_endpoint, remove_endpoint};
 pub use server::serve;
 pub use server::ServeHandle;
 pub use server::ServerLimits;
@@ -32,7 +33,6 @@ pub use stream::{
     send_trailers, BodyReader,
 };
 pub use stream::{alloc_fetch_token, cancel_in_flight};
-pub use registry::{get_endpoint, insert_endpoint, remove_endpoint};
 
 // ── Structured error types ────────────────────────────────────────────────────
 

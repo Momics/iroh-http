@@ -55,7 +55,6 @@ async fn basic_get_200() {
         },
     );
 
-
     let res = fetch(
         &client_ep,
         &server_id,
@@ -109,7 +108,6 @@ async fn get_with_body() {
             });
         },
     );
-
 
     let res = fetch(
         &client_ep,
@@ -165,7 +163,6 @@ async fn post_with_request_body() {
             });
         },
     );
-
 
     let (writer_handle, body_reader) = stream::alloc_body_writer();
     let body_data = b"hello, world!".to_vec();
@@ -228,7 +225,6 @@ async fn custom_response_headers() {
         },
     );
 
-
     let res = fetch(
         &client_ep,
         &server_id,
@@ -272,7 +268,6 @@ async fn request_headers_and_method() {
         },
     );
 
-
     let res = fetch(
         &client_ep,
         &server_id,
@@ -308,7 +303,6 @@ async fn url_uses_httpi_scheme() {
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
-
 
     let res = fetch(
         &client_ep,
@@ -406,7 +400,6 @@ async fn multiple_sequential_requests() {
         },
     );
 
-
     for i in 0..3u32 {
         let res = fetch(
             &client_ep,
@@ -460,7 +453,6 @@ async fn response_trailers() {
             });
         },
     );
-
 
     let res = fetch(
         &client_ep,
@@ -517,7 +509,6 @@ async fn post_empty_body() {
         },
     );
 
-
     // Create body writer but immediately finish without sending data
     let (writer_handle, body_reader) = stream::alloc_body_writer();
     stream::finish_body(writer_handle).unwrap();
@@ -558,7 +549,6 @@ async fn concurrent_requests() {
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
-
 
     // Fire 5 requests concurrently
     let mut handles = Vec::new();
@@ -762,7 +752,6 @@ async fn url_with_query_params() {
         },
     );
 
-
     let res = fetch(
         &client_ep,
         &server_id,
@@ -823,7 +812,6 @@ async fn response_without_trailer_header_still_works() {
         },
     );
 
-
     let res = fetch(
         &client_ep,
         &server_id,
@@ -883,7 +871,6 @@ async fn pool_reuses_connection_for_sequential_requests() {
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
-
 
     // First request — establishes connection and caches it.
     let res1 = fetch(
@@ -957,7 +944,6 @@ async fn pool_concurrent_requests_share_connection() {
             stream::finish_body(payload.res_body_handle).unwrap();
         },
     );
-
 
     // Fire 10 concurrent requests to the same peer.
     let mut handles = Vec::new();
@@ -1093,7 +1079,6 @@ async fn header_bomb_rejected() {
         },
     );
 
-
     // Build headers that exceed 256 bytes when serialized.
     let big_value = "X".repeat(300);
     let headers = vec![("x-big".to_string(), big_value)];
@@ -1149,7 +1134,6 @@ async fn response_header_bomb_rejected() {
         },
     );
 
-
     // The client has max_header_size=128, so the server's big response header should be rejected.
     let result = fetch(
         &client_ep,
@@ -1197,7 +1181,6 @@ async fn default_limits_allow_normal_traffic() {
             });
         },
     );
-
 
     // Should work fine with default 64KB header limit.
     let res = fetch(
@@ -1257,7 +1240,6 @@ async fn body_limit_exceeded_resets_stream() {
             });
         },
     );
-
 
     // Send a 256-byte body, which exceeds the 64-byte limit.
     let (writer, reader) = iroh_http_core::stream::make_body_channel();
@@ -1375,7 +1357,6 @@ async fn graceful_shutdown_drains_in_flight() {
         },
     );
 
-
     // Start a request that will take 1s to complete.
     let fetch_task = {
         let client = client_ep.clone();
@@ -1422,7 +1403,6 @@ async fn force_close_aborts_immediately() {
         ServeOptions::default(),
         move |_payload: RequestPayload| {},
     );
-
 
     let start = std::time::Instant::now();
     server_ep.close_force().await;
@@ -1477,7 +1457,6 @@ async fn shutdown_rejects_new_requests() {
         },
     );
 
-
     // First request should succeed.
     let res = fetch(
         &client_ep,
@@ -1530,7 +1509,6 @@ async fn shutdown_returns_immediately() {
         move |_payload: RequestPayload| {},
     );
 
-
     let start = std::time::Instant::now();
     handle.shutdown();
     let elapsed = start.elapsed();
@@ -1570,7 +1548,6 @@ async fn large_body_round_trip() {
             });
         },
     );
-
 
     // 1 MB of patterned data.
     let data: Vec<u8> = (0u8..=255).cycle().take(1024 * 1024).collect();
@@ -1639,7 +1616,6 @@ async fn mutual_fetch() {
             },
         );
     }
-
 
     // A fetches from B, B fetches from A — concurrently.
     let (res_ab, res_ba) = tokio::join!(
@@ -1711,7 +1687,6 @@ async fn fetch_json_post() {
         },
     );
 
-
     let json_body = b"{\"hello\":\"world\"}";
     let (writer_handle, body_reader) = stream::alloc_body_writer();
 
@@ -1781,7 +1756,6 @@ async fn serve_concurrency_limit() {
             stream::finish_body(res_body).unwrap();
         },
     );
-
 
     // Fire 3 concurrent requests — all should succeed.
     let (r1, r2, r3) = tokio::join!(
@@ -1888,7 +1862,6 @@ async fn node_close_drains_in_flight() {
         },
     );
 
-
     // Start a request in the background.
     let fetch_task = tokio::spawn({
         let client_ep = client_ep.clone();
@@ -1945,7 +1918,6 @@ async fn body_exceeds_limit_resets_stream() {
         },
     );
 
-
     // Send a 10KB body — well over the 100-byte limit.
     let big_body = vec![b'x'; 10_000];
     let (writer_handle, body_reader) = stream::alloc_body_writer();
@@ -2000,7 +1972,6 @@ async fn request_timeout_fires() {
             });
         },
     );
-
 
     // The fetch should come back (either with an error or with whatever the
     // server managed to send before timeout killed the task).

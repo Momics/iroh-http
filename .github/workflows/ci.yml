@@ -53,7 +53,12 @@ jobs:
         with:
           node-version: 20
       - run: npm install
-      - run: npm run typecheck
+      - name: Build shared package (needed by dependents)
+        run: npm run build --workspace=packages/iroh-http-shared
+      - name: Typecheck shared + tauri (node needs napi build)
+        run: |
+          npm run typecheck --workspace=packages/iroh-http-shared
+          npm run typecheck --workspace=packages/iroh-http-tauri
 
   e2e:
     name: End-to-end tests (Node + Deno)
@@ -79,6 +84,9 @@ jobs:
         run: cargo build --release -p iroh-http-node -p iroh-http-deno
 
       # ── Node ──────────────────────────────────────────────────────────────────
+
+      - name: Build shared TypeScript
+        run: npm run build --workspace=packages/iroh-http-shared
 
       - name: napi generate .node + JS wrapper
         run: |
