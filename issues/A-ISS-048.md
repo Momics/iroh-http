@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-048"
 title: "Public API functions return Result<_, String> instead of Result<_, CoreError>"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-14
 area: core

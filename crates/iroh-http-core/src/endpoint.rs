@@ -179,7 +179,7 @@ pub(crate) struct EndpointInner {
 
 impl IrohEndpoint {
     /// Bind an Iroh endpoint with the supplied options.
-    pub async fn bind(opts: NodeOptions) -> Result<Self, String> {
+    pub async fn bind(opts: NodeOptions) -> Result<Self, crate::CoreError> {
         let relay_mode = if opts.disable_networking {
             RelayMode::Disabled
         } else {
@@ -189,18 +189,18 @@ impl IrohEndpoint {
                 Some("disabled") => RelayMode::Disabled,
                 Some("custom") => {
                     if opts.relays.is_empty() {
-                        return Err(
-                            "relay_mode \"custom\" requires at least one URL in `relays`".into(),
-                        );
+                        return Err(crate::CoreError::invalid_input(
+                            "relay_mode \"custom\" requires at least one URL in `relays`",
+                        ));
                     }
                     let urls = opts
                         .relays
                         .iter()
-                        .map(|u| u.parse::<iroh::RelayUrl>().map_err(|e| e.to_string()))
+                        .map(|u| u.parse::<iroh::RelayUrl>().map_err(|e| crate::CoreError::invalid_input(e)))
                         .collect::<Result<Vec<_>, _>>()?;
                     RelayMode::custom(urls)
                 }
-                Some(other) => return Err(format!("unknown relay_mode: {other}")),
+                Some(other) => return Err(crate::CoreError::invalid_input(format!("unknown relay_mode: {other}"))),
             }
         };
 
@@ -227,7 +227,7 @@ impl IrohEndpoint {
             if let Some(ref url_str) = opts.dns_discovery {
                 let url: url::Url = url_str
                     .parse()
-                    .map_err(|e| format!("invalid dns_discovery URL: {e}"))?;
+                    .map_err(|e| crate::CoreError::invalid_input(format!("invalid dns_discovery URL: {e}")))?;
                 builder = builder
                     .address_lookup(PkarrPublisher::builder(url.clone()))
                     .address_lookup(DnsAddressLookup::builder(
@@ -246,7 +246,7 @@ impl IrohEndpoint {
 
         if let Some(ms) = opts.idle_timeout_ms {
             let timeout = IdleTimeout::try_from(Duration::from_millis(ms))
-                .map_err(|e| format!("idle_timeout_ms out of range: {e}"))?;
+                .map_err(|e| crate::CoreError::invalid_input(format!("idle_timeout_ms out of range: {e}")))?;
             let transport = QuicTransportConfig::builder()
                 .max_idle_timeout(Some(timeout))
                 .build();
@@ -257,17 +257,17 @@ impl IrohEndpoint {
         for addr_str in &opts.bind_addrs {
             let sock: std::net::SocketAddr = addr_str
                 .parse()
-                .map_err(|e| format!("invalid bind address \"{addr_str}\": {e}"))?;
+                .map_err(|e| crate::CoreError::invalid_input(format!("invalid bind address \"{addr_str}\": {e}")))?;
             builder = builder
                 .bind_addr(sock)
-                .map_err(|e| format!("bind address \"{addr_str}\": {e}"))?;
+                .map_err(|e| crate::CoreError::invalid_input(format!("bind address \"{addr_str}\": {e}")))?;
         }
 
         // Proxy configuration.
         if let Some(ref proxy) = opts.proxy_url {
             let url: url::Url = proxy
                 .parse()
-                .map_err(|e| format!("invalid proxy URL: {e}"))?;
+                .map_err(|e| crate::CoreError::invalid_input(format!("invalid proxy URL: {e}")))?;
             builder = builder.proxy_url(url);
         } else if opts.proxy_from_env {
             builder = builder.proxy_from_env();
@@ -545,16 +545,9 @@ impl IrohEndpoint {
 // ── Bind-error classification ────────────────────────────────────────────────
 
 /// Classify a bind error into a prefixed string for the JS error mapper.
-fn classify_bind_error(e: impl std::fmt::Display) -> String {
+fn classify_bind_error(e: impl std::fmt::Display) -> crate::CoreError {
     let msg = e.to_string();
-    let lower = msg.to_lowercase();
-    if lower.contains("address") && lower.contains("in use") {
-        format!("ADDRESS_IN_USE: {msg}")
-    } else if lower.contains("permission") || lower.contains("access denied") {
-        format!("PERMISSION_DENIED: {msg}")
-    } else {
-        format!("UNKNOWN: {msg}")
-    }
+    crate::CoreError::connection_failed(msg)
 }
 
 // ── NodeAddr info ────────────────────────────────────────────────────────────
