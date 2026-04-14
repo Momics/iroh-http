@@ -9,7 +9,9 @@ mod dispatch;
 mod serve_registry;
 
 use iroh_http_core::stream::next_chunk;
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// Global multi-threaded Tokio runtime.  Initialised once on the first FFI call.
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
@@ -20,6 +22,21 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
             .build()
             .expect("failed to build Tokio runtime")
     })
+}
+
+// ── Overflow response cache ───────────────────────────────────────────────────
+//
+// When dispatch produces a response larger than the caller-provided output
+// buffer, we cache the encoded bytes under a monotonic token and return the
+// token to the caller (written into the first 8 bytes of the output buffer).
+// The caller retries with method `"__cached"` and the 8-byte token as payload,
+// avoiding a second dispatch of the original method.
+
+static OVERFLOW_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn overflow_cache() -> &'static Mutex<HashMap<u64, Vec<u8>>> {
+    static C: OnceLock<Mutex<HashMap<u64, Vec<u8>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Single-dispatch FFI entry point.
@@ -70,6 +87,34 @@ pub extern "C" fn iroh_http_call(
     let method = std::str::from_utf8(method_bytes).unwrap_or("__invalid_utf8__");
     let payload = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
 
+    // ── Cached-response retrieval (overflow retry path) ───────────────────
+    if method == "__cached" {
+        if payload_len >= 8 {
+            let token = u64::from_le_bytes(payload[0..8].try_into().unwrap());
+            if let Some(cached) = overflow_cache()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&token)
+            {
+                if cached.len() <= out_cap {
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(cached.as_ptr(), out_ptr, cached.len());
+                    }
+                    return cached.len() as i32;
+                }
+                // Buffer still too small — put it back (shouldn't happen).
+                let len = cached.len();
+                overflow_cache()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(token, cached);
+                return -(len as i32);
+            }
+        }
+        return -1;
+    }
+
+    // ── Normal dispatch ───────────────────────────────────────────────────
     let response = runtime().block_on(dispatch::dispatch(method, payload));
 
     let encoded = serde_json::to_vec(&response).unwrap_or_else(|e| {
@@ -78,6 +123,19 @@ pub extern "C" fn iroh_http_call(
 
     let len = encoded.len();
     if len > out_cap {
+        // Cache the response and write a retrieval token into the output
+        // buffer so the caller can retry without re-dispatching.
+        let token = OVERFLOW_COUNTER.fetch_add(1, Ordering::Relaxed);
+        if out_cap >= 8 {
+            let token_bytes = token.to_le_bytes();
+            unsafe {
+                std::ptr::copy_nonoverlapping(token_bytes.as_ptr(), out_ptr, 8);
+            }
+        }
+        overflow_cache()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(token, encoded);
         return -(len as i32);
     }
     // SAFETY: `out_ptr` is non-null (checked above) and `out_cap >= len`.

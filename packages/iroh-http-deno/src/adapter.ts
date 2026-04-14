@@ -156,13 +156,18 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
   )) as number;
 
   if (n < 0) {
-    // Output buffer too small; grow and retry once.
+    // Output buffer too small.  The Rust side cached the response and wrote
+    // an 8-byte retrieval token into the first bytes of `buf`.  Read it and
+    // retry with method "__cached" to avoid re-dispatching the original
+    // handler (DENO-007).
+    const tokenBuf = new Uint8Array(buf.buffer, buf.byteOffset, 8) as Uint8Array<ArrayBuffer>;
+    const cachedMethod = enc.encode("__cached") as Uint8Array<ArrayBuffer>;
     buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
     n = (await lib.symbols.iroh_http_call(
-      mb,
-      BigInt(mb.byteLength),
-      pb,
-      BigInt(pb.byteLength),
+      cachedMethod,
+      BigInt(cachedMethod.byteLength),
+      tokenBuf,
+      BigInt(tokenBuf.byteLength),
       buf,
       BigInt(buf.byteLength),
     )) as number;
