@@ -24,11 +24,15 @@ import {
   denoAddrFns,
   denoDiscoveryFns,
   denoSessionFns,
+  generateSecretKey,
+  publicKeyVerify,
   rawConnect,
   rawFetch,
   rawServe,
+  secretKeySign,
   stopServe,
 } from "./src/adapter.ts";
+export { generateSecretKey, publicKeyVerify, secretKeySign };
 export { PublicKey, SecretKey } from "@momics/iroh-http-shared";
 
 /**
