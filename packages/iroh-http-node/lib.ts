@@ -297,6 +297,8 @@ const nodeSessionFns: RawSessionFns = {
  *
  * @param options Optional configuration.  Omit `key` to generate a fresh identity.
  */
+export { PublicKey, SecretKey } from "@momics/iroh-http-shared";
+
 export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   const keyBytes = options?.key
     ? options.key instanceof Uint8Array
