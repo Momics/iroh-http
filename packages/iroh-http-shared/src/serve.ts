@@ -22,7 +22,7 @@ import { classifyError } from "./errors.js";
  * A request handler that receives a web-standard `Request` and returns a `Response`.
  *
  * The `Request` is augmented with:
- * - `req.headers.get('iroh-node-id')` — the authenticated peer's public key.
+ * - `req.headers.get('Peer-Id')` — the authenticated peer's public key.
  * - `req.trailers` — a `Promise<Headers>` resolving to request trailer headers.
  * - `req.acceptWebTransport()` — (duplex only) returns `{ readable, writable }`.
  *
@@ -114,7 +114,7 @@ const METHODS_WITH_BODY = new Set(["POST", "PUT", "PATCH", "DELETE"]);
  * @example
  * ```ts
  * const server = serve(async (req) => {
- *   const peer = req.headers.get('iroh-node-id');
+ *   const peer = req.headers.get('Peer-Id');
  *   return Response.json({ echo: await req.text(), peer });
  * });
  * await server.finished;
@@ -168,7 +168,7 @@ export function makeServe(
           ? makeReadable(bridge, payload.reqBodyHandle)
           : null;
 
-        // iroh-node-id is stripped (spoof prevention) and re-injected from the
+        // Peer-Id is stripped (spoof prevention) and re-injected from the
         // authenticated QUIC connection identity in Rust core. No duplication here.
         const headers: [string, string][] = [...payload.headers];
 

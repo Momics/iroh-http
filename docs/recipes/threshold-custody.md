@@ -97,7 +97,7 @@ const held = new Map<string, Uint8Array>(); // requestorNodeId → sealed share
 
 node.serve({}, async (req) => {
   const url = new URL(req.url);
-  const requestorId = req.headers.get('iroh-node-id') ?? '';
+  const requestorId = req.headers.get('Peer-Id') ?? '';
 
   // PUT — store the sealed share
   if (req.method === 'POST' && url.pathname === '/custody/store') {

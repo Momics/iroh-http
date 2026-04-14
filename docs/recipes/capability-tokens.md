@@ -110,7 +110,7 @@ middleware.
 - Verification is zero-round-trip — no database, no network call. The
   signature proves the token was issued by the holder of `secretKey` without
   contacting anyone.
-- The transport also authenticates the peer's identity via `iroh-node-id`.
+- The transport also authenticates the peer's identity via `Peer-Id`.
   For many use cases, that alone is sufficient — tokens add scope/expiry
   control on top of identity.
 - Revocation requires short expiry + reissuance. There is no revocation list
@@ -138,7 +138,7 @@ middleware.
 
 **Does not protect against:**
 - Token theft — a valid, unexpired token grants access regardless of who
-  holds it. Combine with `iroh-node-id` header check to bind a token to a
+  holds it. Combine with `Peer-Id` header check to bind a token to a
   specific peer.
 - Revocation before expiry — there is no revocation list. Use short expiry
   (≤15 min) for sensitive operations. For immediate revocation, rotate

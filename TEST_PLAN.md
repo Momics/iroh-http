@@ -111,7 +111,7 @@ Add tests for:
 - **Server limits:** `maxRequestBodyBytes` exceeded → 413 response
 - **Concurrent streams:** 10 concurrent fetches, all return correct bodies
   (already exists — verify it covers the buffer race from DENO-001)
-- **Node ID header:** `iroh-node-id` header is present, valid base32, and
+- **Node ID header:** `Peer-Id` header is present, valid base32, and
   consistent across requests
 - **Handle lifecycle:** double-close does not throw; close during active
   serve completes gracefully

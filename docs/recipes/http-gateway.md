@@ -110,7 +110,7 @@ service expects:
 node.serve({}, async (req) => {
   const headers = new Headers(req.headers);
   headers.set('Host', 'localhost:8080');
-  headers.delete('iroh-node-id');  // don't forward internal headers
+  headers.delete('Peer-Id');  // don't forward internal headers
 
   return fetch('http://127.0.0.1:8080' + new URL(req.url).pathname, {
     method: req.method,

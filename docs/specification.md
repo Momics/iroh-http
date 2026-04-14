@@ -192,7 +192,7 @@ The incoming `Request` is augmented with:
 
 | Property | Type | Description |
 |---|---|---|
-| `req.headers.get('iroh-node-id')` | `string` | Authenticated peer's public key (base32) |
+| `req.headers.get('Peer-Id')` | `string` | Authenticated peer's public key (base32) |
 | `req.trailers` | `Promise<Headers>` | Trailer headers (see [Trailer headers](#trailer-headers)) |
 
 ---

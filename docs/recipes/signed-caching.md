@@ -108,7 +108,7 @@ async function streamWithTrailerSig(
 - Signing the raw bytes is straightforward; signing a hash is equivalent but
   faster for large bodies. Either is fine — pick one and be consistent.
 - This pattern is most useful for public content that many peers cache. For
-  private content, the transport-layer identity (`iroh-node-id`) is usually
+  private content, the transport-layer identity (`Peer-Id`) is usually
   sufficient.
 - `304` responses do not carry a body, so the client must hold the original
   response. Cache the body and the ETag together.
