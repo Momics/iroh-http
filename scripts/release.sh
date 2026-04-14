@@ -123,46 +123,16 @@ echo ""
 
 section "2. Build (all platforms)"
 
-# 2a. Rust workspace (host only — tests use debug, cross-compile uses release)
-step "Rust workspace (cargo build --release)"
-cargo build --release --workspace 2>&1 | tail -3
-ok "Rust workspace"
-
-# 2b. TypeScript shared
-step "TypeScript shared"
-bash scripts/build-ts.sh 2>&1 | grep -E "✓|✗"
-
-# 2c. Node — cross-compile for 4 platforms
-NODE_PKG="packages/iroh-http-node"
-NODE_TARGETS=(
-  "aarch64-apple-darwin"
-  "x86_64-apple-darwin"
-  "x86_64-unknown-linux-gnu"
-  "aarch64-unknown-linux-gnu"
-)
-
-step "Node native addon (4 platforms)"
-for target in "${NODE_TARGETS[@]}"; do
-  step "  napi build --target $target"
-  if [[ "$target" == *"linux"* ]]; then
-    (cd "$NODE_PKG" && npx napi build --platform --release --target "$target" --zig 2>&1 | tail -1)
-  else
-    (cd "$NODE_PKG" && npx napi build --platform --release --target "$target" 2>&1 | tail -1)
-  fi
-  ok "  $target"
-done
-# Compile TS wrapper
-(cd "$NODE_PKG" && npx tsc 2>&1)
-ok "Node lib.ts → lib.js + lib.d.ts"
+step "npm run build:all (core → shared → node:all → tauri → deno:all)"
+npm run build:all 2>&1 | tail -10
+ok "all packages built"
 
 # List what we built:
-echo "  Built Node binaries:"
+NODE_PKG="packages/iroh-http-node"
+echo "  Node binaries:"
 ls -lh "$NODE_PKG"/*.node 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
-
-# 2d. Deno — cross-compile for 5 platforms
-step "Deno native lib (5 platforms)"
-(cd packages/iroh-http-deno && deno task build:all 2>&1 | grep -E '→|FAILED|✓|✗' || true)
-ok "Deno cross-compile"
+echo "  Deno binaries:"
+ls -lh packages/iroh-http-deno/lib/libiroh_http_deno.* 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
 
 echo "  Built Deno binaries:"
 ls -lh packages/iroh-http-deno/lib/libiroh_http_deno.* 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
