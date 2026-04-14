@@ -43,3 +43,9 @@ How to verify the fix is complete.
 
 1. ...
 2. ...
+
+## Regression test
+
+- Layer: rust-core | node | deno | python | cross-runtime | type-check | N/A
+- Test: `test name or file path`
+- Verified failing before fix: yes | N/A

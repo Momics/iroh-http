@@ -37,3 +37,15 @@ Peer-to-peer HTTP over Iroh QUIC transport. Rust core + FFI adapters for Node.js
 ## Recipes
 
 - [Recipes index](../docs/recipes/README.md) — 28 practical patterns built on iroh-http primitives (local-first sync, sealed messages, device handoff, capability tokens, etc.).
+
+## Issue Resolution Policy
+
+Every fixed issue must leave a regression test in the appropriate layer:
+
+- **FFI boundary bugs** → per-adapter integration test (`e2e.mjs`, `smoke.test.ts`, `test_node.py`)
+- **Rust core bugs** → `cargo test` (in `integration.rs` or a new test file)
+- **Type/export bugs** → verified by `tsc`/`pyright` (no new test needed if CI gates it)
+- **Protocol behavior** → `cases.json` entry in `tests/http-compliance/`
+- **Docs/build/config** → N/A (document in the issue's `## Regression test` section)
+
+When closing an issue, fill in the `## Regression test` section of the issue file with the layer, test name/path, and whether the test was verified failing before the fix.
