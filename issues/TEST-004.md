@@ -1,7 +1,7 @@
 ---
 id: "TEST-004"
 title: "Rust core: add edge-case tests for zero-value configs, mid-stream cancellation, and pool exhaustion"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-14
 area: core

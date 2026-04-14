@@ -1,7 +1,7 @@
 ---
 id: "TEST-005"
 title: "CI: add Python tests, pyright, Node compliance, and cross-runtime gate"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-14
 area: infra

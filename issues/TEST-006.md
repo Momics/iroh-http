@@ -1,7 +1,7 @@
 ---
 id: "TEST-006"
 title: "Establish regression test policy and update issue template"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-14
 area: testing

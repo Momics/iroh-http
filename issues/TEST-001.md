@@ -1,7 +1,7 @@
 ---
 id: "TEST-001"
 title: "Node adapter: expand integration tests to cover error paths, limits, crypto, and cancellation"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-14
 area: node

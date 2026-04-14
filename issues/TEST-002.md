@@ -1,7 +1,7 @@
 ---
 id: "TEST-002"
 title: "Deno adapter: add integration tests for error paths, limits, cancellation, and key exports"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-14
 area: deno
