@@ -117,7 +117,7 @@ pub async fn create_endpoint(
 
     let ep = iroh_http_core::endpoint::IrohEndpoint::bind(opts)
         .await
-        .map_err(|e| iroh_http_core::format_error_json("ENDPOINT_FAILURE", e))?;
+        .map_err(|e| iroh_http_core::core_error_to_json(&e))?;
 
     let node_id = ep.node_id().to_string();
     let keypair = ep.secret_key_bytes().to_vec();

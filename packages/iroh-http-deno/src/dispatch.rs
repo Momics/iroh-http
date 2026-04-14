@@ -230,7 +230,7 @@ async fn create_endpoint(p: Value) -> Value {
         },
     };
     match IrohEndpoint::bind(opts).await {
-        Err(e) => err_code("ENDPOINT_FAILURE", e),
+        Err(e) => err_core(e),
         Ok(ep) => {
             let node_id = ep.node_id().to_string();
             let keypair: Vec<u8> = ep.secret_key_bytes().to_vec();
