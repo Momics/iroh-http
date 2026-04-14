@@ -23,11 +23,12 @@ import type { PublicKey } from "./keys.js";
 import { resolveNodeId } from "./keys.js";
 import { classifyError } from "./errors.js";
 
-export type FetchFn = (
-  peer: PublicKey | string,
-  input: string | URL,
-  init?: IrohFetchInit,
-) => Promise<Response>;
+export type FetchFn = {
+  /** Web-standard form: peer identity is embedded in the `httpi://` URL hostname. */
+  (input: string | URL, init?: IrohFetchInit): Promise<Response>;
+  /** Legacy two-argument form: peer and path supplied separately. */
+  (peer: PublicKey | string, input: string | URL, init?: IrohFetchInit): Promise<Response>;
+};
 
 /**
  * Construct a `fetch`-like function bound to a specific `IrohEndpoint`.
@@ -54,13 +55,34 @@ export function makeFetch(
   rawFetch: RawFetchFn,
   allocBodyWriter: AllocBodyWriterFn,
 ): FetchFn {
-  return async (
-    peer: PublicKey | string,
-    input: string | URL,
-    init?: IrohFetchInit,
-  ): Promise<Response> => {
-    const nodeId = resolveNodeId(peer);
-    const url = typeof input === "string" ? input : input.toString();
+  return async function irohFetch(
+    peerOrInput: PublicKey | string | URL,
+    inputOrInit?: string | URL | IrohFetchInit,
+    maybeInit?: IrohFetchInit,
+  ): Promise<Response> {
+    let nodeId: string;
+    let url: string;
+    let init: IrohFetchInit | undefined;
+
+    if (typeof inputOrInit === "string" || inputOrInit instanceof URL) {
+      // Old form: fetch(peer, path, init?)
+      nodeId = resolveNodeId(peerOrInput as PublicKey | string);
+      url = typeof inputOrInit === "string" ? inputOrInit : inputOrInit.href;
+      init = maybeInit;
+    } else {
+      // New form: fetch("httpi://peerId/path", init?)
+      const raw = peerOrInput instanceof URL ? peerOrInput.href : String(peerOrInput);
+      if (!/^httpi:\/\//i.test(raw)) {
+        throw new TypeError(
+          `iroh-http fetch() requires either an httpi:// URL or (peer, path) arguments. ` +
+            `Got: "${raw.slice(0, 80)}"`,
+        );
+      }
+      const parsed = new URL(raw);
+      nodeId = parsed.hostname;
+      url = raw;
+      init = inputOrInit as IrohFetchInit | undefined;
+    }
 
     // Reject standard web schemes — iroh-http uses httpi://, not https:// or http://.
     if (/^https?:\/\//i.test(url)) {
