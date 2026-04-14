@@ -48,6 +48,10 @@ static BACKPRESSURE_CONFIGURED: std::sync::atomic::AtomicBool =
 /// Configure backpressure parameters.  Only the **first** call takes effect;
 /// subsequent calls are silently ignored so that a second endpoint bind does
 /// not clobber the config of an already-running endpoint.
+///
+/// Clamps `channel_capacity` to a minimum of 1 (zero would panic in
+/// `tokio::sync::mpsc::channel`) and `max_chunk_bytes` to a minimum of 1
+/// (zero would cause `send_chunk` to loop without progress).
 pub fn configure_backpressure(
     channel_capacity: usize,
     max_chunk_bytes: usize,
@@ -62,8 +66,8 @@ pub fn configure_backpressure(
         )
         .is_ok()
     {
-        CHANNEL_CAPACITY.store(channel_capacity, std::sync::atomic::Ordering::Relaxed);
-        MAX_CHUNK_SIZE.store(max_chunk_bytes, std::sync::atomic::Ordering::Relaxed);
+        CHANNEL_CAPACITY.store(channel_capacity.max(1), std::sync::atomic::Ordering::Relaxed);
+        MAX_CHUNK_SIZE.store(max_chunk_bytes.max(1), std::sync::atomic::Ordering::Relaxed);
         DRAIN_TIMEOUT_MS.store(drain_timeout_ms, std::sync::atomic::Ordering::Relaxed);
     }
 }
