@@ -8,48 +8,46 @@
 | Node.js 18+ | Node package, TS shared | [nodejs.org](https://nodejs.org) |
 | Deno | Deno package | `curl -fsSL https://deno.land/install.sh \| sh` |
 
+For cross-compilation (all platforms from macOS):
+
+| Tool | Install |
+|------|---------|
+| `cargo-zigbuild` | `cargo install cargo-zigbuild` |
+| `zig` | `brew install zig` |
+| `mingw-w64` | `brew install mingw-w64` (Deno Windows target) |
+| Rust targets | `rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu` |
+
 ## Building locally
 
-Run everything for the current platform:
+Build everything for the current platform:
 
 ```sh
-./scripts/build.sh
+npm run build
 ```
 
-Skip what you don't need:
+Build everything for all platforms (cross-compile):
 
 ```sh
-./scripts/build.sh --skip-deno   # just Rust + Node + TS
-./scripts/build.sh --skip-rust                  # rebuilds only JS/TS layers
+npm run build:all
 ```
 
-The script builds in order:
-
-1. **Rust workspace** — `cargo build --release`
-2. **Tauri plugin** — `cargo check` (separate Cargo workspace)
-3. **TypeScript shared** — `tsc` → `packages/iroh-http-shared/dist/`
-4. **Node addon** — `napi build --platform --release` → `.node` binary + `lib.js`
-5. **Deno native lib** — `deno task build` → `lib/*.dylib` (or `.so`/`.dll`)
-
-Each step includes a smoke test where possible.
-
-## Cross-compilation (Deno only, for now)
-
-The Deno package has a full cross-compile script that builds for 5 platforms from macOS:
+Build individual packages:
 
 ```sh
-cd packages/iroh-http-deno
-deno task build:all
+npm run build:core      # cargo build --release --workspace
+npm run build:shared    # tsc → packages/iroh-http-shared/dist/
+npm run build:node      # napi build (host platform) + tsc
+npm run build:node:all  # napi build (4 platforms) + tsc
+npm run build:tauri     # cargo check + tsc → dist/
+npm run build:deno      # cargo build (host platform)
+npm run build:deno:all  # cargo zigbuild (5 platforms)
 ```
 
-Requires: `cargo-zigbuild`, `zig`, `mingw-w64`, and the rustup targets:
-```sh
-rustup target add x86_64-apple-darwin aarch64-apple-darwin \
-  x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
-  x86_64-pc-windows-gnu
-```
-
-Node cross-compilation will be added when we set up CI (napi-rs has a turnkey GitHub Actions template for this).
+Each package owns its own build logic:
+- **shared** — `packages/iroh-http-shared/package.json` → `tsc`
+- **node** — `packages/iroh-http-node/package.json` → `napi build` + `tsc`, cross-compile via `scripts/build-all.mjs`
+- **tauri** — `packages/iroh-http-tauri/package.json` → `cargo check` + `tsc`
+- **deno** — `packages/iroh-http-deno/deno.jsonc` → `scripts/build-native.mts` / `scripts/build-all.mts`
 
 ## Bumping the version
 

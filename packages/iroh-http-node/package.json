@@ -14,8 +14,9 @@
     ]
   },
   "scripts": {
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
+    "build": "napi build --platform --release && tsc",
+    "build:debug": "napi build --platform && tsc",
+    "build:all": "node scripts/build-all.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node test/smoke.mjs && node test/e2e.mjs && node test/compliance.mjs",
     "test:smoke": "node test/smoke.mjs",
