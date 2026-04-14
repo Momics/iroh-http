@@ -199,11 +199,14 @@ async fn create_endpoint(p: Value) -> Value {
         proxy_url: args.proxy_url,
         proxy_from_env: args.proxy_from_env.unwrap_or(false),
         keylog: args.keylog.unwrap_or(false),
-        max_concurrency: args.max_concurrency,
-        max_connections_per_peer: args.max_connections_per_peer,
-        request_timeout_ms: args.request_timeout,
-        max_request_body_bytes: args.max_request_body_bytes,
-        drain_timeout_secs: None,
+        server_limits: iroh_http_core::server::ServerLimits {
+            max_concurrency: args.max_concurrency,
+            max_connections_per_peer: args.max_connections_per_peer,
+            request_timeout_ms: args.request_timeout,
+            max_request_body_bytes: args.max_request_body_bytes,
+            max_consecutive_errors: args.max_consecutive_errors,
+            drain_timeout_secs: None,
+        },
         #[cfg(feature = "compression")]
         compression: if args.compression_min_body_bytes.is_some()
             || args.compression_level.is_some()

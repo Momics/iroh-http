@@ -45,10 +45,16 @@ where
     body.map_err(|_| unreachable!()).boxed()
 }
 
-// ── ServeOptions ──────────────────────────────────────────────────────────────
+// ── ServerLimits ──────────────────────────────────────────────────────────────
 
+/// Server-side limits shared between [`NodeOptions`](crate::NodeOptions) and
+/// the serve path.
+///
+/// Embedding this struct in both `NodeOptions` and `EndpointInner` guarantees
+/// that adding a new limit field produces a compile error if only one side is
+/// updated.
 #[derive(Debug, Clone, Default)]
-pub struct ServeOptions {
+pub struct ServerLimits {
     pub max_concurrency: Option<usize>,
     pub max_consecutive_errors: Option<usize>,
     pub request_timeout_ms: Option<u64>,
@@ -56,6 +62,10 @@ pub struct ServeOptions {
     pub max_request_body_bytes: Option<usize>,
     pub drain_timeout_secs: Option<u64>,
 }
+
+/// Backward-compatible alias — existing code that names `ServeOptions` keeps
+/// compiling without changes.
+pub type ServeOptions = ServerLimits;
 
 const DEFAULT_CONCURRENCY: usize = 64;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;

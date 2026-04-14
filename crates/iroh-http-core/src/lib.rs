@@ -20,6 +20,7 @@ pub use endpoint::{
 };
 pub use server::serve;
 pub use server::ServeHandle;
+pub use server::ServerLimits;
 pub use session::{
     session_accept, session_close, session_closed, session_connect, session_create_bidi_stream,
     session_create_uni_stream, session_max_datagram_size, session_next_bidi_stream,

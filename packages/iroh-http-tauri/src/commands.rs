@@ -97,11 +97,14 @@ pub async fn create_endpoint(
             proxy_url: a.proxy_url,
             proxy_from_env: a.proxy_from_env.unwrap_or(false),
             keylog: a.keylog.unwrap_or(false),
-            max_concurrency: a.max_concurrency,
-            max_connections_per_peer: a.max_connections_per_peer,
-            request_timeout_ms: a.request_timeout,
-            max_request_body_bytes: a.max_request_body_bytes,
-            drain_timeout_secs: None,
+            server_limits: iroh_http_core::server::ServerLimits {
+                max_concurrency: a.max_concurrency,
+                max_connections_per_peer: a.max_connections_per_peer,
+                request_timeout_ms: a.request_timeout,
+                max_request_body_bytes: a.max_request_body_bytes,
+                max_consecutive_errors: a.max_consecutive_errors,
+                drain_timeout_secs: None,
+            },
             #[cfg(feature = "compression")]
             compression: if a.compression_min_body_bytes.is_some() || a.compression_level.is_some() {
                 Some(iroh_http_core::CompressionOptions {

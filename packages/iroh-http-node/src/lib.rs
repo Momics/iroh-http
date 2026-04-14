@@ -171,11 +171,14 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                 proxy_url: o.proxy_url,
                 proxy_from_env: o.proxy_from_env.unwrap_or(false),
                 keylog: o.keylog.unwrap_or(false),
-                max_concurrency: o.max_concurrency.map(|v| v as usize),
-                max_connections_per_peer: o.max_connections_per_peer.map(|v| v as usize),
-                request_timeout_ms: o.request_timeout.map(|v| safe_f64_to_u64(v, "requestTimeout")).transpose()?,
-                max_request_body_bytes: o.max_request_body_bytes.map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes")).transpose()?,
-                drain_timeout_secs: None,
+                server_limits: iroh_http_core::server::ServerLimits {
+                    max_concurrency: o.max_concurrency.map(|v| v as usize),
+                    max_connections_per_peer: o.max_connections_per_peer.map(|v| v as usize),
+                    request_timeout_ms: o.request_timeout.map(|v| safe_f64_to_u64(v, "requestTimeout")).transpose()?,
+                    max_request_body_bytes: o.max_request_body_bytes.map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes")).transpose()?,
+                    max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
+                    drain_timeout_secs: None,
+                },
                 #[cfg(feature = "compression")]
                 // NODE-003: enable compression when level or minBodyBytes is provided.
                 compression: if o.compression_min_body_bytes.is_some()

@@ -1,30 +1,103 @@
-# Sign / Verify
+# Sign / Verify / Encrypt
 
-`SecretKey` and `PublicKey` expose sign and verify operations directly. Combined
-with the transport's peer authentication, these are the building blocks for
-signed responses, capability tokens, and caching patterns.
+`SecretKey` and `PublicKey` are the cryptographic primitives of iroh-http.
+Every node has an Ed25519 identity keypair. The same keys that authenticate
+the transport are available for signing, verifying, and sealing messages at the
+application layer.
 
-## API
+## Importing the key classes
+
+`PublicKey` and `SecretKey` are exported from each adapter package:
 
 ```ts
-// Sign arbitrary bytes with a secret key:
-const sig: Uint8Array = await secretKey.sign(data);
+// Node.js
+import { createNode, PublicKey, SecretKey } from "@momics/iroh-http-node";
 
-// Verify a signature against a public key:
-const ok: boolean = await publicKey.verify(data, sig);
+// Deno
+import { createNode, PublicKey, SecretKey } from "@momics/iroh-http-deno";
 
-// Generate a fresh key without starting a node:
-const key = SecretKey.generate();
+// Tauri
+import { createNode, PublicKey, SecretKey } from "@momics/iroh-http-tauri";
 ```
 
-Both `sign` and `verify` are **async** — they use the WebCrypto subtle API
-which returns `Promise` values. Always `await` them.
+A node's own keys are also accessible directly:
 
-## Types
+```ts
+const node = await createNode();
+const sk: SecretKey  = node.secretKey;   // Ed25519 secret key
+const pk: PublicKey  = node.publicKey;   // Ed25519 public key (= node ID)
+```
 
-Signatures are 64-byte `Uint8Array` values. `PublicKey.verify` returns
-`boolean` — it does not throw on an invalid signature.
+## Sign
+
+Sign arbitrary bytes with a `SecretKey`. Returns a 64-byte Ed25519 signature.
+
+```ts
+const data = new TextEncoder().encode("hello iroh");
+const sig: Uint8Array = await node.secretKey.sign(data);
+```
+
+`SecretKey.generate()` creates a standalone key that is not tied to a node:
+
+```ts
+const key = SecretKey.generate();
+const sig = await key.sign(data);
+```
+
+## Verify
+
+Verify a signature against any `PublicKey`. Returns `false` rather than
+throwing on an invalid signature.
+
+```ts
+// Verify using the sender's known node ID:
+const senderKey = PublicKey.fromString(senderNodeId);
+const ok: boolean = await senderKey.verify(data, sig);
+
+// Or using the public key already on a node object:
+const ok = await node.publicKey.verify(data, sig);
+```
+
+## Encrypt / Decrypt
+
+`publicKey.encrypt` seals a message so that only the holder of the matching
+`SecretKey` can open it. Uses a sealed-box construction:
+Ed25519→X25519 key conversion, ephemeral ECDH, HKDF-SHA256 key derivation,
+AES-GCM-256 authenticated encryption.
+
+```ts
+// Encrypt to a recipient public key (e.g. their node ID):
+const recipient = PublicKey.fromString(recipientNodeId);
+const ciphertext: Uint8Array = await recipient.encrypt(plaintext);
+
+// Decrypt with the matching secret key:
+const plaintext: Uint8Array = await node.secretKey.decrypt(ciphertext);
+```
+
+The ciphertext format is self-contained: `[32B ephemeral pub] [12B IV] [ciphertext + 16B tag]`.
+`decrypt` throws `IrohError` if authentication fails.
+
+## Types summary
+
+| Value | Type | Description |
+|---|---|---|
+| `sig` | `Uint8Array` (64 bytes) | Ed25519 signature |
+| `ciphertext` | `Uint8Array` | Sealed-box ciphertext (≥ 60 bytes overhead) |
+| `publicKey.verify` result | `boolean` | `false` on invalid sig, never throws |
+| `secretKey.decrypt` result | `Uint8Array` | Plaintext, or throws on auth failure |
+
+All cryptographic operations are **async** — always `await` them.
+
+## What to avoid
+
+Do not use the lower-level `secretKeySign` / `publicKeyVerify` functions that
+some older adapter versions exported. Those take raw `Uint8Array` keys instead
+of typed class instances, are inconsistently available across adapters, and are
+removed in the current API. Use the class methods above instead.
 
 ## See also
 
-- [Recipes index](../recipes/index.md) — sealed messages, capability tokens, and other sign/verify patterns
+- [sealed-messages](../recipes/sealed-messages.md) — encrypt messages for offline delivery
+- [capability-tokens](../recipes/capability-tokens.md) — signed access tokens
+- [sign-verify (feature)](sign-verify.md) — this page
+- [witness-receipts](../recipes/witness-receipts.md) — tamper-evident audit logs

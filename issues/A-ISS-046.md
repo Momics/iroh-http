@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-046"
 title: "NodeOptions and ServeOptions contain 6 duplicated fields with no enforcement of consistency"
-status: open
+status: fixed
 priority: P3
 date: 2026-04-14
 area: core
