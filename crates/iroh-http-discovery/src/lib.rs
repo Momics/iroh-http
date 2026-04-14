@@ -32,7 +32,10 @@ pub struct PeerDiscoveryEvent {
 
 /// An active browse session that yields discovery events.
 ///
-/// Drop to stop receiving events.
+/// Drop to stop receiving events.  Note: the underlying mDNS lookup
+/// remains registered on the endpoint because the iroh API does not
+/// support removal.  Avoid calling `start_browse` repeatedly without
+/// restarting the endpoint if accumulation is a concern.
 #[cfg(feature = "mdns")]
 pub struct BrowseSession {
     rx: tokio::sync::mpsc::Receiver<DiscoveryEvent>,
@@ -108,7 +111,10 @@ pub async fn start_browse(
 
 // ── Advertise session ────────────────────────────────────────────────────────
 
-/// An active advertise session. Drop to stop advertising.
+/// An active advertise session.
+///
+/// Drop to stop advertising.  Note: the underlying mDNS lookup remains
+/// registered on the endpoint (same caveat as [`BrowseSession`]).
 #[cfg(feature = "mdns")]
 pub struct AdvertiseSession {
     _mdns: Arc<MdnsAddressLookup>,

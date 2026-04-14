@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-038"
 title: "mDNS browse/advertise sessions accumulate without unregister"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-13
 area: core
