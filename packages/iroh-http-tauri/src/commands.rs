@@ -139,7 +139,7 @@ pub async fn create_endpoint(
 #[command]
 pub async fn close_endpoint(endpoint_handle: u64, force: Option<bool>) -> Result<(), String> {
     let ep = state::remove_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("node closed or not found (handle {endpoint_handle})")))?;
     if force.unwrap_or(false) {
         ep.close_force().await;
     } else {

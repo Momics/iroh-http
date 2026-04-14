@@ -40,7 +40,7 @@ fn get_endpoint(handle: u32) -> napi::Result<IrohEndpoint> {
     registry::get_endpoint(handle as u64).ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
-            iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {handle}")),
+            iroh_http_core::format_error_json("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
         )
     })
 }
@@ -227,7 +227,7 @@ pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> napi::
         .ok_or_else(|| {
             napi::Error::new(
                 Status::InvalidArg,
-                iroh_http_core::format_error_json("INVALID_HANDLE", "invalid endpoint handle"),
+                iroh_http_core::format_error_json("INVALID_HANDLE", "node closed or not found"),
             )
         })?;
     if force.unwrap_or(false) {
