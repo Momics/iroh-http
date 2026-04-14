@@ -19,6 +19,15 @@ def create_node(
     max_connections_per_peer: Optional[int] = None,
     request_timeout: Optional[int] = None,
     max_request_body_bytes: Optional[int] = None,
+    max_pooled_connections: Optional[int] = None,
+    pool_idle_timeout_ms: Optional[int] = None,
+    dns_discovery_enabled: bool = True,
+    channel_capacity: Optional[int] = None,
+    max_chunk_size_bytes: Optional[int] = None,
+    drain_timeout: Optional[int] = None,
+    handle_ttl: Optional[int] = None,
+    max_consecutive_errors: Optional[int] = None,
+    max_header_bytes: Optional[int] = None,
 ) -> "IrohNode": ...
 """Create and bind an Iroh peer-to-peer HTTP node."""
 

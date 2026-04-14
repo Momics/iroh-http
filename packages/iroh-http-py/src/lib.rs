@@ -1,6 +1,19 @@
 //! Python bindings for iroh-http.
 //!
 //! Exports `create_node`, `IrohNode`, `IrohRequest`, `IrohResponse` via PyO3.
+//!
+//! ## Architecture: adapter + API composition
+//!
+//! Unlike the JS/TS adapters (which delegate high-level API composition to
+//! `iroh-http-shared`), this Python crate serves as both the FFI shim **and**
+//! the API composition layer.  Python has no equivalent to a shared TypeScript
+//! package, so classes like `IrohBidiStream` (with `write()`, `read()`, async
+//! iteration) and `IrohSession` (with `__aenter__` / `__aexit__`) live here.
+//!
+//! This intentional deviation from the "thin shim" architecture is documented
+//! and accepted.  Protocol-level guards (e.g. the PY-006 receive-only guard
+//! in `IrohBidiStream.write()`) provide a better Python-native error message
+//! than the underlying core error.
 
 // The `?` operator always applies `From::from` even when types already match.
 // In PyO3 async functions that pattern causes spurious `useless_conversion` hits.
@@ -1121,9 +1134,18 @@ fn send_500(req_handle: u64, res_body_handle: u64) {
 ///   max_connections_per_peer — Maximum connections from a single peer (default 8).
 ///   request_timeout          — Per-request timeout in milliseconds (default 60000, 0 = disabled).
 ///   max_request_body_bytes   — Reject request bodies larger than this (default unlimited).
+///   max_pooled_connections   — Maximum idle connections in the pool.
+///   pool_idle_timeout_ms     — Milliseconds a pooled connection may stay idle.
+///   dns_discovery_enabled    — Enable/disable DNS discovery (default true).
+///   channel_capacity         — Body channel capacity in chunks (default 32).
+///   max_chunk_size_bytes     — Maximum bytes per chunk (default 65536).
+///   drain_timeout            — Milliseconds to wait for slow body readers (default 30000).
+///   handle_ttl               — TTL in milliseconds for slab entries (default 300000, 0 = no sweep).
+///   max_consecutive_errors   — Accept errors before the serve loop stops (default 5).
+///   max_header_bytes         — Maximum HTTP head size in bytes (default 65536).
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
-#[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false, relay_mode=None, bind_addrs=None, proxy_url=None, proxy_from_env=false, keylog=false, compression_level=None, compression_min_body_bytes=None, max_concurrency=None, max_connections_per_peer=None, request_timeout=None, max_request_body_bytes=None))]
+#[pyo3(signature = (key=None, idle_timeout=None, relays=None, dns_discovery=None, disable_networking=false, relay_mode=None, bind_addrs=None, proxy_url=None, proxy_from_env=false, keylog=false, compression_level=None, compression_min_body_bytes=None, max_concurrency=None, max_connections_per_peer=None, request_timeout=None, max_request_body_bytes=None, max_pooled_connections=None, pool_idle_timeout_ms=None, dns_discovery_enabled=true, channel_capacity=None, max_chunk_size_bytes=None, drain_timeout=None, handle_ttl=None, max_consecutive_errors=None, max_header_bytes=None))]
 fn create_node<'py>(
     py: Python<'py>,
     key: Option<Vec<u8>>,
@@ -1142,6 +1164,15 @@ fn create_node<'py>(
     max_connections_per_peer: Option<usize>,
     request_timeout: Option<u64>,
     max_request_body_bytes: Option<usize>,
+    max_pooled_connections: Option<usize>,
+    pool_idle_timeout_ms: Option<u64>,
+    dns_discovery_enabled: bool,
+    channel_capacity: Option<usize>,
+    max_chunk_size_bytes: Option<usize>,
+    drain_timeout: Option<u64>,
+    handle_ttl: Option<u64>,
+    max_consecutive_errors: Option<usize>,
+    max_header_bytes: Option<usize>,
 ) -> PyResult<Bound<'py, PyAny>> {
     // When the compression feature is disabled the two params have no use site; silence the warning.
     #[cfg(not(feature = "compression"))]
@@ -1164,17 +1195,17 @@ fn create_node<'py>(
             relays: relays.unwrap_or_default(),
             bind_addrs: bind_addrs.unwrap_or_default(),
             dns_discovery,
-            dns_discovery_enabled: true,
+            dns_discovery_enabled,
             capabilities: Vec::new(),
-            channel_capacity: None,
-            max_chunk_size_bytes: None,
-            max_consecutive_errors: None,
+            channel_capacity,
+            max_chunk_size_bytes,
+            max_consecutive_errors,
             disable_networking,
-            drain_timeout_ms: None,
-            handle_ttl_ms: None,
-            max_pooled_connections: None,
-            pool_idle_timeout_ms: None,
-            max_header_size: None,
+            drain_timeout_ms: drain_timeout,
+            handle_ttl_ms: handle_ttl,
+            max_pooled_connections,
+            pool_idle_timeout_ms,
+            max_header_size: max_header_bytes,
             proxy_url,
             proxy_from_env,
             keylog,
