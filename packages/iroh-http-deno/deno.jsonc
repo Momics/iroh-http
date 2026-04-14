@@ -1,6 +1,6 @@
 {
   "name": "@momics/iroh-http-deno",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "exports": "./mod.ts",
   "license": "MIT",
   "tasks": {
@@ -12,7 +12,7 @@
     "test:compliance": "deno run --allow-read --allow-ffi test/compliance.ts"
   },
   "publish": {
-    "include": ["mod.ts", "src/", "lib/"]
+    "include": ["mod.ts", "src/", "README.md"]
   },
   "imports": {
     "@std/path":                  "jsr:@std/path@^1",
