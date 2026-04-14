@@ -39,6 +39,8 @@ pub struct CreateEndpointArgs {
     pub keylog: Option<bool>,
     #[cfg(feature = "compression")]
     pub compression_min_body_bytes: Option<usize>,
+    #[cfg(feature = "compression")]
+    pub compression_level: Option<u32>,
     pub max_concurrency: Option<usize>,
     pub max_connections_per_peer: Option<usize>,
     pub request_timeout: Option<u64>,
@@ -101,9 +103,10 @@ pub async fn create_endpoint(
             max_request_body_bytes: a.max_request_body_bytes,
             drain_timeout_secs: None,
             #[cfg(feature = "compression")]
-            compression: if a.compression_min_body_bytes.is_some() {
+            compression: if a.compression_min_body_bytes.is_some() || a.compression_level.is_some() {
                 Some(iroh_http_core::CompressionOptions {
                     min_body_bytes: a.compression_min_body_bytes.unwrap_or(512),
+                    level: a.compression_level,
                 })
             } else {
                 None

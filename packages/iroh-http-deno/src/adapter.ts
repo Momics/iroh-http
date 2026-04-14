@@ -358,21 +358,20 @@ export const rawServe: RawServeFn = (
               });
             } catch (err) {
               console.error("[iroh-http-deno] handler error:", err);
-              await call<Record<never, never>>("respond", {
-                reqHandle: payload.reqHandle,
-                status: 500,
-                headers: [],
-              }).catch(() => {
-                /* ignore */
-              });
+              try {
+                await call<Record<never, never>>("respond", {
+                  reqHandle: payload.reqHandle,
+                  status: 500,
+                  headers: [],
+                });
+              } catch {
+                /* respond itself failed — nothing more to do */
+              }
             }
           })();
         }
-      })().catch((err) =>
-        console.error("[iroh-http-deno] serve loop error:", err),
-      );
-    })
-    .catch((err) => console.error("[iroh-http-deno] serveStart error:", err)) as Promise<void>;
+      })();
+    });
 };
 
 export const allocBodyWriter: AllocBodyWriterFn = () =>

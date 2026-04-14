@@ -1,7 +1,7 @@
 ---
 id: "TAURI-015"
 title: "Tauri create_endpoint ignores guest-js compressionLevel option"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-13
 area: tauri

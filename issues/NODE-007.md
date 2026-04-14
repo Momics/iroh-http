@@ -1,7 +1,7 @@
 ---
 id: "NODE-007"
 title: "FFI numeric options are lossy-cast without validation"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-13
 area: node

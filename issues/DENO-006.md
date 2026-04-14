@@ -1,7 +1,7 @@
 ---
 id: "DENO-006"
 title: "Serve startup and loop failures are swallowed instead of surfacing to callers"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-13
 area: deno

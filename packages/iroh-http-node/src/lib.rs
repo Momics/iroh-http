@@ -70,6 +70,27 @@ fn advertise_slab() -> &'static Mutex<Slab<iroh_http_discovery::AdvertiseSession
 
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 
+/// Validate and convert an f64 option to a non-negative integer type.
+fn safe_f64_to_u64(value: f64, field: &str) -> napi::Result<u64> {
+    if value.is_nan() || value.is_infinite() || value < 0.0 {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            format!("{field}: expected a non-negative finite number, got {value}"),
+        ));
+    }
+    Ok(value as u64)
+}
+
+fn safe_f64_to_usize(value: f64, field: &str) -> napi::Result<usize> {
+    if value.is_nan() || value.is_infinite() || value < 0.0 {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            format!("{field}: expected a non-negative finite number, got {value}"),
+        ));
+    }
+    Ok(value as usize)
+}
+
 #[napi(object)]
 pub struct JsNodeOptions {
     pub key: Option<Uint8Array>,
@@ -137,7 +158,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                     }
                     None => None,
                 },
-                idle_timeout_ms: o.idle_timeout.map(|t| t as u64),
+                idle_timeout_ms: o.idle_timeout.map(|t| safe_f64_to_u64(t, "idleTimeout")).transpose()?,
                 relay_mode: o.relay_mode,
                 relays: o.relays.unwrap_or_default(),
                 bind_addrs: o.bind_addrs.unwrap_or_default(),
@@ -148,18 +169,18 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                 max_chunk_size_bytes: o.max_chunk_size_bytes.map(|v| v as usize),
                 max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
                 disable_networking: o.disable_networking.unwrap_or(false),
-                drain_timeout_ms: o.drain_timeout.map(|v| v as u64),
-                handle_ttl_ms: o.handle_ttl.map(|v| v as u64),
+                drain_timeout_ms: o.drain_timeout.map(|v| safe_f64_to_u64(v, "drainTimeout")).transpose()?,
+                handle_ttl_ms: o.handle_ttl.map(|v| safe_f64_to_u64(v, "handleTtl")).transpose()?,
                 max_pooled_connections: o.max_pooled_connections.map(|v| v as usize),
-                pool_idle_timeout_ms: o.pool_idle_timeout_ms.map(|v| v as u64),
-                max_header_size: o.max_header_bytes.map(|v| v as usize),
+                pool_idle_timeout_ms: o.pool_idle_timeout_ms.map(|v| safe_f64_to_u64(v, "poolIdleTimeoutMs")).transpose()?,
+                max_header_size: o.max_header_bytes.map(|v| safe_f64_to_usize(v, "maxHeaderBytes")).transpose()?,
                 proxy_url: o.proxy_url,
                 proxy_from_env: o.proxy_from_env.unwrap_or(false),
                 keylog: o.keylog.unwrap_or(false),
                 max_concurrency: o.max_concurrency.map(|v| v as usize),
                 max_connections_per_peer: o.max_connections_per_peer.map(|v| v as usize),
-                request_timeout_ms: o.request_timeout.map(|v| v as u64),
-                max_request_body_bytes: o.max_request_body_bytes.map(|v| v as usize),
+                request_timeout_ms: o.request_timeout.map(|v| safe_f64_to_u64(v, "requestTimeout")).transpose()?,
+                max_request_body_bytes: o.max_request_body_bytes.map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes")).transpose()?,
                 drain_timeout_secs: None,
                 #[cfg(feature = "compression")]
                 // NODE-003: enable compression when level or minBodyBytes is provided.
