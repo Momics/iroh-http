@@ -1,7 +1,7 @@
 ---
 id: "NODE-009"
 title: "Node README options example does not match current createNode API"
-status: open
+status: fixed
 priority: P3
 date: 2026-04-13
 area: node

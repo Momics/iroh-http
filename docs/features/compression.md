@@ -59,5 +59,3 @@ protocol with no legacy client compatibility requirement.
   When the flag is off, the binary has zero compression overhead.
 - Streaming bodies are compressed incrementally — the QUIC send buffer is not
   stalled waiting for the full body.
-
-→ [Patch 19](../patches/19_patch.md)

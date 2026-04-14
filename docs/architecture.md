@@ -80,7 +80,7 @@ The Rust crate that owns all transport logic. Platform adapters depend only on i
 | `session.rs` | Session lifecycle: `session_connect` (non-pooled dedicated connections), bidirectional/unidirectional streams, datagrams. Session registry. |
 | `endpoint.rs` | `IrohEndpoint` (cheap `Arc` clone). Bind, share, close. `NodeOptions` for QUIC transport config, discovery, relay. `ServeOptions` for server limits. `CompressionOptions` (feature-gated). |
 | `io.rs` | `IrohStream`: merges Iroh's split `SendStream`/`RecvStream` into a single `AsyncRead + AsyncWrite` type that hyper can drive directly via `hyper_util::rt::TokioIo`. |
-| `lib.rs` | `CoreError`/`ErrorCode` enum, `FfiResponse`, `RequestPayload`, ALPN constants, crypto helpers (sign/verify), base32 encoding, node ticket parsing, `classify_error_json` compat shim. |
+| `lib.rs` | `CoreError`/`ErrorCode` enum, `FfiResponse`, `RequestPayload`, ALPN constants, crypto helpers (sign/verify), base32 encoding, node ticket parsing, `core_error_to_json`/`format_error_json` serializers. |
 
 ### Platform Adapters
 
@@ -163,7 +163,7 @@ This bounds total in-flight requests across all peers. Per-peer limits are enfor
 moka async cache keyed by `NodeId`. The critical choice is `try_get_with` (not `get_with`):
 - On success: caches the connection for reuse
 - On failure: does **not** cache the error — next caller retries
-- Liveness check before returning a cached connection; stale connections are evicted
+- Liveness check before returning a cached connection; on a stale hit the entry is invalidated and one reconnect attempt is made transparently — callers never observe a stale connection
 
 This provides single-flight semantics: many concurrent fetches to the same peer share one connection attempt. No thundering herd.
 
@@ -200,7 +200,7 @@ All defaults are safe against hostile peers without opt-in. Increasing limits is
 
 ```
 Rust (CoreError / ErrorCode)
-  ↓ classify_error_json()
+  ↓ core_error_to_json() / format_error_json()
 JSON envelope: {"code":"TIMEOUT","message":"..."}
   ↓ platform adapter
 Native error types (DOMException subtypes in JS, etc.)

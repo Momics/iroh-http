@@ -1,7 +1,7 @@
 ---
 id: "B-ISS-047"
 title: "Connection pool stale-connection retry not described in architecture docs"
-status: open
+status: fixed
 priority: P3
 date: 2026-04-14
 area: docs
