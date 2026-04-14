@@ -1,7 +1,7 @@
 ---
 id: "NODE-006"
 title: "Node serve bridge can surface unhandled promise rejections when rawRespond throws"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-13
 area: node
