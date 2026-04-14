@@ -59,16 +59,7 @@ for await (const event of node.browse({ serviceName: 'my-app' })) {
 }
 ```
 
-```ts
-interface PeerDiscoveryEvent {
-  /** true = peer appeared; false = peer left or announcement timed out. */
-  isActive: boolean;
-  /** Base32-encoded public key of the peer. */
-  nodeId: string;
-  /** Known socket addresses for this peer. */
-  addrs?: string[];
-}
-```
+See [`PeerDiscoveryEvent` in the specification](../specification.md#discovery-mdns) for the event shape.
 
 Cancel by passing an `AbortSignal` or by breaking from the loop — both clean
 up the underlying mDNS listener:
@@ -86,16 +77,7 @@ for await (const event of node.browse({ serviceName: 'my-app' })) {
 
 ## mDNS options
 
-```ts
-interface MdnsOptions {
-  /**
-   * Swarm identifier. Only nodes with the same serviceName see each other.
-   * Different applications on the same LAN should use different names.
-   * Default: 'iroh-http'.
-   */
-  serviceName?: string;
-}
-```
+See [`MdnsOptions` in the specification](../specification.md#discovery-mdns) for the option shape.
 
 `browse` and `advertise` accept `MdnsOptions` as their first argument.
 Both can run simultaneously on the same node — they are independent.

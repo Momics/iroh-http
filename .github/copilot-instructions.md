@@ -9,6 +9,7 @@ Peer-to-peer HTTP over Iroh QUIC transport. Rust core + FFI adapters for Node.js
 - [Design decisions](../docs/internals/design-decisions.md) — the *why* behind hyper, slotmap, moka, wire format, compression policy. Read when touching internals.
 - [Documentation index](../docs/README.md) — entry point to all documentation, features, internals, and recipes.
 - [Roadmap](../docs/roadmap.md) — v1.0 release checklist, open source path, embedded and HTTP/3 horizons.
+- [Specification](../docs/specification.md) — normative interface contract for all adapters. Read when adding or changing adapter APIs.
 
 ## Coding Guidelines
 

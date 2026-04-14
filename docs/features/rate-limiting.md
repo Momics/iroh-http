@@ -43,15 +43,7 @@ node.serve({}, rateLimit({
 maintains a per-peer token bucket in a `Map`. No native component — pure
 TypeScript.
 
-```ts
-type RateConfig = { requestsPerSecond: number; burst?: number };
-
-interface RateLimitOptions {
-  requestsPerSecond: number;
-  burst?: number;
-  forPeer?: (nodeId: string) => RateConfig | 'unlimited' | 'block' | null | undefined;
-}
-```
+See [`RateLimitOptions` in the specification](../specification.md#rate-limiting) for the full type.
 
 When a peer exceeds its limit, the middleware returns `429 Too Many Requests`
 with a `Retry-After` header. A `'block'` decision returns `403 Forbidden`.

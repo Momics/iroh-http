@@ -43,20 +43,7 @@ Internal code may use `[string, string][]` for header pairs across FFI, but conv
 
 All errors thrown to user code must be subclasses of `DOMException` or typed error classes from `@momics/iroh-http-shared/errors`. Never throw plain strings. Never expose Rust error messages without classification.
 
-The Rust core emits a structured JSON envelope (`{"code":"TIMEOUT","message":"..."}`). The JS layer maps these to specific classes:
-
-| Rust code | JS class | `name` property |
-|-----------|----------|-----------------|
-| `TIMEOUT` | `IrohConnectError` | `"NetworkError"` |
-| `REFUSED` | `IrohConnectError` | `"NetworkError"` |
-| `PEER_REJECTED` | `IrohConnectError` | `"NetworkError"` |
-| `BODY_TOO_LARGE` | `IrohProtocolError` | `"IrohProtocolError"` |
-| `HEADER_TOO_LARGE` | `IrohProtocolError` | `"IrohProtocolError"` |
-| `INVALID_HANDLE` | `IrohHandleError` | `"IrohHandleError"` |
-| `ABORTED` / `CANCELLED` | `IrohAbortError` | `"AbortError"` |
-| `INVALID_INPUT` | `IrohArgumentError` | `"TypeError"` |
-| `ENDPOINT_FAILURE` | `IrohBindError` | `"NetworkError"` |
-| *(catch-all)* | `IrohError` | `"IrohError"` |
+The Rust core emits a structured JSON envelope (`{"code":"TIMEOUT","message":"..."}`). The JS layer maps these to typed error classes — see the [error contract in the specification](../specification.md#error-contract) for the full mapping table.
 
 Use `instanceof` for class checks; use `.code` for the specific Rust error code and `.name` for web-platform-style matching.
 
@@ -83,9 +70,7 @@ Body streams are `ReadableStream<Uint8Array>`.
 
 ## Serve Handler Contract
 
-```ts
-type ServeHandler = (req: Request) => Response | Promise<Response>;
-```
+See [`ServeHandler` in the specification](../specification.md#servehandler) for the canonical type.
 
 - The handler receives a standard `Request`. Authenticated peer identity is available as the `iroh-node-id` header.
 - Request trailers: `(req as any).trailers: Promise<Headers>`.
@@ -96,13 +81,7 @@ type ServeHandler = (req: Request) => Response | Promise<Response>;
 
 ## Fetch Signature
 
-```ts
-type FetchFn = (
-  peer: PublicKey | string,
-  input: string | URL,
-  init?: IrohFetchInit
-) => Promise<Response>;
-```
+See [`IrohFetchInit` in the specification](../specification.md#irohfetchinit) for the canonical type.
 
 `IrohFetchInit` extends standard `RequestInit` with `signal?: AbortSignal` and `directAddrs?: string[]`. The returned `Response` has a non-standard `trailers: Promise<Headers>` property.
 

@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-051"
 title: "Create docs/specification.md: single normative interface contract for all adapters"
-status: open
+status: resolved
 priority: P2
 date: 2026-04-14
 area: docs
