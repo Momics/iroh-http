@@ -14,7 +14,6 @@
 
 - [Rust](guidelines/rust.md) — naming, visibility, error handling, async, testing for `iroh-http-core`
 - [JavaScript / TypeScript](guidelines/javascript.md) — types, errors, streaming, serve/fetch for adapters
-- [Python](guidelines/python.md) — PyO3 conventions for `iroh-http-py`
 - [Tauri](guidelines/tauri.md) — invoke commands, channels for `iroh-http-tauri`
 
 ## Features

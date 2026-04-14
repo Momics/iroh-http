@@ -14,7 +14,7 @@ and their root causes based on the actual bug history of this codebase.
 | api-surface | 15 | Per-adapter integration tests + type checking |
 | missing-feature | 14 | Not a testing problem — feature work |
 | config-default | 13 | Rust core unit tests + per-adapter tests |
-| type-safety | 9 | Static type checking (tsc, pyright, clippy) |
+| type-safety | 9 | Static type checking (tsc, clippy) |
 | code-duplication | 6 | Not a testing problem — refactoring |
 | architecture | 5 | Rust core integration tests |
 
@@ -38,24 +38,20 @@ each individual adapter.
 | Node integration | `e2e.mjs` | 7 tests | ✅ |
 | Node smoke | `smoke.mjs` | 3 tests | ❌ |
 | Deno integration + smoke | `smoke.test.ts` | 17 tests | ✅ |
-| Python integration | `test_node.py`, `test_session.py` | ~20 tests | ❌ |
-| Python unit | `test_crypto.py`, `test_mdns.py`, `smoke.py` | ~15 tests | ❌ |
 | Cross-runtime compliance | `cases.json` (12 cases), `run.sh` | node↔deno | ❌ |
 | TypeScript type check | `npm run typecheck` | — | ✅ |
 
 ### What is missing
 
-1. **Python tests are not in CI** — 35+ tests exist but never run automatically.
-2. **Node adapter has thin integration coverage** — 7 tests vs Deno's 17.
+1. **Node adapter has thin integration coverage** — 7 tests vs Deno's 17.
    Missing: crypto, cancellation, error classification, concurrent streams.
-3. **Deno adapter has no dedicated integration tests** — `smoke.test.ts` mixes
+2. **Deno adapter has no dedicated integration tests** — `smoke.test.ts` mixes
    smoke checks and integration tests. No error path or limit tests.
-4. **No static type checking for Python** — pyright/mypy is not in CI.
-5. **Rust core edge cases** — missing: mid-stream cancellation, pool exhaustion
+3. **Rust core edge cases** — missing: mid-stream cancellation, pool exhaustion
    under contention, malformed input rejection, zero-config boundary values.
-6. **Cross-runtime compliance not in CI** — `run.sh` exists but never runs
+4. **Cross-runtime compliance not in CI** — `run.sh` exists but never runs
    automatically.
-7. **No regression test policy** — closed issues leave no permanent test receipt.
+5. **No regression test policy** — closed issues leave no permanent test receipt.
 
 ---
 
@@ -65,7 +61,7 @@ each individual adapter.
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│  Static analysis (tsc, pyright, clippy)                │ ← Cheapest. Catches
+│  Static analysis (tsc, clippy)                        │ ← Cheapest. Catches
 │  Catches: type mismatches, missing exports, API drift  │   type-safety + api-surface
 ├────────────────────────────────────────────────────────┤
 │  Rust core tests (cargo test)                          │ ← Fast. Catches
@@ -84,10 +80,10 @@ each individual adapter.
 
 1. **Test where the bugs are.** FFI boundaries produce the most bugs → invest
    most in per-adapter integration tests.
-2. **Static analysis is free.** Add pyright to CI. tsc and clippy already gate.
+2. **Static analysis is free.** tsc and clippy already gate.
 3. **Cross-runtime is a smoke check, not a matrix.** One pair (node↔deno) in CI
    validates wire compatibility. Add pairs only when a wire bug motivates it.
-4. **Regression tests go in the right layer.** A Python FFI bug → pytest. A Rust
+4. **Regression tests go in the right layer.** A Rust
    config edge case → `cargo test`. A protocol behavior → `cases.json`. Never
    force a regression into the wrong layer.
 5. **Every fixed issue leaves a test.** But in the test suite that matches its
@@ -134,20 +130,6 @@ Add tests for:
 
 Target: ≥ 22 tests (currently 17).
 
-### 4.3 Python integration tests (`packages/iroh-http-py/tests/test_node.py`)
-
-Add tests for:
-- **Error on invalid input:** fetch with invalid node ID → raises
-- **Handler exception → 500:** `async def handler` that raises → client
-  gets status 500
-- **Large body round-trip:** 1 MiB POST body → echoed back correctly
-- **Concurrent requests:** 5 concurrent fetches, all correct
-- **Server limits:** body too large → appropriate error
-- **Session:** connect, bidi stream, send+recv (extend `test_session.py`)
-- **Context manager:** `async with create_node() as node:` → close is called
-
-Target: ≥ 25 tests (currently ~20).
-
 ### Verification
 
 Each adapter's test suite passes locally. No cross-runtime infrastructure
@@ -185,27 +167,7 @@ that config-default and architecture bugs emerge from.
 
 **Goal:** Type mismatches and missing exports are caught before any test runs.
 
-### 6.1 Add pyright to CI
-
-```yaml
-- name: Python type check
-  run: |
-    pip install pyright
-    cd packages/iroh-http-py && pyright iroh_http/
-```
-
-### 6.2 Add Python tests to CI
-
-```yaml
-- name: Python tests
-  run: |
-    cd packages/iroh-http-py
-    pip install maturin pytest pytest-asyncio
-    maturin develop
-    python -m pytest tests/ -v
-```
-
-### 6.3 Add Node compliance to CI
+### 6.1 Add Node compliance to CI
 
 The existing `compliance.mjs` (same-process, 12 cases) should run in CI alongside `e2e.mjs`:
 
@@ -214,11 +176,9 @@ The existing `compliance.mjs` (same-process, 12 cases) should run in CI alongsid
   run: node packages/iroh-http-node/test/compliance.mjs
 ```
 
-### 6.4 Gate cross-runtime (node↔deno only)
+### 6.2 Gate cross-runtime (node↔deno only)
 
-Add `run.sh` to CI with the existing two pairs only. No Python pairs needed —
-Python's FFI boundary is tested by pytest, and python↔node would not catch any
-wire bug that node↔deno doesn't already catch.
+Add `run.sh` to CI with the existing two pairs only.
 
 ```yaml
 - name: Cross-runtime compliance (node↔deno)
@@ -227,7 +187,7 @@ wire bug that node↔deno doesn't already catch.
 
 ### Verification
 
-CI pipeline: `rust-check` → `typescript-check` → `python-check` → `e2e` →
+CI pipeline: `rust-check` → `typescript-check` → `e2e` →
 `cross-runtime` (node↔deno only).
 
 ---
@@ -243,7 +203,7 @@ Add a `## Regression test` section:
 ```markdown
 ## Regression test
 
-- Layer: rust-core | node | deno | python | cross-runtime | type-check | N/A
+- Layer: rust-core | node | deno | cross-runtime | type-check | N/A
 - Test: `test name or file path`
 - Verified failing before fix: yes | N/A
 ```
@@ -256,9 +216,9 @@ Add:
 ## Issue Resolution Policy
 
 Every fixed issue must leave a regression test in the appropriate layer:
-- FFI boundary bugs → per-adapter integration test (e2e.mjs, smoke.test.ts, test_node.py)
+- FFI boundary bugs → per-adapter integration test (e2e.mjs, smoke.test.ts)
 - Rust core bugs → cargo test (integration.rs or new test file)
-- Type/export bugs → verified by tsc/pyright (no new test needed if CI gates it)
+- Type/export bugs → verified by tsc (no new test needed if CI gates it)
 - Protocol behavior → cases.json entry
 - Docs/build/config → N/A (document in issue)
 ```
@@ -322,14 +282,13 @@ to gate on). Phase 4 is a process change applied continuously.
 |---|---|---|
 | `packages/iroh-http-node/test/e2e.mjs` | 1 | Add ~8 integration tests |
 | `packages/iroh-http-deno/test/smoke.test.ts` | 1 | Add ~5 integration tests |
-| `packages/iroh-http-py/tests/test_node.py` | 1 | Add ~5 integration tests |
 | `crates/iroh-http-core/tests/integration.rs` | 2 | Add ~6 edge-case tests |
-| `.github/workflows/ci.yml` | 3 | Add pyright, pytest, compliance, cross-runtime jobs |
+| `.github/workflows/ci.yml` | 3 | Add compliance, cross-runtime jobs |
 | `docs/build-and-test.md` | 3 | Document new CI jobs |
 | `issues/_template.md` | 4 | Add `## Regression test` section |
 | `.github/copilot-instructions.md` | 4 | Add issue resolution policy |
 
-No new files needed except potentially a `pyright` config if needed.
+No new files needed.
 
 ---
 
@@ -339,8 +298,8 @@ No new files needed except potentially a `pyright` config if needed.
    limits, cancellation, and crypto.
 2. Rust core has edge-case tests for zero-value configs, mid-stream
    cancellation, pool exhaustion, and concurrent limits.
-3. CI gates on: `cargo test`, `cargo clippy`, `tsc`, `pyright`, Node e2e +
-   compliance, Deno smoke, Python pytest, cross-runtime node↔deno.
+3. CI gates on: `cargo test`, `cargo clippy`, `tsc`, Node e2e +
+   compliance, Deno smoke, cross-runtime node↔deno.
 4. `issues/_template.md` has a `## Regression test` section.
 5. A new FFI boundary bug is caught by per-adapter tests before it reaches
    cross-runtime — because the bug is in one adapter's type conversion, not

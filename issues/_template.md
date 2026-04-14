@@ -7,9 +7,9 @@ priority: P1
 # priority options: P0 (critical) | P1 (high) | P2 (medium) | P3 (low)
 date: YYYY-MM-DD
 area: core
-# area options: core | node | deno | tauri | python | docs | infra | protocol | testing
+# area options: core | node | deno | tauri | docs | infra | protocol | testing
 package: ""
-# package: iroh-http-core | iroh-http-discovery | iroh-http-node | iroh-http-deno | iroh-http-tauri | iroh-http-py | iroh-http-shared
+# package: iroh-http-core | iroh-http-discovery | iroh-http-node | iroh-http-deno | iroh-http-tauri | iroh-http-shared
 tags: []
 ---
 

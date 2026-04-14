@@ -1,7 +1,7 @@
 ---
 id: "TEST-003"
 title: "Python adapter: expand integration tests for error paths, limits, concurrency, and large bodies"
-status: fixed
+status: superseded
 priority: P1
 date: 2026-04-14
 area: python
@@ -9,9 +9,13 @@ package: "iroh-http-py"
 tags: [testing, integration, ffi-boundary, regression]
 ---
 
-# [TEST-003] Python adapter: expand integration tests for error paths, limits, concurrency, and large bodies
+# [TEST-003] Python adapter — SUPERSEDED
 
-## Summary
+> **Note:** The Python adapter was removed from the project (see
+> `issues/REMOVE-PYTHON.md`). This issue is no longer applicable.
+> Python support may be re-added in a future horizon.
+
+## Original Summary
 
 `packages/iroh-http-py/tests/test_node.py` has ~15 tests covering basic
 lifecycle and happy-path serve/fetch. The Python adapter had 9 FFI-boundary

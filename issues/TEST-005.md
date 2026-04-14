@@ -1,15 +1,19 @@
 ---
 id: "TEST-005"
-title: "CI: add Python tests, pyright, Node compliance, and cross-runtime gate"
+title: "CI: add Node compliance and cross-runtime gate"
 status: fixed
 priority: P1
 date: 2026-04-14
 area: infra
 package: ""
-tags: [testing, ci, python, type-checking, cross-runtime]
+tags: [testing, ci, type-checking, cross-runtime]
 ---
 
-# [TEST-005] CI: add Python tests, pyright, Node compliance, and cross-runtime gate
+# [TEST-005] CI: add Node compliance and cross-runtime gate
+
+> **Note:** Python tests and pyright were originally part of this issue but
+> the Python adapter has been removed. The remaining CI additions (Node
+> compliance, cross-runtime gate) are still in place.
 
 ## Summary
 

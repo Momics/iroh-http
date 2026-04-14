@@ -6,10 +6,6 @@ members = [
     "packages/iroh-http-node",
     "packages/iroh-http-deno",
 ]
-# iroh-http-py is excluded from the workspace: PyO3 cdylib extensions cannot be
-# built with plain `cargo build` on macOS (the linker rejects undefined Python
-# symbols in dylibs). Use `maturin build` or `maturin develop` inside
-# packages/iroh-http-py instead. See docs/build-and-test.md.
 
 [workspace.dependencies]
 iroh = { version = "0.96.1" }

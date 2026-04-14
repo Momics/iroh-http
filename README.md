@@ -94,18 +94,6 @@ const node = await createNode();
 node.serve({}, (req) => new Response("hello"));
 ```
 
-### Python
-
-```python
-import iroh_http
-
-node = iroh_http.create_node()
-print("Node ID:", node.node_id())
-
-res = node.fetch(remote_peer_id, "/hello")
-print(res.text())
-```
-
 ## Features
 
 - **Web-standard `fetch`/`serve` API** — uses standard `Request`/`Response` objects; works with existing routing and middleware libraries
@@ -115,7 +103,7 @@ print(res.text())
 - **AbortSignal** — cancel in-flight requests
 - **mDNS discovery** — find peers on the local network automatically
 - **Mobile lifecycle** — reconnect on app resume (Tauri)
-- **Multi-platform** — Node.js, Deno, Tauri (desktop + mobile), Python
+- **Multi-platform** — Node.js, Deno, Tauri (desktop + mobile)
 
 ## Architecture
 
@@ -126,7 +114,6 @@ iroh-http-shared (TS)       — shared Bridge interface + error types
 iroh-http-node (napi-rs)    — Node.js native addon
 iroh-http-tauri (Tauri v2)  — Tauri plugin
 iroh-http-deno (FFI)        — Deno native library
-iroh-http-py (PyO3)         — Python bindings
 ```
 
 See the [docs/](docs/) folder for architecture details and the [examples/](examples/) folder for runnable demos.

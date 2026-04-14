@@ -1,6 +1,6 @@
 # iroh-http
 
-Peer-to-peer HTTP over Iroh QUIC transport. Rust core + FFI adapters for Node.js, Deno, Tauri, and Python. Nodes addressed by Ed25519 public key, not DNS.
+Peer-to-peer HTTP over Iroh QUIC transport. Rust core + FFI adapters for Node.js, Deno, and Tauri. Nodes addressed by Ed25519 public key, not DNS.
 
 ## Context
 
@@ -15,7 +15,6 @@ Peer-to-peer HTTP over Iroh QUIC transport. Rust core + FFI adapters for Node.js
 
 - [Rust](../docs/guidelines/rust.md) — naming, visibility, error handling, async, testing for `iroh-http-core` and `iroh-http-discovery`.
 - [JavaScript / TypeScript](../docs/guidelines/javascript.md) — platform types, error classes, streaming, serve/fetch contracts for Node, Deno, Tauri adapters.
-- [Python](../docs/guidelines/python.md) — PyO3 conventions for `iroh-http-py`.
 - [Tauri](../docs/guidelines/tauri.md) — invoke commands, channels, plugin structure for `iroh-http-tauri`.
 
 ## Protocol & Wire Format
@@ -42,9 +41,9 @@ Peer-to-peer HTTP over Iroh QUIC transport. Rust core + FFI adapters for Node.js
 
 Every fixed issue must leave a regression test in the appropriate layer:
 
-- **FFI boundary bugs** → per-adapter integration test (`e2e.mjs`, `smoke.test.ts`, `test_node.py`)
+- **FFI boundary bugs** → per-adapter integration test (`e2e.mjs`, `smoke.test.ts`)
 - **Rust core bugs** → `cargo test` (in `integration.rs` or a new test file)
-- **Type/export bugs** → verified by `tsc`/`pyright` (no new test needed if CI gates it)
+- **Type/export bugs** → verified by `tsc` (no new test needed if CI gates it)
 - **Protocol behavior** → `cases.json` entry in `tests/http-compliance/`
 - **Docs/build/config** → N/A (document in the issue's `## Regression test` section)
 
