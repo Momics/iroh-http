@@ -95,6 +95,27 @@ Each adapter is a thin FFI shim — no logic, no state, just type translation:
 
 Adapters translate between platform types (e.g. `BigInt` ↔ `u64`) and call into iroh-http-core. They do not contain business logic. If an adapter needs something currently `pub(crate)` in core, it must be deliberately promoted and documented.
 
+#### Serve Callback Contract
+
+Core's `serve()` accepts an `on_request: Arc<dyn Fn(RequestPayload) + Send + Sync>` callback. Each adapter implements this differently to bridge into its platform runtime:
+
+| Adapter | Mechanism | Model |
+|---------|-----------|-------|
+| Node | `ThreadsafeFunction` | Push — callback into JS event loop |
+| Deno | `mpsc` queue + `nextRequest()` | Pull — JS polls for requests |
+| Tauri | Tauri `Channel` | Push — event emitted to frontend |
+| Python | PyO3 `future_into_py` | Push — callback into Python asyncio |
+
+**Behavioral guarantees of `on_request`:**
+
+1. Called exactly **once per accepted HTTP request** (one call per QUIC bi-stream).
+2. Called from a Tokio task — the callback must be `Send + Sync` and must not block the Tokio runtime.
+3. The callback receives a `RequestPayload` containing opaque handles; it does not own the underlying resources (those live in the core slab registries).
+4. If the callback is slow, the per-request timeout (`request_timeout_ms`) still applies — the hyper response channel will time out regardless of callback latency.
+5. The callback must not panic. A panic in a Tokio task aborts only that task, but the request will hang until the timeout fires.
+
+Each adapter is responsible for surfacing errors from its callback mechanism. The core does not observe whether the callback succeeded.
+
 ### iroh-http-shared (TypeScript)
 
 Shared TypeScript layer consumed by all JS/TS adapters:
