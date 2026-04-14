@@ -219,6 +219,16 @@ test("fetch — rejects http:// URL with TypeError", async () => {
 test("serve — handler throws synchronously → client gets 500", async () => {
   const server = await createNode();
   const client = await createNode();
+
+  // Capture the expected error log so it doesn't leak to test output.
+  const captured = [];
+  const origError = console.error;
+  console.error = (...args) => {
+    const msg = args.map(String).join(" ");
+    if (msg.includes("[iroh-http]")) captured.push(msg);
+    else origError(...args);
+  };
+
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     const ac = new AbortController();
@@ -230,8 +240,10 @@ test("serve — handler throws synchronously → client gets 500", async () => {
       directAddrs: serverAddrs,
     });
     assert.equal(resp.status, 500);
+    assert.ok(captured.some((m) => m.includes("handler blow-up")), "expected error log");
     ac.abort();
   } finally {
+    console.error = origError;
     await server.close();
     await client.close();
   }
@@ -240,6 +252,15 @@ test("serve — handler throws synchronously → client gets 500", async () => {
 test("serve — handler rejects async → client gets 500", async () => {
   const server = await createNode();
   const client = await createNode();
+
+  const captured = [];
+  const origError = console.error;
+  console.error = (...args) => {
+    const msg = args.map(String).join(" ");
+    if (msg.includes("[iroh-http]")) captured.push(msg);
+    else origError(...args);
+  };
+
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     const ac = new AbortController();
@@ -251,8 +272,10 @@ test("serve — handler rejects async → client gets 500", async () => {
       directAddrs: serverAddrs,
     });
     assert.equal(resp.status, 500);
+    assert.ok(captured.some((m) => m.includes("async handler blow-up")), "expected error log");
     ac.abort();
   } finally {
+    console.error = origError;
     await server.close();
     await client.close();
   }
