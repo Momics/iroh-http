@@ -509,10 +509,33 @@ impl IrohEndpoint {
             });
         }
 
+        // Enrich with QUIC connection-level stats if a pooled connection exists.
+        let (rtt_ms, bytes_sent, bytes_received, lost_packets, sent_packets, congestion_window) =
+            if let Some(pooled) = self.inner.pool.get_existing(pk, crate::ALPN).await {
+                let s = pooled.conn.stats();
+                let rtt = pooled.conn.rtt(iroh::endpoint::PathId::ZERO);
+                (
+                    rtt.map(|d| d.as_secs_f64() * 1000.0),
+                    Some(s.udp_tx.bytes),
+                    Some(s.udp_rx.bytes),
+                    None, // quinn path stats not exposed via iroh ConnectionStats
+                    None, // quinn path stats not exposed via iroh ConnectionStats
+                    None, // quinn path stats not exposed via iroh ConnectionStats
+                )
+            } else {
+                (None, None, None, None, None, None)
+            };
+
         Some(PeerStats {
             relay: has_active_relay,
             relay_url: active_relay_url,
             paths,
+            rtt_ms,
+            bytes_sent,
+            bytes_received,
+            lost_packets,
+            sent_packets,
+            congestion_window,
         })
     }
 }
@@ -547,6 +570,18 @@ pub struct PeerStats {
     pub relay_url: Option<String>,
     /// All known paths to this peer.
     pub paths: Vec<PathInfo>,
+    /// Round-trip time in milliseconds.  `None` if no active QUIC connection is pooled.
+    pub rtt_ms: Option<f64>,
+    /// Total UDP bytes sent to this peer.  `None` if no active QUIC connection is pooled.
+    pub bytes_sent: Option<u64>,
+    /// Total UDP bytes received from this peer.  `None` if no active QUIC connection is pooled.
+    pub bytes_received: Option<u64>,
+    /// Total packets lost on the QUIC path.  `None` if no active QUIC connection is pooled.
+    pub lost_packets: Option<u64>,
+    /// Total packets sent on the QUIC path.  `None` if no active QUIC connection is pooled.
+    pub sent_packets: Option<u64>,
+    /// Current congestion window in bytes.  `None` if no active QUIC connection is pooled.
+    pub congestion_window: Option<u64>,
 }
 
 /// Network path information for a single transport address.

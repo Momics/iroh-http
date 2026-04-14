@@ -112,6 +112,19 @@ impl ConnectionPool {
         }
     }
 
+    /// Return an existing live connection for `(node_id, alpn)` without
+    /// establishing a new one.  Returns `None` if the connection is not
+    /// cached or has been closed.
+    pub async fn get_existing(&self, node_id: PublicKey, alpn: &[u8]) -> Option<PooledConnection> {
+        let key = PoolKey { node_id, alpn: alpn.to_vec() };
+        let pooled = self.cache.get(&key).await?;
+        if pooled.conn.close_reason().is_none() {
+            Some((*pooled).clone())
+        } else {
+            None
+        }
+    }
+
     /// Number of live entries (for testing).
     #[cfg(test)]
     pub async fn len(&self) -> usize {
