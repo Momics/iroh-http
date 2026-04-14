@@ -638,6 +638,36 @@ export interface PeerStats {
   relayUrl: string | null;
   /** All known paths to this peer. */
   paths: PathInfo[];
+  /**
+   * Round-trip time in milliseconds (from the QUIC connection).
+   * `null` if no active QUIC connection is pooled (e.g. after a cold start).
+   */
+  rttMs: number | null;
+  /**
+   * Total UDP bytes sent to this peer since the connection was established.
+   * `null` if no active QUIC connection is pooled.
+   */
+  bytesSent: number | null;
+  /**
+   * Total UDP bytes received from this peer since the connection was established.
+   * `null` if no active QUIC connection is pooled.
+   */
+  bytesReceived: number | null;
+  /**
+   * Total QUIC packets lost on the active path.
+   * `null` if no active QUIC connection is pooled, or not exposed by transport.
+   */
+  lostPackets: number | null;
+  /**
+   * Total QUIC packets sent on the active path.
+   * `null` if no active QUIC connection is pooled, or not exposed by transport.
+   */
+  sentPackets: number | null;
+  /**
+   * Current QUIC congestion window in bytes.
+   * `null` if no active QUIC connection is pooled, or not exposed by transport.
+   */
+  congestionWindow: number | null;
 }
 
 /**
