@@ -793,6 +793,11 @@ impl IrohNode {
         // runtime managed by pyo3_async_runtimes (same one used for async fns).
         let rt = pyo3_async_runtimes::tokio::get_runtime();
 
+        // PY-011: Enter the runtime so tokio::spawn inside core serve() has a
+        // reactor context.  The guard is held across the serve() call and
+        // dropped immediately after.
+        let _guard = rt.enter();
+
         // PARITY-005: watch channel so callers can await serve loop termination.
         let (finished_tx, finished_rx) = tokio::sync::watch::channel(false);
 
