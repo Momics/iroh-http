@@ -1,25 +1,43 @@
 /**
  * PublicKey and SecretKey — typed wrappers around Ed25519 key material.
  *
- * Uses `@scure/base` for RFC 4648 base32 encoding and `crypto.subtle`
+ * Uses an inline RFC 4648 base32 codec and `crypto.subtle`
  * for Ed25519 signature verification (Node 18+, Deno, modern browsers).
  */
-
-import { base32 } from "@scure/base";
 
 // ── Base32 codec ──────────────────────────────────────────────────────────────
 //
 // Iroh node IDs are RFC 4648 base32 (a-z2-7, no padding, lowercase).
-// @scure/base's `base32` codec uses padding; we strip it on encode and re-add
-// it on decode so the library stays happy while wire format stays unpadded.
+// Implemented inline to avoid any external dependency.
 
-const base32Encode = (b: Uint8Array): string =>
-  base32.encode(b).replace(/=+$/, "").toLowerCase();
+const B32_ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const B32_LOOKUP = new Uint8Array(256).fill(0xff);
+for (let i = 0; i < B32_ALPHA.length; i++)
+  B32_LOOKUP[B32_ALPHA.charCodeAt(i)] = i;
+
+const base32Encode = (b: Uint8Array): string => {
+  let out = "", buf = 0, bits = 0;
+  for (const byte of b) {
+    buf = (buf << 8) | byte;
+    bits += 8;
+    while (bits >= 5) { bits -= 5; out += B32_ALPHA[(buf >> bits) & 0x1f]; }
+  }
+  if (bits > 0) out += B32_ALPHA[(buf << (5 - bits)) & 0x1f];
+  return out.toLowerCase();
+};
+
 const base32Decode = (s: string): Uint8Array => {
-  const upper = s.toUpperCase();
-  // RFC 4648 §6: base32 groups are 5 chars; pad to next multiple of 8.
-  const pad = (8 - (upper.length % 8)) % 8;
-  return base32.decode(upper + "=".repeat(pad));
+  const out: number[] = [];
+  let buf = 0, bits = 0;
+  for (const ch of s.toUpperCase()) {
+    if (ch === "=") break;
+    const val = B32_LOOKUP[ch.charCodeAt(0)];
+    if (val === 0xff) throw new Error(`Invalid base32 character: ${ch}`);
+    buf = (buf << 5) | val;
+    bits += 5;
+    if (bits >= 8) { bits -= 8; out.push((buf >> bits) & 0xff); }
+  }
+  return new Uint8Array(out);
 };
 
 // ── Web Crypto algorithm descriptor ──────────────────────────────────────────
