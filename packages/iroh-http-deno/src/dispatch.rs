@@ -1,7 +1,22 @@
 //! JSON-over-FFI dispatch.  Translates `(method, payload)` pairs into calls on
 //! `iroh-http-core` and returns a JSON-encoded `{"ok": T} | {"err": string}`.
 //!
-//! Every method listed in the patch spec is handled here.
+//! ## Why this file is large
+//!
+//! Deno FFI (`Deno.dlopen`) exposes a single C-ABI symbol (`iroh_http_call`).
+//! Every bridge method arrives as a UTF-8 method name + JSON payload, and the
+//! dispatch table below routes each to the appropriate `iroh-http-core` call.
+//! Unlike Node.js (napi-rs macros) or Tauri (typed commands), Deno has no
+//! code-generation layer that can auto-produce bindings — the match arms,
+//! JSON deserialization, and response serialization are all hand-maintained.
+//!
+//! The file is organised into logical sections (endpoint lifecycle, streaming,
+//! fetch/serve, keys, mDNS, sessions).  Each section is a thin shim that
+//! deserializes JSON, calls core, and re-serializes the result.  Endpoint
+//! slab management is centralised in `iroh_http_core::registry` (A-ISS-041).
+//!
+//! If a generated binding approach becomes viable for Deno FFI, this file
+//! should be replaced.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use bytes::Bytes;
