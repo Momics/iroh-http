@@ -1,7 +1,7 @@
 ---
 id: "TAURI-014"
 title: "Mobile mDNS advertise path omits peer identity metadata required by browse"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-13
 area: tauri
