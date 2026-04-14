@@ -37,7 +37,7 @@ function joinGroup(node: IrohNode, opts: {
     if (new URL(req.url).pathname !== path) {
       return new Response('Not Found', { status: 404 });
     }
-    const from = req.headers.get('iroh-node-id') ?? 'unknown';
+    const from = req.headers.get('Peer-Id') ?? 'unknown';
     const body = new Uint8Array(await req.arrayBuffer());
     writer.write({ from, body });
     return new Response(null, { status: 204 });

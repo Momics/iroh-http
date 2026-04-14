@@ -92,7 +92,7 @@ function retryAfterSeconds(bucket: Bucket): number {
 /**
  * Token-bucket rate limiting middleware.
  *
- * Reads the `iroh-node-id` header (injected by iroh-http on every request)
+ * Reads the `Peer-Id` header (injected by iroh-http on every request)
  * to identify the caller.  Maintains a per-peer token bucket in a `Map`.
  *
  * - Peers that exceed their limit receive **429 Too Many Requests** with a
@@ -118,7 +118,7 @@ export function rateLimit(options: RateLimitOptions): Middleware {
 
   return (handler: ServeHandler): ServeHandler =>
   (req: Request): Response | Promise<Response> => {
-    const nodeId = req.headers.get("iroh-node-id") ?? "";
+    const nodeId = req.headers.get("Peer-Id") ?? "";
 
     const peerConfig = forPeer ? forPeer(nodeId) : null;
 

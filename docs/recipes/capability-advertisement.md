@@ -192,7 +192,7 @@ node.serve({}, async (req) => {
       return new Response('Invalid signature', { status: 400 });
     }
     // Only the owner can update their own record
-    if (record.nodeId !== req.headers.get('iroh-node-id')) {
+    if (record.nodeId !== req.headers.get('Peer-Id')) {
       return new Response('Forbidden', { status: 403 });
     }
     registry.set(record.nodeId, record);

@@ -39,7 +39,7 @@ node.serve({}, rateLimit({
 })(handler));
 ```
 
-`rateLimit` reads the `iroh-node-id` header injected on every request and
+`rateLimit` reads the `Peer-Id` header injected on every request and
 maintains a per-peer token bucket in a `Map`. No native component — pure
 TypeScript.
 

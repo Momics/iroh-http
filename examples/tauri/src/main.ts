@@ -155,7 +155,7 @@ serveBtn.addEventListener("click", () => {
       acceptWebTransport?: () => { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> } | null;
     }).acceptWebTransport?.();
     if (wt) {
-      const peer = req.headers.get("iroh-node-id") ?? "?";
+      const peer = req.headers.get("peer-id") ?? "?";
       appendLog(serverLog, `WebTransport from ${peer.slice(0, 20)}… (echo mode)`);
       void (async () => {
         const reader = wt.readable.getReader();
@@ -175,7 +175,7 @@ serveBtn.addEventListener("click", () => {
     }
 
     const path = new URL(req.url).pathname;
-    const peer = req.headers.get("iroh-node-id") ?? "?";
+    const peer = req.headers.get("peer-id") ?? "?";
     appendLog(serverLog, `${req.method} ${path} ← ${peer.slice(0, 20)}…`);
     return new Response(`Hello from iroh-http! (${req.method} ${path})`, {
       headers: { "content-type": "text/plain" },

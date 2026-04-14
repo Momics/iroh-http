@@ -6,7 +6,7 @@ a relay. Physical proximity is a meaningful signal — no VPN, no allowlist.
 ## The insight
 
 iroh-http exposes how a connection was established: every request carries
-`iroh-node-id` (who) and the library knows whether the path was direct
+`Peer-Id` (who) and the library knows whether the path was direct
 (LAN/NAT traversal) or relayed (cloud relay server). A peer that is
 physically on the same network segment is far less likely to be an adversary
 than a random peer from the internet relay.
@@ -59,7 +59,7 @@ function requireTier(minimum: TrustTier): Middleware {
 ## mDNS allowlist fallback
 
 Until `iroh-path-type` is available, maintain a set of node IDs discovered
-via `node.browse()` and check the request's `iroh-node-id` against it:
+via `node.browse()` and check the request's `Peer-Id` against it:
 
 ```ts
 const lanPeers = new Set<string>();
@@ -72,7 +72,7 @@ async function trackLanPeers(node: IrohNode, signal: AbortSignal) {
 }
 
 function isLanPeer(req: Request): boolean {
-  const id = req.headers.get('iroh-node-id');
+  const id = req.headers.get('Peer-Id');
   return id != null && lanPeers.has(id);
 }
 

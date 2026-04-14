@@ -87,7 +87,7 @@ const pendingIntroductions: Introduction[] = [];
 node.serve({}, async (req) => {
   if (req.method === 'POST' && new URL(req.url).pathname === '/introduce') {
     const intro: Introduction = await req.json();
-    const senderNodeId = req.headers.get('iroh-node-id');
+    const senderNodeId = req.headers.get('Peer-Id');
 
     // Only accept introductions from peers you already know
     if (!knownPeers.has(senderNodeId ?? '')) {
@@ -219,7 +219,7 @@ async function rendezvous(
 **Protects against:**
 - Fake introductions (each link is signed by the actual key holder)
 - An attacker impersonating a known peer to make an introduction
-  (iroh-node-id on the connection is the introducer's verified key)
+  (Peer-Id on the connection is the introducer's verified key)
 
 **Does not protect against:**
 - A compromised introducer making legitimate-looking introductions to

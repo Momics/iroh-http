@@ -35,18 +35,18 @@
     "response": { "status": 200, "headers": { "x-reply": "pong" } }
   },
   {
-    "id": "iroh-node-id-present",
-    "description": "iroh-node-id header is injected and non-empty",
-    "request": { "method": "GET", "path": "/header/iroh-node-id", "headers": {}, "body": null },
+    "id": "peer-id-present",
+    "description": "peer-id header is injected and non-empty",
+    "request": { "method": "GET", "path": "/header/peer-id", "headers": {}, "body": null },
     "response": { "status": 200, "bodyNotEmpty": true }
   },
   {
-    "id": "iroh-node-id-not-spoofable",
-    "description": "Client-supplied iroh-node-id is stripped; the value reflects the real peer identity",
+    "id": "peer-id-not-spoofable",
+    "description": "Client-supplied peer-id is stripped; the value reflects the real peer identity",
     "request": {
       "method": "GET",
-      "path": "/header/iroh-node-id",
-      "headers": { "iroh-node-id": "SPOOFED" },
+      "path": "/header/peer-id",
+      "headers": { "peer-id": "SPOOFED" },
       "body": null
     },
     "response": { "status": 200, "bodyNot": "SPOOFED" }

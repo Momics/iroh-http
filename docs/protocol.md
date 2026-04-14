@@ -73,7 +73,7 @@ The version number changed from 1 to 2 when the wire format migrated from custom
 
 ### Request identity
 
-Every request carries the peer's authenticated identity from the QUIC connection. The header `iroh-node-id` is injected by the server-side framing layer (and any client-supplied `iroh-node-id` header is stripped for security). Handlers can trust `req.headers.get("iroh-node-id")` as the authenticated caller identity.
+Every request carries the peer's authenticated identity from the QUIC connection. The header `Peer-Id` is injected by the server-side framing layer (and any client-supplied `Peer-Id` header is stripped for security). Handlers can trust `req.headers.get("Peer-Id")` as the authenticated caller identity.
 
 ### Bidirectional streaming
 

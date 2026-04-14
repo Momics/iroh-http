@@ -72,7 +72,7 @@ Body streams are `ReadableStream<Uint8Array>`.
 
 See [`ServeHandler` in the specification](../specification.md#servehandler) for the canonical type.
 
-- The handler receives a standard `Request`. Authenticated peer identity is available as the `iroh-node-id` header.
+- The handler receives a standard `Request`. Authenticated peer identity is available as the `Peer-Id` header.
 - Request trailers: `(req as any).trailers: Promise<Headers>`.
 - Response trailers: sent exactly once via the bridge after the response head.
 - The `httpi:` scheme is normalised to `http:` before constructing `Request` so the WHATWG URL parser accepts it.

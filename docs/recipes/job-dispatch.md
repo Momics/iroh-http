@@ -266,7 +266,7 @@ See [webtransport](../features/webtransport.md) for the bidi stream API.
 Workers should only accept jobs from trusted clients. Options in increasing
 strictness:
 
-1. **Node ID allowlist** — check `iroh-node-id` header against known peers
+1. **Node ID allowlist** — check `Peer-Id` header against known peers
 2. **Capability token** — require a `requireToken()` middleware; see
    [capability-tokens.md](capability-tokens.md)
 3. **Attenuated chain** — scope tokens to specific job types; see
@@ -304,7 +304,7 @@ node.serve({}, compose(
 - A malicious worker returning incorrect results — verify outputs where
   possible (hash, re-run on a second worker)
 - Resource exhaustion by a trusted-but-buggy client — rate limit by node ID
-  (`iroh-node-id` header) using the pattern in
+  (`Peer-Id` header) using the pattern in
   [middleware.md](middleware.md)
 - Workers observing sensitive payloads — [sealed-messages.md](sealed-messages.md)
   shows how to encrypt payloads if workers shouldn't see the input

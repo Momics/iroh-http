@@ -321,17 +321,17 @@ test("PublicKey.fromString — round-trip via node publicKey", async () => {
   }
 });
 
-// ── Node ID header ────────────────────────────────────────────────────────────
+// ── Peer-Id header ────────────────────────────────────────────────────────────
 
-test("iroh-node-id header — present, valid base32, consistent", async () => {
+test("peer-id header — present, valid base32, consistent", async () => {
   const server = await createNode();
   const client = await createNode();
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     const ac = new AbortController();
     server.serve({ signal: ac.signal }, (req) => {
-      const nodeId = req.headers.get("iroh-node-id");
-      return new Response(nodeId || "", { status: 200 });
+      const peerId = req.headers.get("peer-id");
+      return new Response(peerId || "", { status: 200 });
     });
 
     const fetchOpts = { directAddrs: serverAddrs };
@@ -341,11 +341,11 @@ test("iroh-node-id header — present, valid base32, consistent", async () => {
     const id2 = await r2.text();
 
     // Present and non-empty.
-    assert.ok(id1.length >= 52, `iroh-node-id too short: ${id1.length}`);
+    assert.ok(id1.length >= 52, `peer-id too short: ${id1.length}`);
     // Valid base32: only a-z and 2-7.
-    assert.match(id1, /^[a-z2-7]+$/, `iroh-node-id should be base32: ${id1}`);
+    assert.match(id1, /^[a-z2-7]+$/, `peer-id should be base32: ${id1}`);
     // Consistent across requests.
-    assert.equal(id1, id2, "iroh-node-id should be consistent");
+    assert.equal(id1, id2, "peer-id should be consistent");
     ac.abort();
   } finally {
     await server.close();

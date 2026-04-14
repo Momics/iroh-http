@@ -38,7 +38,7 @@ function rateLimit(opts: { requestsPerSecond: number; burst?: number }): Middlew
   const burst = opts.burst ?? opts.requestsPerSecond;
 
   return (next) => (req) => {
-    const peer = req.headers.get('iroh-node-id') ?? '';
+    const peer = req.headers.get('Peer-Id') ?? '';
     const now = Date.now() / 1000;
     let b = buckets.get(peer) ?? { tokens: burst, last: now };
     b.tokens = Math.min(burst, b.tokens + (now - b.last) * opts.requestsPerSecond);
@@ -58,7 +58,7 @@ function rateLimit(opts: { requestsPerSecond: number; burst?: number }): Middlew
 }
 ```
 
-`iroh-node-id` is injected by the Rust layer on every request — it is the
+`Peer-Id` is injected by the Rust layer on every request — it is the
 peer's verified Ed25519 public key, not spoofable. No additional auth needed
 to identify the caller for rate limiting purposes.
 
@@ -69,7 +69,7 @@ function logger(): Middleware {
   return (next) => async (req) => {
     const start = Date.now();
     const res = await next(req);
-    const peer = req.headers.get('iroh-node-id')?.slice(0, 8) ?? '?';
+    const peer = req.headers.get('Peer-Id')?.slice(0, 8) ?? '?';
     console.log(`${req.method} ${new URL(req.url).pathname} ${res.status} ${Date.now() - start}ms [${peer}]`);
     return res;
   };

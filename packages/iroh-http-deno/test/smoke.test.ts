@@ -446,9 +446,9 @@ Deno.test("SecretKey — re-exported from mod.ts, toBytes round-trip", async () 
   }
 });
 
-// ── iroh-node-id header ───────────────────────────────────────────────────────
+// ── peer-id header ───────────────────────────────────────────────────────────
 
-Deno.test({ name: "iroh-node-id header — present and consistent", sanitizeOps: false }, () => withTimeout(20_000, async () => {
+Deno.test({ name: "peer-id header — present and consistent", sanitizeOps: false }, () => withTimeout(20_000, async () => {
   const server = await createNode({ bindAddr: "127.0.0.1:0" });
   const client = await createNode({ bindAddr: "127.0.0.1:0" });
   const ac = new AbortController();
@@ -457,8 +457,8 @@ Deno.test({ name: "iroh-node-id header — present and consistent", sanitizeOps:
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     handle = server.serve({ signal: ac.signal }, (req: Request) => {
-      const nodeId = req.headers.get("iroh-node-id");
-      return new Response(nodeId || "", { status: 200 });
+      const peerId = req.headers.get("peer-id");
+      return new Response(peerId || "", { status: 200 });
     });
 
     const fetchOpts = { directAddrs: serverAddrs };
@@ -467,8 +467,8 @@ Deno.test({ name: "iroh-node-id header — present and consistent", sanitizeOps:
     const r2 = await client.fetch(serverId, "httpi://example.com/2", fetchOpts);
     const id2 = await r2.text();
 
-    assert(id1.length >= 52, `iroh-node-id too short: ${id1.length}`);
-    assertEquals(id1, id2, "iroh-node-id must be consistent across requests");
+    assert(id1.length >= 52, `peer-id too short: ${id1.length}`);
+    assertEquals(id1, id2, "peer-id must be consistent across requests");
   } finally {
     ac.abort();
     await server.close();

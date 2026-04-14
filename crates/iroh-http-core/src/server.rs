@@ -206,15 +206,15 @@ impl RequestService {
             .map(|p| p.as_str())
             .unwrap_or("/")
             .to_string();
-        // Strip any client-supplied iroh-node-id to prevent spoofing,
+        // Strip any client-supplied peer-id to prevent spoofing,
         // then inject the authenticated identity from the QUIC connection.
         let req_headers: Vec<(String, String)> = req
             .headers()
             .iter()
-            .filter(|(k, _)| !k.as_str().eq_ignore_ascii_case("iroh-node-id"))
+            .filter(|(k, _)| !k.as_str().eq_ignore_ascii_case("peer-id"))
             .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
             .chain(std::iter::once((
-                "iroh-node-id".to_string(),
+                "peer-id".to_string(),
                 remote_node_id.clone(),
             )))
             .collect();

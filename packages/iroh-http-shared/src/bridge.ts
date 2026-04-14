@@ -50,7 +50,7 @@ export interface Bridge {
 
 /**
  * Raw request data as it crosses the FFI boundary.
- * The `iroh-node-id` header has already been stripped by the Rust layer.
+ * The `Peer-Id` header has already been stripped by the Rust layer.
  */
 export interface FfiRequest {
   /** HTTP method, e.g. `"GET"`. */
@@ -397,7 +397,7 @@ export interface IrohFetchInit extends RequestInit {
  * @example Serve requests:
  * ```ts
  * const server = node.serve((req) => {
- *   const peer = req.headers.get('iroh-node-id');
+ *   const peer = req.headers.get('Peer-Id');
  *   return Response.json({ hello: peer });
  * });
  * await server.finished;

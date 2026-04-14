@@ -46,7 +46,7 @@ Add the following tests to `e2e.mjs`:
    handler → throws `AbortError`
 5. **Server limits:** create node with `maxRequestBodyBytes: 100`, POST 1 KiB
    body → 413 response
-6. **Node ID header:** `iroh-node-id` header is present, valid base32 (≥52
+6. **Node ID header:** `peer-id` header is present, valid base32 (≥52
    chars), and consistent across two sequential requests
 7. **Handle lifecycle:** `node.close()` twice does not throw; close during
    active serve completes gracefully
