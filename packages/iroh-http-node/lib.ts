@@ -59,6 +59,7 @@ import {
   classifyBindError,
   type DiscoveryFunctions,
   type IrohNode,
+  type IrohRequest,
   type NodeAddrInfo,
   type NodeOptions,
   normaliseRelayMode,
@@ -298,6 +299,7 @@ const nodeSessionFns: RawSessionFns = {
  * @param options Optional configuration.  Omit `key` to generate a fresh identity.
  */
 export { PublicKey, SecretKey } from "@momics/iroh-http-shared";
+export type { IrohNode, IrohRequest, NodeOptions };
 
 export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   const keyBytes = options?.key

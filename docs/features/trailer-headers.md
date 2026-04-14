@@ -11,18 +11,20 @@ iroh-http supports trailers on both request and response, exposed as a non-stand
 ### Reading request trailers (in a serve handler)
 
 ```ts
-node.serve({}, async (req) => {
+import type { IrohRequest } from "@momics/iroh-http-deno"; // or iroh-http-node
+
+node.serve({}, async (req: IrohRequest) => {
   const body = await req.text();
 
-  // req.trailers is a Promise<Headers> that resolves once the body is consumed.
+  // req.trailers is a Promise<Headers | null> that resolves once the body is consumed.
   const trailers = await req.trailers;
-  const checksum = trailers.get('x-body-checksum');
+  const checksum = trailers?.get('x-body-checksum');
 
   return new Response('ok');
 });
 ```
 
-`req.trailers` is a `Promise<Headers>`. It resolves to an empty `Headers` object when the sender sent no trailers.
+`req.trailers` is typed as `Promise<Headers | null>`. It resolves to `null` when the sender sent no trailers. Cast the handler argument to `IrohRequest` (or use `as any`) to access the property without TypeScript errors.
 
 ### Sending response trailers (in a serve handler)
 
@@ -44,7 +46,7 @@ const res = await node.fetch(peer, '/stream');
 const body = await res.text();
 
 // res.trailers resolves once the body is fully consumed.
-const trailers = await (res as any).trailers;
+const trailers = await (res as any).trailers as Headers | null;
 const checksum = trailers?.get('x-body-checksum');
 ```
 
