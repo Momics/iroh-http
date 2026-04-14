@@ -1,7 +1,7 @@
 ---
 id: "B-ISS-041"
 title: "debugHeaders option documented but not implemented"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-13
 area: docs
