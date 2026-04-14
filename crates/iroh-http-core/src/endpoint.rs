@@ -12,7 +12,7 @@ use crate::server::ServeHandle;
 use crate::{ALPN, ALPN_DUPLEX};
 
 /// Configuration passed to [`IrohEndpoint::bind`].
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct NodeOptions {
     // ── Identity ────────────────────────────────────────────────────────────
     /// 32-byte Ed25519 secret key.  Generate a fresh one when `None`.
@@ -105,6 +105,40 @@ pub struct CompressionOptions {
     pub level: Option<u32>,
 }
 
+impl Default for NodeOptions {
+    fn default() -> Self {
+        Self {
+            key: None,
+            relay_mode: None,
+            relays: Vec::new(),
+            bind_addrs: Vec::new(),
+            idle_timeout_ms: None,
+            dns_discovery: None,
+            dns_discovery_enabled: true,
+            capabilities: Vec::new(),
+            proxy_url: None,
+            proxy_from_env: false,
+            keylog: false,
+            channel_capacity: None,
+            max_chunk_size_bytes: None,
+            max_consecutive_errors: None,
+            disable_networking: false,
+            drain_timeout_ms: None,
+            handle_ttl_ms: None,
+            max_pooled_connections: None,
+            pool_idle_timeout_ms: None,
+            max_header_size: None,
+            max_concurrency: None,
+            max_connections_per_peer: None,
+            request_timeout_ms: None,
+            max_request_body_bytes: None,
+            drain_timeout_secs: None,
+            #[cfg(feature = "compression")]
+            compression: None,
+        }
+    }
+}
+
 /// A shared Iroh endpoint.
 ///
 /// Clone-able (cheap Arc clone).  All fetch and serve calls on the same node
@@ -122,7 +156,7 @@ pub(crate) struct EndpointInner {
     pub max_consecutive_errors: usize,
     /// Connection pool for reusing QUIC connections across fetch/connect calls.
     pub pool: ConnectionPool,
-    /// Maximum byte size of a QPACK-encoded head (request or response).
+    /// Maximum byte size of an HTTP/1.1 head (request or response).
     pub max_header_size: usize,
     /// Maximum simultaneous in-flight requests.
     pub max_concurrency: Option<usize>,
@@ -398,7 +432,7 @@ impl IrohEndpoint {
         self.inner.endpoint_idx
     }
 
-    /// Maximum byte size of a QPACK-encoded head.
+    /// Maximum byte size of an HTTP/1.1 head.
     pub fn max_header_size(&self) -> usize {
         self.inner.max_header_size
     }

@@ -1094,7 +1094,7 @@ async fn header_bomb_rejected() {
     );
 
 
-    // Build headers that exceed 256 bytes when QPACK-encoded.
+    // Build headers that exceed 256 bytes when serialized.
     let big_value = "X".repeat(300);
     let headers = vec![("x-big".to_string(), big_value)];
 
