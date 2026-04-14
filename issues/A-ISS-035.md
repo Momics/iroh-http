@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-035"
 title: "Zero channel capacity can panic body channel creation"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-13
 area: core

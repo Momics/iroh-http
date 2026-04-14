@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-034"
 title: "Zero max_chunk_size can hang send_chunk"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-13
 area: core
