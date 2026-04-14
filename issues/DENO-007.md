@@ -1,7 +1,7 @@
 ---
 id: "DENO-007"
 title: "Output-buffer resize path replays FFI methods and can duplicate side effects"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-13
 area: deno
