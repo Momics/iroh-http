@@ -5,6 +5,7 @@
     "examples/deno",
     "tests/http-compliance"
   ],
+  "nodeModulesDir": "none",
   "unstable": ["sloppy-imports"],
   "exclude": [
     "workspace/old_references",
