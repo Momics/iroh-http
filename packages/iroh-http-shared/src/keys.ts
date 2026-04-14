@@ -28,6 +28,21 @@ const ED25519: EcKeyAlgorithm = {
   name: "Ed25519",
 } as unknown as EcKeyAlgorithm;
 
+// ── PKCS8 helper ─────────────────────────────────────────────────────────────
+
+/** DER-encoded PKCS8 prefix for an Ed25519 private key (RFC 8410). */
+const ED25519_PKCS8_PREFIX = new Uint8Array([
+  0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
+  0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+]);
+
+/** Wrap a 32-byte Ed25519 seed in PKCS8 DER encoding for Web Crypto import. */
+function ed25519Pkcs8(seed: Uint8Array): ArrayBuffer {
+  const buf = new Uint8Array(ED25519_PKCS8_PREFIX.length + 32);
+  buf.set(ED25519_PKCS8_PREFIX);
+  buf.set(seed, ED25519_PKCS8_PREFIX.length);
+  return buf.buffer;
+}
 // ── PublicKey ─────────────────────────────────────────────────────────────────
 
 /**
@@ -210,35 +225,19 @@ export class SecretKey {
    */
   async derivePublicKey(): Promise<PublicKey> {
     if (this.#publicKey !== null) return this.#publicKey;
-    // Web Crypto does not support raw Ed25519 key derivation directly.
-    // We use the JWK format to import the private key and export the public half.
-    const jwk: JsonWebKey = {
-      kty: "OKP",
-      crv: "Ed25519",
-      d: btoa(String.fromCharCode(...this.#bytes)).replace(/\+/g, "-").replace(
-        /\//g,
-        "_",
-      ).replace(/=+$/, ""),
-      key_ops: ["sign"],
-    };
-    const cryptoKey = await crypto.subtle.importKey("jwk", jwk, ED25519, true, [
-      "sign",
-    ]);
-    const pubJwk = await crypto.subtle.exportKey(
-      "jwk",
-      await crypto.subtle.importKey(
-        "jwk",
-        { ...jwk, d: undefined, key_ops: ["verify"] },
-        ED25519,
-        true,
-        ["verify"],
-      ),
+    // Import via PKCS8 (works on Node, Deno, browsers — JWK without `x` fails on Node).
+    const cryptoKey = await crypto.subtle.importKey(
+      "pkcs8",
+      ed25519Pkcs8(this.#bytes),
+      ED25519,
+      true,
+      ["sign"],
     );
+    const pubJwk = await crypto.subtle.exportKey("jwk", cryptoKey);
     const pubBytes = Uint8Array.from(
       atob((pubJwk.x as string).replace(/-/g, "+").replace(/_/g, "/")),
       (c) => c.charCodeAt(0),
     );
-    void cryptoKey; // used above for type narrowing
     this.#publicKey = PublicKey.fromBytes(pubBytes);
     return this.#publicKey;
   }
@@ -248,18 +247,9 @@ export class SecretKey {
    * Returns a 64-byte signature.
    */
   async sign(data: Uint8Array): Promise<Uint8Array> {
-    const jwk: JsonWebKey = {
-      kty: "OKP",
-      crv: "Ed25519",
-      d: btoa(String.fromCharCode(...this.#bytes)).replace(/\+/g, "-").replace(
-        /\//g,
-        "_",
-      ).replace(/=+$/, ""),
-      key_ops: ["sign"],
-    };
     const cryptoKey = await crypto.subtle.importKey(
-      "jwk",
-      jwk,
+      "pkcs8",
+      ed25519Pkcs8(this.#bytes),
       ED25519,
       false,
       ["sign"],
