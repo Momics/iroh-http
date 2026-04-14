@@ -254,7 +254,7 @@ async fn close_endpoint(p: Value) -> Value {
     let force = p["force"].as_bool().unwrap_or(false);
     serve_registry::remove(handle);
     match remove_endpoint(handle) {
-        None => err(format!("invalid endpoint handle: {handle}")),
+        None => err_code("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
         Some(ep) => {
             if force {
                 ep.close_force().await;
@@ -274,7 +274,7 @@ fn node_addr_dispatch(p: Value) -> Value {
         None => return err("missing endpointHandle"),
     };
     match get_endpoint(handle) {
-        None => err(format!("invalid endpoint handle: {handle}")),
+        None => err_code("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
         Some(ep) => {
             let info = ep.node_addr();
             ok(json!({ "id": info.id, "addrs": info.addrs }))
@@ -288,7 +288,7 @@ fn node_ticket_dispatch(p: Value) -> Value {
         None => return err("missing endpointHandle"),
     };
     match get_endpoint(handle) {
-        None => err(format!("invalid endpoint handle: {handle}")),
+        None => err_code("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
         Some(ep) => ok(iroh_http_core::node_ticket(&ep)),
     }
 }
@@ -299,7 +299,7 @@ fn home_relay_dispatch(p: Value) -> Value {
         None => return err("missing endpointHandle"),
     };
     match get_endpoint(handle) {
-        None => err(format!("invalid endpoint handle: {handle}")),
+        None => err_code("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
         Some(ep) => ok(ep.home_relay()),
     }
 }
@@ -314,7 +314,7 @@ async fn peer_info_dispatch(p: Value) -> Value {
         None => return err("missing nodeId"),
     };
     match get_endpoint(handle) {
-        None => err(format!("invalid endpoint handle: {handle}")),
+        None => err_code("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
         Some(ep) => ok(ep
             .peer_info(node_id)
             .await
@@ -332,7 +332,7 @@ async fn peer_stats_dispatch(p: Value) -> Value {
         None => return err("missing nodeId"),
     };
     match get_endpoint(handle) {
-        None => err(format!("invalid endpoint handle: {handle}")),
+        None => err_code("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
         Some(ep) => ok(ep.peer_stats(node_id).await),
     }
 }
@@ -478,7 +478,7 @@ async fn raw_fetch(p: Value) -> Value {
     };
     let ep = match get_endpoint(args.endpoint_handle) {
         Some(e) => e,
-        None => return err(format!("invalid endpoint handle: {}", args.endpoint_handle)),
+        None => return err_code("INVALID_HANDLE", format!("node closed or not found (handle {})", args.endpoint_handle)),
     };
     let pairs: Vec<(String, String)> = args
         .headers
@@ -541,7 +541,7 @@ async fn raw_connect_dispatch(p: Value) -> Value {
     };
     let ep = match get_endpoint(args.endpoint_handle) {
         Some(e) => e,
-        None => return err(format!("invalid endpoint handle: {}", args.endpoint_handle)),
+        None => return err_code("INVALID_HANDLE", format!("node closed or not found (handle {})", args.endpoint_handle)),
     };
     let pairs: Vec<(String, String)> = args
         .headers
@@ -569,7 +569,7 @@ async fn serve_start(p: Value) -> Value {
     };
     let ep = match get_endpoint(handle) {
         Some(e) => e,
-        None => return err(format!("invalid endpoint handle: {handle}")),
+        None => return err_code("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
     };
 
     let queue = serve_registry::register(handle);
@@ -623,7 +623,7 @@ async fn stop_serve(p: Value) -> Value {
     };
     let ep = match get_endpoint(handle) {
         Some(e) => e,
-        None => return err(format!("invalid endpoint handle: {handle}")),
+        None => return err_code("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
     };
     ep.stop_serve();
     // DENO-002: drop the registry entry so the tx inside ServeQueue is freed.
@@ -784,7 +784,7 @@ async fn mdns_browse_dispatch(p: Value) -> Value {
     {
         let ep = match get_endpoint(handle) {
             Some(ep) => ep,
-            None => return err(format!("invalid endpoint handle: {handle}")),
+            None => return err_code("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
         };
         match iroh_http_discovery::start_browse(ep.raw(), service_name).await {
             Err(e) => err_code("REFUSED", e),
@@ -854,7 +854,7 @@ fn mdns_advertise_dispatch(p: Value) -> Value {
     {
         let ep = match get_endpoint(handle) {
             Some(ep) => ep,
-            None => return err(format!("invalid endpoint handle: {handle}")),
+            None => return err_code("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
         };
         match iroh_http_discovery::start_advertise(ep.raw(), service_name) {
             Err(e) => err_code("REFUSED", e),
@@ -900,7 +900,7 @@ async fn session_connect_dispatch(p: Value) -> Value {
     };
     let ep = match get_endpoint(args.endpoint_handle) {
         Some(e) => e,
-        None => return err(format!("invalid endpoint handle: {}", args.endpoint_handle)),
+        None => return err_code("INVALID_HANDLE", format!("node closed or not found (handle {})", args.endpoint_handle)),
     };
     let addrs = match parse_direct_addrs(&args.direct_addrs) {
         Ok(a) => a,
