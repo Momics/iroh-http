@@ -61,6 +61,7 @@ import {
   type IrohNode,
   type NodeAddrInfo,
   type NodeOptions,
+  normaliseRelayMode,
   type SecretKey,
 } from "@momics/iroh-http-shared";
 import type {
@@ -193,37 +194,6 @@ const rawConnect: RawConnectFn = async (
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
-
-/** Normalise `relayMode` into flat fields for the Rust adapter. */
-function normaliseRelayMode(
-  mode?: import("@momics/iroh-http-shared").RelayMode,
-): {
-  relayMode: string | undefined;
-  relays: string[] | undefined;
-  disableNetworking: boolean;
-} {
-  if (mode === "disabled") {
-    return { relayMode: "disabled", relays: [], disableNetworking: true };
-  }
-  if (mode === "default" || mode === undefined) {
-    return {
-      relayMode: undefined,
-      relays: undefined,
-      disableNetworking: false,
-    };
-  }
-  if (mode === "staging") {
-    return {
-      relayMode: "staging",
-      relays: undefined,
-      disableNetworking: false,
-    };
-  }
-  if (Array.isArray(mode)) {
-    return { relayMode: "custom", relays: mode, disableNetworking: false };
-  }
-  return { relayMode: "custom", relays: [mode], disableNetworking: false };
-}
 
 /** Normalise the `discovery` option into flat fields for the Rust adapter. */
 function normaliseDiscovery(disc?: NodeOptions["discovery"]): {

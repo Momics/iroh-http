@@ -25,7 +25,7 @@ import type {
   RequestPayload,
   RawSessionFns,
 } from "@momics/iroh-http-shared/adapter";
-import { classifyError, classifyBindError } from "@momics/iroh-http-shared";
+import { classifyError, classifyBindError, encodeBase64, decodeBase64, normaliseRelayMode } from "@momics/iroh-http-shared";
 import type {
   AddrFunctions,
   DiscoveryFunctions,
@@ -70,22 +70,7 @@ const lib = Deno.dlopen(LIB_PATH, {
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
-// ── Base64 helpers ─────────────────────────────────────────────────────
 
-function encodeBase64(u8: Uint8Array): string {
-  const CHUNK = 0x8000; // 32 KB — safe for String.fromCharCode spread
-  const parts: string[] = [];
-  for (let i = 0; i < u8.length; i += CHUNK)
-    parts.push(String.fromCharCode(...u8.subarray(i, i + CHUNK)));
-  return btoa(parts.join(""));
-}
-
-function decodeBase64(s: string): Uint8Array {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
 /**
  * Capacity hint for per-call output buffers.  Each call allocates its own
  * buffer of this size so concurrent `nonblocking` FFI calls never alias the
@@ -378,25 +363,6 @@ export const allocBodyWriter: AllocBodyWriterFn = () =>
   call<{ handle: number }>("allocBodyWriter", {}).then((r) => BigInt(r.handle));
 
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
-
-/** Normalise `relayMode` into flat fields for the Rust adapter. */
-function normaliseRelayMode(
-  mode?: import("@momics/iroh-http-shared").RelayMode,
-): {
-  relayMode: string | undefined;
-  relays: string[] | null;
-  disableNetworking: boolean;
-} {
-  if (mode === "disabled")
-    return { relayMode: "disabled", relays: [], disableNetworking: true };
-  if (mode === "default" || mode === undefined)
-    return { relayMode: undefined, relays: null, disableNetworking: false };
-  if (mode === "staging")
-    return { relayMode: "staging", relays: null, disableNetworking: false };
-  if (Array.isArray(mode))
-    return { relayMode: "custom", relays: mode, disableNetworking: false };
-  return { relayMode: "custom", relays: [mode], disableNetworking: false };
-}
 
 /** Normalise the `discovery` option into flat fields for the Rust adapter. */
 function normaliseDiscovery(

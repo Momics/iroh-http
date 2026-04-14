@@ -47,6 +47,12 @@ export {
   IrohProtocolError,
   IrohStreamError,
 } from "./errors.js";
+export {
+  decodeBase64,
+  encodeBase64,
+  normaliseRelayMode,
+} from "./utils.js";
+export type { NormalisedRelay } from "./utils.js";
 
 /**
  * Extract the node ID from a ticket string without network I/O.

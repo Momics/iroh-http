@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-042"
 title: "normaliseRelayMode and base64 helpers duplicated across JS/TS adapters"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-14
 area: core
