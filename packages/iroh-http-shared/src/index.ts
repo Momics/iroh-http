@@ -12,6 +12,7 @@ export type {
   EndpointInfo,
   IrohFetchInit,
   IrohNode,
+  IrohRequest,
   NodeAddrInfo,
   NodeOptions,
   PathInfo,

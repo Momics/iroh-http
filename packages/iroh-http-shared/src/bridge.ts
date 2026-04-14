@@ -365,6 +365,32 @@ export interface NodeOptions {
 }
 
 /**
+ * An incoming `Request` delivered to a `serve` handler, augmented with
+ * iroh-http-specific properties.
+ *
+ * Use this type instead of the plain `Request` when you need to access trailer
+ * headers or other iroh-http extensions:
+ *
+ * ```ts
+ * import type { IrohRequest } from "@momics/iroh-http-shared";
+ *
+ * node.serve({}, async (req: IrohRequest) => {
+ *   const peer = req.headers.get('Peer-Id');
+ *   const trailers = await req.trailers;        // null if none were sent
+ *   const checksum = trailers?.get('x-checksum');
+ *   return Response.json({ peer, checksum });
+ * });
+ * ```
+ */
+export interface IrohRequest extends Request {
+  /**
+   * A promise that resolves to the request trailer headers once the request
+   * body has been fully consumed, or `null` if no trailers were sent.
+   */
+  trailers: Promise<Headers | null>;
+}
+
+/**
  * Extended `RequestInit` for iroh-http fetch.
  *
  * Adds iroh-specific options alongside the standard web fetch init.
