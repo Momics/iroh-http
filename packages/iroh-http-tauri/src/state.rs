@@ -1,35 +1,23 @@
 //! Global state managed by the Tauri plugin.
 
-use std::sync::{Mutex, OnceLock};
-
 use iroh_http_core::{
     endpoint::IrohEndpoint,
+    registry,
     stream::{alloc_body_writer, store_pending_reader},
 };
-use slab::Slab;
 
-// ── Endpoint slab ─────────────────────────────────────────────────────────────
-
-fn endpoint_slab() -> &'static Mutex<Slab<IrohEndpoint>> {
-    static S: OnceLock<Mutex<Slab<IrohEndpoint>>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(Slab::new()))
-}
+// ── Endpoint slab (delegates to core registry) ───────────────────────────────
 
 pub fn insert_endpoint(ep: IrohEndpoint) -> u64 {
-    endpoint_slab().lock().unwrap().insert(ep) as u64
+    registry::insert_endpoint(ep)
 }
 
 pub fn get_endpoint(handle: u64) -> Option<IrohEndpoint> {
-    endpoint_slab().lock().unwrap().get(handle as usize).cloned()
+    registry::get_endpoint(handle)
 }
 
 pub fn remove_endpoint(handle: u64) -> Option<IrohEndpoint> {
-    let mut slab = endpoint_slab().lock().unwrap();
-    if slab.contains(handle as usize) {
-        Some(slab.remove(handle as usize))
-    } else {
-        None
-    }
+    registry::remove_endpoint(handle)
 }
 
 // Re-export stream helpers so commands.rs has a single import path.
