@@ -1,7 +1,7 @@
 ---
 id: "NODE-005"
 title: "Node package uses unbounded @momics/iroh-http-shared dependency range"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-13
 area: node
