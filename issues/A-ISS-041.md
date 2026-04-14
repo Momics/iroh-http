@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-041"
 title: "Endpoint slab management triplicated across Node, Deno, and Tauri adapters"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-14
 area: core

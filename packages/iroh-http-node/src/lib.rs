@@ -6,12 +6,15 @@
 
 #![deny(clippy::all)]
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
+#[cfg(feature = "discovery")]
+use std::sync::{Mutex, OnceLock};
 
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
     parse_direct_addrs,
+    registry,
     server::respond,
     stream::{
         alloc_body_writer, cancel_reader, claim_pending_reader, finish_body, next_chunk,
@@ -25,25 +28,16 @@ use napi::{
     JsFunction,
 };
 use napi_derive::napi;
-use slab::Slab;
 
+#[cfg(feature = "discovery")]
+use slab::Slab;
 #[cfg(feature = "discovery")]
 use tokio::sync::Mutex as TokioMutex;
 
-// ── Endpoint slab ─────────────────────────────────────────────────────────────
-
-fn endpoint_slab() -> &'static Mutex<Slab<IrohEndpoint>> {
-    static S: OnceLock<Mutex<Slab<IrohEndpoint>>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(Slab::new()))
-}
-
-fn insert_endpoint(ep: IrohEndpoint) -> u32 {
-    endpoint_slab().lock().unwrap().insert(ep) as u32
-}
+// ── Endpoint helpers ──────────────────────────────────────────────────────────
 
 fn get_endpoint(handle: u32) -> napi::Result<IrohEndpoint> {
-    let slab = endpoint_slab().lock().unwrap();
-    slab.get(handle as usize).cloned().ok_or_else(|| {
+    registry::get_endpoint(handle as u64).ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
             iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {handle}")),
@@ -211,7 +205,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
 
     let node_id = ep.node_id().to_string();
     let keypair = ep.secret_key_bytes().to_vec();
-    let handle = insert_endpoint(ep);
+    let handle = registry::insert_endpoint(ep) as u32;
 
     Ok(JsEndpointInfo {
         endpoint_handle: handle,
@@ -226,16 +220,13 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
 /// requests.  Otherwise performs a graceful shutdown.
 #[napi]
 pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> napi::Result<()> {
-    let ep = {
-        let mut slab = endpoint_slab().lock().unwrap();
-        if !slab.contains(endpoint_handle as usize) {
-            return Err(napi::Error::new(
+    let ep = registry::remove_endpoint(endpoint_handle as u64)
+        .ok_or_else(|| {
+            napi::Error::new(
                 Status::InvalidArg,
                 iroh_http_core::format_error_json("INVALID_HANDLE", "invalid endpoint handle"),
-            ));
-        }
-        slab.remove(endpoint_handle as usize)
-    };
+            )
+        })?;
     if force.unwrap_or(false) {
         ep.close_force().await;
     } else {

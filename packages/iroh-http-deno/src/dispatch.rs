@@ -8,6 +8,7 @@ use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
     parse_direct_addrs,
+    registry,
     server::respond,
     stream::{
         alloc_body_writer, cancel_reader, claim_pending_reader, finish_body, next_chunk,
@@ -17,44 +18,31 @@ use iroh_http_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::{Mutex, OnceLock};
 
 use crate::serve_registry;
 #[cfg(feature = "discovery")]
 use iroh_http_discovery as _;
 #[cfg(feature = "discovery")]
+use slab::Slab;
+#[cfg(feature = "discovery")]
+use std::sync::{Mutex, OnceLock};
+#[cfg(feature = "discovery")]
 use std::sync::Arc;
 #[cfg(feature = "discovery")]
 use tokio::sync::Mutex as TokioMutex;
 
-// ── Endpoint slab (replicates the napi / tauri pattern) ──────────────────────
-
-use slab::Slab;
-
-fn endpoint_slab() -> &'static Mutex<Slab<IrohEndpoint>> {
-    static S: OnceLock<Mutex<Slab<IrohEndpoint>>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(Slab::new()))
-}
-
-fn insert_endpoint(ep: IrohEndpoint) -> u32 {
-    endpoint_slab().lock().unwrap().insert(ep) as u32
-}
+// ── Endpoint helpers ─────────────────────────────────────────────────────────
 
 fn get_endpoint(handle: u32) -> Option<IrohEndpoint> {
-    endpoint_slab()
-        .lock()
-        .unwrap()
-        .get(handle as usize)
-        .cloned()
+    registry::get_endpoint(handle as u64)
 }
 
 fn remove_endpoint(handle: u32) -> Option<IrohEndpoint> {
-    let mut slab = endpoint_slab().lock().unwrap();
-    if slab.contains(handle as usize) {
-        Some(slab.remove(handle as usize))
-    } else {
-        None
-    }
+    registry::remove_endpoint(handle as u64)
+}
+
+fn insert_endpoint(ep: IrohEndpoint) -> u32 {
+    registry::insert_endpoint(ep) as u32
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────
