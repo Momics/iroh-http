@@ -48,8 +48,65 @@ function libName(): string {
   return `libiroh_http_deno.${Deno.build.os}-${Deno.build.arch}.${libExtension()}`;
 }
 
-const LIB_DIR = resolve(dirname(fromFileUrl(import.meta.url)), "..", "lib");
-const LIB_PATH = resolve(LIB_DIR, libName());
+/** Version must match the tag used for GitHub releases (v0.1.0 → tag v0.1.0). */
+const VERSION = "0.1.0";
+const DOWNLOAD_BASE = `https://github.com/Momics/iroh-http-releases/releases/download/v${VERSION}`;
+
+function cacheDir(): string {
+  // Local dev: import.meta.url is file://, use lib/ next to src/.
+  if (import.meta.url.startsWith("file://")) {
+    return resolve(dirname(fromFileUrl(import.meta.url)), "..", "lib");
+  }
+  // JSR / remote: use a platform-appropriate cache directory.
+  const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "/tmp";
+  return resolve(home, ".cache", "iroh-http-deno", VERSION);
+}
+
+const LIB_DIR = cacheDir();
+
+async function ensureLib(): Promise<string> {
+  const name = libName();
+  const libPath = resolve(LIB_DIR, name);
+
+  // Fast path: lib already exists locally (dev build or cached download).
+  try {
+    await Deno.stat(libPath);
+    return libPath;
+  } catch {
+    // Not found — download it.
+  }
+
+  const url = `${DOWNLOAD_BASE}/${name}`;
+  console.error(`[iroh-http] Downloading native library from ${url} …`);
+
+  const resp = await fetch(url);
+  if (!resp.ok || !resp.body) {
+    throw new Error(
+      `[iroh-http] Failed to download native library: ${resp.status} ${resp.statusText}\n` +
+      `  URL: ${url}\n` +
+      `  Ensure a GitHub release exists for v${VERSION} with the binary attached.`,
+    );
+  }
+
+  await Deno.mkdir(LIB_DIR, { recursive: true });
+  const file = await Deno.open(libPath, { write: true, create: true });
+  try {
+    await resp.body.pipeTo(file.writable);
+  } catch (e) {
+    // Clean up partial download.
+    try { await Deno.remove(libPath); } catch { /* ignore */ }
+    throw e;
+  }
+
+  // Mark executable on Unix.
+  if (Deno.build.os !== "windows") {
+    await Deno.chmod(libPath, 0o755);
+  }
+
+  return libPath;
+}
+
+const LIB_PATH = await ensureLib();
 
 // ── FFI symbols ───────────────────────────────────────────────────────────────
 
