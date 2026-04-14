@@ -334,6 +334,15 @@ Deno.test({ name: "serve — handler throws synchronously → client gets 500", 
   const ac = new AbortController();
   let handle: { finished: Promise<void> } | undefined;
 
+  // Capture the expected error log so it doesn't leak to test output.
+  const captured: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => {
+    const msg = args.map(String).join(" ");
+    if (msg.includes("[iroh-http]")) captured.push(msg);
+    else origError(...args);
+  };
+
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     handle = server.serve({ signal: ac.signal }, (_req: Request) => {
@@ -344,7 +353,9 @@ Deno.test({ name: "serve — handler throws synchronously → client gets 500", 
       directAddrs: serverAddrs,
     });
     assertEquals(resp.status, 500);
+    assert(captured.some((m) => m.includes("handler blow-up")), "expected error log");
   } finally {
+    console.error = origError;
     ac.abort();
     await server.close();
     await handle?.finished.catch(() => {});
@@ -358,6 +369,14 @@ Deno.test({ name: "serve — handler rejects async → client gets 500", sanitiz
   const ac = new AbortController();
   let handle: { finished: Promise<void> } | undefined;
 
+  const captured: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => {
+    const msg = args.map(String).join(" ");
+    if (msg.includes("[iroh-http]")) captured.push(msg);
+    else origError(...args);
+  };
+
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     handle = server.serve({ signal: ac.signal }, async (_req: Request) => {
@@ -368,7 +387,9 @@ Deno.test({ name: "serve — handler rejects async → client gets 500", sanitiz
       directAddrs: serverAddrs,
     });
     assertEquals(resp.status, 500);
+    assert(captured.some((m) => m.includes("async blow-up")), "expected error log");
   } finally {
+    console.error = origError;
     ac.abort();
     await server.close();
     await handle?.finished.catch(() => {});
