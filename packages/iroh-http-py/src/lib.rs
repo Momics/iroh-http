@@ -1178,11 +1178,14 @@ fn create_node<'py>(
             proxy_url,
             proxy_from_env,
             keylog,
-            max_concurrency,
-            max_connections_per_peer,
-            request_timeout_ms: request_timeout,
-            max_request_body_bytes,
-            drain_timeout_secs: None,
+            server_limits: iroh_http_core::server::ServerLimits {
+                max_concurrency,
+                max_connections_per_peer,
+                request_timeout_ms: request_timeout,
+                max_request_body_bytes,
+                max_consecutive_errors: None,
+                drain_timeout_secs: None,
+            },
             #[cfg(feature = "compression")]
             // PY-005: enable compression when level or min_body_bytes is provided.
             compression: if compression_level.is_some() || compression_min_body_bytes.is_some() {
