@@ -1,7 +1,7 @@
 ---
 id: "DENO-005"
 title: "Fetch cancellation tokens are allocated with the wrong endpoint identifier"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-13
 area: deno

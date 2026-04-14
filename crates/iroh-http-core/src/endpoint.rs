@@ -393,6 +393,11 @@ impl IrohEndpoint {
         &self.inner.ep
     }
 
+    /// Per-endpoint index used by global slab registries (cancellation tokens, etc.).
+    pub fn endpoint_idx(&self) -> u32 {
+        self.inner.endpoint_idx
+    }
+
     /// Maximum byte size of a QPACK-encoded head.
     pub fn max_header_size(&self) -> usize {
         self.inner.max_header_size
