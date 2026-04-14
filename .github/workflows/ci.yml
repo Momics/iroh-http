@@ -21,16 +21,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-      - name: cargo check (workspace)
-        run: cargo check --workspace
-      - name: cargo check (tauri plugin)
-        run: cd packages/iroh-http-tauri && cargo check
-      - name: cargo test (workspace)
-        run: cargo test --workspace
       - name: cargo fmt
         run: cargo fmt --all -- --check
-      - name: cargo clippy
-        run: cargo clippy --workspace -- -D warnings
+      - name: cargo clippy (workspace + tauri)
+        run: |
+          cargo clippy --workspace -- -D warnings
+          cd packages/iroh-http-tauri && cargo clippy -- -D warnings
+      - name: cargo test (workspace)
+        run: cargo test --workspace
 
   rust-check-no-default-features:
     name: Rust check (no discovery)
@@ -80,8 +78,8 @@ jobs:
       - name: Install npm dependencies
         run: npm install
 
-      - name: Build native libs (release)
-        run: cargo build --release -p iroh-http-node -p iroh-http-deno
+      - name: Build native libs (ci profile)
+        run: cargo build --profile ci -p iroh-http-node -p iroh-http-deno
 
       # ── Node ──────────────────────────────────────────────────────────────────
 
@@ -91,7 +89,7 @@ jobs:
       - name: napi generate .node + JS wrapper
         run: |
           cd packages/iroh-http-node
-          npx napi build --platform --release
+          npx napi build --platform --profile ci
           npx tsc
 
       - name: Run Node e2e tests
@@ -105,7 +103,7 @@ jobs:
       - name: Copy Deno native lib
         run: |
           mkdir -p packages/iroh-http-deno/lib
-          cp target/release/libiroh_http_deno.so \
+          cp target/ci/libiroh_http_deno.so \
              packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
 
       - name: Run Deno tests
