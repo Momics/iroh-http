@@ -1,7 +1,7 @@
 ---
 id: "NODE-008"
 title: "Platform support signaling is ambiguous between declared targets and loader fallbacks"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-13
 area: node
