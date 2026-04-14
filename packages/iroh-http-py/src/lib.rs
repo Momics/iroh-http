@@ -990,15 +990,10 @@ impl IrohNode {
 
     fn __aenter__<'py>(slf: PyRef<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
         let py = slf.py();
-        let ep = slf.ep.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let (close_tx, close_rx) = tokio::sync::watch::channel(false);
-            Ok(IrohNode {
-                ep,
-                close_tx: std::sync::Arc::new(close_tx),
-                close_rx,
-            })
-        })
+        // Return self rather than a detached copy so lifecycle state
+        // (close_tx/close_rx) is shared (PY-013).
+        let obj: PyObject = slf.into_py(py);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(obj) })
     }
 
     fn __aexit__<'py>(
@@ -1009,8 +1004,10 @@ impl IrohNode {
         _exc_tb: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let ep = self.ep.clone();
+        let tx = std::sync::Arc::clone(&self.close_tx);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             ep.close().await;
+            let _ = tx.send(true);
             Ok(())
         })
     }
