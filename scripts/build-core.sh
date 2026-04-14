@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Rust workspace (all crates except iroh-http-py, which needs maturin).
+# Build the Rust workspace.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

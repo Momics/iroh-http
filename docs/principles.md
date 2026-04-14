@@ -6,7 +6,7 @@ wins. They are invariants — not aspirations, not suggestions.
 
 For language-specific coding conventions, see [guidelines/](guidelines/) or pick directly:
 [Rust](guidelines/rust.md) · [JavaScript/TypeScript](guidelines/javascript.md) ·
-[Python](guidelines/python.md) · [Tauri](guidelines/tauri.md)
+[Tauri](guidelines/tauri.md)
 
 ---
 
@@ -219,18 +219,17 @@ The FFI boundary is where Rust reliability guarantees meet runtimes that
 cannot handle native crashes.
 
 **Panics must never cross the FFI boundary.**
-A Rust panic in a JS or Python context is a hard process crash with no
-recovery. Every FFI entry point catches panics and converts them to a
-representable error. This is non-negotiable.
+A Rust panic in a JS context is a hard process crash with no recovery. Every
+FFI entry point catches panics and converts them to a representable error.
+This is non-negotiable.
 
 **The FFI surface must be minimal and stable.**
 Every function exposed across the boundary is a contract that is expensive to
 change. Design it as if it will never change.
 
 **Errors must be native to the calling language.**
-JS users see `DOMException` subtypes. Python users see idiomatic exception
-types. Opaque integers and raw error strings are never acceptable at the
-user-facing layer.
+JS users see `DOMException` subtypes. Opaque integers and raw error strings
+are never acceptable at the user-facing layer.
 
 **Memory ownership at the boundary must be explicit.**
 All state lives in Rust (slotmap registries); platform adapters hold only

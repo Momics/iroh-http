@@ -79,19 +79,12 @@ All cryptographic operations are **async** — always `await` them.
 
 ## Platform support
 
-See [Python API differences in the specification](../specification.md#python-api-differences) for the full mapping.
-
-| Feature | Node / Deno / Tauri | Python |
-|---------|:---:|:---:|
-| **Sign** (`secretKey.sign`) | ✅ class method | ✅ `secret_key_sign(key, data)` module function |
-| **Verify** (`publicKey.verify`) | ✅ class method | ✅ `public_key_verify(key, data, sig)` module function |
-| **Generate key** (`SecretKey.generate`) | ✅ class method | ✅ `generate_secret_key()` module function |
-| **Sealed-box encrypt/decrypt** | via [recipe](../recipes/sealed-messages.md) | via recipe |
-
-> **Python note:** Sign/verify/generate are module-level functions accepting
-> raw `bytes` keys, not class methods on `PublicKey`/`SecretKey` objects.
-> This matches PyO3 conventions where lightweight wrappers expose the
-> underlying Rust functions directly.
+| Feature | Node / Deno / Tauri |
+|---------|:---:|
+| **Sign** (`secretKey.sign`) | ✅ class method |
+| **Verify** (`publicKey.verify`) | ✅ class method |
+| **Generate key** (`SecretKey.generate`) | ✅ class method |
+| **Sealed-box encrypt/decrypt** | via [recipe](../recipes/sealed-messages.md) |
 
 ## What to avoid
 

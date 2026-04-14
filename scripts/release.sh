@@ -8,11 +8,10 @@
 #
 # What it does (in order):
 #   1. Preflight  — checks tools, clean working tree, registry auth
-#   2. Build      — Rust workspace, TS, Node (4 platforms), Deno (5 platforms),
-#                   Python (4 platforms)
-#   3. Test       — cargo test, Node e2e, Deno smoke, Python pytest
-#   4. Version    — bumps all 13 manifests via version.sh
-#   5. Publish    — crates.io, npm, JSR, PyPI
+#   2. Build      — Rust workspace, TS, Node (4 platforms), Deno (5 platforms)
+#   3. Test       — cargo test, Node e2e, Deno smoke
+#   4. Version    — bumps all 10 manifests via version.sh
+#   5. Publish    — crates.io, npm, JSR
 #   6. Tag + push — git commit, tag, push
 #
 # Prerequisites:
@@ -23,7 +22,6 @@
 #   npm adduser                   # or set NPM_TOKEN
 #   cargo login                   # or set CARGO_REGISTRY_TOKEN
 #   deno login                    # for JSR (jsr.io)
-#   pip install maturin[zig] twine
 # ────────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -76,7 +74,7 @@ warn_or_die() {
 section "1. Preflight checks"
 
 # Tools
-for cmd in cargo rustup node deno python3 maturin uv zig npx; do
+for cmd in cargo rustup node deno zig npx; do
   command -v "$cmd" &>/dev/null || die "$cmd not found"
 done
 ok "all required tools found"
@@ -114,10 +112,6 @@ if ! $DRY_RUN; then
   [[ -f "$HOME/.cargo/credentials.toml" ]] || [[ -n "${CARGO_REGISTRY_TOKEN:-}" ]] \
     || die "no crates.io token (run: cargo login)"
   ok "crates.io token found"
-
-  # PyPI — check twine or token
-  command -v twine &>/dev/null || die "twine not found (run: pip install twine)"
-  ok "twine available"
 fi
 
 echo ""
@@ -173,31 +167,6 @@ ok "Deno cross-compile"
 echo "  Built Deno binaries:"
 ls -lh packages/iroh-http-deno/lib/libiroh_http_deno.* 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
 
-# 2e. Python — build wheels for macOS + Linux
-WHEEL_DIR="$ROOT/target/wheels"
-mkdir -p "$WHEEL_DIR"
-
-PYTHON_TARGETS=(
-  "aarch64-apple-darwin"
-  "x86_64-apple-darwin"
-  "x86_64-unknown-linux-gnu"
-  "aarch64-unknown-linux-gnu"
-)
-
-step "Python wheels (${#PYTHON_TARGETS[@]} platforms)"
-for target in "${PYTHON_TARGETS[@]}"; do
-  step "  maturin build --target $target"
-  if [[ "$target" == *"linux"* ]]; then
-    (cd packages/iroh-http-py && maturin build --release --target "$target" --zig --out "$WHEEL_DIR" 2>&1 | tail -1)
-  else
-    (cd packages/iroh-http-py && maturin build --release --target "$target" --out "$WHEEL_DIR" 2>&1 | tail -1)
-  fi
-  ok "  $target"
-done
-
-echo "  Built Python wheels:"
-ls -lh "$WHEEL_DIR"/*.whl 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
-
 # ── 3. Test ────────────────────────────────────────────────────────────────────
 
 section "3. Test"
@@ -242,24 +211,8 @@ step "Deno smoke tests"
 deno test --allow-read --allow-ffi --allow-env --allow-net packages/iroh-http-deno/test/smoke.test.ts 2>&1 | tail -3
 ok "Deno tests (23 tests)"
 
-# 3h. Python tests (crypto + node only — session tests have known issues)
-step "Python tests"
-CACHE_VENV="${XDG_CACHE_HOME:-$HOME/.cache}/iroh-http-py-build-venv"
-uv venv --quiet "$CACHE_VENV" 2>&1 || true
-NEWEST_WHEEL=$(ls -t "$WHEEL_DIR"/*macosx*arm64*.whl 2>/dev/null | head -1)
-if [[ -z "$NEWEST_WHEEL" ]]; then
-  NEWEST_WHEEL=$(ls -t "$WHEEL_DIR"/*.whl 2>/dev/null | head -1)
-fi
-if [[ -n "$NEWEST_WHEEL" ]]; then
-  uv pip install --python "$CACHE_VENV/bin/python" --force-reinstall "$NEWEST_WHEEL" pytest pytest-asyncio -q 2>&1
-  "$CACHE_VENV/bin/python" -m pytest packages/iroh-http-py/tests/test_crypto.py packages/iroh-http-py/tests/test_node.py -v --tb=short 2>&1 | tail -10
-  ok "Python tests"
-else
-  warn_or_die "No macOS wheel found for testing"
-fi
-
 echo ""
-TOTAL_TESTS="93 Rust + 14 Node + 23 Deno + Python"
+TOTAL_TESTS="93 Rust + 14 Node + 23 Deno"
 ok "All tests passed ($TOTAL_TESTS)"
 
 # ── 4. Version bump ───────────────────────────────────────────────────────────
@@ -277,7 +230,6 @@ if $DRY_RUN; then
   skip "crates.io (dry-run)"
   skip "npm (dry-run)"
   skip "JSR (dry-run)"
-  skip "PyPI (dry-run)"
 else
   # 5a. crates.io — publish in dependency order
   step "crates.io: iroh-http-core"
@@ -315,11 +267,6 @@ else
   step "JSR: @momics/iroh-http-deno"
   (cd packages/iroh-http-deno && deno publish 2>&1 | tail -3)
   ok "@momics/iroh-http-deno → JSR"
-
-  # 5g. PyPI
-  step "PyPI: iroh-http (all wheels)"
-  twine upload "$WHEEL_DIR"/*.whl 2>&1 | tail -3
-  ok "iroh-http → PyPI"
 fi
 
 # ── 6. Git tag + push ─────────────────────────────────────────────────────────

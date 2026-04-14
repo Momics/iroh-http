@@ -10,9 +10,8 @@
 ## Overview
 
 iroh-http provides HTTP/1.1-over-QUIC networking addressed by Ed25519 public
-keys. Three JavaScript/TypeScript adapters (Node, Deno, Tauri) and one Python
-adapter expose identical semantics through platform-appropriate FFI
-mechanisms.
+keys. Three JavaScript/TypeScript adapters (Node, Deno, Tauri) expose
+identical semantics through platform-appropriate FFI mechanisms.
 
 Every adapter must export the **core interfaces** below. **Feature
 interfaces** are required only when the adapter claims to support that feature.
@@ -27,10 +26,6 @@ The sole entry point. Creates and returns an `IrohNode`.
 
 ```ts
 function createNode(options?: NodeOptions): Promise<IrohNode>;
-```
-
-```python
-async def create_node(**kwargs) -> IrohNode: ...
 ```
 
 See [NodeOptions](#nodeoptions) for the full option set.
@@ -100,10 +95,6 @@ interface IrohNode {
   [Symbol.asyncDispose](): Promise<void>;
 }
 ```
-
-Python equivalent — the Python adapter exposes module-level functions
-(`create_node`, `fetch`, `serve`) rather than a class with methods. See
-[Python API differences](#python-api-differences).
 
 ---
 
@@ -204,21 +195,6 @@ The incoming `Request` is augmented with:
 | `req.headers.get('iroh-node-id')` | `string` | Authenticated peer's public key (base32) |
 | `req.trailers` | `Promise<Headers>` | Trailer headers (see [Trailer headers](#trailer-headers)) |
 
-```python
-async def handler(request: IrohRequest) -> dict:
-    """
-    request.method   — HTTP method string
-    request.url      — Full request URL
-    request.headers  — List of [name, value] pairs
-    request.remote_node_id — Peer's public key (base32)
-
-    await request.body()  — Full body as bytes
-    await request.text()  — Body as UTF-8 string
-
-    Returns: {"status": int, "headers": [[name, value], ...], "body": bytes}
-    """
-```
-
 ---
 
 ### `ServeHandle`
@@ -311,8 +287,6 @@ class SecretKey {
   async sign(data: Uint8Array): Promise<Uint8Array>;
 }
 ```
-
-Python uses module-level functions instead — see [Python API differences](#python-api-differences).
 
 ---
 
@@ -502,27 +476,6 @@ interface WebTransportCloseInfo {
 No additional interfaces. `node.ticket()` returns a `string`;
 `ticketNodeId(ticket)` extracts the node ID. See
 [tickets.md](features/tickets.md).
-
----
-
-## Python API Differences
-
-The Python adapter (`iroh-http-py`) uses module-level functions and snake_case
-naming instead of classes and methods.
-
-| JS / TS | Python | Notes |
-|---|---|---|
-| `SecretKey.sign(data)` | `secret_key_sign(key, data)` | Module-level function |
-| `PublicKey.verify(data, sig)` | `public_key_verify(key, data, sig)` | Module-level function |
-| `SecretKey.generate()` | `generate_secret_key()` | Module-level function |
-| `AbortSignal` cancellation | `async for … break` | Python async iteration |
-
-**Feature flags** (compile-time, via `maturin` features):
-
-| Feature | Default | APIs gated |
-|---|---|---|
-| `mdns` | off | `node.browse()`, `node.advertise()` |
-| `compression` | off | `compression_level`, `compression_min_body_bytes` |
 
 ---
 

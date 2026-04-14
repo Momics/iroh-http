@@ -29,18 +29,11 @@ keywords      = ["p2p", "http", "quic", "iroh"]
 categories    = ["network-programming", "web-programming"]
 ```
 
-**PyPI — `[project.urls]` missing from `pyproject.toml`**
-
-```toml
-[project.urls]
-Repository = "https://github.com/momics/iroh-http"
-```
-
 **No release CI workflow**
 
 `ci.yml` runs check + test. There is no `release.yml` that fires on `git tag
-v*` to build cross-platform binaries and publish to npm, JSR, PyPI, and
-crates.io. napi-rs and maturin both have turnkey GitHub Actions templates.
+v*` to build cross-platform binaries and publish to npm, JSR, and
+crates.io. napi-rs has a turnkey GitHub Actions template.
 
 **Unclean repository state**
 
@@ -67,7 +60,6 @@ crates.io. napi-rs and maturin both have turnkey GitHub Actions templates.
 | `@momics/iroh-http-node` | npm | **Broken** — platform packages not configured |
 | `@momics/iroh-http-deno` | JSR | Config looks correct |
 | `@momics/iroh-http-tauri` | npm | Config looks correct |
-| `iroh-http` | PyPI | Missing `[project.urls]` |
 | `iroh-http-core` | crates.io | Missing publish metadata |
 | `iroh-http-discovery` | crates.io | Missing publish metadata |
 
@@ -139,3 +131,6 @@ The blocker is upstream: there is no `h3-noq` crate yet (analogous to
 `h3-quinn` but for Iroh's noq fork). Once that exists and Iroh exposes
 `noq::Connection` publicly, the swap is straightforward. Track this via
 the open question in [architecture.md](architecture.md).
+
+**Python support is a future goal** once the core and JS adapters are stable
+and the release pipeline is solid.

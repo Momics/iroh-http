@@ -92,17 +92,12 @@ Appropriate for embedded targets, air-gapped networks, and integration tests.
 
 ## Platform support
 
-| Feature | Node / Deno / Tauri | Python |
-|---------|:---:|:---:|
-| **DNS discovery** (auto-resolve by public key) | ✅ | ✅ |
-| **`advertise()`** | ✅ (AbortSignal) | ✅ (`node.advertise(service_name)`) |
-| **`browse()`** | ✅ (async iterable + AbortSignal) | ✅ (async iterator) |
+| Feature | Node / Deno / Tauri |
+|---------|:---:|
+| **DNS discovery** (auto-resolve by public key) | ✅ |
+| **`advertise()`** | ✅ (AbortSignal) |
+| **`browse()`** | ✅ (async iterable + AbortSignal) |
 
 > **Feature flag:** mDNS browse and advertise require the `mdns` compile-time
-> feature in all Rust adapters.  In Python, calling `browse()` or
-> `advertise()` without the feature raises `RuntimeError`.
->
-> **Python API differences:** Python uses positional `service_name: str`
-> instead of an options dict.  Cancellation is via `async for … break` or
-> node close, not `AbortSignal`.
+> feature in all Rust adapters.
 

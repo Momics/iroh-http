@@ -53,9 +53,9 @@ Add a `## Issue Resolution Policy` section:
 ## Issue Resolution Policy
 
 Every fixed issue must leave a regression test in the appropriate layer:
-- FFI boundary bugs → per-adapter integration test (e2e.mjs, smoke.test.ts, test_node.py)
+- FFI boundary bugs → per-adapter integration test (e2e.mjs, smoke.test.ts)
 - Rust core bugs → cargo test (integration.rs or new test file)
-- Type/export bugs → verified by tsc/pyright (no new test needed if CI gates it)
+- Type/export bugs → verified by tsc (no new test needed if CI gates it)
 - Protocol behavior → cases.json entry
 - Docs/build/config → N/A (document in issue)
 ```

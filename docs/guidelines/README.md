@@ -6,5 +6,4 @@ Coding conventions for each platform target. These cover naming, types, error ha
 |----------|------|
 | Rust (`iroh-http-core`, discovery) | [rust.md](rust.md) |
 | JavaScript / TypeScript (Node, Deno, Tauri guest) | [javascript.md](javascript.md) |
-| Python (`iroh-http-py`) | [python.md](python.md) |
 | Tauri plugin + guest JS | [tauri.md](tauri.md) |

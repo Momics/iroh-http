@@ -8,7 +8,7 @@ For engineering values and invariants, see [principles.md](principles.md). For d
 
 ## What This Is
 
-iroh-http is an HTTP implementation over [Iroh](https://iroh.computer/) QUIC transport, exposed to Deno, Node.js, Tauri, and Python via FFI bridges. Nodes are addressed by Ed25519 public key, not by domain name. Two devices that know each other's public key can exchange HTTP requests peer-to-peer, through NATs, without servers or DNS.
+iroh-http is an HTTP implementation over [Iroh](https://iroh.computer/) QUIC transport, exposed to Deno, Node.js, and Tauri via FFI bridges. Nodes are addressed by Ed25519 public key, not by domain name. Two devices that know each other's public key can exchange HTTP requests peer-to-peer, through NATs, without servers or DNS.
 
 The **user-facing API** is deliberately familiar:
 - **`fetch()`** — follows the [WHATWG Fetch specification](https://fetch.spec.whatwg.org/)
@@ -23,7 +23,7 @@ Any deviation from these contracts is a bug unless explicitly documented.
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Platform Adapters                                            │
-│  Node.js (napi-rs) · Deno (FFI) · Tauri (invoke) · Python    │
+│  Node.js (napi-rs) · Deno (FFI) · Tauri (invoke)             │
 │                                                              │
 │  Thin shims. Translate platform types ↔ u64 handles.         │
 │  No logic. No state.                                         │
@@ -91,7 +91,6 @@ Each adapter is a thin FFI shim — no logic, no state, just type translation:
 | `iroh-http-node` | napi-rs v2 | Node.js / Bun |
 | `iroh-http-deno` | Deno FFI (`dlopen`) | Deno |
 | `iroh-http-tauri` | Tauri invoke | Tauri (desktop/mobile) |
-| `iroh-http-py` | PyO3 | Python |
 
 Adapters translate between platform types (e.g. `BigInt` ↔ `u64`) and call into iroh-http-core. They do not contain business logic. If an adapter needs something currently `pub(crate)` in core, it must be deliberately promoted and documented.
 
@@ -104,7 +103,6 @@ Core's `serve()` accepts an `on_request: Arc<dyn Fn(RequestPayload) + Send + Syn
 | Node | `ThreadsafeFunction` | Push — callback into JS event loop |
 | Deno | `mpsc` queue + `nextRequest()` | Pull — JS polls for requests |
 | Tauri | Tauri `Channel` | Push — event emitted to frontend |
-| Python | PyO3 `future_into_py` | Push — callback into Python asyncio |
 
 **Behavioral guarantees of `on_request`:**
 
@@ -219,7 +217,7 @@ tower_http::decompression::DecompressionLayer::new()
     .gzip(false).br(false).deflate(false).zstd(true)
 ```
 
-Compression belongs in core because the Rust layer reads `Accept-Encoding` before JS/Python sees the body. Skipped when: response already has `Content-Encoding`, `Content-Range`, `Cache-Control: no-transform`, or body is a stream.
+Compression belongs in core because the Rust layer reads `Accept-Encoding` before JS sees the body. Skipped when: response already has `Content-Encoding`, `Content-Range`, `Cache-Control: no-transform`, or body is a stream.
 
 ---
 

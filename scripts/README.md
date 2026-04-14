@@ -7,8 +7,6 @@
 | Rust toolchain | Everything | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | Node.js 18+ | Node package, TS shared | [nodejs.org](https://nodejs.org) |
 | Deno | Deno package | `curl -fsSL https://deno.land/install.sh \| sh` |
-| Python 3.9+ | Python package | System or [python.org](https://python.org) |
-| maturin | Python package | `pip install maturin` |
 
 ## Building locally
 
@@ -21,18 +19,17 @@ Run everything for the current platform:
 Skip what you don't need:
 
 ```sh
-./scripts/build.sh --skip-python --skip-deno   # just Rust + Node + TS
+./scripts/build.sh --skip-deno   # just Rust + Node + TS
 ./scripts/build.sh --skip-rust                  # rebuilds only JS/TS layers
 ```
 
 The script builds in order:
 
-1. **Rust workspace** — `cargo build --release` (excludes Python; that needs maturin)
+1. **Rust workspace** — `cargo build --release`
 2. **Tauri plugin** — `cargo check` (separate Cargo workspace)
 3. **TypeScript shared** — `tsc` → `packages/iroh-http-shared/dist/`
 4. **Node addon** — `napi build --platform --release` → `.node` binary + `lib.js`
 5. **Deno native lib** — `deno task build` → `lib/*.dylib` (or `.so`/`.dll`)
-6. **Python wheel** — `maturin develop --release` → installs into your Python env
 
 Each step includes a smoke test where possible.
 
@@ -52,11 +49,11 @@ rustup target add x86_64-apple-darwin aarch64-apple-darwin \
   x86_64-pc-windows-gnu
 ```
 
-Node and Python cross-compilation will be added when we set up CI (napi-rs and maturin both have turnkey GitHub Actions for this).
+Node cross-compilation will be added when we set up CI (napi-rs has a turnkey GitHub Actions template for this).
 
 ## Bumping the version
 
-All packages share the same version. One command updates all 13 manifest files:
+All packages share the same version. One command updates all 12 manifest files:
 
 ```sh
 ./scripts/version.sh 0.2.0
@@ -65,7 +62,6 @@ All packages share the same version. One command updates all 13 manifest files:
 This touches:
 - 7 `Cargo.toml` (3 crates + 4 packages)
 - 3 `package.json` (shared, node, tauri)
-- 1 `pyproject.toml` (python)
 - 1 `deno.jsonc` (deno)
 - 1 `jsr.jsonc` (shared on JSR)
 
@@ -89,10 +85,10 @@ One command to build (all platforms), test, version-bump, and publish:
 
 The release script:
 1. **Preflight** — checks tools, clean working tree, registry auth
-2. **Build** — Rust workspace, TS shared, Node (4 platforms), Deno (5 platforms), Python (4 wheels)
-3. **Test** — cargo test, clippy, fmt, tsc, Node e2e, Deno smoke, Python pytest
-4. **Version bump** — updates all 13 manifests via `version.sh`
-5. **Publish** — crates.io (in dependency order), npm, JSR, PyPI
+2. **Build** — Rust workspace, TS shared, Node (4 platforms), Deno (5 platforms)
+3. **Test** — cargo test, clippy, fmt, tsc, Node e2e, Deno smoke
+4. **Version bump** — updates all 12 manifests via `version.sh`
+5. **Publish** — crates.io (in dependency order), npm, JSR
 6. **Git** — commit, tag `v0.2.0`, print push commands
 
 All cross-compilation happens locally using `cargo-zigbuild` (Linux targets), plain `cargo` (macOS/Windows targets), and `zig` as a linker. No CI needed.
@@ -106,7 +102,6 @@ cargo install cargo-zigbuild
 brew install zig mingw-w64
 npm adduser               # npm auth
 cargo login               # crates.io auth
-pip install twine          # PyPI upload
 ```
 
 ## Release checklist (manual, for now)
@@ -121,6 +116,5 @@ When you're ready to tag a release:
    - **crates.io:** `cargo publish -p iroh-http-core` (then discovery)
    - **JSR:** `cd packages/iroh-http-shared && deno publish`
    - **Deno:** `cd packages/iroh-http-deno && deno publish`
-   - **PyPI:** `cd packages/iroh-http-py && maturin publish`
 
 Order matters: shared crates/packages first, then platform packages that depend on them.

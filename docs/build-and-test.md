@@ -29,25 +29,6 @@ cargo check -p iroh-http-deno --no-default-features
 
 ---
 
-## Python
-
-`iroh-http-py` is a PyO3 extension module and **cannot** be built with plain
-`cargo build` — the macOS linker rejects undefined Python symbols in dylibs at
-link time. Use `maturin` instead, which passes the correct linker flags:
-
-```sh
-cd packages/iroh-http-py
-pip install maturin               # once
-maturin develop                   # build + install into current Python venv
-# or
-maturin build --release           # build a wheel
-```
-
-`iroh-http-py` is therefore excluded from the Cargo workspace. `cargo build
---release` at the repo root builds only the Node, Deno, and core crates.
-
----
-
 ## TypeScript
 
 ```sh
@@ -112,7 +93,6 @@ must pass:
 7. Node.js E2E tests + compliance tests (12 cases)
 8. Deno E2E tests
 9. Cross-runtime compliance (node↔deno via `tests/http-compliance/run.sh`)
-10. Python: `maturin develop` + `pyright iroh_http/` + `pytest tests/ -v`
 
 See [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) for the full
 pipeline.
@@ -127,12 +107,3 @@ node packages/iroh-http-node/test/compliance.mjs
 bash tests/http-compliance/run.sh
 ```
 
-### Running Python tests locally
-
-```sh
-cd packages/iroh-http-py
-source .venv/bin/activate         # or create: python -m venv .venv
-maturin develop                   # build native extension
-pyright iroh_http/                # type check stubs
-python -m pytest tests/ -v        # run tests
-```

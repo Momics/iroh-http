@@ -4,9 +4,8 @@ set -euo pipefail
 # Usage: ./scripts/version.sh 0.2.0
 #
 # Bumps the version across ALL package manifests:
-#   - 7 Cargo.toml  (crates + packages, excluding examples)
+#   - 5 Cargo.toml  (2 crates + 3 packages, excluding examples)
 #   - 3 package.json (node, tauri, shared)
-#   - 1 pyproject.toml
 #   - 1 deno.jsonc
 #   - 1 jsr.jsonc
 #
@@ -39,7 +38,6 @@ CARGO_FILES=(
   crates/iroh-http-discovery/Cargo.toml
   packages/iroh-http-node/Cargo.toml
   packages/iroh-http-deno/Cargo.toml
-  packages/iroh-http-py/Cargo.toml
   packages/iroh-http-tauri/Cargo.toml
 )
 
@@ -73,13 +71,6 @@ for f in "${JSON_FILES[@]}"; do
   sed -i '' "s/\"version\": \"$OLD\"/\"version\": \"$NEW\"/" "$filepath"
   echo "  ✓ $f"
 done
-
-# ── pyproject.toml ────────────────────────────────────────────────────────────
-PYPROJECT="$ROOT/packages/iroh-http-py/pyproject.toml"
-if [[ -f "$PYPROJECT" ]]; then
-  sed -i '' "s/^version *= *\"$OLD\"/version         = \"$NEW\"/" "$PYPROJECT"
-  echo "  ✓ packages/iroh-http-py/pyproject.toml"
-fi
 
 # ── deno.jsonc ────────────────────────────────────────────────────────────────
 DENO_JSON="$ROOT/packages/iroh-http-deno/deno.jsonc"
