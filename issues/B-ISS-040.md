@@ -1,7 +1,7 @@
 ---
 id: "B-ISS-040"
 title: "JS error classifier has unreachable branches — real errors fall to UNKNOWN"
-status: open
+status: fixed
 priority: P0
 date: 2026-04-13
 area: core

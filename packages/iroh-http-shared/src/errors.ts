@@ -224,6 +224,7 @@ export function classifyError(raw: string | unknown): IrohError {
 
 function classifyByCode(code: string, msg: string): IrohError {
   switch (code) {
+    // ── Connection errors ──────────────────────────────────────────────────
     case "TIMEOUT":
       return new IrohConnectError(msg, code);
     case "DNS_FAILURE":
@@ -232,12 +233,22 @@ function classifyByCode(code: string, msg: string): IrohError {
       return new IrohConnectError(msg, code);
     case "REFUSED":
       return new IrohConnectError(msg, code);
+    case "PEER_REJECTED":
+      return new IrohConnectError(msg, code);
+
+    // ── Protocol errors ────────────────────────────────────────────────────
     case "UPGRADE_REJECTED":
       return new IrohProtocolError(msg, code);
     case "PARSE_FAILURE":
       return new IrohProtocolError(msg, code);
     case "TOO_MANY_HEADERS":
       return new IrohProtocolError(msg, code);
+    case "BODY_TOO_LARGE":
+      return new IrohProtocolError(msg, code);
+    case "HEADER_TOO_LARGE":
+      return new IrohProtocolError(msg, code);
+
+    // ── Handle / stream errors ─────────────────────────────────────────────
     case "INVALID_HANDLE":
       return new IrohHandleError(msg, code);
     case "WRITER_DROPPED":
@@ -246,15 +257,23 @@ function classifyByCode(code: string, msg: string): IrohError {
       return new IrohStreamError(msg, code);
     case "STREAM_RESET":
       return new IrohStreamError(msg, code);
+
+    // ── Bind / endpoint errors ─────────────────────────────────────────────
     case "INVALID_KEY":
       return new IrohBindError(msg, code);
     case "ENDPOINT_FAILURE":
       return new IrohBindError(msg, code);
+
+    // ── Abort / cancel ─────────────────────────────────────────────────────
     case "ABORTED":
     case "CANCELLED":
       return new IrohAbortError(msg);
+
+    // ── Input validation ───────────────────────────────────────────────────
     case "INVALID_ARGUMENT":
-      return new IrohArgumentError(msg);
+    case "INVALID_INPUT":
+      return new IrohArgumentError(msg, code);
+
     default:
       return new IrohError(msg, code);
   }
