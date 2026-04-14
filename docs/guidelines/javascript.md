@@ -47,11 +47,18 @@ The Rust core emits a structured JSON envelope (`{"code":"TIMEOUT","message":"..
 
 | Rust code | JS class | `name` property |
 |-----------|----------|-----------------|
-| `TIMEOUT` | `IrohConnectError` | `"TimeoutError"` |
-| `ABORT` | `IrohAbortError` | `"AbortError"` |
-| `INVALID_HANDLE` | `IrohHandleError` | `"InvalidHandle"` |
-| `STREAM_RESET` | `IrohStreamError` | `"StreamReset"` |
+| `TIMEOUT` | `IrohConnectError` | `"NetworkError"` |
+| `REFUSED` | `IrohConnectError` | `"NetworkError"` |
+| `PEER_REJECTED` | `IrohConnectError` | `"NetworkError"` |
+| `BODY_TOO_LARGE` | `IrohProtocolError` | `"IrohProtocolError"` |
+| `HEADER_TOO_LARGE` | `IrohProtocolError` | `"IrohProtocolError"` |
+| `INVALID_HANDLE` | `IrohHandleError` | `"IrohHandleError"` |
+| `ABORTED` / `CANCELLED` | `IrohAbortError` | `"AbortError"` |
+| `INVALID_INPUT` | `IrohArgumentError` | `"TypeError"` |
+| `ENDPOINT_FAILURE` | `IrohBindError` | `"NetworkError"` |
 | *(catch-all)* | `IrohError` | `"IrohError"` |
+
+Use `instanceof` for class checks; use `.code` for the specific Rust error code and `.name` for web-platform-style matching.
 
 ---
 
