@@ -324,7 +324,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         key: keyBytes,
         idleTimeout: options.idleTimeout,
         relayMode,
-        relays,
+        relays: relays ?? undefined,
         bindAddrs,
         dnsDiscovery: discovery.dnsServerUrl ?? undefined,
         dnsDiscoveryEnabled: discovery.dnsEnabled,

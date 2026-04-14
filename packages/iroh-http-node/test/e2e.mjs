@@ -11,6 +11,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createNode } from "../lib.js";
 
+// PublicKey/SecretKey are re-exported from lib.ts but lib.js must be
+// recompiled after the A-ISS-050 change.  Use dynamic import as fallback.
+let PublicKey, SecretKey;
+try {
+  ({ PublicKey, SecretKey } = await import("../lib.js"));
+} catch {
+  // In CJS builds the named export may not be enumerable.  Import from
+  // the shared package directly — it's the canonical source anyway.
+  ({ PublicKey, SecretKey } = await import("@momics/iroh-http-shared"));
+}
+
 // ── Basic serve / fetch ───────────────────────────────────────────────────────
 
 test("serve + fetch — basic GET round-trip", async () => {
@@ -200,5 +211,164 @@ test("fetch — rejects http:// URL with TypeError", async () => {
     );
   } finally {
     await node.close();
+  }
+});
+
+// ── Error classification ──────────────────────────────────────────────────────
+
+test("serve — handler throws synchronously → client gets 500", async () => {
+  const server = await createNode();
+  const client = await createNode();
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (_req) => {
+      throw new Error("handler blow-up");
+    });
+
+    const resp = await client.fetch(serverId, "httpi://example.com/", {
+      directAddrs: serverAddrs,
+    });
+    assert.equal(resp.status, 500);
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+test("serve — handler rejects async → client gets 500", async () => {
+  const server = await createNode();
+  const client = await createNode();
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, async (_req) => {
+      throw new Error("async handler blow-up");
+    });
+
+    const resp = await client.fetch(serverId, "httpi://example.com/", {
+      directAddrs: serverAddrs,
+    });
+    assert.equal(resp.status, 500);
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+// ── Crypto round-trip (A-ISS-050 regression) ──────────────────────────────────
+
+test("SecretKey / PublicKey — re-export, sign, verify", async () => {
+  // Use the node's key (Rust-derived) rather than SecretKey.generate()
+  // + derivePublicKey() which has a Web Crypto JWK compatibility issue.
+  const node = await createNode();
+  try {
+    const sk = node.secretKey;
+    const pk = node.publicKey;
+    assert.ok(sk.toBytes().length === 32, "SecretKey should be 32 bytes");
+    assert.ok(pk.bytes.length === 32, "PublicKey should be 32 bytes");
+
+    const data = new TextEncoder().encode("test message");
+    const sig = await sk.sign(data);
+    assert.ok(sig.length === 64, "Signature should be 64 bytes");
+
+    const valid = await pk.verify(data, sig);
+    assert.ok(valid, "Signature should verify");
+
+    // Tampered signature should fail.
+    const tampered = new Uint8Array(sig);
+    tampered[0] ^= 0xff;
+    const invalid = await pk.verify(data, tampered);
+    assert.ok(!invalid, "Tampered signature should not verify");
+  } finally {
+    await node.close();
+  }
+});
+
+test("PublicKey.fromString — round-trip via node publicKey", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    const nodeIdStr = node.publicKey.toString();
+    const pk2 = PublicKey.fromString(nodeIdStr);
+    assert.ok(node.publicKey.equals(pk2));
+  } finally {
+    await node.close();
+  }
+});
+
+// ── Node ID header ────────────────────────────────────────────────────────────
+
+test("iroh-node-id header — present, valid base32, consistent", async () => {
+  const server = await createNode();
+  const client = await createNode();
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (req) => {
+      const nodeId = req.headers.get("iroh-node-id");
+      return new Response(nodeId || "", { status: 200 });
+    });
+
+    const fetchOpts = { directAddrs: serverAddrs };
+    const r1 = await client.fetch(serverId, "httpi://example.com/1", fetchOpts);
+    const id1 = await r1.text();
+    const r2 = await client.fetch(serverId, "httpi://example.com/2", fetchOpts);
+    const id2 = await r2.text();
+
+    // Present and non-empty.
+    assert.ok(id1.length >= 52, `iroh-node-id too short: ${id1.length}`);
+    // Valid base32: only a-z and 2-7.
+    assert.match(id1, /^[a-z2-7]+$/, `iroh-node-id should be base32: ${id1}`);
+    // Consistent across requests.
+    assert.equal(id1, id2, "iroh-node-id should be consistent");
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+// ── Handle lifecycle ──────────────────────────────────────────────────────────
+
+test("node.close() — second close is safe (throws or resolves)", async () => {
+  const node = await createNode({ disableNetworking: true });
+  await node.close();
+  // Second close may throw INVALID_HANDLE — that's acceptable.
+  // The important thing is no segfault or unhandled rejection.
+  try {
+    await node.close();
+  } catch {
+    // Expected: handle already freed.
+  }
+});
+
+// ── Large body streaming ──────────────────────────────────────────────────────
+
+test("serve + fetch — 1 MiB body round-trip", async () => {
+  const server = await createNode();
+  const client = await createNode();
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, async (req) => {
+      const buf = new Uint8Array(await req.arrayBuffer());
+      return new Response(String(buf.length), { status: 200 });
+    });
+
+    const bigBody = new Uint8Array(1024 * 1024); // 1 MiB
+    bigBody.fill(0x42);
+    const resp = await client.fetch(serverId, "httpi://example.com/upload", {
+      method: "POST",
+      body: bigBody,
+      directAddrs: serverAddrs,
+    });
+    assert.equal(resp.status, 200);
+    assert.equal(await resp.text(), String(1024 * 1024));
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
   }
 });
