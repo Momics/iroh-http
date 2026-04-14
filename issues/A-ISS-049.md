@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-049"
 title: "Serve callback model diverges across adapters — no shared abstraction"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-14
 area: core
