@@ -78,6 +78,37 @@ git diff --stat                    # review changes
 git add -u && git commit -m "chore: bump version to 0.2.0"
 ```
 
+## Releasing
+
+One command to build (all platforms), test, version-bump, and publish:
+
+```sh
+./scripts/release.sh 0.2.0           # full release
+./scripts/release.sh 0.2.0 --dry-run # everything except publish + push
+```
+
+The release script:
+1. **Preflight** — checks tools, clean working tree, registry auth
+2. **Build** — Rust workspace, TS shared, Node (4 platforms), Deno (5 platforms), Python (4 wheels)
+3. **Test** — cargo test, clippy, fmt, tsc, Node e2e, Deno smoke, Python pytest
+4. **Version bump** — updates all 13 manifests via `version.sh`
+5. **Publish** — crates.io (in dependency order), npm, JSR, PyPI
+6. **Git** — commit, tag `v0.2.0`, print push commands
+
+All cross-compilation happens locally using `cargo-zigbuild` (Linux targets), plain `cargo` (macOS/Windows targets), and `zig` as a linker. No CI needed.
+
+### Prerequisites
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin \
+  x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
+cargo install cargo-zigbuild
+brew install zig mingw-w64
+npm adduser               # npm auth
+cargo login               # crates.io auth
+pip install twine          # PyPI upload
+```
+
 ## Release checklist (manual, for now)
 
 When you're ready to tag a release:
