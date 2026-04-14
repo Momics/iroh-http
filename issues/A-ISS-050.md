@@ -1,12 +1,13 @@
 ---
 id: "A-ISS-050"
-title: "Crypto API surface: export key classes, remove raw functions, add encrypt/decrypt"
-status: open
+title: "Crypto API surface: export key classes, remove raw functions"
+status: resolved
+resolution: "Phase 1 completed. Phase 2 (encrypt/decrypt) deferred — sealed-box encryption uses X25519 keys, not Ed25519 identity keys; mixing them on the same class conflates two distinct cryptographic roles. The sealed-messages recipe documents the pattern for users who need it."
 priority: P1
 date: 2026-04-14
 area: core
 package: "iroh-http-shared, iroh-http-node, iroh-http-deno, iroh-http-tauri"
-tags: [api-design, crypto, keys, sign-verify, encrypt]
+tags: [api-design, crypto, keys, sign-verify]
 ---
 
 # [A-ISS-050] Crypto API surface: export key classes, remove raw functions, add encrypt/decrypt
@@ -66,38 +67,15 @@ Encrypted sealed-box functionality does not exist.
    These are adapter-internal implementation details. They remain in `adapter.ts` /
    Tauri commands as private implementation. Replace with `SecretKey.generate()`.
 
-### Phase 2 — Sealed-box encrypt/decrypt
+### Phase 2 — Sealed-box encrypt/decrypt (DEFERRED)
 
-3. Add `async encrypt(plaintext: Uint8Array): Promise<Uint8Array>` to `PublicKey` in
-   `packages/iroh-http-shared/src/keys.ts`.
+**Decision:** encrypt/decrypt will NOT be added to `PublicKey`/`SecretKey`.
 
-   Algorithm (sealed-box, ECIES variant):
-   - Convert Ed25519 public key bytes → X25519 public key (Birkhoff–Edwards to
-     Montgomery: `u = (1+y)/(1-y) mod p`)
-   - Generate ephemeral X25519 keypair using `crypto.getRandomValues`
-   - ECDH: `sharedSecret = x25519(ephemPriv, recipientX25519Pub)`
-   - KDF: `key = HKDF-SHA256(sharedSecret, salt=ephemPub, info="")`
-   - Encrypt: `ct = AES-GCM-256(key, iv=random(12), plaintext)`
-   - Output: `[32B ephemPub] || [12B IV] || [ct] || [16B AES-GCM tag]`
-
-4. Add `async decrypt(ciphertext: Uint8Array): Promise<Uint8Array>` to `SecretKey`.
-
-   Algorithm:
-   - Split: `ephemPub = ciphertext[0..32]`, `iv = ciphertext[32..44]`, `ct = ciphertext[44..]`
-   - Convert Ed25519 secret key bytes → X25519 private key
-     (`sha512(seed)[0..32]` with standard clamping)
-   - ECDH: `sharedSecret = x25519(myX25519Priv, ephemPub)`
-   - KDF: `key = HKDF-SHA256(sharedSecret, salt=ephemPub, info="")`
-   - Decrypt: AES-GCM-256 decryption; throw `IrohError` on authentication failure
-
-   Minimum ciphertext length is 60 bytes; throw `IrohArgumentError` if shorter.
-
-5. Both operations use only `crypto.subtle` (WebCrypto) and inline BigInt math for the
-   key conversion. No new dependencies, no new Rust required.
-
-6. Update `docs/recipes/sealed-messages.md` to show the simplified 2-call version and
-   cross-reference the manual ECIES construction as a footnote for callers who need a
-   different cipher suite.
+Sealed-box encryption requires X25519 keys (Diffie-Hellman), not Ed25519 keys
+(signing). Adding `encrypt()`/`decrypt()` to identity key classes would conflate
+two distinct cryptographic roles on one type. The correct approach is either a
+separate library or the recipe pattern documented in
+[sealed-messages.md](../docs/recipes/sealed-messages.md).
 
 ## Acceptance criteria
 
@@ -105,16 +83,7 @@ Encrypted sealed-box functionality does not exist.
    `PublicKey.fromString(nodeId)` works at runtime.
 2. Same for `@momics/iroh-http-node` and `@momics/iroh-http-tauri`.
 3. `secretKeySign`, `publicKeyVerify`, and `generateSecretKey` are no longer named
-   exports of any adapter package. Calling them produces a TypeScript compiler error.
-4. `await node.publicKey.encrypt(data)` returns a `Uint8Array` ≥ 60 bytes.
-5. `await node.secretKey.decrypt(ciphertext)` returns the original plaintext exactly.
-6. `node.secretKey.decrypt(tamperedCiphertext)` throws `IrohError`.
-7. `await node.secretKey.sign(data)` and `await node.publicKey.verify(data, sig)` still
+   exports of any adapter package.
+4. `await node.secretKey.sign(data)` and `await node.publicKey.verify(data, sig)` still
    work (non-regression).
-8. All three adapters (Node, Deno, Tauri) pass a new compliance case `crypto-sign-verify-encrypt-decrypt`.
-9. `npm run typecheck` passes.
-
-## Regression test
-
-- `cases.json` case IDs: `reg-a-iss-050-sign-verify`, `reg-a-iss-050-encrypt-decrypt`
-- Verified failing before fix: N/A (new features / missing exports)
+5. Sealed-box encrypt/decrypt remains documented in `docs/recipes/sealed-messages.md`.

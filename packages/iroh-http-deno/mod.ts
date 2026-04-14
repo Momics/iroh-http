@@ -29,11 +29,7 @@ import {
   rawServe,
   stopServe,
 } from "./src/adapter.ts";
-export {
-  generateSecretKey,
-  publicKeyVerify,
-  secretKeySign,
-} from "./src/adapter.ts";
+export { PublicKey, SecretKey } from "@momics/iroh-http-shared";
 
 /**
  * Create an Iroh node for peer-to-peer HTTP.

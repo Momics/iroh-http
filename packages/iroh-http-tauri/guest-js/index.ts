@@ -526,45 +526,4 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
 }
 
 export type { IrohNode, NodeOptions };
-
-// ── Crypto utilities (PARITY-001) ─────────────────────────────────────────────
-
-/**
- * Sign arbitrary bytes with a 32-byte Ed25519 secret key.
- * Returns a 64-byte `Uint8Array` signature.
- */
-export async function secretKeySign(
-  secretKey: Uint8Array,
-  data: Uint8Array,
-): Promise<Uint8Array> {
-  const sig: string = await invoke("plugin:iroh-http|secret_key_sign", {
-    secretKey: encodeBase64(secretKey),
-    data: encodeBase64(data),
-  });
-  return decodeBase64(sig);
-}
-
-/**
- * Verify a 64-byte Ed25519 signature against a 32-byte public key.
- * Returns `true` if the signature is valid.
- */
-export async function publicKeyVerify(
-  publicKey: Uint8Array,
-  data: Uint8Array,
-  signature: Uint8Array,
-): Promise<boolean> {
-  return invoke<boolean>("plugin:iroh-http|public_key_verify", {
-    publicKey: encodeBase64(publicKey),
-    data: encodeBase64(data),
-    signature: encodeBase64(signature),
-  });
-}
-
-/**
- * Generate a fresh Ed25519 secret key.
- * Returns the 32-byte key as a `Uint8Array`.
- */
-export async function generateSecretKey(): Promise<Uint8Array> {
-  const key: string = await invoke("plugin:iroh-http|generate_secret_key");
-  return decodeBase64(key);
-}
+export { PublicKey, SecretKey } from "@momics/iroh-http-shared";
