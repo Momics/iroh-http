@@ -89,6 +89,9 @@ jobs:
       - name: Run Node e2e tests
         run: node packages/iroh-http-node/test/e2e.mjs
 
+      - name: Node compliance tests
+        run: node packages/iroh-http-node/test/compliance.mjs
+
       # ── Deno ──────────────────────────────────────────────────────────────────
 
       - name: Copy Deno native lib
@@ -99,3 +102,28 @@ jobs:
 
       - name: Run Deno tests
         run: deno test --allow-read --allow-ffi --allow-env --allow-net packages/iroh-http-deno/test/smoke.test.ts
+
+      # ── Cross-runtime compliance ──────────────────────────────────────────────
+
+      - name: Cross-runtime compliance (node↔deno)
+        run: bash tests/http-compliance/run.sh
+
+  python-check:
+    name: Python check (pytest + pyright)
+    runs-on: ubuntu-latest
+    needs: [rust-check]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python dependencies
+        run: pip install maturin pytest pytest-asyncio pyright
+      - name: Build native extension
+        run: cd packages/iroh-http-py && maturin develop
+      - name: Pyright type check
+        run: cd packages/iroh-http-py && pyright iroh_http/
+      - name: Run pytest
+        run: cd packages/iroh-http-py && python -m pytest tests/ -v

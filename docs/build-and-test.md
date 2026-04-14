@@ -109,8 +109,30 @@ must pass:
 4. `cargo clippy --workspace -- -D warnings`
 5. No-default-features check (Node + Deno)
 6. TypeScript typecheck (`npm run typecheck`)
-7. Node.js E2E tests
+7. Node.js E2E tests + compliance tests (12 cases)
 8. Deno E2E tests
+9. Cross-runtime compliance (node↔deno via `tests/http-compliance/run.sh`)
+10. Python: `maturin develop` + `pyright iroh_http/` + `pytest tests/ -v`
 
 See [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) for the full
 pipeline.
+
+### Running compliance tests locally
+
+```sh
+# Node compliance (cases.json fixture):
+node packages/iroh-http-node/test/compliance.mjs
+
+# Cross-runtime — requires both Node and Deno native libs built:
+bash tests/http-compliance/run.sh
+```
+
+### Running Python tests locally
+
+```sh
+cd packages/iroh-http-py
+source .venv/bin/activate         # or create: python -m venv .venv
+maturin develop                   # build native extension
+pyright iroh_http/                # type check stubs
+python -m pytest tests/ -v        # run tests
+```
