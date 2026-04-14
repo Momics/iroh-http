@@ -175,11 +175,18 @@ impl IrohEndpoint {
                     let urls = opts
                         .relays
                         .iter()
-                        .map(|u| u.parse::<iroh::RelayUrl>().map_err(|e| crate::CoreError::invalid_input(e)))
+                        .map(|u| {
+                            u.parse::<iroh::RelayUrl>()
+                                .map_err(|e| crate::CoreError::invalid_input(e))
+                        })
                         .collect::<Result<Vec<_>, _>>()?;
                     RelayMode::custom(urls)
                 }
-                Some(other) => return Err(crate::CoreError::invalid_input(format!("unknown relay_mode: {other}"))),
+                Some(other) => {
+                    return Err(crate::CoreError::invalid_input(format!(
+                        "unknown relay_mode: {other}"
+                    )))
+                }
             }
         };
 
@@ -204,9 +211,9 @@ impl IrohEndpoint {
         // DNS discovery (enabled by default unless disable_networking).
         if !opts.disable_networking && opts.dns_discovery_enabled {
             if let Some(ref url_str) = opts.dns_discovery {
-                let url: url::Url = url_str
-                    .parse()
-                    .map_err(|e| crate::CoreError::invalid_input(format!("invalid dns_discovery URL: {e}")))?;
+                let url: url::Url = url_str.parse().map_err(|e| {
+                    crate::CoreError::invalid_input(format!("invalid dns_discovery URL: {e}"))
+                })?;
                 builder = builder
                     .address_lookup(PkarrPublisher::builder(url.clone()))
                     .address_lookup(DnsAddressLookup::builder(
@@ -224,8 +231,9 @@ impl IrohEndpoint {
         }
 
         if let Some(ms) = opts.idle_timeout_ms {
-            let timeout = IdleTimeout::try_from(Duration::from_millis(ms))
-                .map_err(|e| crate::CoreError::invalid_input(format!("idle_timeout_ms out of range: {e}")))?;
+            let timeout = IdleTimeout::try_from(Duration::from_millis(ms)).map_err(|e| {
+                crate::CoreError::invalid_input(format!("idle_timeout_ms out of range: {e}"))
+            })?;
             let transport = QuicTransportConfig::builder()
                 .max_idle_timeout(Some(timeout))
                 .build();
@@ -234,12 +242,12 @@ impl IrohEndpoint {
 
         // Bind address(es).
         for addr_str in &opts.bind_addrs {
-            let sock: std::net::SocketAddr = addr_str
-                .parse()
-                .map_err(|e| crate::CoreError::invalid_input(format!("invalid bind address \"{addr_str}\": {e}")))?;
-            builder = builder
-                .bind_addr(sock)
-                .map_err(|e| crate::CoreError::invalid_input(format!("bind address \"{addr_str}\": {e}")))?;
+            let sock: std::net::SocketAddr = addr_str.parse().map_err(|e| {
+                crate::CoreError::invalid_input(format!("invalid bind address \"{addr_str}\": {e}"))
+            })?;
+            builder = builder.bind_addr(sock).map_err(|e| {
+                crate::CoreError::invalid_input(format!("bind address \"{addr_str}\": {e}"))
+            })?;
         }
 
         // Proxy configuration.

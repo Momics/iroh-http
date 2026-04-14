@@ -116,7 +116,10 @@ impl ConnectionPool {
     /// establishing a new one.  Returns `None` if the connection is not
     /// cached or has been closed.
     pub async fn get_existing(&self, node_id: PublicKey, alpn: &[u8]) -> Option<PooledConnection> {
-        let key = PoolKey { node_id, alpn: alpn.to_vec() };
+        let key = PoolKey {
+            node_id,
+            alpn: alpn.to_vec(),
+        };
         let pooled = self.cache.get(&key).await?;
         if pooled.conn.close_reason().is_none() {
             Some((*pooled).clone())

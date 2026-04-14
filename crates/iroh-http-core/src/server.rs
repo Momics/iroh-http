@@ -287,8 +287,7 @@ impl RequestService {
         // For duplex: keep req_body_writer to move into the upgrade spawn below.
         // For regular: consume it immediately into the pump task.
         // ISS-004: create an overflow channel so the serve path can return 413.
-        let (body_overflow_tx, body_overflow_rx) = if !is_bidi && max_request_body_bytes.is_some()
-        {
+        let (body_overflow_tx, body_overflow_rx) = if !is_bidi && max_request_body_bytes.is_some() {
             let (tx, rx) = tokio::sync::oneshot::channel::<()>();
             (Some(tx), Some(rx))
         } else {
@@ -373,8 +372,7 @@ impl RequestService {
             if response_head.status != StatusCode::SWITCHING_PROTOCOLS.as_u16() {
                 drop(upgrade_fut);
                 drop(req_body_writer);
-                let mut resp_builder =
-                    hyper::Response::builder().status(response_head.status);
+                let mut resp_builder = hyper::Response::builder().status(response_head.status);
                 for (k, v) in &response_head.headers {
                     resp_builder = resp_builder.header(k.as_str(), v.as_str());
                 }
@@ -655,8 +653,7 @@ where
                             let mut layer = CompressionLayer::new().zstd(true);
                             if let Some(level) = svc.compression.as_ref().and_then(|c| c.level) {
                                 use tower_http::compression::CompressionLevel;
-                                layer = layer
-                                    .quality(CompressionLevel::Precise(level as i32));
+                                layer = layer.quality(CompressionLevel::Precise(level as i32));
                             }
                             TowerToHyperService::new(
                                 tower::ServiceBuilder::new()

@@ -13,8 +13,7 @@ use std::sync::{Mutex, OnceLock};
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
-    parse_direct_addrs,
-    registry,
+    parse_direct_addrs, registry,
     server::respond,
     stream::{
         alloc_body_writer, cancel_reader, claim_pending_reader, finish_body, next_chunk,
@@ -40,7 +39,10 @@ fn get_endpoint(handle: u32) -> napi::Result<IrohEndpoint> {
     registry::get_endpoint(handle as u64).ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
-            iroh_http_core::format_error_json("INVALID_HANDLE", format!("node closed or not found (handle {handle})")),
+            iroh_http_core::format_error_json(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {handle})"),
+            ),
         )
     })
 }
@@ -223,13 +225,12 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
 /// requests.  Otherwise performs a graceful shutdown.
 #[napi]
 pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> napi::Result<()> {
-    let ep = registry::remove_endpoint(endpoint_handle as u64)
-        .ok_or_else(|| {
-            napi::Error::new(
-                Status::InvalidArg,
-                iroh_http_core::format_error_json("INVALID_HANDLE", "node closed or not found"),
-            )
-        })?;
+    let ep = registry::remove_endpoint(endpoint_handle as u64).ok_or_else(|| {
+        napi::Error::new(
+            Status::InvalidArg,
+            iroh_http_core::format_error_json("INVALID_HANDLE", "node closed or not found"),
+        )
+    })?;
     if force.unwrap_or(false) {
         ep.close_force().await;
     } else {
@@ -296,7 +297,10 @@ pub async fn mdns_next_event(browse_handle: u32) -> napi::Result<Option<JsPeerDi
     .ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
-            iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid browse handle: {browse_handle}")),
+            iroh_http_core::format_error_json(
+                "INVALID_HANDLE",
+                format!("invalid browse handle: {browse_handle}"),
+            ),
         )
     })?;
     let event = session.lock().await.next_event().await;
