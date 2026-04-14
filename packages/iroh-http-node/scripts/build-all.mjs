@@ -5,9 +5,10 @@
  * Prerequisites (macOS host):
  *   rustup target add \
  *     aarch64-apple-darwin x86_64-apple-darwin \
- *     x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+ *     x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+ *     x86_64-pc-windows-gnu
  *   cargo install cargo-zigbuild
- *   brew install zig
+ *   brew install zig mingw-w64
  */
 import { execSync } from "node:child_process";
 import { readdirSync } from "node:fs";
@@ -22,6 +23,7 @@ const TARGETS = [
   { target: "x86_64-apple-darwin", zig: false },
   { target: "x86_64-unknown-linux-gnu", zig: true },
   { target: "aarch64-unknown-linux-gnu", zig: true },
+  { target: "x86_64-pc-windows-gnu", zig: false },
 ];
 
 let failed = 0;
