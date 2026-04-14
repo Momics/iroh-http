@@ -180,7 +180,7 @@ export function makeServe(
         if (reqBody) reqInit.duplex = "half";
 
         const req = new Request(
-          payload.url.replace(/^httpi:/, "http:"),
+          payload.url,
           reqInit,
         );
 
