@@ -1,0 +1,56 @@
+name: Feature request
+description: Propose a new feature or API change
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should be added or changed, and why.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence / Motivation
+      description: Use case, user feedback, or reference to related spec/docs.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Who benefits and what changes for existing users.
+  - type: textarea
+    id: remediation
+    attributes:
+      label: Implementation plan
+      description: Suggested approach, files to change, or open questions.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How do we know it's done?
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P1 — blocks users or breaks protocol
+        - P2 — important but has workaround
+        - P3 — minor / cosmetic
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - api
+        - protocol
+        - connectivity
+        - observability
+        - dx
+      description: Primary area affected (matches repo labels).
+    validations:
+      required: true

@@ -45,6 +45,6 @@ Every fixed issue must leave a regression test in the appropriate layer:
 - **Rust core bugs** → `cargo test` (in `integration.rs` or a new test file)
 - **Type/export bugs** → verified by `tsc` (no new test needed if CI gates it)
 - **Protocol behavior** → `cases.json` entry in `tests/http-compliance/`
-- **Docs/build/config** → N/A (document in the issue's `## Regression test` section)
+- **Docs/build/config** → N/A (note in the closing comment)
 
-When closing an issue, fill in the `## Regression test` section of the issue file with the layer, test name/path, and whether the test was verified failing before the fix.
+When closing an issue on GitHub, add a comment linking the fix commit (full URL) and note the regression test layer/name. See the `manage-issues` skill (`.github/skills/manage-issues/SKILL.md`) for the full issue workflow.
