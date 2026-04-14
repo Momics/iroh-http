@@ -11,27 +11,7 @@ connection.
 peerStats(nodeId: string): Promise<PeerStats | null>  // null if not connected
 ```
 
-```ts
-interface PeerStats {
-  /** Whether the active path goes through a relay server. */
-  relay: boolean;
-  /** Active relay URL, or null if using a direct path. */
-  relayUrl: string | null;
-  /** All known paths to this peer. */
-  paths: PathInfo[];
-}
-
-interface PathInfo {
-  /** Whether this path goes through a relay server. */
-  relay: boolean;
-  /** The relay URL in use, when relay is true. */
-  relayUrl?: string;
-  /** The remote socket address for this path. */
-  addr: string;
-  /** Whether this is the currently selected (active) path. */
-  selected: boolean;
-}
-```
+See [`PeerStats` and `PathInfo` in the specification](../specification.md#supporting-types) for the type shapes.
 
 Path change events, for reactive use:
 

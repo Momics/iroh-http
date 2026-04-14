@@ -43,16 +43,9 @@ await session.closed;
 
 ## `IrohSession` interface
 
-`IrohSession` satisfies `WebTransport` exactly:
-
-```ts
-interface IrohSession extends WebTransport {
-  // All standard WebTransport properties, plus:
-
-  /** The peer's verified public key. Not on standard WebTransport. */
-  readonly remoteId: PublicKey;
-}
-```
+`IrohSession` satisfies `WebTransport` with an additional `remoteId` property.
+See [`IrohSession` in the specification](../specification.md#webtransport) for the
+full interface definition.
 
 ## `node.fetch` and `node.serve`
 
@@ -137,17 +130,8 @@ console.log(session.datagrams.maxDatagramSize); // e.g. 1200
 ```
 
 `IrohDatagramDuplexStream` matches the spec's
-[`WebTransportDatagramDuplexStream`](https://developer.mozilla.org/en-US/docs/Web/API/WebTransportDatagramDuplexStream):
-
-```ts
-interface IrohDatagramDuplexStream {
-  readonly readable: ReadableStream<Uint8Array>;
-  readonly writable: WritableStream<Uint8Array>;
-  readonly maxDatagramSize: number | null;  // null = datagrams unavailable on this path
-  incomingHighWaterMark: number;            // spec property
-  outgoingHighWaterMark: number;            // spec property
-}
-```
+[`WebTransportDatagramDuplexStream`](https://developer.mozilla.org/en-US/docs/Web/API/WebTransportDatagramDuplexStream).
+See the [specification](../specification.md#webtransport) for the full interface.
 
 Writing a datagram larger than `maxDatagramSize` throws `IrohSendDatagramError`
 with code `"TOO_LARGE"`. `maxDatagramSize` is updated automatically when the

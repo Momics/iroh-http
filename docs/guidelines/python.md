@@ -50,10 +50,7 @@ Body methods consume the body stream. Call only one, exactly once.
 
 ## Serve Handler Contract
 
-```python
-async def handler(request: IrohRequest) -> dict:
-    ...
-```
+See [ServeHandler in the specification](../specification.md#servehandler) for the canonical handler contract (including the Python form).
 
 `IrohRequest` properties: `method`, `url`, `headers`, `remote_node_id`. Async methods: `await request.body()`, `await request.text()`.
 
@@ -97,17 +94,11 @@ Document feature availability when shipping pre-built wheels.
 
 ## API Differences from JS/TS
 
-Python exposes Rust functions directly via PyO3. Some APIs differ from the
-class-method style used in the JavaScript adapters:
+See [Python API differences in the specification](../specification.md#python-api-differences) for the full mapping table.
 
-| JS/TS | Python | Notes |
-|-------|--------|-------|
-| `node.secretKey.sign(data)` | `secret_key_sign(key, data)` | Module-level, takes raw `bytes` key |
-| `node.publicKey.verify(data, sig)` | `public_key_verify(key, data, sig)` | Module-level, takes raw `bytes` key |
-| `SecretKey.generate()` | `generate_secret_key()` | Module-level, returns 32 `bytes` |
-| `publicKey.encrypt(plaintext)` | ❌ not implemented | |
-| `secretKey.decrypt(ciphertext)` | ❌ not implemented | |
-| `AbortSignal` cancellation | `async for … break` or node close | |
+Python exposes Rust functions directly via PyO3 as module-level functions
+rather than class methods. Cancellation uses `async for … break` instead of
+`AbortSignal`.
 
 ---
 

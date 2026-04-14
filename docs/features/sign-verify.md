@@ -60,43 +60,33 @@ const ok = await node.publicKey.verify(data, sig);
 
 ## Encrypt / Decrypt
 
-`publicKey.encrypt` seals a message so that only the holder of the matching
-`SecretKey` can open it. Uses a sealed-box construction:
-Ed25519→X25519 key conversion, ephemeral ECDH, HKDF-SHA256 key derivation,
-AES-GCM-256 authenticated encryption.
-
-```ts
-// Encrypt to a recipient public key (e.g. their node ID):
-const recipient = PublicKey.fromString(recipientNodeId);
-const ciphertext: Uint8Array = await recipient.encrypt(plaintext);
-
-// Decrypt with the matching secret key:
-const plaintext: Uint8Array = await node.secretKey.decrypt(ciphertext);
-```
-
-The ciphertext format is self-contained: `[32B ephemeral pub] [12B IV] [ciphertext + 16B tag]`.
-`decrypt` throws `IrohError` if authentication fails.
+Sealed-box encryption (Ed25519→X25519 key conversion, ephemeral ECDH,
+HKDF-SHA256, AES-GCM-256) is available as a recipe pattern rather than a
+core API — the derived X25519 keys are cryptographically distinct from the
+Ed25519 identity keys. See [sealed-messages recipe](../recipes/sealed-messages.md)
+for the full implementation.
 
 ## Types summary
 
 | Value | Type | Description |
 |---|---|---|
 | `sig` | `Uint8Array` (64 bytes) | Ed25519 signature |
-| `ciphertext` | `Uint8Array` | Sealed-box ciphertext (≥ 60 bytes overhead) |
 | `publicKey.verify` result | `boolean` | `false` on invalid sig, never throws |
-| `secretKey.decrypt` result | `Uint8Array` | Plaintext, or throws on auth failure |
+
+See also: [key classes in the specification](../specification.md#key-classes).
 
 All cryptographic operations are **async** — always `await` them.
 
 ## Platform support
+
+See [Python API differences in the specification](../specification.md#python-api-differences) for the full mapping.
 
 | Feature | Node / Deno / Tauri | Python |
 |---------|:---:|:---:|
 | **Sign** (`secretKey.sign`) | ✅ class method | ✅ `secret_key_sign(key, data)` module function |
 | **Verify** (`publicKey.verify`) | ✅ class method | ✅ `public_key_verify(key, data, sig)` module function |
 | **Generate key** (`SecretKey.generate`) | ✅ class method | ✅ `generate_secret_key()` module function |
-| **Encrypt** (`publicKey.encrypt`) | ✅ | ❌ not implemented |
-| **Decrypt** (`secretKey.decrypt`) | ✅ | ❌ not implemented |
+| **Sealed-box encrypt/decrypt** | via [recipe](../recipes/sealed-messages.md) | via recipe |
 
 > **Python note:** Sign/verify/generate are module-level functions accepting
 > raw `bytes` keys, not class methods on `PublicKey`/`SecretKey` objects.

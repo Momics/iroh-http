@@ -6,6 +6,10 @@
 - [Principles](principles.md) — engineering values, design philosophy, self-evaluation checklist
 - [Protocol](protocol.md) — wire format, `httpi://` URL scheme, ALPN versioning
 
+## Specification
+
+- [Adapter specification](specification.md) — normative interface contract for all adapters (core types, error hierarchy, feature interfaces, conformance)
+
 ## Coding Guidelines
 
 - [Rust](guidelines/rust.md) — naming, visibility, error handling, async, testing for `iroh-http-core`
