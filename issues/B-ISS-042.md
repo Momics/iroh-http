@@ -1,7 +1,7 @@
 ---
 id: "B-ISS-042"
 title: "JS guidelines error .name table doesn't match errors.ts implementation"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-14
 area: docs
