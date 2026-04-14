@@ -29,20 +29,12 @@ When `node.fetch` sends a request, the Rust layer injects `iroh-node-id: <local-
 
 Because the header value is derived from the authenticated key, it matches the identity the server will see in its own `iroh-node-id` — both sides see the same verified identity.
 
-## Optional headers
+## Diagnostic data
 
-The following diagnostic headers can be requested by setting `debugHeaders: true`
-in `NodeOptions`:
-
-| Header | Direction | Value |
-|---|---|---|
-| `iroh-relay` | request + response | `"true"` or `"false"` — whether this connection is relayed |
-| `iroh-rtt-ms` | response | Round-trip time in milliseconds to the responding peer |
-
-These are off by default to keep production headers minimal. Enable them for
-debugging or for applications that need to adapt behaviour to connection quality
-(see [observability](observability.md) for programmatic access to the same
-data).
+Relay status and round-trip time are accessible programmatically via
+`node.peerStats()` (see [observability](observability.md)).  Automatic injection
+of `iroh-relay` and `iroh-rtt-ms` headers is not yet implemented — this is
+tracked for a future release.
 
 ## What is NOT injected
 
