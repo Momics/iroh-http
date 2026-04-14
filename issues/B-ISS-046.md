@@ -1,7 +1,7 @@
 ---
 id: "B-ISS-046"
 title: "architecture.md references removed classify_error_json function"
-status: open
+status: fixed
 priority: P3
 date: 2026-04-14
 area: docs

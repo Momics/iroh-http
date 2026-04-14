@@ -40,11 +40,11 @@ await node.close();
 
 ```ts
 const node = await createNode({
-  key: savedKey,                // SecretKey or Uint8Array — restore identity
-  relays: ["https://my-relay"], // custom relay URLs
-  discovery: { mdns: true, serviceName: "my-app.iroh-http" }, // local discovery
-  advanced: { drainTimeout: 30_000 },  // ms to wait for slow body readers
+  key: savedKey,                              // SecretKey or Uint8Array — restore identity
+  relayMode: "https://my-relay.example.com",  // custom relay URL (or "default", "staging", "disabled")
+  advanced: { drainTimeout: 30_000 },         // ms to wait for slow body readers
 });
+// Use node.browse() / node.advertise() for mDNS peer discovery.
 ```
 
 ## License

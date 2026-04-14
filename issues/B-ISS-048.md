@@ -1,7 +1,7 @@
 ---
 id: "B-ISS-048"
 title: "compression.md contains internal patch tracking artifact"
-status: open
+status: fixed
 priority: P3
 date: 2026-04-14
 area: docs
