@@ -1,0 +1,46 @@
+---
+id: "B-ISS-041"
+title: "debugHeaders option documented but not implemented"
+status: open
+priority: P1
+date: 2026-04-13
+area: docs
+package: iroh-http-core
+tags: [docs, correctness, observability, headers]
+---
+
+# [B-ISS-041] debugHeaders option documented but not implemented
+
+## Summary
+
+`docs/features/default-headers.md` describes a `debugHeaders: true` option in `NodeOptions` that injects `iroh-relay` and `iroh-rtt-ms` diagnostic headers on every request/response. This option does not exist anywhere in the codebase — not in `NodeOptions`, not in any adapter, not in any Rust handler.
+
+## Evidence
+
+- `docs/features/default-headers.md` — documents `debugHeaders: true` as a working `createNode()` option
+- `crates/iroh-http-core/src/endpoint.rs` — `NodeOptions` struct has no `debug_headers` field
+- `packages/iroh-http-node/src/lib.rs`, `packages/iroh-http-tauri/src/commands.rs`, `packages/iroh-http-deno/src/dispatch.rs` — no mention of `debugHeaders` or `iroh-relay`/`iroh-rtt-ms` headers
+- `crates/iroh-http-core/src/server.rs`, `crates/iroh-http-core/src/client.rs` — no header injection of relay or RTT info
+
+## Impact
+
+Developers following the documentation will set `debugHeaders: true` with no effect and no error. The option is silently ignored. Any diagnostic workflow that depends on `iroh-relay` or `iroh-rtt-ms` headers is broken.
+
+## Remediation
+
+Two valid paths:
+
+**Option A — Implement the feature:**
+1. Add `debug_headers: bool` to `NodeOptions` and `CreateEndpointArgs` (all adapters).
+2. After the QUIC connection is established, look up relay/RTT via `peerStats`-equivalent and inject `iroh-relay` and `iroh-rtt-ms` into the request/response headers.
+3. Verify with a test that the headers appear when `debugHeaders: true` and are absent otherwise.
+
+**Option B — Remove from docs until implemented:**
+1. Delete the "Optional headers" section from `docs/features/default-headers.md`.
+2. Add a line noting that relay/RTT info is accessible programmatically via `node.peerStats()`.
+3. Track implementation as a separate issue on the roadmap.
+
+## Acceptance criteria
+
+1. Either: `debugHeaders: true` injects `iroh-relay` and `iroh-rtt-ms` and a test verifies this.
+2. Or: the option is removed from all documentation and a roadmap note is added.
