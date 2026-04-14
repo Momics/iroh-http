@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-039"
 title: "NodeOptions default for dns_discovery_enabled conflicts with docs"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-13
 area: core

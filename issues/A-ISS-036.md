@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-036"
 title: "session_ready ignores invalid or stale session handles"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-13
 area: core

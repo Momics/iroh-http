@@ -1,7 +1,7 @@
 ---
 id: "B-ISS-043"
 title: "max_header_bytes naming inconsistency across ServeOptions, NodeOptions, and Tauri args"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-14
 area: core

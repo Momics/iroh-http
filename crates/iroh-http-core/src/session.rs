@@ -153,7 +153,9 @@ pub fn session_close(session_handle: u64, close_code: u32, reason: &str) -> Resu
 /// Wait for the QUIC handshake to complete on a session.
 ///
 /// Resolves immediately if the handshake has already completed.
-pub async fn session_ready(_session_handle: u64) -> Result<(), CoreError> {
+pub async fn session_ready(session_handle: u64) -> Result<(), CoreError> {
+    // Validate handle exists — keeps error behavior consistent with other session APIs.
+    let _conn = get_conn(session_handle)?;
     // iroh connections are fully established by the time session_connect returns,
     // so ready always resolves immediately. Kept for WebTransport API compatibility.
     Ok(())

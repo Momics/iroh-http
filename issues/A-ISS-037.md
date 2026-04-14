@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-037"
 title: "extract_path drops query for authority-only URLs"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-13
 area: core

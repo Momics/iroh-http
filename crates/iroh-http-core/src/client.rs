@@ -420,6 +420,10 @@ pub(crate) fn extract_path(url: &str) -> String {
         if let Some(slash) = after_scheme.find('/') {
             return after_scheme[slash..].to_string();
         }
+        // No path segment — check for query string (e.g. "httpi://node?x=1").
+        if let Some(q) = after_scheme.find('?') {
+            return format!("/{}", &after_scheme[q..]);
+        }
         return "/".to_string();
     }
     if url.starts_with('/') {

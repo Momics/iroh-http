@@ -1,7 +1,7 @@
 ---
 id: "A-ISS-043"
 title: "Stale QPACK references in endpoint.rs doc comments and test comments"
-status: open
+status: fixed
 priority: P2
 date: 2026-04-14
 area: core
