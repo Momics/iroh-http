@@ -731,10 +731,45 @@ pub async fn mdns_next_event<R: tauri::Runtime>(
     state: tauri::State<'_, crate::mobile_mdns::MobileMdns<R>>,
     browse_handle: u64,
 ) -> Result<Option<PeerDiscoveryEventPayload>, String> {
-    let events = state
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::{Mutex, OnceLock};
+
+    // TAURI-013: Buffer surplus events from browse_poll so they are not lost.
+    // Each browse_handle gets its own queue.
+    static BUFFER: OnceLock<Mutex<HashMap<u64, VecDeque<crate::mobile_mdns::MobileDiscoveryEvent>>>> =
+        OnceLock::new();
+    let buffer = BUFFER.get_or_init(|| Mutex::new(HashMap::new()));
+
+    // Return a buffered event if available.
+    {
+        let mut map = buffer.lock().unwrap();
+        if let Some(queue) = map.get_mut(&browse_handle) {
+            if let Some(ev) = queue.pop_front() {
+                return Ok(Some(PeerDiscoveryEventPayload {
+                    is_active: ev.kind == "discovered",
+                    node_id: ev.node_id,
+                    addrs: ev.addrs,
+                }));
+            }
+        }
+    }
+
+    // No buffered events — poll native layer.
+    let mut events = state
         .browse_poll(browse_handle)
         .map_err(|e| iroh_http_core::format_error_json("INVALID_HANDLE", e))?;
-    Ok(events.into_iter().next().map(|ev| PeerDiscoveryEventPayload {
+
+    let first = events.drain(..1.min(events.len())).next();
+
+    // Buffer remaining events.
+    if !events.is_empty() {
+        let mut map = buffer.lock().unwrap();
+        map.entry(browse_handle)
+            .or_insert_with(VecDeque::new)
+            .extend(events);
+    }
+
+    Ok(first.map(|ev| PeerDiscoveryEventPayload {
         is_active: ev.kind == "discovered",
         node_id: ev.node_id,
         addrs: ev.addrs,

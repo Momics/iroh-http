@@ -1,7 +1,7 @@
 ---
 id: "TAURI-013"
 title: "Mobile mdns_next_event drops buffered discovery events"
-status: open
+status: fixed
 priority: P1
 date: 2026-04-13
 area: tauri
