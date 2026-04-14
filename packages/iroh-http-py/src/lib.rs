@@ -626,8 +626,10 @@ impl IrohServeHandle {
 #[pyclass]
 struct IrohNode {
     ep: IrohEndpoint,
-    /// Notify signaled when `close()` completes (PARITY-004).
-    close_notify: std::sync::Arc<tokio::sync::Notify>,
+    /// Watch channel signaled when `close()` completes (PARITY-004).
+    /// Uses watch<bool> so that `closed` resolves even when awaited after close.
+    close_tx: std::sync::Arc<tokio::sync::watch::Sender<bool>>,
+    close_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 #[pymethods]
@@ -834,10 +836,10 @@ impl IrohNode {
     /// After close() completes, `node.closed` resolves.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let ep = self.ep.clone();
-        let notify = std::sync::Arc::clone(&self.close_notify);
+        let tx = std::sync::Arc::clone(&self.close_tx);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             ep.close().await;
-            notify.notify_waiters();
+            let _ = tx.send(true);
             Ok(())
         })
     }
@@ -852,9 +854,10 @@ impl IrohNode {
     /// value of this property.
     #[getter]
     fn closed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let notify = std::sync::Arc::clone(&self.close_notify);
+        let mut rx = self.close_rx.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            notify.notified().await;
+            // Resolve immediately if already closed, otherwise wait.
+            let _ = rx.wait_for(|&closed| closed).await;
             Ok(())
         })
     }
@@ -989,9 +992,11 @@ impl IrohNode {
         let py = slf.py();
         let ep = slf.ep.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let (close_tx, close_rx) = tokio::sync::watch::channel(false);
             Ok(IrohNode {
                 ep,
-                close_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+                close_tx: std::sync::Arc::new(close_tx),
+                close_rx,
             })
         })
     }
@@ -1193,9 +1198,11 @@ fn create_node<'py>(
             },
         };
         let ep = IrohEndpoint::bind(opts).await.map_err(py_err)?;
+        let (close_tx, close_rx) = tokio::sync::watch::channel(false);
         Ok(IrohNode {
             ep,
-            close_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+            close_tx: std::sync::Arc::new(close_tx),
+            close_rx,
         })
     })
 }
