@@ -2,6 +2,7 @@
   "name": "@momics/iroh-http-deno",
   "version": "0.1.0",
   "exports": "./mod.ts",
+  "license": "MIT",
   "tasks": {
     "build":       "deno run --allow-run --allow-env --allow-read --allow-write --allow-sys scripts/build-native.mts",
     "build:debug": "deno run --allow-run --allow-env --allow-read --allow-write --allow-sys scripts/build-native.mts --debug",
