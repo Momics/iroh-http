@@ -508,3 +508,30 @@ Deno.test({ name: "serve + fetch — 1 MiB body round-trip", sanitizeOps: false 
     await client.close();
   }
 }));
+
+// ── httpi:// URL form (web-standard, ISS-001) ─────────────────────────────────
+
+Deno.test({ name: "fetch — httpi:// URL form (peer in hostname)", sanitizeOps: false }, () => withTimeout(20_000, async () => {
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
+  const ac = new AbortController();
+  let handle: { finished: Promise<void> } | undefined;
+
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    handle = server.serve({ signal: ac.signal }, (_req: Request) => {
+      return new Response("ok-from-httpi-url", { status: 200 });
+    });
+
+    // New web-standard form: peer ID embedded in httpi:// URL hostname.
+    const url = `httpi://${serverId}/hello`;
+    const resp = await client.fetch(url, { directAddrs: serverAddrs });
+    assertEquals(resp.status, 200);
+    assertEquals(await resp.text(), "ok-from-httpi-url");
+  } finally {
+    ac.abort();
+    await server.close();
+    await handle?.finished.catch(() => {});
+    await client.close();
+  }
+}));

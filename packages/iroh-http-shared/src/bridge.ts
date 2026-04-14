@@ -421,13 +421,23 @@ export interface IrohNode {
   secretKey: SecretKey;
   /**
    * Send an HTTP request to a remote node.
-   * Signature mirrors `globalThis.fetch` with `peer` prepended.
    *
-   * Pass `directAddrs` in init to provide known socket addresses for the peer
-   * (useful in tests or when addresses are already known out-of-band).
+   * Two call forms are supported:
+   * - **Web-standard:** `node.fetch("httpi://<peerId>/path", init?)` — peer ID embedded in URL
+   * - **Legacy:** `node.fetch(peer, "/path", init?)` — peer and path supplied separately
+   *
+   * @param input - `httpi://` URL string or URL object (web-standard form).
+   * @param init - Standard `RequestInit` options plus iroh-specific `directAddrs`.
+   * @returns A standard `Response` with an additional `trailers` promise.
+   * @throws {IrohConnectError} If the peer is unreachable.
+   * @throws {IrohAbortError} If `init.signal` is aborted.
+   */
+  fetch(input: string | URL, init?: IrohFetchInit): Promise<Response>;
+  /**
+   * Send an HTTP request to a remote node (legacy form).
    *
    * @param peer - Remote node's public key or base32 node ID string.
-   * @param input - Request URL path, e.g. `"/api/data"` or `"httpi://nodeId/path"`.
+   * @param input - Request URL path, e.g. `"/api/data"` or full `"httpi://nodeId/path"`.
    * @param init - Standard `RequestInit` options plus iroh-specific `directAddrs`.
    * @returns A standard `Response` with an additional `trailers` promise.
    * @throws {IrohConnectError} If the peer is unreachable.
