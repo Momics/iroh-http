@@ -1,9 +1,11 @@
 name: Release
 
-on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+# Disabled — releasing locally for now. Re-enable when ready:
+# on:
+#   push:
+#     tags:
+#       - 'v[0-9]+.[0-9]+.[0-9]+'
+on: workflow_dispatch
 
 permissions:
   contents: write
