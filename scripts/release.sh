@@ -11,7 +11,7 @@
 #   2. Build      — Rust workspace, TS, Node (4 platforms), Deno (5 platforms)
 #   3. Test       — cargo test, Node e2e, Deno smoke
 #   4. Version    — bumps all 10 manifests via version.sh
-#   5. Publish    — npm, JSR
+#   5. Publish    — npm, JSR, crates.io (tauri plugin)
 #   6. Tag + push — git commit, tag, push
 #
 # Prerequisites:
@@ -111,6 +111,10 @@ if ! $DRY_RUN; then
   npm whoami &>/dev/null || die "not logged in to npm (run: npm adduser)"
   ok "npm authenticated"
 
+  # crates.io — needed for tauri-plugin-iroh-http
+  [[ -f "$HOME/.cargo/credentials.toml" ]] || [[ -n "${CARGO_REGISTRY_TOKEN:-}" ]] \
+    || die "no crates.io token (run: cargo login)"
+  ok "crates.io token found"
 fi
 
 echo ""
@@ -198,6 +202,7 @@ section "5. Publish"
 if $DRY_RUN; then
   skip "npm (dry-run)"
   skip "JSR (dry-run)"
+  skip "crates.io (dry-run)"
 else
   # 5a. npm: shared (pure TS, no native code)
   step "npm: @momics/iroh-http-shared"
@@ -223,6 +228,11 @@ else
   step "JSR: @momics/iroh-http-deno"
   (cd packages/iroh-http-deno && deno publish 2>&1 | tail -3)
   ok "@momics/iroh-http-deno → JSR"
+
+  # 5g. crates.io: tauri plugin Rust host crate
+  step "crates.io: tauri-plugin-iroh-http"
+  (cd packages/iroh-http-tauri && cargo publish 2>&1 | tail -3)
+  ok "tauri-plugin-iroh-http → crates.io"
 fi
 
 # ── 6. Git tag + push ─────────────────────────────────────────────────────────
