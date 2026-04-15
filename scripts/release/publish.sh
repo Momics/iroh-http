@@ -24,13 +24,12 @@ section "Publish  [$PLATFORM]"
 
 case "$PLATFORM" in
   node)
-    # Node depends on shared via npm
+    # Shared goes to npm (Node consumers use npm)
     try_publish "@momics/iroh-http-shared → npm" "npm run publish:shared"
-    try_publish "@momics/iroh-http-shared → JSR" "npm run publish:shared:jsr"
     try_publish "@momics/iroh-http-node → npm"   "npm run publish:node"
     ;;
   deno)
-    # Deno depends on shared via JSR
+    # Shared goes to JSR (Deno consumers use JSR), then the deno package
     try_publish "@momics/iroh-http-shared → JSR" "npm run publish:shared:jsr"
     try_publish "@momics/iroh-http-deno → JSR"   "npm run publish:deno"
     ;;
