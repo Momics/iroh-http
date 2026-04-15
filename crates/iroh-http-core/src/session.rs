@@ -156,9 +156,12 @@ pub fn session_close(
         .handles()
         .remove_session(session_handle)
         .ok_or_else(|| CoreError::invalid_handle(session_handle as u32))?;
-    entry
-        .conn
-        .close(iroh::endpoint::VarInt::from_u64(close_code).unwrap_or(iroh::endpoint::VarInt::from_u32(0)), reason.as_bytes());
+    let code = iroh::endpoint::VarInt::from_u64(close_code).map_err(|_| {
+        CoreError::invalid_input(format!(
+            "close_code {close_code} exceeds QUIC VarInt max (2^62 - 1)"
+        ))
+    })?;
+    entry.conn.close(code, reason.as_bytes());
     Ok(())
 }
 
