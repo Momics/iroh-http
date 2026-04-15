@@ -101,7 +101,7 @@ impl CoreError {
             message: detail.to_string(),
         }
     }
-    pub fn invalid_handle(handle: u32) -> Self {
+    pub fn invalid_handle(handle: u64) -> Self {
         CoreError {
             code: ErrorCode::InvalidInput,
             message: format!("unknown handle: {handle}"),
