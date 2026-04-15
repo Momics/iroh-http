@@ -79,33 +79,7 @@ import type {
 } from "@momics/iroh-http-shared/adapter";
 
 // ── Bridge implementation ─────────────────────────────────────────────────────
-
-const bridge: Bridge = {
-  nextChunk: (handle: bigint) => jsNextChunk(handle),
-  sendChunk: (handle: bigint, chunk: Uint8Array) => jsSendChunk(handle, chunk),
-  finishBody: (handle: bigint) => {
-    jsFinishBody(handle);
-    return Promise.resolve();
-  },
-  cancelRequest: (handle: bigint) => {
-    jsCancelRequest(handle);
-    return Promise.resolve();
-  },
-  allocFetchToken: (eh: number) => Promise.resolve(jsAllocFetchToken(eh)),
-  cancelFetch: (token: bigint) => {
-    jsCancelInFlight(token);
-  },
-  nextTrailer: async (handle: bigint) => {
-    const rows = await jsNextTrailer(handle);
-    return rows
-      ? (rows as string[][]).map((p) => [p[0], p[1]] as [string, string])
-      : null;
-  },
-  sendTrailers: (handle: bigint, trailers: [string, string][]) => {
-    jsSendTrailers(handle, trailers as string[][]);
-    return Promise.resolve();
-  },
-};
+// Constructed per-node inside createNode() to close over endpointHandle.
 
 // ── Platform function adapters ────────────────────────────────────────────────
 
@@ -151,6 +125,7 @@ const rawServe: RawServeFn = (
       .then((head) => {
         try {
           napiRawRespond(
+            endpointHandle,
             typed.reqHandle,
             head.status,
             head.headers as string[][],
@@ -162,7 +137,7 @@ const rawServe: RawServeFn = (
       .catch((err: unknown) => {
         console.error("[iroh-http-node] serve handler error:", err);
         try {
-          napiRawRespond(typed.reqHandle, 500, []);
+          napiRawRespond(endpointHandle, typed.reqHandle, 500, []);
         } catch (respondErr) {
           console.error("[iroh-http-node] rawRespond (fallback 500) failed:", respondErr);
         }
@@ -174,7 +149,7 @@ const rawServe: RawServeFn = (
   return Promise.resolve();
 };
 
-const allocBodyWriter: AllocBodyWriterFn = () => jsAllocBodyWriter();
+// allocBodyWriter constructed per-node inside createNode() to close over endpointHandle.
 
 const rawConnect: RawConnectFn = async (
   endpointHandle,
@@ -260,44 +235,7 @@ const discoveryFns: DiscoveryFunctions = {
     napiMdnsAdvertiseClose(advertiseHandle),
 };
 
-/** Session functions backed by napi bindings. */
-const nodeSessionFns: RawSessionFns = {
-  connect: async (endpointHandle, nodeId, directAddrs) =>
-    napiSessionConnect(endpointHandle, nodeId, directAddrs ?? undefined),
-  createBidiStream: async (sessionHandle) => {
-    const ffi = await napiSessionCreateBidiStream(sessionHandle);
-    return {
-      readHandle: ffi.readHandle,
-      writeHandle: ffi.writeHandle,
-    } satisfies FfiDuplexStream;
-  },
-  nextBidiStream: async (sessionHandle) => {
-    const ffi = await napiSessionNextBidiStream(sessionHandle);
-    return ffi
-      ? ({ readHandle: ffi.readHandle, writeHandle: ffi.writeHandle } satisfies FfiDuplexStream)
-      : null;
-  },
-  createUniStream: async (sessionHandle: bigint) =>
-    napiSessionCreateUniStream(sessionHandle),
-  nextUniStream: async (sessionHandle: bigint) => {
-    const h = await napiSessionNextUniStream(sessionHandle);
-    return h ?? null;
-  },
-  sendDatagram: async (sessionHandle: bigint, data: Uint8Array) =>
-    napiSessionSendDatagram(sessionHandle, data),
-  recvDatagram: async (sessionHandle: bigint) => {
-    const buf = await napiSessionRecvDatagram(sessionHandle);
-    return buf ? new Uint8Array(buf) : null;
-  },
-  maxDatagramSize: async (sessionHandle: bigint) =>
-    napiSessionMaxDatagramSize(sessionHandle) ?? null,
-  closed: async (sessionHandle: bigint) => {
-    const info = await napiSessionClosed(sessionHandle);
-    return { closeCode: info.closeCode, reason: info.reason };
-  },
-  close: async (sessionHandle: bigint, closeCode?: number, reason?: string) =>
-    napiSessionClose(sessionHandle, closeCode, reason),
-};
+// Session functions constructed per-node inside createNode() to close over endpointHandle.
 
 /**
  * Create an Iroh node for peer-to-peer HTTP.
@@ -366,8 +304,78 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     throw classifyBindError(e);
   });
 
+  const eh = info.endpointHandle;
+
+  // Bridge: close over endpointHandle so body-handle napi calls get it.
+  const nodeBridge: Bridge = {
+    nextChunk: (handle: bigint) => jsNextChunk(eh, handle),
+    sendChunk: (handle: bigint, chunk: Uint8Array) => jsSendChunk(eh, handle, chunk),
+    finishBody: (handle: bigint) => {
+      jsFinishBody(eh, handle);
+      return Promise.resolve();
+    },
+    cancelRequest: (handle: bigint) => {
+      jsCancelRequest(eh, handle);
+      return Promise.resolve();
+    },
+    allocFetchToken: (_endpointHandle: number) => Promise.resolve(jsAllocFetchToken(eh)),
+    cancelFetch: (token: bigint) => {
+      jsCancelInFlight(eh, token);
+    },
+    nextTrailer: async (handle: bigint) => {
+      const rows = await jsNextTrailer(eh, handle);
+      return rows
+        ? (rows as string[][]).map((p) => [p[0], p[1]] as [string, string])
+        : null;
+    },
+    sendTrailers: (handle: bigint, trailers: [string, string][]) => {
+      jsSendTrailers(eh, handle, trailers as string[][]);
+      return Promise.resolve();
+    },
+  };
+
+  const nodeAllocBodyWriter: AllocBodyWriterFn = () => jsAllocBodyWriter(eh);
+
+  const nodeSessionFns: RawSessionFns = {
+    connect: async (endpointHandle, nodeId, directAddrs) =>
+      napiSessionConnect(endpointHandle, nodeId, directAddrs ?? undefined),
+    createBidiStream: async (sessionHandle) => {
+      const ffi = await napiSessionCreateBidiStream(eh, sessionHandle);
+      return {
+        readHandle: ffi.readHandle,
+        writeHandle: ffi.writeHandle,
+      } satisfies FfiDuplexStream;
+    },
+    nextBidiStream: async (sessionHandle) => {
+      const ffi = await napiSessionNextBidiStream(eh, sessionHandle);
+      return ffi
+        ? ({ readHandle: ffi.readHandle, writeHandle: ffi.writeHandle } satisfies FfiDuplexStream)
+        : null;
+    },
+    createUniStream: async (sessionHandle: bigint) =>
+      napiSessionCreateUniStream(eh, sessionHandle),
+    nextUniStream: async (sessionHandle: bigint) => {
+      const h = await napiSessionNextUniStream(eh, sessionHandle);
+      return h ?? null;
+    },
+    sendDatagram: async (sessionHandle: bigint, data: Uint8Array) =>
+      napiSessionSendDatagram(eh, sessionHandle, data),
+    recvDatagram: async (sessionHandle: bigint) => {
+      const buf = await napiSessionRecvDatagram(eh, sessionHandle);
+      return buf ? new Uint8Array(buf) : null;
+    },
+    maxDatagramSize: async (sessionHandle: bigint) =>
+      napiSessionMaxDatagramSize(eh, sessionHandle) ?? null,
+    closed: async (sessionHandle: bigint) => {
+      const info = await napiSessionClosed(eh, sessionHandle);
+      return { closeCode: info.closeCode, reason: info.reason };
+    },
+    close: async (sessionHandle: bigint, closeCode?: number, reason?: string) =>
+      napiSessionClose(eh, sessionHandle, closeCode, reason),
+  };
+
   return buildNode(
-    bridge,
+    nodeBridge,
     {
       endpointHandle: info.endpointHandle,
       nodeId: info.nodeId,
@@ -376,7 +384,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawFetch,
     rawServe,
     rawConnect,
-    allocBodyWriter,
+    nodeAllocBodyWriter,
     (handle: number, force?: boolean) => closeEndpoint(handle, force ?? null),
     (handle: number) => napiStopServe(handle),
     addrFns,
