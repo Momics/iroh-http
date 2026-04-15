@@ -130,6 +130,24 @@ pub const ALPN: &[u8] = b"iroh-http/2";
 /// ALPN for base + bidirectional streaming (duplex/raw_connect).
 pub const ALPN_DUPLEX: &[u8] = b"iroh-http/2-duplex";
 
+// ── Shared body type alias ────────────────────────────────────────────────────
+
+/// Boxed HTTP body type used by both client and server.
+pub(crate) type BoxBody =
+    http_body_util::combinators::BoxBody<bytes::Bytes, std::convert::Infallible>;
+
+/// Wrap any body into a `BoxBody`.
+pub(crate) fn box_body<B>(body: B) -> BoxBody
+where
+    B: http_body::Body<Data = bytes::Bytes, Error = std::convert::Infallible>
+        + Send
+        + Sync
+        + 'static,
+{
+    use http_body_util::BodyExt;
+    body.map_err(|_| unreachable!()).boxed()
+}
+
 // ── Key operations ───────────────────────────────────────────────────────────
 
 /// Sign arbitrary bytes with a 32-byte Ed25519 secret key.

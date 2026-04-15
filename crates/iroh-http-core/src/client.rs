@@ -18,14 +18,7 @@ use crate::{
 
 // ── BoxBody type alias ────────────────────────────────────────────────────────
 
-type BoxBody = http_body_util::combinators::BoxBody<Bytes, std::convert::Infallible>;
-
-fn box_body<B>(body: B) -> BoxBody
-where
-    B: http_body::Body<Data = Bytes, Error = std::convert::Infallible> + Send + Sync + 'static,
-{
-    body.map_err(|_| unreachable!()).boxed()
-}
+use crate::BoxBody;
 
 // ── Compression: thin tower service wrapper around hyper SendRequest ─────────
 
@@ -219,9 +212,9 @@ async fn do_fetch(
 
     let req_body: BoxBody = if let Some(reader) = req_body_reader {
         // Adapt BodyReader → hyper body (no trailers on request side for now).
-        box_body(body_from_reader(reader, None))
+        crate::box_body(body_from_reader(reader, None))
     } else {
-        box_body(http_body_util::Empty::new())
+        crate::box_body(http_body_util::Empty::new())
     };
 
     let req = req_builder
@@ -533,7 +526,7 @@ pub async fn raw_connect(
     }
 
     let req = req_builder
-        .body(box_body(http_body_util::Empty::new()))
+        .body(crate::box_body(http_body_util::Empty::new()))
         .map_err(|e| CoreError::internal(format!("build duplex request: {e}")))?;
 
     let resp = sender
@@ -562,7 +555,8 @@ pub async fn raw_connect(
     let write_handle = handles.insert_writer(client_write)?;
 
     // Pipe upgraded IO to/from body channels.
-    tokio::spawn(pump_upgraded(upgraded, server_write, client_read));
+    let io = TokioIo::new(upgraded);
+    tokio::spawn(crate::stream::pump_duplex(io, server_write, client_read));
 
     Ok(FfiDuplexStream {
         read_handle,
@@ -570,47 +564,31 @@ pub async fn raw_connect(
     })
 }
 
-/// Pump data between an upgraded hyper IO object and body channels.
-async fn pump_upgraded(
-    upgraded: hyper::upgrade::Upgraded,
-    writer: BodyWriter, // server→client: write incoming data here
-    reader: BodyReader, // client→server: read outgoing data from here
-) {
-    let io = TokioIo::new(upgraded);
-    let (mut recv, mut send) = tokio::io::split(io);
+#[cfg(test)]
+mod tests {
+    use super::extract_path;
 
-    tokio::join!(
-        async {
-            let mut buf = vec![0u8; crate::stream::PUMP_READ_BUF];
-            loop {
-                use tokio::io::AsyncReadExt;
-                match recv.read(&mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        if writer
-                            .send_chunk(bytes::Bytes::copy_from_slice(&buf[..n]))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-        },
-        async {
-            use tokio::io::AsyncWriteExt;
-            loop {
-                match reader.next_chunk().await {
-                    None => break,
-                    Some(data) => {
-                        if send.write_all(&data).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-            let _ = send.shutdown().await;
-        },
-    );
+    #[test]
+    fn extract_path_basic() {
+        assert_eq!(extract_path("httpi://node/foo/bar"), "/foo/bar");
+        assert_eq!(extract_path("httpi://node/"), "/");
+        assert_eq!(extract_path("httpi://node"), "/");
+    }
+
+    #[test]
+    fn extract_path_query_string() {
+        assert_eq!(extract_path("httpi://node/path?x=1"), "/path?x=1");
+        assert_eq!(extract_path("httpi://node?x=1"), "/?x=1");
+    }
+
+    #[test]
+    fn extract_path_fragment() {
+        assert_eq!(extract_path("httpi://node/path#frag"), "/path#frag");
+    }
+
+    #[test]
+    fn extract_path_bare_path() {
+        assert_eq!(extract_path("/already"), "/already");
+        assert_eq!(extract_path("no-slash"), "/no-slash");
+    }
 }

@@ -756,6 +756,54 @@ pub(crate) async fn pump_body_to_quic_send(
     let _ = send.finish();
 }
 
+/// Bidirectional pump between a byte-level I/O object and a pair of body channels.
+///
+/// Reads from `io` → sends to `writer` (incoming data).
+/// Reads from `reader` → writes to `io` (outgoing data).
+///
+/// Used for both client-side and server-side duplex upgrade pumps.
+pub(crate) async fn pump_duplex<IO>(io: IO, writer: BodyWriter, reader: BodyReader)
+where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let (mut recv, mut send) = tokio::io::split(io);
+
+    tokio::join!(
+        async {
+            use tokio::io::AsyncReadExt;
+            let mut buf = vec![0u8; PUMP_READ_BUF];
+            loop {
+                match recv.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if writer
+                            .send_chunk(bytes::Bytes::copy_from_slice(&buf[..n]))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        },
+        async {
+            use tokio::io::AsyncWriteExt;
+            loop {
+                match reader.next_chunk().await {
+                    None => break,
+                    Some(data) => {
+                        if send.write_all(&data).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+            let _ = send.shutdown().await;
+        },
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
