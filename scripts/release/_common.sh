@@ -38,14 +38,17 @@ current_version() {
 # ── Publish helper: skip gracefully if already published ───────────────────────
 try_publish() {
   local label="$1" cmd="$2"
-  local out rc=0
-  out=$(eval "$cmd" 2>&1) || rc=$?
+  local tmpfile rc=0
+  tmpfile=$(mktemp)
+  eval "$cmd" >"$tmpfile" 2>&1 || rc=$?
   if [[ $rc -eq 0 ]]; then
     ok "$label"
-  elif echo "$out" | grep -qiE "E403|previously published|already exists|EPUBLISHCONFLICT|already been published"; then
+  elif grep -qiE "E403|previously published|already exists|EPUBLISHCONFLICT|already been published" "$tmpfile"; then
     ok "$label (already published — skipped)"
   else
-    echo "$out"
+    cat "$tmpfile"
+    rm -f "$tmpfile"
     die "publish failed: $label"
   fi
+  rm -f "$tmpfile"
 }

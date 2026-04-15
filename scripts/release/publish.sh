@@ -22,16 +22,17 @@ done
 
 section "Publish  [$PLATFORM]"
 
-# Shared always goes first (dependency for everything).
-try_publish "@momics/iroh-http-shared → npm" "npm run publish:shared"
-try_publish "@momics/iroh-http-shared → JSR" "npm run publish:shared:jsr"
-
 case "$PLATFORM" in
   node)
-    try_publish "@momics/iroh-http-node → npm" "npm run publish:node"
+    # Node depends on shared via npm
+    try_publish "@momics/iroh-http-shared → npm" "npm run publish:shared"
+    try_publish "@momics/iroh-http-shared → JSR" "npm run publish:shared:jsr"
+    try_publish "@momics/iroh-http-node → npm"   "npm run publish:node"
     ;;
   deno)
-    try_publish "@momics/iroh-http-deno → JSR" "npm run publish:deno"
+    # Deno depends on shared via JSR
+    try_publish "@momics/iroh-http-shared → JSR" "npm run publish:shared:jsr"
+    try_publish "@momics/iroh-http-deno → JSR"   "npm run publish:deno"
     ;;
   *)
     die "Unknown platform: $PLATFORM (expected deno or node)"
