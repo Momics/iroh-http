@@ -617,20 +617,20 @@ where
                 }
             }
 
+            let remote_id = base32_encode(remote_pk.as_bytes());
+
             let guard =
                 match PeerConnectionGuard::acquire(&peer_counts, remote_pk, max_conns_per_peer) {
                     Some(g) => g,
                     None => {
                         tracing::warn!(
-                            "iroh-http: peer {} exceeded connection limit",
-                            base32_encode(remote_pk.as_bytes())
+                            "iroh-http: peer {remote_id} exceeded connection limit"
                         );
                         conn.close(0u32.into(), b"too many connections");
                         continue;
                     }
                 };
 
-            let remote_id = base32_encode(remote_pk.as_bytes());
             let mut peer_svc = base_svc.clone();
             peer_svc.remote_node_id = Some(remote_id);
 
