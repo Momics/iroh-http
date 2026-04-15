@@ -1,6 +1,6 @@
 {
   "name": "@momics/iroh-http-node",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "Node.js native addon for iroh-http (napi-rs)",
   "main": "./lib.js",
   "types": "./lib.d.ts",
