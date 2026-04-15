@@ -1,6 +1,10 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -43,6 +47,19 @@ jobs:
         run: |
           cargo check -p iroh-http-node --no-default-features
           cargo check -p iroh-http-deno --no-default-features
+
+  rust-check-features:
+    name: Rust check (feature matrix)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: ["", "compression"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (features=${{ matrix.features }})
+        run: cargo test -p iroh-http-core --features "${{ matrix.features }}"
 
   typescript-check:
     name: TypeScript typecheck
