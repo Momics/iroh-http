@@ -2,7 +2,26 @@
 
 Peer-to-peer HTTP over Iroh QUIC transport. Rust core + FFI adapters for Node.js, Deno, and Tauri. Nodes addressed by Ed25519 public key, not DNS.
 
+## Principles
+
+These govern every action. No exceptions.
+
+- **Observe** — When you encounter something broken, stale, or inconsistent outside your current task, surface it. Don't silently pass by.
+- **Cohere** — Every change must leave the system more connected. New files get linked from their parent index. Renamed things get updated everywhere they're referenced.
+- **Verify** — Read before editing. Test after changing. Don't assume prior state.
+- **Trace** — Changes connect to reasons. Commits reference issues. Decisions reference evidence.
+
+## Architecture
+
+`iroh-http-core` (Rust) is the single source of truth. It exposes types and functions consumed by three FFI adapters: `iroh-http-node` (napi-rs), `iroh-http-deno` (Deno FFI), `iroh-http-tauri` (Tauri plugin). `iroh-http-shared` is pure TypeScript shared by all JS/TS adapters. `iroh-http-discovery` adds mDNS/DNS peer discovery.
+
+When a type or function changes in core, all adapters must be updated: Rust bridge → TypeScript mapping → re-exported types. A change to `PeerStats` in core means updating `JsPeerStats` in node, the dispatch in deno, the command in tauri, and the type in shared.
+
+Verify with: `cargo test -p iroh-http-core`, `cargo clippy --workspace -- -D warnings`, `npm run typecheck`.
+
 ## Reference
+
+Read the relevant doc before acting in that area. Don't read all docs upfront.
 
 - [Principles](../docs/principles.md) — engineering invariants, hierarchy of values. Read before any non-trivial change.
 - [Architecture](../docs/architecture.md) — layer diagram, component responsibilities, concurrency model. Read before modifying core.
