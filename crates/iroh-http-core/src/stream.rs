@@ -103,7 +103,10 @@ pub struct BodyWriter {
 /// function uses the compile-time defaults and exists for tests and pre-bind
 /// code paths.
 pub fn make_body_channel() -> (BodyWriter, BodyReader) {
-    make_body_channel_with(DEFAULT_CHANNEL_CAPACITY, Duration::from_millis(DEFAULT_DRAIN_TIMEOUT_MS))
+    make_body_channel_with(
+        DEFAULT_CHANNEL_CAPACITY,
+        Duration::from_millis(DEFAULT_DRAIN_TIMEOUT_MS),
+    )
 }
 
 fn make_body_channel_with(capacity: usize, drain_timeout: Duration) -> (BodyWriter, BodyReader) {
@@ -218,7 +221,8 @@ pub struct HandleStore {
     trailer_tx: Mutex<SlotMap<TrailerTxKey, Timed<TrailerTx>>>,
     trailer_rx: Mutex<SlotMap<TrailerRxKey, Timed<TrailerRx>>>,
     sessions: Mutex<SlotMap<SessionKey, Timed<Arc<SessionEntry>>>>,
-    request_heads: Mutex<SlotMap<RequestHeadKey, Timed<tokio::sync::oneshot::Sender<ResponseHeadEntry>>>>,
+    request_heads:
+        Mutex<SlotMap<RequestHeadKey, Timed<tokio::sync::oneshot::Sender<ResponseHeadEntry>>>>,
     fetch_cancels: Mutex<SlotMap<FetchCancelKey, Timed<Arc<tokio::sync::Notify>>>>,
     pending_readers: Mutex<HashMap<u64, PendingReaderEntry>>,
     pub(crate) config: StoreConfig,
@@ -566,10 +570,7 @@ impl HandleStore {
         self.sweep_pending_readers(ttl);
     }
 
-    fn sweep_registry<K: slotmap::Key, T>(
-        registry: &Mutex<SlotMap<K, Timed<T>>>,
-        ttl: Duration,
-    ) {
+    fn sweep_registry<K: slotmap::Key, T>(registry: &Mutex<SlotMap<K, Timed<T>>>, ttl: Duration) {
         let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
         let before = reg.len();
         reg.retain(|_, e| !e.is_expired(ttl));

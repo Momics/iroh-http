@@ -7,10 +7,8 @@
 //! These run in normal `cargo test` / CI alongside the deterministic suite.
 
 use iroh_http_core::{
-    parse_node_addr, respond, HandleStore, NodeAddrInfo, StoreConfig,
-    base32_encode,
-    secret_key_sign, public_key_verify, generate_secret_key,
-    parse_direct_addrs,
+    base32_encode, generate_secret_key, parse_direct_addrs, parse_node_addr, public_key_verify,
+    respond, secret_key_sign, HandleStore, NodeAddrInfo, StoreConfig,
 };
 use proptest::prelude::*;
 

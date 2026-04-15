@@ -272,10 +272,12 @@ impl IrohEndpoint {
         let node_id_str = crate::base32_encode(ep.id().as_bytes());
 
         let store_config = StoreConfig {
-            channel_capacity: opts.channel_capacity
+            channel_capacity: opts
+                .channel_capacity
                 .unwrap_or(crate::stream::DEFAULT_CHANNEL_CAPACITY)
                 .max(1),
-            max_chunk_size: opts.max_chunk_size_bytes
+            max_chunk_size: opts
+                .max_chunk_size_bytes
                 .unwrap_or(crate::stream::DEFAULT_MAX_CHUNK_SIZE)
                 .max(1),
             drain_timeout: Duration::from_millis(
@@ -326,7 +328,9 @@ impl IrohEndpoint {
                 let mut ticker = tokio::time::interval(Duration::from_secs(60));
                 loop {
                     ticker.tick().await;
-                    let Some(inner) = weak.upgrade() else { break; };
+                    let Some(inner) = weak.upgrade() else {
+                        break;
+                    };
                     inner.handles.sweep(sweep_ttl);
                     drop(inner); // release strong ref between ticks
                 }
