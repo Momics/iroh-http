@@ -14,8 +14,7 @@ use crate::{
     io::IrohStream,
     parse_node_addr,
     stream::{
-        drain_timeout, get_fetch_cancel_notify, insert_reader, insert_trailer_receiver,
-        insert_writer, make_body_channel, remove_fetch_token, BodyReader, BodyWriter,
+        HandleStore, BodyReader, BodyWriter,
     },
     CoreError, FfiDuplexStream, FfiResponse, IrohEndpoint, ALPN, ALPN_DUPLEX,
 };
@@ -99,8 +98,8 @@ pub async fn fetch(
         })?;
     }
 
-    let cancel_notify = fetch_token.and_then(get_fetch_cancel_notify);
-    let ep_idx = endpoint.inner.endpoint_idx;
+    let cancel_notify = fetch_token.and_then(|t| endpoint.handles().get_fetch_cancel_notify(t));
+    let handles = endpoint.handles();
 
     let parsed = parse_node_addr(remote_node_id)?;
     let node_id = parsed.node_id;
@@ -132,7 +131,7 @@ pub async fn fetch(
     let conn = pooled.conn.clone();
 
     let result = do_fetch(
-        ep_idx,
+        handles,
         conn,
         url,
         http_method,
@@ -152,14 +151,14 @@ pub async fn fetch(
 
     // Clean up the cancellation token.
     if let Some(token) = fetch_token {
-        remove_fetch_token(token);
+        endpoint.handles().remove_fetch_token(token);
     }
 
     out
 }
 
 async fn do_fetch(
-    ep_idx: u32,
+    handles: &HandleStore,
     conn: iroh::endpoint::Connection,
     url: &str,
     method: Method,
@@ -269,13 +268,13 @@ async fn do_fetch(
 
     // Allocate channels for streaming the response body to JS.
     let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-    let trailer_handle = insert_trailer_receiver(ep_idx, trailer_rx);
+    let trailer_handle = handles.insert_trailer_receiver(trailer_rx)?;
 
-    let (res_writer, res_reader) = make_body_channel();
+    let (res_writer, res_reader) = handles.make_body_channel();
     let body = resp.into_body();
     tokio::spawn(pump_hyper_body_to_channel(body, res_writer, trailer_tx));
 
-    let body_handle = insert_reader(ep_idx, res_reader);
+    let body_handle = handles.insert_reader(res_reader)?;
     let response_url = format!("httpi://{remote_str}{path}");
 
     Ok(FfiResponse {
@@ -299,7 +298,8 @@ pub(crate) async fn pump_hyper_body_to_channel<B>(
     B: http_body::Body<Data = Bytes>,
     B::Error: std::fmt::Debug,
 {
-    pump_hyper_body_to_channel_limited(body, writer, trailer_tx, None, drain_timeout(), None).await;
+    let timeout = writer.drain_timeout;
+    pump_hyper_body_to_channel_limited(body, writer, trailer_tx, None, timeout, None).await;
 }
 
 /// Drain with optional byte limit and a per-frame read timeout.
@@ -395,7 +395,7 @@ pub(crate) fn body_from_reader(
                     if let Some(rx) = trailer_rx {
                         // ISS-016: bound the wait so declared-but-unsent trailers
                         // don't stall completion indefinitely.
-                        let timeout = drain_timeout();
+                        let timeout = reader.drain_timeout;
                         match tokio::time::timeout(timeout, rx).await {
                             Ok(Ok(trailers)) => {
                                 let mut map = http::HeaderMap::new();
@@ -483,6 +483,7 @@ pub async fn raw_connect(
     let ep_raw = endpoint.raw().clone();
     let addr_clone = addr.clone();
     let max_header_size = endpoint.max_header_size();
+    let handles = endpoint.handles();
 
     let pooled = endpoint
         .pool()
@@ -545,12 +546,11 @@ pub async fn raw_connect(
         .await
         .map_err(|e| CoreError::connection_failed(format!("upgrade error: {e}")))?;
 
-    let ep_idx = endpoint.inner.endpoint_idx;
-    let (server_write, server_read) = make_body_channel();
-    let (client_write, client_read) = make_body_channel();
+    let (server_write, server_read) = handles.make_body_channel();
+    let (client_write, client_read) = handles.make_body_channel();
 
-    let read_handle = insert_reader(ep_idx, server_read);
-    let write_handle = insert_writer(ep_idx, client_write);
+    let read_handle = handles.insert_reader(server_read)?;
+    let write_handle = handles.insert_writer(client_write)?;
 
     // Pipe upgraded IO to/from body channels.
     tokio::spawn(pump_upgraded(upgraded, server_write, client_read));

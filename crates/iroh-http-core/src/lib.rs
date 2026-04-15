@@ -28,11 +28,8 @@ pub use session::{
     session_next_uni_stream, session_ready, session_recv_datagram, session_remote_id,
     session_send_datagram, CloseInfo,
 };
-pub use stream::{
-    alloc_body_writer, cancel_reader, finish_body, next_chunk, next_trailer, send_chunk,
-    send_trailers, BodyReader,
-};
-pub use stream::{alloc_fetch_token, cancel_in_flight};
+pub use stream::{BodyReader, HandleStore, StoreConfig};
+pub use server::respond;
 
 // ── Structured error types ────────────────────────────────────────────────────
 

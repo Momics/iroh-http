@@ -8,7 +8,7 @@
 mod dispatch;
 mod serve_registry;
 
-use iroh_http_core::stream::next_chunk;
+use iroh_http_core::registry;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -196,6 +196,7 @@ pub extern "C" fn iroh_http_call(
 /// active reference for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iroh_http_next_chunk(
+    endpoint_handle: u32,
     handle: u64,
     out_ptr: *mut u8,
     out_cap: usize,
@@ -204,7 +205,12 @@ pub unsafe extern "C" fn iroh_http_next_chunk(
         return -1;
     }
 
-    let result = runtime().block_on(next_chunk(handle));
+    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+        Some(ep) => ep,
+        None => return -1,
+    };
+
+    let result = runtime().block_on(ep.handles().next_chunk(handle));
 
     match result {
         Err(_) => -1,

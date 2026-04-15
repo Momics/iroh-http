@@ -1,16 +1,13 @@
-//! Body channel types and global handle registries backed by `slotmap`.
+//! Per-endpoint handle store and body channel types.
 //!
 //! Rust owns all stream state; JS holds only opaque `u64` handles.
-//! One global `Mutex<SlotMap<K, Entry<T>>>` per resource type is maintained.
-//! Handles are `u64` values equal to `key.data().as_ffi()` — globally unique
-//! across all endpoints without encoding `ep_idx` into the handle bits.
+//! Each `IrohEndpoint` has its own `HandleStore` — no process-global registries.
+//! Handles are `u64` values equal to `key.data().as_ffi()`, unique within the
+//! owning endpoint's slot-map.
 
 use std::{
     collections::HashMap,
-    sync::{
-        atomic::{AtomicU32, AtomicUsize, Ordering},
-        Arc, Mutex, OnceLock,
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -26,79 +23,7 @@ pub const DEFAULT_CHANNEL_CAPACITY: usize = 32;
 pub const DEFAULT_MAX_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
 pub const DEFAULT_DRAIN_TIMEOUT_MS: u64 = 30_000; // 30 s
 pub const DEFAULT_SLAB_TTL_MS: u64 = 300_000; // 5 min
-
-// ── Global backpressure config (set at endpoint bind time) ────────────────────
-//
-// These values are process-global; they are set from the first endpoint that
-// calls configure_backpressure() and remain fixed for the lifetime of the
-// process.  Subsequent calls are no-ops so that a second endpoint cannot
-// silently change channel behaviour for an already-running endpoint.
-
-static CHANNEL_CAPACITY: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(DEFAULT_CHANNEL_CAPACITY);
-static MAX_CHUNK_SIZE: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(DEFAULT_MAX_CHUNK_SIZE);
-static DRAIN_TIMEOUT_MS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(DEFAULT_DRAIN_TIMEOUT_MS);
-
-/// Tracks whether backpressure globals have been initialised.
-static BACKPRESSURE_CONFIGURED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Configure backpressure parameters.  Only the **first** call takes effect;
-/// subsequent calls log a warning if the requested values differ from the
-/// active configuration. This is a process-global setting because all slab
-/// registries are process-global.
-///
-/// Clamps `channel_capacity` to a minimum of 1 (zero would panic in
-/// `tokio::sync::mpsc::channel`) and `max_chunk_bytes` to a minimum of 1
-/// (zero would cause `send_chunk` to loop without progress).
-/// ISS-008: returns `Err` with a descriptive message when a second endpoint
-/// requests different backpressure parameters, making the mismatch visible
-/// to callers rather than silently ignoring the new values.
-pub fn configure_backpressure(
-    channel_capacity: usize,
-    max_chunk_bytes: usize,
-    drain_timeout_ms: u64,
-) -> Result<(), String> {
-    let cap = channel_capacity.max(1);
-    let chunk = max_chunk_bytes.max(1);
-
-    if BACKPRESSURE_CONFIGURED
-        .compare_exchange(
-            false,
-            true,
-            std::sync::atomic::Ordering::AcqRel,
-            std::sync::atomic::Ordering::Acquire,
-        )
-        .is_ok()
-    {
-        CHANNEL_CAPACITY.store(cap, std::sync::atomic::Ordering::Relaxed);
-        MAX_CHUNK_SIZE.store(chunk, std::sync::atomic::Ordering::Relaxed);
-        DRAIN_TIMEOUT_MS.store(drain_timeout_ms, std::sync::atomic::Ordering::Relaxed);
-        Ok(())
-    } else {
-        // Reject if the caller requested different values than the active config.
-        let active_cap = CHANNEL_CAPACITY.load(std::sync::atomic::Ordering::Relaxed);
-        let active_chunk = MAX_CHUNK_SIZE.load(std::sync::atomic::Ordering::Relaxed);
-        let active_drain = DRAIN_TIMEOUT_MS.load(std::sync::atomic::Ordering::Relaxed);
-        if cap != active_cap || chunk != active_chunk || drain_timeout_ms != active_drain {
-            Err(format!(
-                "backpressure config already set (capacity={active_cap}, \
-                 chunk={active_chunk}, drain={active_drain}ms); cannot apply new values \
-                 (capacity={cap}, chunk={chunk}, drain={drain_timeout_ms}ms). \
-                 Backpressure parameters are process-global."
-            ))
-        } else {
-            // Same values — no conflict.
-            Ok(())
-        }
-    }
-}
-
-pub(crate) fn drain_timeout() -> Duration {
-    Duration::from_millis(DRAIN_TIMEOUT_MS.load(std::sync::atomic::Ordering::Relaxed))
-}
+pub const DEFAULT_MAX_HANDLES: usize = 65_536;
 
 // ── Resource types ────────────────────────────────────────────────────────────
 
@@ -120,28 +45,6 @@ slotmap::new_key_type! { pub(crate) struct TrailerRxKey; }
 slotmap::new_key_type! { pub(crate) struct FetchCancelKey; }
 slotmap::new_key_type! { pub(crate) struct SessionKey; }
 slotmap::new_key_type! { pub(crate) struct RequestHeadKey; }
-
-// ── Registry entry ────────────────────────────────────────────────────────────
-
-struct Entry<T> {
-    ep_idx: u32,
-    value: T,
-    created_at: Instant,
-}
-
-impl<T> Entry<T> {
-    fn new(ep_idx: u32, value: T) -> Self {
-        Self {
-            ep_idx,
-            value,
-            created_at: Instant::now(),
-        }
-    }
-
-    fn is_expired(&self, ttl: Duration) -> bool {
-        self.created_at.elapsed() > ttl
-    }
-}
 
 // ── Handle encode / decode helpers ───────────────────────────────────────────
 
@@ -167,6 +70,9 @@ fn handle_to_session_key(h: u64) -> SessionKey {
 fn handle_to_request_head_key(h: u64) -> RequestHeadKey {
     RequestHeadKey::from(KeyData::from_ffi(h))
 }
+fn handle_to_fetch_cancel_key(h: u64) -> FetchCancelKey {
+    FetchCancelKey::from(KeyData::from_ffi(h))
+}
 
 // ── Body channel primitives ───────────────────────────────────────────────────
 
@@ -178,23 +84,36 @@ pub struct BodyReader {
     /// ISS-010: cancellation signal — notified when `cancel_reader` is called
     /// so in-flight `next_chunk` awaits terminate promptly.
     pub(crate) cancel: Arc<tokio::sync::Notify>,
+    /// Drain timeout inherited from the endpoint config at channel-creation time.
+    pub(crate) drain_timeout: Duration,
 }
 
 /// Producer end — stored in the writer registry.
 /// `mpsc::Sender` is `Clone`, so we clone it out of the registry for each call.
 pub struct BodyWriter {
     pub(crate) tx: mpsc::Sender<Bytes>,
+    /// Drain timeout baked in at channel-creation time from the endpoint config.
+    pub(crate) drain_timeout: Duration,
 }
 
 /// Create a matched (writer, reader) pair backed by a bounded mpsc channel.
+///
+/// Prefer [`HandleStore::make_body_channel`] when an endpoint is available so
+/// the channel inherits the endpoint's backpressure config.  This free
+/// function uses the compile-time defaults and exists for tests and pre-bind
+/// code paths.
 pub fn make_body_channel() -> (BodyWriter, BodyReader) {
-    let cap = CHANNEL_CAPACITY.load(std::sync::atomic::Ordering::Relaxed);
-    let (tx, rx) = mpsc::channel(cap);
+    make_body_channel_with(DEFAULT_CHANNEL_CAPACITY, Duration::from_millis(DEFAULT_DRAIN_TIMEOUT_MS))
+}
+
+fn make_body_channel_with(capacity: usize, drain_timeout: Duration) -> (BodyWriter, BodyReader) {
+    let (tx, rx) = mpsc::channel(capacity);
     (
-        BodyWriter { tx },
+        BodyWriter { tx, drain_timeout },
         BodyReader {
             rx: Arc::new(tokio::sync::Mutex::new(rx)),
             cancel: Arc::new(tokio::sync::Notify::new()),
+            drain_timeout,
         },
     )
 }
@@ -217,7 +136,7 @@ impl BodyWriter {
     /// Send one chunk.  Returns `Err` if the reader has been dropped or if
     /// the drain timeout expires (JS not reading fast enough).
     pub async fn send_chunk(&self, chunk: Bytes) -> Result<(), String> {
-        tokio::time::timeout(drain_timeout(), self.tx.send(chunk))
+        tokio::time::timeout(self.drain_timeout, self.tx.send(chunk))
             .await
             .map_err(|_| "drain timeout: body reader is too slow".to_string())?
             .map_err(|_| "body reader dropped".to_string())
@@ -229,549 +148,452 @@ impl BodyWriter {
 type TrailerTx = tokio::sync::oneshot::Sender<Vec<(String, String)>>;
 pub(crate) type TrailerRx = tokio::sync::oneshot::Receiver<Vec<(String, String)>>;
 
-// ── Global registries ─────────────────────────────────────────────────────────
+// ── StoreConfig ───────────────────────────────────────────────────────────────
 
-fn reader_registry() -> &'static Mutex<SlotMap<ReaderKey, Entry<BodyReader>>> {
-    static R: OnceLock<Mutex<SlotMap<ReaderKey, Entry<BodyReader>>>> = OnceLock::new();
-    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
+/// Configuration for a [`HandleStore`].  Set once at endpoint bind time.
+#[derive(Debug, Clone)]
+pub struct StoreConfig {
+    /// Body-channel capacity (in chunks).  Minimum 1.
+    pub channel_capacity: usize,
+    /// Maximum byte length of a single chunk in `send_chunk`.  Minimum 1.
+    pub max_chunk_size: usize,
+    /// Milliseconds to wait for a slow body reader before dropping.
+    pub drain_timeout: Duration,
+    /// Maximum handle slots per registry.  Prevents unbounded growth.
+    pub max_handles: usize,
+    /// TTL for handle entries; expired entries are swept periodically.
+    /// Zero disables sweeping.
+    pub ttl: Duration,
 }
 
-fn writer_registry() -> &'static Mutex<SlotMap<WriterKey, Entry<BodyWriter>>> {
-    static R: OnceLock<Mutex<SlotMap<WriterKey, Entry<BodyWriter>>>> = OnceLock::new();
-    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
-}
-
-fn fetch_cancel_registry(
-) -> &'static Mutex<SlotMap<FetchCancelKey, Entry<Arc<tokio::sync::Notify>>>> {
-    static R: OnceLock<Mutex<SlotMap<FetchCancelKey, Entry<Arc<tokio::sync::Notify>>>>> =
-        OnceLock::new();
-    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
-}
-
-fn handle_to_fetch_cancel_key(h: u64) -> FetchCancelKey {
-    FetchCancelKey::from(KeyData::from_ffi(h))
-}
-
-/// Allocate a cancellation token (as a u64 handle) for an upcoming `fetch` call.
-pub fn alloc_fetch_token(ep_idx: u32) -> u64 {
-    let notify = Arc::new(tokio::sync::Notify::new());
-    let key = fetch_cancel_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(Entry::new(ep_idx, notify));
-    key_to_handle(key)
-}
-
-/// Signal an in-flight fetch to abort.
-pub fn cancel_in_flight(token: u64) {
-    if let Some(entry) = fetch_cancel_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(handle_to_fetch_cancel_key(token))
-    {
-        entry.value.notify_one();
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Self {
+            channel_capacity: DEFAULT_CHANNEL_CAPACITY,
+            max_chunk_size: DEFAULT_MAX_CHUNK_SIZE,
+            drain_timeout: Duration::from_millis(DEFAULT_DRAIN_TIMEOUT_MS),
+            max_handles: DEFAULT_MAX_HANDLES,
+            ttl: Duration::from_millis(DEFAULT_SLAB_TTL_MS),
+        }
     }
 }
 
-/// Retrieve the `Notify` for a fetch token (clones the Arc for use in select!).
-pub(crate) fn get_fetch_cancel_notify(token: u64) -> Option<Arc<tokio::sync::Notify>> {
-    fetch_cancel_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(handle_to_fetch_cancel_key(token))
-        .map(|e| e.value.clone())
+// ── Timed wrapper ─────────────────────────────────────────────────────────────
+
+struct Timed<T> {
+    value: T,
+    created_at: Instant,
 }
 
-/// Remove a fetch cancel token after the fetch completes.
-pub(crate) fn remove_fetch_token(token: u64) {
-    fetch_cancel_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(handle_to_fetch_cancel_key(token));
+impl<T> Timed<T> {
+    fn new(value: T) -> Self {
+        Self {
+            value,
+            created_at: Instant::now(),
+        }
+    }
+
+    fn is_expired(&self, ttl: Duration) -> bool {
+        self.created_at.elapsed() > ttl
+    }
 }
 
-/// ISS-018: pending readers are tracked with insertion time for TTL sweep.
+/// Pending reader tracked with insertion time for TTL sweep.
 struct PendingReaderEntry {
     reader: BodyReader,
     created: Instant,
 }
 
-fn pending_readers_map() -> &'static Mutex<HashMap<u64, PendingReaderEntry>> {
-    static R: OnceLock<Mutex<HashMap<u64, PendingReaderEntry>>> = OnceLock::new();
-    R.get_or_init(|| Mutex::new(HashMap::new()))
-}
+// ── HandleStore ───────────────────────────────────────────────────────────────
 
-/// ISS-018: sweep stale pending readers that exceed the TTL.
-fn sweep_pending_readers(ttl: Duration) {
-    let mut map = pending_readers_map()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let before = map.len();
-    map.retain(|_, e| e.created.elapsed() < ttl);
-    let removed = before - map.len();
-    if removed > 0 {
-        tracing::debug!("[iroh-http] swept {removed} stale pending readers (ttl={ttl:?})");
-    }
-}
-
-fn trailer_tx_registry() -> &'static Mutex<SlotMap<TrailerTxKey, Entry<TrailerTx>>> {
-    static R: OnceLock<Mutex<SlotMap<TrailerTxKey, Entry<TrailerTx>>>> = OnceLock::new();
-    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
-}
-
-fn trailer_rx_registry() -> &'static Mutex<SlotMap<TrailerRxKey, Entry<TrailerRx>>> {
-    static R: OnceLock<Mutex<SlotMap<TrailerRxKey, Entry<TrailerRx>>>> = OnceLock::new();
-    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
-}
-
-fn session_registry() -> &'static Mutex<SlotMap<SessionKey, Entry<Arc<SessionEntry>>>> {
-    static R: OnceLock<Mutex<SlotMap<SessionKey, Entry<Arc<SessionEntry>>>>> = OnceLock::new();
-    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
-}
-
-fn request_head_registry(
-) -> &'static Mutex<SlotMap<RequestHeadKey, Entry<tokio::sync::oneshot::Sender<ResponseHeadEntry>>>>
-{
-    static R: OnceLock<
-        Mutex<SlotMap<RequestHeadKey, Entry<tokio::sync::oneshot::Sender<ResponseHeadEntry>>>>,
-    > = OnceLock::new();
-    R.get_or_init(|| Mutex::new(SlotMap::with_key()))
-}
-
-// ── Endpoint lifecycle ────────────────────────────────────────────────────────
-
-static NEXT_EP_IDX_COUNTER: AtomicU32 = AtomicU32::new(1);
-/// Number of live endpoints. Used to stop the sweep task when the last one closes.
-static ACTIVE_ENDPOINT_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-pub fn alloc_endpoint_idx() -> u32 {
-    NEXT_EP_IDX_COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
-/// Increment the active endpoint count. Called when an endpoint is bound.
-pub fn register_endpoint(_ep_idx: u32) {
-    ACTIVE_ENDPOINT_COUNT.fetch_add(1, Ordering::Relaxed);
-}
-
-/// Remove all registry entries that belong to this endpoint.
-/// When the last endpoint closes, the sweep task is also stopped.
-pub fn unregister_endpoint(ep_idx: u32) {
-    reader_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|_, e| e.ep_idx != ep_idx);
-    writer_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|_, e| e.ep_idx != ep_idx);
-    trailer_tx_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|_, e| e.ep_idx != ep_idx);
-    trailer_rx_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|_, e| e.ep_idx != ep_idx);
-    session_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|_, e| e.ep_idx != ep_idx);
-    request_head_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|_, e| e.ep_idx != ep_idx);
-    fetch_cancel_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|_, e| e.ep_idx != ep_idx);
-
-    // Stop the sweep task when the last endpoint closes.
-    let prev = ACTIVE_ENDPOINT_COUNT.fetch_sub(1, Ordering::Relaxed);
-    if prev == 1 {
-        stop_slab_sweep();
-    }
-}
-
-// ── Body reader / writer ──────────────────────────────────────────────────────
-
-/// Insert a `BodyReader` into the global registry and return a `u64` handle.
-pub(crate) fn insert_reader(ep_idx: u32, reader: BodyReader) -> u64 {
-    let key = reader_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(Entry::new(ep_idx, reader));
-    key_to_handle(key)
-}
-
-/// Insert a `BodyWriter` into the global registry and return a `u64` handle.
-pub(crate) fn insert_writer(ep_idx: u32, writer: BodyWriter) -> u64 {
-    let key = writer_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(Entry::new(ep_idx, writer));
-    key_to_handle(key)
-}
-
-/// Allocate a `(writer_handle, reader)` pair using the global (ep_idx=0) pool.
+/// Per-endpoint handle registry.  Owns all body readers, writers, trailers,
+/// sessions, request-head rendezvous channels, and fetch-cancel tokens for
+/// a single `IrohEndpoint`.
 ///
-/// The writer handle is returned to JS.  The reader must be stored via
-/// [`store_pending_reader`] so `rawFetch` can claim it.
-pub fn alloc_body_writer() -> (u64, BodyReader) {
-    let (writer, reader) = make_body_channel();
-    let handle = insert_writer(0, writer);
-    (handle, reader)
+/// When the endpoint is dropped, this store is dropped with it — all
+/// slot-maps are freed and any remaining handles become invalid.
+pub struct HandleStore {
+    readers: Mutex<SlotMap<ReaderKey, Timed<BodyReader>>>,
+    writers: Mutex<SlotMap<WriterKey, Timed<BodyWriter>>>,
+    trailer_tx: Mutex<SlotMap<TrailerTxKey, Timed<TrailerTx>>>,
+    trailer_rx: Mutex<SlotMap<TrailerRxKey, Timed<TrailerRx>>>,
+    sessions: Mutex<SlotMap<SessionKey, Timed<Arc<SessionEntry>>>>,
+    request_heads: Mutex<SlotMap<RequestHeadKey, Timed<tokio::sync::oneshot::Sender<ResponseHeadEntry>>>>,
+    fetch_cancels: Mutex<SlotMap<FetchCancelKey, Timed<Arc<tokio::sync::Notify>>>>,
+    pending_readers: Mutex<HashMap<u64, PendingReaderEntry>>,
+    pub(crate) config: StoreConfig,
 }
 
-/// Store the reader side of a newly allocated writer channel so that the fetch
-/// path can claim it with [`claim_pending_reader`].
-pub fn store_pending_reader(writer_handle: u64, reader: BodyReader) {
-    pending_readers_map()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(writer_handle, PendingReaderEntry {
-            reader,
-            created: Instant::now(),
-        });
-}
+impl HandleStore {
+    /// Create a new handle store with the given configuration.
+    pub fn new(config: StoreConfig) -> Self {
+        Self {
+            readers: Mutex::new(SlotMap::with_key()),
+            writers: Mutex::new(SlotMap::with_key()),
+            trailer_tx: Mutex::new(SlotMap::with_key()),
+            trailer_rx: Mutex::new(SlotMap::with_key()),
+            sessions: Mutex::new(SlotMap::with_key()),
+            request_heads: Mutex::new(SlotMap::with_key()),
+            fetch_cancels: Mutex::new(SlotMap::with_key()),
+            pending_readers: Mutex::new(HashMap::new()),
+            config,
+        }
+    }
 
-/// Claim the reader that was paired with `writer_handle`.
-/// Returns `None` if already claimed or never stored.
-pub fn claim_pending_reader(writer_handle: u64) -> Option<BodyReader> {
-    pending_readers_map()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&writer_handle)
-        .map(|e| e.reader)
-}
+    // ── Config accessors ─────────────────────────────────────────────────
 
-// ── Bridge methods (nextChunk / sendChunk / finishBody) ───────────────────────
+    /// The configured drain timeout.
+    pub fn drain_timeout(&self) -> Duration {
+        self.config.drain_timeout
+    }
 
-/// Pull the next chunk from a reader handle.
-///
-/// Returns `Ok(None)` at EOF.  The handle remains valid until EOF so JS can
-/// safely call `nextChunk` again after partial reads.  After returning `None`
-/// the handle is cleaned up from the registry automatically.
-pub async fn next_chunk(handle: u64) -> Result<Option<Bytes>, CoreError> {
-    // Clone the Arc — allows awaiting without holding the registry mutex.
-    let rx_arc = {
-        let reg = reader_registry().lock().unwrap_or_else(|e| e.into_inner());
-        reg.get(handle_to_reader_key(handle))
-            .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
-            .value
-            .rx
-            .clone()
-    };
+    /// The configured maximum chunk size.
+    pub fn max_chunk_size(&self) -> usize {
+        self.config.max_chunk_size
+    }
 
-    let chunk = rx_arc.lock().await.recv().await;
+    // ── Body channels ────────────────────────────────────────────────────
 
-    // Clean up on EOF so the slot is released promptly.
-    if chunk.is_none() {
-        reader_registry()
+    /// Create a matched (writer, reader) pair using this store's config.
+    pub fn make_body_channel(&self) -> (BodyWriter, BodyReader) {
+        make_body_channel_with(self.config.channel_capacity, self.config.drain_timeout)
+    }
+
+    // ── Capacity-checked insert ──────────────────────────────────────────
+
+    fn insert_checked<K: slotmap::Key, T>(
+        registry: &Mutex<SlotMap<K, Timed<T>>>,
+        value: T,
+        max: usize,
+    ) -> Result<u64, CoreError> {
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        if reg.len() >= max {
+            return Err(CoreError::internal("handle registry at capacity"));
+        }
+        let key = reg.insert(Timed::new(value));
+        Ok(key_to_handle(key))
+    }
+
+    // ── Body reader / writer ─────────────────────────────────────────────
+
+    /// Insert a `BodyReader` and return a handle.
+    pub fn insert_reader(&self, reader: BodyReader) -> Result<u64, CoreError> {
+        Self::insert_checked(&self.readers, reader, self.config.max_handles)
+    }
+
+    /// Insert a `BodyWriter` and return a handle.
+    pub fn insert_writer(&self, writer: BodyWriter) -> Result<u64, CoreError> {
+        Self::insert_checked(&self.writers, writer, self.config.max_handles)
+    }
+
+    /// Allocate a `(writer_handle, reader)` pair for streaming request bodies.
+    ///
+    /// The writer handle is returned to JS.  The reader must be stashed via
+    /// [`store_pending_reader`](Self::store_pending_reader) so the fetch path
+    /// can claim it.
+    pub fn alloc_body_writer(&self) -> Result<(u64, BodyReader), CoreError> {
+        let (writer, reader) = self.make_body_channel();
+        let handle = self.insert_writer(writer)?;
+        Ok((handle, reader))
+    }
+
+    /// Store the reader side of a newly allocated writer channel so that the
+    /// fetch path can claim it with [`claim_pending_reader`](Self::claim_pending_reader).
+    pub fn store_pending_reader(&self, writer_handle: u64, reader: BodyReader) {
+        self.pending_readers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                writer_handle,
+                PendingReaderEntry {
+                    reader,
+                    created: Instant::now(),
+                },
+            );
+    }
+
+    /// Claim the reader that was paired with `writer_handle`.
+    /// Returns `None` if already claimed or never stored.
+    pub fn claim_pending_reader(&self, writer_handle: u64) -> Option<BodyReader> {
+        self.pending_readers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&writer_handle)
+            .map(|e| e.reader)
+    }
+
+    // ── Bridge methods (nextChunk / sendChunk / finishBody) ──────────────
+
+    /// Pull the next chunk from a reader handle.
+    ///
+    /// Returns `Ok(None)` at EOF.  After returning `None` the handle is
+    /// cleaned up from the registry automatically.
+    pub async fn next_chunk(&self, handle: u64) -> Result<Option<Bytes>, CoreError> {
+        // Clone the Arc — allows awaiting without holding the registry mutex.
+        let (rx_arc, cancel) = {
+            let reg = self.readers.lock().unwrap_or_else(|e| e.into_inner());
+            let entry = reg
+                .get(handle_to_reader_key(handle))
+                .ok_or_else(|| CoreError::invalid_handle(handle as u32))?;
+            (entry.value.rx.clone(), entry.value.cancel.clone())
+        };
+
+        let chunk = tokio::select! {
+            biased;
+            _ = cancel.notified() => None,
+            chunk = async { rx_arc.lock().await.recv().await } => chunk,
+        };
+
+        // Clean up on EOF so the slot is released promptly.
+        if chunk.is_none() {
+            self.readers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(handle_to_reader_key(handle));
+        }
+
+        Ok(chunk)
+    }
+
+    /// Push a chunk into a writer handle.
+    ///
+    /// Chunks larger than the configured `max_chunk_size` are split
+    /// automatically so individual messages stay within the backpressure budget.
+    pub async fn send_chunk(&self, handle: u64, chunk: Bytes) -> Result<(), CoreError> {
+        // Clone the Sender (cheap) and release the lock before awaiting.
+        let (tx, timeout) = {
+            let reg = self.writers.lock().unwrap_or_else(|e| e.into_inner());
+            let entry = reg
+                .get(handle_to_writer_key(handle))
+                .ok_or_else(|| CoreError::invalid_handle(handle as u32))?;
+            (entry.value.tx.clone(), entry.value.drain_timeout)
+        };
+        let max = self.config.max_chunk_size;
+        if chunk.len() <= max {
+            tokio::time::timeout(timeout, tx.send(chunk))
+                .await
+                .map_err(|_| CoreError::timeout("drain timeout: body reader is too slow"))?
+                .map_err(|_| CoreError::internal("body reader dropped"))
+        } else {
+            // Split into max-size pieces.
+            let mut offset = 0;
+            while offset < chunk.len() {
+                let end = (offset + max).min(chunk.len());
+                tokio::time::timeout(timeout, tx.send(chunk.slice(offset..end)))
+                    .await
+                    .map_err(|_| CoreError::timeout("drain timeout: body reader is too slow"))?
+                    .map_err(|_| CoreError::internal("body reader dropped"))?;
+                offset = end;
+            }
+            Ok(())
+        }
+    }
+
+    /// Signal end-of-body by dropping the writer from the registry.
+    pub fn finish_body(&self, handle: u64) -> Result<(), CoreError> {
+        self.writers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(handle_to_writer_key(handle))
+            .ok_or_else(|| CoreError::invalid_handle(handle as u32))?;
+        Ok(())
+    }
+
+    /// Drop a body reader, signalling cancellation of any in-flight read.
+    pub fn cancel_reader(&self, handle: u64) {
+        let entry = self
+            .readers
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(handle_to_reader_key(handle));
+        if let Some(e) = entry {
+            e.value.cancel.notify_waiters();
+        }
     }
 
-    Ok(chunk)
-}
+    // ── Trailer operations ───────────────────────────────────────────────
 
-/// Push a chunk into a writer handle.
-///
-/// Chunks larger than the configured `MAX_CHUNK_SIZE` are split automatically
-/// so individual messages stay within the backpressure budget.
-pub async fn send_chunk(handle: u64, chunk: Bytes) -> Result<(), CoreError> {
-    // Clone the Sender (cheap) and release the lock before awaiting.
-    let tx = {
-        let reg = writer_registry().lock().unwrap_or_else(|e| e.into_inner());
-        reg.get(handle_to_writer_key(handle))
+    /// Insert a trailer oneshot **sender** and return a handle.
+    pub fn insert_trailer_sender(&self, tx: TrailerTx) -> Result<u64, CoreError> {
+        Self::insert_checked(&self.trailer_tx, tx, self.config.max_handles)
+    }
+
+    /// Insert a trailer oneshot **receiver** and return a handle.
+    pub fn insert_trailer_receiver(&self, rx: TrailerRx) -> Result<u64, CoreError> {
+        Self::insert_checked(&self.trailer_rx, rx, self.config.max_handles)
+    }
+
+    /// Remove (drop) a trailer sender without sending.
+    pub fn remove_trailer_sender(&self, handle: u64) {
+        self.trailer_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(handle_to_trailer_tx_key(handle));
+    }
+
+    /// Deliver trailers from the JS side to the waiting Rust pump task.
+    pub fn send_trailers(
+        &self,
+        handle: u64,
+        trailers: Vec<(String, String)>,
+    ) -> Result<(), CoreError> {
+        let tx = self
+            .trailer_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(handle_to_trailer_tx_key(handle))
             .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
-            .value
-            .tx
-            .clone()
-    };
-    let max = MAX_CHUNK_SIZE.load(std::sync::atomic::Ordering::Relaxed);
-    if chunk.len() <= max {
-        tokio::time::timeout(drain_timeout(), tx.send(chunk))
-            .await
-            .map_err(|_| CoreError::timeout("drain timeout: body reader is too slow"))?
-            .map_err(|_| CoreError::internal("body reader dropped"))
-    } else {
-        // Split into max-size pieces.
-        let mut offset = 0;
-        while offset < chunk.len() {
-            let end = (offset + max).min(chunk.len());
-            tokio::time::timeout(drain_timeout(), tx.send(chunk.slice(offset..end)))
-                .await
-                .map_err(|_| CoreError::timeout("drain timeout: body reader is too slow"))?
-                .map_err(|_| CoreError::internal("body reader dropped"))?;
-            offset = end;
+            .value;
+        tx.send(trailers)
+            .map_err(|_| CoreError::internal("trailer receiver dropped"))
+    }
+
+    /// Await and retrieve trailers produced by the Rust pump task.
+    pub async fn next_trailer(
+        &self,
+        handle: u64,
+    ) -> Result<Option<Vec<(String, String)>>, CoreError> {
+        let rx = self
+            .trailer_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(handle_to_trailer_rx_key(handle))
+            .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
+            .value;
+        match rx.await {
+            Ok(trailers) => Ok(Some(trailers)),
+            Err(_) => Ok(None), // sender dropped = no trailers
         }
-        Ok(())
     }
-}
 
-/// Signal end-of-body by dropping the writer from the registry.
-///
-/// The associated `BodyReader` will return `None` on its next poll.
-pub fn finish_body(handle: u64) -> Result<(), CoreError> {
-    writer_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(handle_to_writer_key(handle))
-        .ok_or_else(|| CoreError::invalid_handle(handle as u32))?;
-    Ok(())
-}
+    // ── Session ──────────────────────────────────────────────────────────
 
-/// Drop a body reader from the global registry, causing any pending `nextChunk`
-/// to return an error and signalling EOF on a cancelled fetch.
-///
-/// ISS-010: notify the cancellation signal so in-flight `next_chunk` awaits
-/// terminate promptly rather than hanging until the writer is dropped.
-pub fn cancel_reader(handle: u64) {
-    let entry = reader_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(handle_to_reader_key(handle));
-    if let Some(e) = entry {
-        e.value.cancel.notify_waiters();
+    /// Insert a `SessionEntry` and return a handle.
+    pub fn insert_session(&self, entry: SessionEntry) -> Result<u64, CoreError> {
+        Self::insert_checked(&self.sessions, Arc::new(entry), self.config.max_handles)
     }
-}
 
-// ── Trailer operations ────────────────────────────────────────────────────────
-
-/// Insert a trailer oneshot **sender** into the global registry and return a `u64` handle.
-pub(crate) fn insert_trailer_sender(ep_idx: u32, tx: TrailerTx) -> u64 {
-    let key = trailer_tx_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(Entry::new(ep_idx, tx));
-    key_to_handle(key)
-}
-
-/// Insert a trailer oneshot **receiver** into the global registry and return a `u64` handle.
-pub(crate) fn insert_trailer_receiver(ep_idx: u32, rx: TrailerRx) -> u64 {
-    let key = trailer_rx_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(Entry::new(ep_idx, rx));
-    key_to_handle(key)
-}
-
-/// Remove (drop) a trailer sender from the registry without sending.
-///
-/// This causes the corresponding receiver to resolve with `Err`,
-/// which `pump_body_to_stream` handles via `unwrap_or_default()`.
-pub(crate) fn remove_trailer_sender(handle: u64) {
-    trailer_tx_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(handle_to_trailer_tx_key(handle));
-}
-
-/// Deliver trailers from the JS side to the waiting Rust pump task.
-pub fn send_trailers(handle: u64, trailers: Vec<(String, String)>) -> Result<(), CoreError> {
-    let tx = trailer_tx_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(handle_to_trailer_tx_key(handle))
-        .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
-        .value;
-    tx.send(trailers)
-        .map_err(|_| CoreError::internal("trailer receiver dropped"))
-}
-
-/// Await and retrieve trailers produced by the Rust pump task.
-pub async fn next_trailer(handle: u64) -> Result<Option<Vec<(String, String)>>, CoreError> {
-    let rx = trailer_rx_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(handle_to_trailer_rx_key(handle))
-        .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
-        .value;
-    match rx.await {
-        Ok(trailers) => Ok(Some(trailers)),
-        Err(_) => Ok(None), // sender dropped = no trailers
+    /// Look up a session by handle without consuming it.
+    pub fn lookup_session(&self, handle: u64) -> Option<Arc<SessionEntry>> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle_to_session_key(handle))
+            .map(|e| e.value.clone())
     }
-}
 
-// ── Session ───────────────────────────────────────────────────────────────────
-
-/// Insert a `SessionEntry` into the global registry and return a `u64` handle.
-pub(crate) fn insert_session_for(ep_idx: u32, entry: SessionEntry) -> u64 {
-    let key = session_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(Entry::new(ep_idx, Arc::new(entry)));
-    key_to_handle(key)
-}
-
-/// Look up a session by handle without consuming it.
-pub(crate) fn lookup_session(handle: u64) -> Option<Arc<SessionEntry>> {
-    session_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(handle_to_session_key(handle))
-        .map(|e| e.value.clone())
-}
-
-/// Remove a session entry by handle and return it.
-pub(crate) fn remove_session(handle: u64) -> Option<Arc<SessionEntry>> {
-    session_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(handle_to_session_key(handle))
-        .map(|e| e.value)
-}
-
-/// Return the endpoint index for a session handle.
-pub(crate) fn session_ep_idx(handle: u64) -> Option<u32> {
-    session_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(handle_to_session_key(handle))
-        .map(|e| e.ep_idx)
-}
-
-// ── Request head (for server respond path) ────────────────────────────────────
-
-/// Insert a response-head oneshot sender into the global registry and return a `u64` handle.
-pub(crate) fn allocate_req_handle(
-    ep_idx: u32,
-    sender: tokio::sync::oneshot::Sender<ResponseHeadEntry>,
-) -> u64 {
-    let key = request_head_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(Entry::new(ep_idx, sender));
-    key_to_handle(key)
-}
-
-/// Remove and return the response-head sender for the given handle.
-pub fn take_req_sender(
-    handle: u64,
-) -> Option<tokio::sync::oneshot::Sender<ResponseHeadEntry>> {
-    request_head_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(handle_to_request_head_key(handle))
-        .map(|e| e.value)
-}
-
-// ── TTL sweep ─────────────────────────────────────────────────────────────────
-
-/// Ensures at most one sweep task is running process-wide.
-static SWEEP_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Shutdown signal for the active sweep task.
-/// ISS-028: use Mutex<Option<...>> so the notify can be replaced on restart cycles.
-static SWEEP_SHUTDOWN: Mutex<Option<Arc<tokio::sync::Notify>>> = Mutex::new(None);
-
-/// Start a background task that sweeps expired registry entries every 60 seconds.
-/// Pass `ttl_ms = 0` to disable sweeping.
-///
-/// Only the first call starts the sweep task; subsequent calls are no-ops so
-/// that multiple endpoint binds do not accumulate duplicate sweepers.
-pub fn start_slab_sweep(ttl_ms: u64) {
-    if ttl_ms == 0 {
-        return;
+    /// Remove a session entry by handle and return it.
+    pub fn remove_session(&self, handle: u64) -> Option<Arc<SessionEntry>> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(handle_to_session_key(handle))
+            .map(|e| e.value)
     }
-    if SWEEP_STARTED
-        .compare_exchange(
-            false,
-            true,
-            std::sync::atomic::Ordering::AcqRel,
-            std::sync::atomic::Ordering::Acquire,
-        )
-        .is_err()
-    {
-        return; // already running
-    }
-    let shutdown = Arc::new(tokio::sync::Notify::new());
-    // Replace any stale notify from a prior stop/start cycle.
-    *SWEEP_SHUTDOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown.clone());
 
-    let ttl = Duration::from_millis(ttl_ms);
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_secs(60));
-        loop {
-            tokio::select! {
-                _ = ticker.tick() => sweep_all(ttl),
-                _ = shutdown.notified() => {
-                    tracing::debug!("[iroh-http] slab sweep task stopped");
-                    break;
-                }
-            }
+    // ── Request head (for server respond path) ───────────────────────────
+
+    /// Insert a response-head oneshot sender and return a handle.
+    pub fn allocate_req_handle(
+        &self,
+        sender: tokio::sync::oneshot::Sender<ResponseHeadEntry>,
+    ) -> Result<u64, CoreError> {
+        Self::insert_checked(&self.request_heads, sender, self.config.max_handles)
+    }
+
+    /// Remove and return the response-head sender for the given handle.
+    pub fn take_req_sender(
+        &self,
+        handle: u64,
+    ) -> Option<tokio::sync::oneshot::Sender<ResponseHeadEntry>> {
+        self.request_heads
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(handle_to_request_head_key(handle))
+            .map(|e| e.value)
+    }
+
+    // ── Fetch cancel ─────────────────────────────────────────────────────
+
+    /// Allocate a cancellation token for an upcoming `fetch` call.
+    pub fn alloc_fetch_token(&self) -> Result<u64, CoreError> {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        Self::insert_checked(&self.fetch_cancels, notify, self.config.max_handles)
+    }
+
+    /// Signal an in-flight fetch to abort.
+    pub fn cancel_in_flight(&self, token: u64) {
+        if let Some(entry) = self
+            .fetch_cancels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle_to_fetch_cancel_key(token))
+        {
+            entry.value.notify_one();
         }
-    });
-}
-
-/// Signal the sweep task to stop.  Safe to call even if no sweep is running.
-///
-/// After this returns, `start_slab_sweep` may be called again to restart.
-pub fn stop_slab_sweep() {
-    // Take (not just peek) so a future start_slab_sweep can install a fresh notify.
-    let notify = SWEEP_SHUTDOWN
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take();
-    if let Some(n) = notify {
-        n.notify_one();
     }
-    // Reset so the next endpoint bind can restart the sweep.
-    SWEEP_STARTED.store(false, std::sync::atomic::Ordering::Release);
-}
 
-fn sweep_all(ttl: Duration) {
-    sweep_registry(
-        &mut *reader_registry().lock().unwrap_or_else(|e| e.into_inner()),
-        ttl,
-    );
-    sweep_registry(
-        &mut *writer_registry().lock().unwrap_or_else(|e| e.into_inner()),
-        ttl,
-    );
-    sweep_registry(
-        &mut *trailer_tx_registry()
+    /// Retrieve the `Notify` for a fetch token (clones the Arc for use in select!).
+    pub fn get_fetch_cancel_notify(&self, token: u64) -> Option<Arc<tokio::sync::Notify>> {
+        self.fetch_cancels
             .lock()
-            .unwrap_or_else(|e| e.into_inner()),
-        ttl,
-    );
-    sweep_registry(
-        &mut *trailer_rx_registry()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()),
-        ttl,
-    );
-    // ISS-007: sweep request_head_registry to prevent leaks on timeout/early-exit.
-    sweep_registry(
-        &mut *request_head_registry()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()),
-        ttl,
-    );
-    // ISS-007: sweep session and fetch_cancel registries for completeness.
-    sweep_registry(
-        &mut *session_registry()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()),
-        ttl,
-    );
-    sweep_registry(
-        &mut *fetch_cancel_registry()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()),
-        ttl,
-    );
-    // ISS-018: sweep pending_readers_map to prevent unbounded growth.
-    sweep_pending_readers(ttl);
-}
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle_to_fetch_cancel_key(token))
+            .map(|e| e.value.clone())
+    }
 
-fn sweep_registry<K: slotmap::Key, T>(registry: &mut SlotMap<K, Entry<T>>, ttl: Duration) {
-    let before = registry.len();
-    registry.retain(|_, e| !e.is_expired(ttl));
-    let removed = before - registry.len();
-    if removed > 0 {
-        tracing::debug!("[iroh-http] swept {removed} expired registry entries (ttl={ttl:?})");
+    /// Remove a fetch cancel token after the fetch completes.
+    pub fn remove_fetch_token(&self, token: u64) {
+        self.fetch_cancels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(handle_to_fetch_cancel_key(token));
+    }
+
+    // ── TTL sweep ────────────────────────────────────────────────────────
+
+    /// Sweep all registries, removing entries older than `ttl`.
+    /// Also compacts any registry that is empty after sweeping to reclaim
+    /// the backing memory from traffic bursts.
+    pub fn sweep(&self, ttl: Duration) {
+        Self::sweep_registry(&self.readers, ttl);
+        Self::sweep_registry(&self.writers, ttl);
+        Self::sweep_registry(&self.trailer_tx, ttl);
+        Self::sweep_registry(&self.trailer_rx, ttl);
+        Self::sweep_registry(&self.request_heads, ttl);
+        Self::sweep_registry(&self.sessions, ttl);
+        Self::sweep_registry(&self.fetch_cancels, ttl);
+        self.sweep_pending_readers(ttl);
+    }
+
+    fn sweep_registry<K: slotmap::Key, T>(
+        registry: &Mutex<SlotMap<K, Timed<T>>>,
+        ttl: Duration,
+    ) {
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let before = reg.len();
+        reg.retain(|_, e| !e.is_expired(ttl));
+        let removed = before - reg.len();
+        if removed > 0 {
+            tracing::debug!("[iroh-http] swept {removed} expired registry entries (ttl={ttl:?})");
+        }
+        // Compact when empty to reclaim backing memory after traffic bursts.
+        if reg.is_empty() && reg.capacity() > 128 {
+            *reg = SlotMap::with_key();
+        }
+    }
+
+    fn sweep_pending_readers(&self, ttl: Duration) {
+        let mut map = self
+            .pending_readers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let before = map.len();
+        map.retain(|_, e| e.created.elapsed() < ttl);
+        let removed = before - map.len();
+        if removed > 0 {
+            tracing::debug!("[iroh-http] swept {removed} stale pending readers (ttl={ttl:?})");
+        }
     }
 }
 
@@ -822,6 +644,10 @@ pub(crate) async fn pump_body_to_quic_send(
 mod tests {
     use super::*;
 
+    fn test_store() -> HandleStore {
+        HandleStore::new(StoreConfig::default())
+    }
+
     // ── Body channel basics ─────────────────────────────────────────────
 
     #[tokio::test]
@@ -861,38 +687,44 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── Registry handle operations ──────────────────────────────────────
+    // ── HandleStore operations ──────────────────────────────────────────
 
     #[tokio::test]
     async fn insert_reader_and_next_chunk() {
-        let (writer, reader) = make_body_channel();
-        let handle: u64 = insert_reader(0, reader);
+        let store = test_store();
+        let (writer, reader) = store.make_body_channel();
+        let handle = store.insert_reader(reader).unwrap();
 
         writer.send_chunk(Bytes::from("slab-data")).await.unwrap();
         drop(writer);
 
-        let chunk = next_chunk(handle).await.unwrap();
+        let chunk = store.next_chunk(handle).await.unwrap();
         assert_eq!(chunk, Some(Bytes::from("slab-data")));
 
         // EOF cleans up the registry entry
-        let eof = next_chunk(handle).await.unwrap();
+        let eof = store.next_chunk(handle).await.unwrap();
         assert!(eof.is_none());
     }
 
     #[tokio::test]
     async fn next_chunk_invalid_handle() {
-        let result = next_chunk(999999).await;
+        let store = test_store();
+        let result = store.next_chunk(999999).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, crate::ErrorCode::InvalidInput);
     }
 
     #[tokio::test]
-    async fn send_chunk_via_slab_handle() {
-        let (writer, reader) = make_body_channel();
-        let handle: u64 = insert_writer(0, writer);
+    async fn send_chunk_via_handle() {
+        let store = test_store();
+        let (writer, reader) = store.make_body_channel();
+        let handle = store.insert_writer(writer).unwrap();
 
-        send_chunk(handle, Bytes::from("via-slab")).await.unwrap();
-        finish_body(handle).unwrap();
+        store
+            .send_chunk(handle, Bytes::from("via-slab"))
+            .await
+            .unwrap();
+        store.finish_body(handle).unwrap();
 
         let chunk = reader.next_chunk().await;
         assert_eq!(chunk, Some(Bytes::from("via-slab")));
@@ -901,133 +733,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_chunk_invalid_handle() {
-        let result = send_chunk(999999, Bytes::from("nope")).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, crate::ErrorCode::InvalidInput);
-    }
-
-    #[test]
-    fn finish_body_invalid_handle() {
-        let result = finish_body(999999);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, crate::ErrorCode::InvalidInput);
-    }
-
-    #[test]
-    fn finish_body_signals_eof() {
-        let (writer, _reader) = make_body_channel();
-        let handle: u64 = insert_writer(0, writer);
-        finish_body(handle).unwrap();
-        // Double finish should fail
-        let result = finish_body(handle);
-        assert!(result.is_err());
-    }
-
-    // ── alloc_body_writer / pending reader ──────────────────────────────
-
-    #[test]
-    fn alloc_body_writer_and_claim() {
-        let (handle, reader): (u64, BodyReader) = alloc_body_writer();
-        store_pending_reader(handle, reader);
-        let claimed = claim_pending_reader(handle);
-        assert!(claimed.is_some());
-        // Second claim returns None
-        let again = claim_pending_reader(handle);
-        assert!(again.is_none());
-    }
-
-    // ── cancel_reader ───────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn cancel_reader_drops_from_slab() {
-        let (_writer, reader) = make_body_channel();
-        let handle: u64 = insert_reader(0, reader);
-        cancel_reader(handle);
-        // Subsequent next_chunk should fail (handle invalid)
-        let result = next_chunk(handle).await;
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cancel_reader_nonexistent_is_noop() {
-        // Should not panic
-        cancel_reader(999999);
-    }
-
-    // ── Trailer operations ──────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn trailers_send_and_receive() {
-        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-        let tx_handle: u64 = insert_trailer_sender(0, tx);
-        let rx_handle: u64 = insert_trailer_receiver(0, rx);
-
-        send_trailers(tx_handle, vec![("x-checksum".into(), "abc".into())]).unwrap();
-
-        let result = next_trailer(rx_handle).await.unwrap();
-        let trailers = result.unwrap();
-        assert_eq!(trailers.len(), 1);
-        assert_eq!(trailers[0], ("x-checksum".into(), "abc".into()));
-    }
-
-    #[test]
-    fn send_trailers_invalid_handle() {
-        let result = send_trailers(999999, vec![]);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, crate::ErrorCode::InvalidInput);
-    }
-
-    #[tokio::test]
-    async fn next_trailer_invalid_handle() {
-        let result = next_trailer(999999).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, crate::ErrorCode::InvalidInput);
-    }
-
-    #[tokio::test]
-    async fn next_trailer_sender_dropped_returns_none() {
-        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-        let rx_handle: u64 = insert_trailer_receiver(0, rx);
-        drop(tx); // sender dropped without sending
-        let result = next_trailer(rx_handle).await.unwrap();
-        assert!(result.is_none());
-    }
-
-    #[tokio::test]
-    async fn send_trailers_empty_vec() {
-        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-        let tx_handle: u64 = insert_trailer_sender(0, tx);
-        let rx_handle: u64 = insert_trailer_receiver(0, rx);
-
-        send_trailers(tx_handle, vec![]).unwrap();
-        let result = next_trailer(rx_handle).await.unwrap();
-        let trailers = result.unwrap();
-        assert!(trailers.is_empty());
-    }
-
-    // ── configure_backpressure ──────────────────────────────────────────
-
-    #[test]
-    fn configure_backpressure_updates_atomics() {
-        configure_backpressure(64, 128 * 1024, 60_000);
-        assert_eq!(
-            CHANNEL_CAPACITY.load(std::sync::atomic::Ordering::Relaxed),
-            64
-        );
-        assert_eq!(
-            MAX_CHUNK_SIZE.load(std::sync::atomic::Ordering::Relaxed),
-            128 * 1024
-        );
-        assert_eq!(
-            DRAIN_TIMEOUT_MS.load(std::sync::atomic::Ordering::Relaxed),
-            60_000
-        );
-        // Reset to defaults to avoid affecting other tests
-        configure_backpressure(
-            DEFAULT_CHANNEL_CAPACITY,
-            DEFAULT_MAX_CHUNK_SIZE,
-            DEFAULT_DRAIN_TIMEOUT_MS,
-        );
+    async fn capacity_cap_rejects_overflow() {
+        let store = HandleStore::new(StoreConfig {
+            max_handles: 2,
+            ..StoreConfig::default()
+        });
+        let (_, r1) = store.make_body_channel();
+        let (_, r2) = store.make_body_channel();
+        let (_, r3) = store.make_body_channel();
+        store.insert_reader(r1).unwrap();
+        store.insert_reader(r2).unwrap();
+        let err = store.insert_reader(r3).unwrap_err();
+        assert!(err.message.contains("capacity"));
     }
 }

@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use crate::pool::ConnectionPool;
 use crate::server::ServeHandle;
+use crate::stream::{HandleStore, StoreConfig};
 use crate::{ALPN, ALPN_DUPLEX};
 
 /// Configuration passed to [`IrohEndpoint::bind`].
@@ -147,8 +148,9 @@ pub(crate) struct EndpointInner {
     pub max_header_size: usize,
     /// Server-side limits forwarded to the serve loop.
     pub server_limits: crate::server::ServerLimits,
-    /// Per-endpoint index for global slab registries.
-    pub endpoint_idx: u32,
+    /// Per-endpoint handle store — owns all body readers, writers, trailers,
+    /// sessions, request-head channels, and fetch-cancel tokens.
+    pub handles: HandleStore,
     /// Active serve handle, if `serve()` has been called.
     pub serve_handle: std::sync::Mutex<Option<ServeHandle>>,
     /// Body compression options, if the feature is enabled.
@@ -267,59 +269,71 @@ impl IrohEndpoint {
 
         let ep = builder.bind().await.map_err(classify_bind_error)?;
 
-        // Apply backpressure config for all future channel allocations.
-        // ISS-008: reject mismatched second initialization with explicit error.
-        crate::stream::configure_backpressure(
-            opts.channel_capacity
-                .unwrap_or(crate::stream::DEFAULT_CHANNEL_CAPACITY),
-            opts.max_chunk_size_bytes
-                .unwrap_or(crate::stream::DEFAULT_MAX_CHUNK_SIZE),
-            opts.drain_timeout_ms
-                .unwrap_or(crate::stream::DEFAULT_DRAIN_TIMEOUT_MS),
-        )
-        .map_err(crate::CoreError::invalid_input)?;
-
-        // Start slab TTL sweep if configured.
-        crate::stream::start_slab_sweep(
-            opts.handle_ttl_ms
-                .unwrap_or(crate::stream::DEFAULT_SLAB_TTL_MS),
-        );
-
         let node_id_str = crate::base32_encode(ep.id().as_bytes());
 
-        let endpoint_idx = crate::stream::alloc_endpoint_idx();
-        crate::stream::register_endpoint(endpoint_idx);
+        let store_config = StoreConfig {
+            channel_capacity: opts.channel_capacity
+                .unwrap_or(crate::stream::DEFAULT_CHANNEL_CAPACITY)
+                .max(1),
+            max_chunk_size: opts.max_chunk_size_bytes
+                .unwrap_or(crate::stream::DEFAULT_MAX_CHUNK_SIZE)
+                .max(1),
+            drain_timeout: Duration::from_millis(
+                opts.drain_timeout_ms
+                    .unwrap_or(crate::stream::DEFAULT_DRAIN_TIMEOUT_MS),
+            ),
+            max_handles: crate::stream::DEFAULT_MAX_HANDLES,
+            ttl: Duration::from_millis(
+                opts.handle_ttl_ms
+                    .unwrap_or(crate::stream::DEFAULT_SLAB_TTL_MS),
+            ),
+        };
+        let sweep_ttl = store_config.ttl;
 
-        Ok(Self {
-            inner: Arc::new(EndpointInner {
-                ep,
-                node_id_str,
-                pool: ConnectionPool::new(
-                    opts.max_pooled_connections,
-                    opts.pool_idle_timeout_ms
-                        .map(std::time::Duration::from_millis),
-                ),
-                // ISS-020: treat 0 as "use default" — it would otherwise underflow
-                // the hyper minimum (ISS-001).  None also defaults to 64 KB.
-                max_header_size: match opts.max_header_size {
-                    None | Some(0) => 64 * 1024,
-                    Some(n) => n,
-                },
-                server_limits: {
-                    let mut sl = opts.server_limits.clone();
-                    // Merge standalone max_consecutive_errors into server_limits
-                    // (backward compat — adapters may set the standalone field).
-                    if sl.max_consecutive_errors.is_none() {
-                        sl.max_consecutive_errors = opts.max_consecutive_errors.or(Some(5));
-                    }
-                    sl
-                },
-                endpoint_idx,
-                serve_handle: std::sync::Mutex::new(None),
-                #[cfg(feature = "compression")]
-                compression: opts.compression,
-            }),
-        })
+        let inner = Arc::new(EndpointInner {
+            ep,
+            node_id_str,
+            pool: ConnectionPool::new(
+                opts.max_pooled_connections,
+                opts.pool_idle_timeout_ms
+                    .map(std::time::Duration::from_millis),
+            ),
+            // ISS-020: treat 0 as "use default" — it would otherwise underflow
+            // the hyper minimum (ISS-001).  None also defaults to 64 KB.
+            max_header_size: match opts.max_header_size {
+                None | Some(0) => 64 * 1024,
+                Some(n) => n,
+            },
+            server_limits: {
+                let mut sl = opts.server_limits.clone();
+                // Merge standalone max_consecutive_errors into server_limits
+                // (backward compat — adapters may set the standalone field).
+                if sl.max_consecutive_errors.is_none() {
+                    sl.max_consecutive_errors = opts.max_consecutive_errors.or(Some(5));
+                }
+                sl
+            },
+            handles: HandleStore::new(store_config),
+            serve_handle: std::sync::Mutex::new(None),
+            #[cfg(feature = "compression")]
+            compression: opts.compression,
+        });
+
+        // Start per-endpoint sweep task (held alive via Weak reference).
+        if !sweep_ttl.is_zero() {
+            let weak = Arc::downgrade(&inner);
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(Duration::from_secs(60));
+                loop {
+                    ticker.tick().await;
+                    let Some(inner) = weak.upgrade() else { break; };
+                    inner.handles.sweep(sweep_ttl);
+                    drop(inner); // release strong ref between ticks
+                }
+            });
+        }
+
+        Ok(Self { inner })
     }
 
     /// The node's public key as a lowercase base32 string.
@@ -350,9 +364,11 @@ impl IrohEndpoint {
     /// then close the QUIC endpoint.
     ///
     /// If no serve loop is running, closes the endpoint immediately.
+    /// The handle store (all registries) is freed when the last `IrohEndpoint`
+    /// clone is dropped — no explicit unregister is needed.
     pub async fn close(&self) {
-        // ISS-027: drain in-flight requests *before* unregistering slab entries so
-        // that request handlers can still access their reader/writer/trailer handles
+        // ISS-027: drain in-flight requests *before* dropping so that request
+        // handlers can still access their reader/writer/trailer handles
         // during the drain window.
         let handle = self
             .inner
@@ -363,14 +379,12 @@ impl IrohEndpoint {
         if let Some(h) = handle {
             h.drain().await;
         }
-        crate::stream::unregister_endpoint(self.inner.endpoint_idx);
         self.inner.ep.close().await;
     }
 
     /// Immediate close: abort the serve loop and close the endpoint with
     /// no drain period.
     pub async fn close_force(&self) {
-        crate::stream::unregister_endpoint(self.inner.endpoint_idx);
         let handle = self
             .inner
             .serve_handle
@@ -412,9 +426,9 @@ impl IrohEndpoint {
         &self.inner.ep
     }
 
-    /// Per-endpoint index used by global slab registries (cancellation tokens, etc.).
-    pub fn endpoint_idx(&self) -> u32 {
-        self.inner.endpoint_idx
+    /// Per-endpoint handle store.
+    pub fn handles(&self) -> &HandleStore {
+        &self.inner.handles
     }
 
     /// Maximum byte size of an HTTP/1.1 head.
