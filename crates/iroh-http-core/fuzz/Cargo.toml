@@ -1,0 +1,32 @@
+[package]
+name = "iroh-http-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+iroh-http-core = { path = ".." }
+serde_json = "1"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_parse_node_addr"
+path = "fuzz_targets/parse_node_addr.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_handle_store"
+path = "fuzz_targets/handle_store.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_respond"
+path = "fuzz_targets/respond.rs"
+doc = false
