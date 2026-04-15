@@ -2,4 +2,7 @@
   "deno.enable": false,
   "deno.enablePaths": ["./packages/iroh-http-deno", "./tests/http-compliance", "./examples/deno"],
   "js/ts.tsdk.path": "node_modules/typescript/lib",
+  "chat.tools.terminal.autoApprove": {
+    "./scripts/release.sh": true
+  }
 }
