@@ -273,16 +273,18 @@ async fn do_fetch(
     }
 
     // Allocate channels for streaming the response body to JS.
+    let mut guard = handles.insert_guard();
     let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-    let trailer_handle = handles.insert_trailer_receiver(trailer_rx)?;
+    let trailer_handle = guard.insert_trailer_receiver(trailer_rx)?;
 
     let (res_writer, res_reader) = handles.make_body_channel();
     let body = resp.into_body();
     tokio::spawn(pump_hyper_body_to_channel(body, res_writer, trailer_tx));
 
-    let body_handle = handles.insert_reader(res_reader)?;
+    let body_handle = guard.insert_reader(res_reader)?;
     let response_url = format!("httpi://{remote_str}{path}");
 
+    guard.commit();
     Ok(FfiResponse {
         status,
         headers: resp_headers,

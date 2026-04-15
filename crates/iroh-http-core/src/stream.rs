@@ -209,6 +209,102 @@ struct PendingReaderEntry {
 
 // ── HandleStore ───────────────────────────────────────────────────────────────
 
+/// Tracks handles inserted during a multi-handle allocation sequence.
+/// On drop, removes all tracked handles unless [`commit`](InsertGuard::commit)
+/// has been called. This prevents orphaned handles when a later insert fails.
+pub(crate) struct InsertGuard<'a> {
+    store: &'a HandleStore,
+    readers: Vec<u64>,
+    writers: Vec<u64>,
+    trailer_txs: Vec<u64>,
+    trailer_rxs: Vec<u64>,
+    req_heads: Vec<u64>,
+    committed: bool,
+}
+
+impl<'a> InsertGuard<'a> {
+    fn new(store: &'a HandleStore) -> Self {
+        Self {
+            store,
+            readers: Vec::new(),
+            writers: Vec::new(),
+            trailer_txs: Vec::new(),
+            trailer_rxs: Vec::new(),
+            req_heads: Vec::new(),
+            committed: false,
+        }
+    }
+
+    pub fn insert_reader(&mut self, reader: BodyReader) -> Result<u64, CoreError> {
+        let h = self.store.insert_reader(reader)?;
+        self.readers.push(h);
+        Ok(h)
+    }
+
+    pub fn insert_writer(&mut self, writer: BodyWriter) -> Result<u64, CoreError> {
+        let h = self.store.insert_writer(writer)?;
+        self.writers.push(h);
+        Ok(h)
+    }
+
+    pub fn insert_trailer_sender(&mut self, tx: TrailerTx) -> Result<u64, CoreError> {
+        let h = self.store.insert_trailer_sender(tx)?;
+        self.trailer_txs.push(h);
+        Ok(h)
+    }
+
+    pub fn insert_trailer_receiver(&mut self, rx: TrailerRx) -> Result<u64, CoreError> {
+        let h = self.store.insert_trailer_receiver(rx)?;
+        self.trailer_rxs.push(h);
+        Ok(h)
+    }
+
+    pub fn allocate_req_handle(
+        &mut self,
+        sender: tokio::sync::oneshot::Sender<ResponseHeadEntry>,
+    ) -> Result<u64, CoreError> {
+        let h = self.store.allocate_req_handle(sender)?;
+        self.req_heads.push(h);
+        Ok(h)
+    }
+
+    /// Consume the guard without rolling back. Call after all inserts succeed.
+    pub fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for InsertGuard<'_> {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        for h in &self.readers {
+            self.store.cancel_reader(*h);
+        }
+        for h in &self.writers {
+            let _ = self.store.finish_body(*h);
+        }
+        for h in &self.trailer_txs {
+            self.store.remove_trailer_sender(*h);
+        }
+        for h in &self.trailer_rxs {
+            self.store
+                .trailer_rx
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(handle_to_trailer_rx_key(*h));
+        }
+        for h in &self.req_heads {
+            self.store
+                .request_heads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(handle_to_request_head_key(*h));
+        }
+    }
+}
+
 /// Per-endpoint handle registry.  Owns all body readers, writers, trailers,
 /// sessions, request-head rendezvous channels, and fetch-cancel tokens for
 /// a single `IrohEndpoint`.
@@ -245,6 +341,11 @@ impl HandleStore {
     }
 
     // ── Config accessors ─────────────────────────────────────────────────
+
+    /// Create a guard for multi-handle allocation with automatic rollback.
+    pub(crate) fn insert_guard(&self) -> InsertGuard<'_> {
+        InsertGuard::new(self)
+    }
 
     /// The configured drain timeout.
     pub fn drain_timeout(&self) -> Duration {

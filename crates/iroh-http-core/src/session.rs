@@ -283,16 +283,19 @@ fn wrap_bidi_stream(
     send: iroh::endpoint::SendStream,
     recv: iroh::endpoint::RecvStream,
 ) -> Result<FfiDuplexStream, CoreError> {
+    let mut guard = handles.insert_guard();
+
     // Receive side: pump from QUIC recv → BodyWriter → BodyReader (JS reads via nextChunk).
     let (recv_writer, recv_reader) = handles.make_body_channel();
-    let read_handle = handles.insert_reader(recv_reader)?;
+    let read_handle = guard.insert_reader(recv_reader)?;
     tokio::spawn(pump_quic_recv_to_body(recv, recv_writer));
 
     // Send side: pump from BodyReader (JS writes via sendChunk) → QUIC send.
     let (send_writer, send_reader) = handles.make_body_channel();
-    let write_handle = handles.insert_writer(send_writer)?;
+    let write_handle = guard.insert_writer(send_writer)?;
     tokio::spawn(pump_body_to_quic_send(send_reader, send));
 
+    guard.commit();
     Ok(FfiDuplexStream {
         read_handle,
         write_handle,
