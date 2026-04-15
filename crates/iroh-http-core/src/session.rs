@@ -27,7 +27,7 @@ fn is_connection_closed(err: &iroh::endpoint::ConnectionError) -> bool {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseInfo {
-    pub close_code: u32,
+    pub close_code: u64,
     pub reason: String,
 }
 
@@ -149,14 +149,16 @@ pub async fn session_accept(endpoint: &IrohEndpoint) -> Result<Option<u64>, Core
 pub fn session_close(
     endpoint: &IrohEndpoint,
     session_handle: u64,
-    close_code: u32,
+    close_code: u64,
     reason: &str,
 ) -> Result<(), CoreError> {
     let entry = endpoint
         .handles()
         .remove_session(session_handle)
         .ok_or_else(|| CoreError::invalid_handle(session_handle as u32))?;
-    entry.conn.close(close_code.into(), reason.as_bytes());
+    entry
+        .conn
+        .close(iroh::endpoint::VarInt::from_u64(close_code).unwrap_or(iroh::endpoint::VarInt::from_u32(0)), reason.as_bytes());
     Ok(())
 }
 
@@ -298,12 +300,12 @@ fn wrap_bidi_stream(
 }
 
 /// Extract close code and reason from a QUIC `ConnectionError`.
-fn parse_connection_error(err: &iroh::endpoint::ConnectionError) -> (u32, String) {
+fn parse_connection_error(err: &iroh::endpoint::ConnectionError) -> (u64, String) {
     match err {
         iroh::endpoint::ConnectionError::ApplicationClosed(info) => {
             let code: u64 = info.error_code.into();
             let reason = String::from_utf8_lossy(&info.reason).into_owned();
-            (code as u32, reason)
+            (code, reason)
         }
         other => (0, other.to_string()),
     }

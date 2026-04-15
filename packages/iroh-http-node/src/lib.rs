@@ -903,14 +903,14 @@ pub async fn session_next_bidi_stream(
 pub async fn session_close_handle(
     endpoint_handle: u32,
     session_handle: BigInt,
-    close_code: Option<u32>,
+    close_code: Option<BigInt>,
     reason: Option<String>,
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
     iroh_http_core::session_close(
         &ep,
         session_handle.get_u64().1,
-        close_code.unwrap_or(0),
+        close_code.map(|c| c.get_u64().1).unwrap_or(0),
         reason.as_deref().unwrap_or(""),
     )
     .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
@@ -919,7 +919,7 @@ pub async fn session_close_handle(
 /// Wait for a session to close. Returns close info { closeCode, reason }.
 #[napi(object)]
 pub struct JsCloseInfo {
-    pub close_code: u32,
+    pub close_code: BigInt,
     pub reason: String,
 }
 
@@ -933,7 +933,7 @@ pub async fn session_closed(
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(JsCloseInfo {
-        close_code: info.close_code,
+        close_code: BigInt::from(info.close_code),
         reason: info.reason,
     })
 }

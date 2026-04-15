@@ -567,7 +567,7 @@ pub async fn session_next_bidi_stream(endpoint_handle: u64, session_handle: u64)
 
 /// Close a session with optional close code and reason.
 #[command]
-pub async fn session_close(endpoint_handle: u64, session_handle: u64, close_code: Option<u32>, reason: Option<String>) -> Result<(), String> {
+pub async fn session_close(endpoint_handle: u64, session_handle: u64, close_code: Option<u64>, reason: Option<String>) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     iroh_http_core::session_close(&ep, session_handle, close_code.unwrap_or(0), reason.as_deref().unwrap_or(""))
@@ -578,7 +578,7 @@ pub async fn session_close(endpoint_handle: u64, session_handle: u64, close_code
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseInfoPayload {
-    pub close_code: u32,
+    pub close_code: u64,
     pub reason: String,
 }
 

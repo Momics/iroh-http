@@ -1083,7 +1083,7 @@ async fn session_next_bidi_stream_dispatch(p: Value) -> Value {
 struct SessionClosePayload {
     endpoint_handle: u32,
     session_handle: u64,
-    close_code: Option<u32>,
+    close_code: Option<u64>,
     reason: Option<String>,
 }
 
