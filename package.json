@@ -16,11 +16,14 @@
     "build:deno:all": "cd packages/iroh-http-deno && deno task build:all",
     "build": "npm run build:core && npm run build:shared && npm run build:node && npm run build:tauri && npm run build:deno",
     "build:all": "npm run build:core && npm run build:shared && npm run build:node:all && npm run build:tauri && npm run build:deno:all",
+    "check": "cargo check --workspace && npm run typecheck",
+    "lint": "cargo fmt --all -- --check && cargo clippy --workspace -- -D warnings",
     "test:rust": "cargo test --workspace",
     "test:node": "npm test --workspace=packages/iroh-http-node",
     "test:deno": "cd packages/iroh-http-deno && deno task test",
     "test:interop": "bash tests/http-compliance/run.sh",
-    "test": "npm run test:rust && npm run test:node && npm run test:deno",
+    "test": "npm run test:rust && npm run test:node && npm run test:deno && npm run test:interop",
+    "prerelease": "npm run build && npm run test",
     "release": "bash scripts/release.sh",
     "release:dry": "bash scripts/release.sh --dry-run"
   }
