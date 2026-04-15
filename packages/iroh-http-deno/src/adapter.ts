@@ -117,7 +117,7 @@ const lib = Deno.dlopen(LIB_PATH, {
     nonblocking: true,
   },
   iroh_http_next_chunk: {
-    parameters: ["u64", "buffer", "usize"],
+    parameters: ["u32", "u64", "buffer", "usize"],
     result: "i32",
     nonblocking: true,
   },
@@ -233,12 +233,14 @@ let chunkBufHint = 65536;
 
 // ── Bridge implementation ─────────────────────────────────────────────────────
 
-export const bridge: Bridge = {
+export function makeBridge(endpointHandle: number): Bridge {
+  return {
   async nextChunk(handle: bigint): Promise<Uint8Array | null> {
     // DENO-001: allocate a per-call buffer so concurrent reads on different
     // handles do not share memory and corrupt each other's data.
     let buf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
     let n = (await lib.symbols.iroh_http_next_chunk(
+      endpointHandle,
       handle,
       buf,
       BigInt(buf.byteLength),
@@ -247,6 +249,7 @@ export const bridge: Bridge = {
       // Chunk too large for current hint; grow and retry once.
       buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
       n = (await lib.symbols.iroh_http_next_chunk(
+        endpointHandle,
         handle,
         buf,
         BigInt(buf.byteLength),
@@ -259,28 +262,29 @@ export const bridge: Bridge = {
   },
   async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
     await call<Record<never, never>>("sendChunk", {
+      endpointHandle,
       handle,
       chunk: encodeBase64(chunk),
     });
   },
   async finishBody(handle: bigint): Promise<void> {
-    await call<Record<never, never>>("finishBody", { handle });
+    await call<Record<never, never>>("finishBody", { endpointHandle, handle });
   },
   async cancelRequest(handle: bigint): Promise<void> {
-    await call<Record<never, never>>("cancelRequest", { handle });
+    await call<Record<never, never>>("cancelRequest", { endpointHandle, handle });
   },
-  async allocFetchToken(endpointHandle: number): Promise<bigint> {
+  async allocFetchToken(_endpointHandle: number): Promise<bigint> {
     const res = await call<{ token: number }>("allocFetchToken", { endpointHandle });
     return BigInt(res.token);
   },
   cancelFetch(token: bigint): void {
     // Fire-and-forget — do not await.
-    void call<Record<never, never>>("cancelInFlight", { token });
+    void call<Record<never, never>>("cancelInFlight", { endpointHandle, token });
   },
   async nextTrailer(handle: bigint): Promise<[string, string][] | null> {
     const res = await call<{ trailers: [string, string][] | null }>(
       "nextTrailer",
-      { handle },
+      { endpointHandle, handle },
     );
     return res.trailers;
   },
@@ -288,9 +292,10 @@ export const bridge: Bridge = {
     handle: bigint,
     trailers: [string, string][],
   ): Promise<void> {
-    await call<Record<never, never>>("sendTrailers", { handle, trailers });
+    await call<Record<never, never>>("sendTrailers", { endpointHandle, handle, trailers });
   },
-};
+  };
+}
 
 // ── Platform functions ────────────────────────────────────────────────────────
 
@@ -394,6 +399,7 @@ export const rawServe: RawServeFn = (
             try {
               const head = await callback(payload);
               await call<Record<never, never>>("respond", {
+                endpointHandle,
                 reqHandle: payload.reqHandle,
                 status: head.status,
                 headers: head.headers,
@@ -402,6 +408,7 @@ export const rawServe: RawServeFn = (
               console.error("[iroh-http-deno] handler error:", err);
               try {
                 await call<Record<never, never>>("respond", {
+                  endpointHandle,
                   reqHandle: payload.reqHandle,
                   status: 500,
                   headers: [],
@@ -416,8 +423,10 @@ export const rawServe: RawServeFn = (
     });
 };
 
-export const allocBodyWriter: AllocBodyWriterFn = () =>
-  call<{ handle: number }>("allocBodyWriter", {}).then((r) => BigInt(r.handle));
+export function makeAllocBodyWriter(endpointHandle: number): AllocBodyWriterFn {
+  return () =>
+    call<{ handle: number }>("allocBodyWriter", { endpointHandle }).then((r) => BigInt(r.handle));
+}
 
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 

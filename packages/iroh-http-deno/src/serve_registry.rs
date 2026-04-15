@@ -54,7 +54,11 @@ pub fn get(endpoint_handle: u32) -> Option<std::sync::Arc<ServeQueue>> {
 /// rather than hanging until the serve closure drops its `tx` clone.
 pub fn remove(endpoint_handle: u32) {
     if let Some(queue) = registry().lock().unwrap().remove(&endpoint_handle) {
-        // Close the receiver so any blocked recv() returns None.
-        queue.rx.blocking_lock().close();
+        // Close the channel by dropping the receiver.  We can't call
+        // `blocking_lock()` here because this may run inside an async context
+        // (e.g. called from `stopServe` or `closeEndpoint` dispatched by
+        // Tokio).  Dropping the Arc<ServeQueue> closes the tx; once all tx
+        // clones are dropped the rx will return None on the next recv().
+        drop(queue);
     }
 }

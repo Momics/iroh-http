@@ -18,8 +18,8 @@ import {
   type NodeOptions,
 } from "@momics/iroh-http-shared";
 import {
-  allocBodyWriter,
-  bridge,
+  makeAllocBodyWriter,
+  makeBridge,
   closeEndpoint,
   createEndpointInfo,
   denoAddrFns,
@@ -44,12 +44,12 @@ export { PublicKey, SecretKey } from "@momics/iroh-http-shared";
 export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   const info = await createEndpointInfo(options);
   return buildNode(
-    bridge,
+    makeBridge(info.endpointHandle),
     info,
     rawFetch,
     rawServe,
     rawConnect,
-    allocBodyWriter,
+    makeAllocBodyWriter(info.endpointHandle),
     closeEndpoint,
     stopServe,
     denoAddrFns,
