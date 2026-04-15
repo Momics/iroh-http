@@ -24,10 +24,6 @@ use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
     parse_direct_addrs, registry,
     server::respond,
-    stream::{
-        alloc_body_writer, cancel_reader, claim_pending_reader, finish_body, next_chunk,
-        next_trailer, send_chunk, send_trailers, store_pending_reader,
-    },
     RequestPayload,
 };
 use serde::{Deserialize, Serialize};
@@ -77,6 +73,19 @@ fn err_core(e: iroh_http_core::CoreError) -> Value {
     json!({ "err": iroh_http_core::core_error_to_json(&e) })
 }
 
+/// Extract and look up the endpoint from a JSON payload's `endpointHandle`.
+fn require_endpoint(p: &Value) -> Result<IrohEndpoint, Value> {
+    let handle = p["endpointHandle"]
+        .as_u64()
+        .ok_or_else(|| err("missing endpointHandle"))? as u32;
+    get_endpoint(handle).ok_or_else(|| {
+        err_code(
+            "INVALID_HANDLE",
+            format!("node closed or not found (handle {handle})"),
+        )
+    })
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 /// Entry point called from `lib.rs`.  Parses the JSON payload and routes to the
@@ -95,7 +104,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "homeRelay" => home_relay_dispatch(p),
         "peerInfo" => peer_info_dispatch(p).await,
         "peerStats" => peer_stats_dispatch(p).await,
-        "allocBodyWriter" => alloc_body_writer_dispatch(),
+        "allocBodyWriter" => alloc_body_writer_dispatch(p),
         "allocFetchToken" => alloc_fetch_token_dispatch(p),
         "cancelInFlight" => cancel_in_flight_dispatch(p),
         "nextChunk" => next_chunk_dispatch(p).await,
@@ -364,41 +373,55 @@ async fn peer_stats_dispatch(p: Value) -> Value {
 
 // ── Body writer allocation ────────────────────────────────────────────────────
 
-fn alloc_body_writer_dispatch() -> Value {
-    let (handle, reader) = alloc_body_writer();
-    store_pending_reader(handle, reader);
+fn alloc_body_writer_dispatch(p: Value) -> Value {
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
+    };
+    let (handle, reader) = match ep.handles().alloc_body_writer() {
+        Ok(v) => v,
+        Err(e) => return err_core(e),
+    };
+    ep.handles().store_pending_reader(handle, reader);
     ok(json!({ "handle": handle }))
 }
 
 fn alloc_fetch_token_dispatch(p: Value) -> Value {
-    let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
-        None => return err("missing endpointHandle"),
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
     };
-    let ep = match get_endpoint(handle) {
-        Some(ep) => ep,
-        None => return err("invalid endpointHandle"),
-    };
-    ok(json!({ "token": iroh_http_core::alloc_fetch_token(ep.endpoint_idx()) }))
+    match ep.handles().alloc_fetch_token() {
+        Ok(token) => ok(json!({ "token": token })),
+        Err(e) => err_core(e),
+    }
 }
 
 fn cancel_in_flight_dispatch(p: Value) -> Value {
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
+    };
     let token = match p["token"].as_u64() {
         Some(t) => t,
         None => return err("missing token"),
     };
-    iroh_http_core::cancel_in_flight(token);
+    ep.handles().cancel_in_flight(token);
     ok(json!({}))
 }
 
 // ── Streaming bridge ──────────────────────────────────────────────────────────
 
 async fn next_chunk_dispatch(p: Value) -> Value {
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
+    };
     let handle = match p["handle"].as_u64() {
         Some(h) => h,
         None => return err("missing handle"),
     };
-    match next_chunk(handle).await {
+    match ep.handles().next_chunk(handle).await {
         Err(e) => err_core(e),
         Ok(None) => ok(json!({ "chunk": null })),
         Ok(Some(b)) => ok(json!({ "chunk": B64.encode(&b[..]) })),
@@ -406,6 +429,10 @@ async fn next_chunk_dispatch(p: Value) -> Value {
 }
 
 async fn send_chunk_dispatch(p: Value) -> Value {
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
+    };
     let handle = match p["handle"].as_u64() {
         Some(h) => h,
         None => return err("missing handle"),
@@ -418,38 +445,50 @@ async fn send_chunk_dispatch(p: Value) -> Value {
         Ok(b) => Bytes::from(b),
         Err(e) => return err(format!("base64 decode: {e}")),
     };
-    match send_chunk(handle, bytes).await {
+    match ep.handles().send_chunk(handle, bytes).await {
         Ok(()) => ok(json!({})),
         Err(e) => err_core(e),
     }
 }
 
 fn finish_body_dispatch(p: Value) -> Value {
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
+    };
     let handle = match p["handle"].as_u64() {
         Some(h) => h,
         None => return err("missing handle"),
     };
-    match finish_body(handle) {
+    match ep.handles().finish_body(handle) {
         Ok(()) => ok(json!({})),
         Err(e) => err_core(e),
     }
 }
 
 fn cancel_request_dispatch(p: Value) -> Value {
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
+    };
     let handle = match p["handle"].as_u64() {
         Some(h) => h,
         None => return err("missing handle"),
     };
-    cancel_reader(handle);
+    ep.handles().cancel_reader(handle);
     ok(json!({}))
 }
 
 async fn next_trailer_dispatch(p: Value) -> Value {
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
+    };
     let handle = match p["handle"].as_u64() {
         Some(h) => h,
         None => return err("missing handle"),
     };
-    match next_trailer(handle).await {
+    match ep.handles().next_trailer(handle).await {
         Err(e) => err_core(e),
         Ok(None) => ok(json!({ "trailers": null })),
         Ok(Some(t)) => ok(json!({ "trailers": t })),
@@ -457,6 +496,10 @@ async fn next_trailer_dispatch(p: Value) -> Value {
 }
 
 fn send_trailers_dispatch(p: Value) -> Value {
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
+    };
     let handle = match p["handle"].as_u64() {
         Some(h) => h,
         None => return err("missing handle"),
@@ -475,7 +518,7 @@ fn send_trailers_dispatch(p: Value) -> Value {
             }
         })
         .collect();
-    match send_trailers(handle, pairs) {
+    match ep.handles().send_trailers(handle, pairs) {
         Ok(()) => ok(json!({})),
         Err(e) => err_core(e),
     }
@@ -521,7 +564,9 @@ async fn raw_fetch(p: Value) -> Value {
             }
         })
         .collect();
-    let reader = args.req_body_handle.and_then(claim_pending_reader);
+    let reader = args
+        .req_body_handle
+        .and_then(|h| ep.handles().claim_pending_reader(h));
     let addrs = match parse_direct_addrs(&args.direct_addrs) {
         Ok(a) => a,
         Err(e) => return err(e),
@@ -614,11 +659,13 @@ async fn serve_start(p: Value) -> Value {
 
     let queue = serve_registry::register(handle);
 
+    let ep_clone = ep.clone();
     let serve_handle = iroh_http_core::serve(
         ep.clone(),
         ep.serve_options(),
         move |payload: RequestPayload| {
             let q = std::sync::Arc::clone(&queue);
+            let ep_ref = ep_clone.clone();
             let headers: Vec<Vec<String>> = payload
                 .headers
                 .into_iter()
@@ -643,6 +690,7 @@ async fn serve_start(p: Value) -> Value {
                 if tx.try_send(event).is_err() {
                     tracing::warn!("iroh-http-deno: serve queue full — dropping request with 503");
                     let _ = respond(
+                        ep_ref.handles(),
                         payload.req_handle,
                         503,
                         vec![("content-length".to_string(), "0".to_string())],
@@ -694,12 +742,18 @@ async fn next_request(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RespondPayload {
+    #[allow(dead_code)]
+    endpoint_handle: u32,
     req_handle: u64,
     status: u16,
     headers: Vec<Vec<String>>,
 }
 
 fn respond_dispatch(p: Value) -> Value {
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
+    };
     let args: RespondPayload = match serde_json::from_value(p) {
         Ok(v) => v,
         Err(e) => return err(e),
@@ -715,7 +769,7 @@ fn respond_dispatch(p: Value) -> Value {
             }
         })
         .collect();
-    match respond(args.req_handle, args.status, headers) {
+    match respond(ep.handles(), args.req_handle, args.status, headers) {
         Ok(()) => ok(json!({})),
         Err(e) => err_core(e),
     }
@@ -974,31 +1028,59 @@ async fn session_connect_dispatch(p: Value) -> Value {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SessionHandlePayload {
+struct SessionEndpointPayload {
+    endpoint_handle: u32,
     session_handle: u64,
 }
 
 async fn session_create_bidi_stream_dispatch(p: Value) -> Value {
-    let args: SessionHandlePayload = match serde_json::from_value(p) {
+    let args: SessionEndpointPayload = match serde_json::from_value(p) {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    match iroh_http_core::session_create_bidi_stream(args.session_handle).await {
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {})", args.endpoint_handle),
+            )
+        }
+    };
+    match iroh_http_core::session_create_bidi_stream(&ep, args.session_handle).await {
         Err(e) => err_core(e),
         Ok(d) => ok(json!({ "readHandle": d.read_handle, "writeHandle": d.write_handle })),
     }
 }
 
 async fn session_next_bidi_stream_dispatch(p: Value) -> Value {
-    let args: SessionHandlePayload = match serde_json::from_value(p) {
+    let args: SessionEndpointPayload = match serde_json::from_value(p) {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    match iroh_http_core::session_next_bidi_stream(args.session_handle).await {
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {})", args.endpoint_handle),
+            )
+        }
+    };
+    match iroh_http_core::session_next_bidi_stream(&ep, args.session_handle).await {
         Err(e) => err_core(e),
         Ok(None) => ok(json!(null)),
         Ok(Some(d)) => ok(json!({ "readHandle": d.read_handle, "writeHandle": d.write_handle })),
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionClosePayload {
+    endpoint_handle: u32,
+    session_handle: u64,
+    close_code: Option<u32>,
+    reason: Option<String>,
 }
 
 fn session_close_dispatch(p: Value) -> Value {
@@ -1006,7 +1088,17 @@ fn session_close_dispatch(p: Value) -> Value {
         Ok(v) => v,
         Err(e) => return err(e),
     };
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {})", args.endpoint_handle),
+            )
+        }
+    };
     match iroh_http_core::session_close(
+        &ep,
         args.session_handle,
         args.close_code.unwrap_or(0),
         args.reason.as_deref().unwrap_or(""),
@@ -1016,42 +1108,61 @@ fn session_close_dispatch(p: Value) -> Value {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionClosePayload {
-    session_handle: u64,
-    close_code: Option<u32>,
-    reason: Option<String>,
-}
-
 async fn session_closed_dispatch(p: Value) -> Value {
-    let args: SessionHandlePayload = match serde_json::from_value(p) {
+    let args: SessionEndpointPayload = match serde_json::from_value(p) {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    match iroh_http_core::session_closed(args.session_handle).await {
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {})", args.endpoint_handle),
+            )
+        }
+    };
+    match iroh_http_core::session_closed(&ep, args.session_handle).await {
         Err(e) => err_core(e),
         Ok(info) => ok(json!({ "closeCode": info.close_code, "reason": info.reason })),
     }
 }
 
 async fn session_create_uni_stream_dispatch(p: Value) -> Value {
-    let args: SessionHandlePayload = match serde_json::from_value(p) {
+    let args: SessionEndpointPayload = match serde_json::from_value(p) {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    match iroh_http_core::session_create_uni_stream(args.session_handle).await {
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {})", args.endpoint_handle),
+            )
+        }
+    };
+    match iroh_http_core::session_create_uni_stream(&ep, args.session_handle).await {
         Err(e) => err_core(e),
         Ok(handle) => ok(json!({ "writeHandle": handle })),
     }
 }
 
 async fn session_next_uni_stream_dispatch(p: Value) -> Value {
-    let args: SessionHandlePayload = match serde_json::from_value(p) {
+    let args: SessionEndpointPayload = match serde_json::from_value(p) {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    match iroh_http_core::session_next_uni_stream(args.session_handle).await {
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {})", args.endpoint_handle),
+            )
+        }
+    };
+    match iroh_http_core::session_next_uni_stream(&ep, args.session_handle).await {
         Err(e) => err_core(e),
         Ok(None) => ok(json!(null)),
         Ok(Some(handle)) => ok(json!({ "readHandle": handle })),
@@ -1061,6 +1172,7 @@ async fn session_next_uni_stream_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionDatagramPayload {
+    endpoint_handle: u32,
     session_handle: u64,
     data: String, // base64
 }
@@ -1070,22 +1182,40 @@ fn session_send_datagram_dispatch(p: Value) -> Value {
         Ok(v) => v,
         Err(e) => return err(e),
     };
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {})", args.endpoint_handle),
+            )
+        }
+    };
     let data = match B64.decode(&args.data) {
         Ok(d) => d,
         Err(e) => return err(format!("base64 decode: {e}")),
     };
-    match iroh_http_core::session_send_datagram(args.session_handle, &data) {
+    match iroh_http_core::session_send_datagram(&ep, args.session_handle, &data) {
         Err(e) => err_core(e),
         Ok(()) => ok(json!({})),
     }
 }
 
 async fn session_recv_datagram_dispatch(p: Value) -> Value {
-    let args: SessionHandlePayload = match serde_json::from_value(p) {
+    let args: SessionEndpointPayload = match serde_json::from_value(p) {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    match iroh_http_core::session_recv_datagram(args.session_handle).await {
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {})", args.endpoint_handle),
+            )
+        }
+    };
+    match iroh_http_core::session_recv_datagram(&ep, args.session_handle).await {
         Err(e) => err_core(e),
         Ok(None) => ok(json!(null)),
         Ok(Some(data)) => ok(json!({ "data": B64.encode(&data) })),
@@ -1093,11 +1223,20 @@ async fn session_recv_datagram_dispatch(p: Value) -> Value {
 }
 
 fn session_max_datagram_size_dispatch(p: Value) -> Value {
-    let args: SessionHandlePayload = match serde_json::from_value(p) {
+    let args: SessionEndpointPayload = match serde_json::from_value(p) {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    match iroh_http_core::session_max_datagram_size(args.session_handle) {
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {})", args.endpoint_handle),
+            )
+        }
+    };
+    match iroh_http_core::session_max_datagram_size(&ep, args.session_handle) {
         Err(e) => err_core(e),
         Ok(size) => ok(json!({ "maxDatagramSize": size })),
     }

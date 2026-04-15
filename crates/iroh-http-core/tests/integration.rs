@@ -6,10 +6,8 @@
 
 use bytes::Bytes;
 use iroh_http_core::server::respond;
-use iroh_http_core::stream;
 use iroh_http_core::{
-    alloc_fetch_token, cancel_in_flight, fetch, next_chunk, next_trailer, send_trailers, serve,
-    server::ServeOptions, IrohEndpoint, NodeOptions, RequestPayload,
+    fetch, serve, server::ServeOptions, IrohEndpoint, NodeOptions, RequestPayload,
 };
 
 /// Create a pair of locally-connected endpoints (relay disabled, loopback only).
@@ -46,12 +44,16 @@ async fn basic_get_200() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             respond(
+                server_ep.handles(),
                 payload.req_handle,
                 200,
                 vec![("content-length".into(), "0".into())],
             )
             .unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -71,7 +73,7 @@ async fn basic_get_200() {
     assert!(res.url.starts_with("httpi://"));
     assert!(res.url.contains("/hello"));
 
-    let chunk = next_chunk(res.body_handle).await.unwrap();
+    let chunk = client_ep.handles().next_chunk(res.body_handle).await.unwrap();
     assert!(chunk.is_none());
 }
 
@@ -95,6 +97,7 @@ async fn get_with_body() {
             let body_bytes = Bytes::from(path.as_bytes().to_vec());
 
             respond(
+                server_ep.handles(),
                 payload.req_handle,
                 200,
                 vec![("content-type".into(), "text/plain".into())],
@@ -102,9 +105,10 @@ async fn get_with_body() {
             .unwrap();
 
             let handle = payload.res_body_handle;
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
-                stream::send_chunk(handle, body_bytes).await.unwrap();
-                stream::finish_body(handle).unwrap();
+                server_ep.handles().send_chunk(handle, body_bytes).await.unwrap();
+                server_ep.handles().finish_body(handle).unwrap();
             });
         },
     );
@@ -124,7 +128,7 @@ async fn get_with_body() {
     assert_eq!(res.status, 200);
 
     let mut body = Vec::new();
-    while let Some(chunk) = next_chunk(res.body_handle).await.unwrap() {
+    while let Some(chunk) = client_ep.handles().next_chunk(res.body_handle).await.unwrap() {
         body.extend_from_slice(&chunk);
     }
     assert_eq!(String::from_utf8(body).unwrap(), "/echo/test");
@@ -148,31 +152,42 @@ async fn post_with_request_body() {
             let res_body_handle = payload.res_body_handle;
             let req_handle = payload.req_handle;
 
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
                 let mut body = Vec::new();
-                while let Some(chunk) = next_chunk(req_body_handle).await.unwrap() {
+                while let Some(chunk) = server_ep
+                    .handles()
+                    .next_chunk(req_body_handle)
+                    .await
+                    .unwrap()
+                {
                     body.extend_from_slice(&chunk);
                 }
 
                 let response_body = format!("received {} bytes", body.len());
-                respond(req_handle, 200, vec![]).unwrap();
-                stream::send_chunk(res_body_handle, Bytes::from(response_body.into_bytes()))
+                respond(server_ep.handles(), req_handle, 200, vec![]).unwrap();
+                server_ep
+                    .handles()
+                    .send_chunk(res_body_handle, Bytes::from(response_body.into_bytes()))
                     .await
                     .unwrap();
-                stream::finish_body(res_body_handle).unwrap();
+                server_ep.handles().finish_body(res_body_handle).unwrap();
             });
         },
     );
 
-    let (writer_handle, body_reader) = stream::alloc_body_writer();
+    let (writer_handle, body_reader) = client_ep.handles().alloc_body_writer().unwrap();
     let body_data = b"hello, world!".to_vec();
     let body_len = body_data.len();
 
+    let client_ep_send = client_ep.clone();
     tokio::spawn(async move {
-        stream::send_chunk(writer_handle, Bytes::from(body_data))
+        client_ep_send
+            .handles()
+            .send_chunk(writer_handle, Bytes::from(body_data))
             .await
             .unwrap();
-        stream::finish_body(writer_handle).unwrap();
+        client_ep_send.handles().finish_body(writer_handle).unwrap();
     });
 
     let res = fetch(
@@ -191,7 +206,7 @@ async fn post_with_request_body() {
     assert_eq!(res.status, 200);
 
     let mut body = Vec::new();
-    while let Some(chunk) = next_chunk(res.body_handle).await.unwrap() {
+    while let Some(chunk) = client_ep.handles().next_chunk(res.body_handle).await.unwrap() {
         body.extend_from_slice(&chunk);
     }
     assert_eq!(
@@ -213,6 +228,7 @@ async fn custom_response_headers() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             respond(
+                server_ep.handles(),
                 payload.req_handle,
                 201,
                 vec![
@@ -221,7 +237,10 @@ async fn custom_response_headers() {
                 ],
             )
             .unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -263,8 +282,11 @@ async fn request_headers_and_method() {
                 .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer token123");
             assert!(has_auth, "authorization header missing");
 
-            respond(payload.req_handle, 204, vec![]).unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            respond(server_ep.handles(), payload.req_handle, 204, vec![]).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -299,8 +321,11 @@ async fn url_uses_httpi_scheme() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             *captured.lock().unwrap() = payload.url.clone();
-            respond(payload.req_handle, 200, vec![]).unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            respond(server_ep.handles(), payload.req_handle, 200, vec![]).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -350,8 +375,11 @@ async fn remote_node_id_is_populated() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             *captured.lock().unwrap() = payload.remote_node_id.clone();
-            respond(payload.req_handle, 200, vec![]).unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            respond(server_ep.handles(), payload.req_handle, 200, vec![]).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -389,13 +417,16 @@ async fn multiple_sequential_requests() {
         move |payload: RequestPayload| {
             let n = counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let body = format!("request #{n}");
-            respond(payload.req_handle, 200, vec![]).unwrap();
+            respond(server_ep.handles(), payload.req_handle, 200, vec![]).unwrap();
             let h = payload.res_body_handle;
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
-                stream::send_chunk(h, Bytes::from(body.into_bytes()))
+                server_ep
+                    .handles()
+                    .send_chunk(h, Bytes::from(body.into_bytes()))
                     .await
                     .unwrap();
-                stream::finish_body(h).unwrap();
+                server_ep.handles().finish_body(h).unwrap();
             });
         },
     );
@@ -416,7 +447,7 @@ async fn multiple_sequential_requests() {
         assert_eq!(res.status, 200);
 
         let mut body = Vec::new();
-        while let Some(chunk) = next_chunk(res.body_handle).await.unwrap() {
+        while let Some(chunk) = client_ep.handles().next_chunk(res.body_handle).await.unwrap() {
             body.extend_from_slice(&chunk);
         }
         assert_eq!(String::from_utf8(body).unwrap(), format!("request #{i}"));
@@ -436,6 +467,7 @@ async fn response_trailers() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             respond(
+                server_ep.handles(),
                 payload.req_handle,
                 200,
                 vec![("trailer".into(), "x-checksum".into())],
@@ -444,12 +476,18 @@ async fn response_trailers() {
 
             let body_h = payload.res_body_handle;
             let trailer_h = payload.res_trailers_handle;
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
-                stream::send_chunk(body_h, Bytes::from("data"))
+                server_ep
+                    .handles()
+                    .send_chunk(body_h, Bytes::from("data"))
                     .await
                     .unwrap();
-                stream::finish_body(body_h).unwrap();
-                send_trailers(trailer_h, vec![("x-checksum".into(), "abc123".into())]).unwrap();
+                server_ep.handles().finish_body(body_h).unwrap();
+                server_ep
+                    .handles()
+                    .send_trailers(trailer_h, vec![("x-checksum".into(), "abc123".into())])
+                    .unwrap();
             });
         },
     );
@@ -468,9 +506,13 @@ async fn response_trailers() {
     .unwrap();
     assert_eq!(res.status, 200);
 
-    while let Some(_chunk) = next_chunk(res.body_handle).await.unwrap() {}
+    while let Some(_chunk) = client_ep.handles().next_chunk(res.body_handle).await.unwrap() {}
 
-    let trailers = next_trailer(res.trailers_handle).await.unwrap();
+    let trailers = client_ep
+        .handles()
+        .next_trailer(res.trailers_handle)
+        .await
+        .unwrap();
     let trailers = trailers.expect("expected trailers");
     assert!(
         trailers
@@ -498,20 +540,25 @@ async fn post_empty_body() {
             let res_body_handle = payload.res_body_handle;
             let req_handle = payload.req_handle;
 
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
                 // Read request body — should be empty
-                let chunk = next_chunk(req_body_handle).await.unwrap();
+                let chunk = server_ep
+                    .handles()
+                    .next_chunk(req_body_handle)
+                    .await
+                    .unwrap();
                 assert!(chunk.is_none(), "expected empty body");
 
-                respond(req_handle, 204, vec![]).unwrap();
-                stream::finish_body(res_body_handle).unwrap();
+                respond(server_ep.handles(), req_handle, 204, vec![]).unwrap();
+                server_ep.handles().finish_body(res_body_handle).unwrap();
             });
         },
     );
 
     // Create body writer but immediately finish without sending data
-    let (writer_handle, body_reader) = stream::alloc_body_writer();
-    stream::finish_body(writer_handle).unwrap();
+    let (writer_handle, body_reader) = client_ep.handles().alloc_body_writer().unwrap();
+    client_ep.handles().finish_body(writer_handle).unwrap();
 
     let res = fetch(
         &client_ep,
@@ -541,12 +588,16 @@ async fn concurrent_requests() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             respond(
+                server_ep.handles(),
                 payload.req_handle,
                 200,
                 vec![("content-length".into(), "0".into())],
             )
             .unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -605,12 +656,13 @@ async fn fetch_cancelled_via_token() {
         },
     );
 
-    let token = alloc_fetch_token(0);
+    let token = client_ep.handles().alloc_fetch_token().unwrap();
 
     // Cancel as soon as the server has received the request — no sleep needed.
+    let client_ep_cancel = client_ep.clone();
     tokio::spawn(async move {
         let _ = request_arrived_rx.await;
-        cancel_in_flight(token);
+        client_ep_cancel.handles().cancel_in_flight(token);
     });
 
     let result = fetch(
@@ -743,12 +795,16 @@ async fn url_with_query_params() {
         move |payload: RequestPayload| {
             *captured.lock().unwrap() = payload.url.clone();
             respond(
+                server_ep.handles(),
                 payload.req_handle,
                 200,
                 vec![("content-length".into(), "0".into())],
             )
             .unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -783,7 +839,13 @@ async fn url_with_query_params() {
 
 #[tokio::test]
 async fn respond_invalid_handle() {
-    let result = respond(999999, 200, vec![]);
+    let ep = IrohEndpoint::bind(NodeOptions {
+        disable_networking: true,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let result = respond(ep.handles(), 999999, 200, vec![]);
     assert!(result.is_err());
 }
 
@@ -802,11 +864,16 @@ async fn response_without_trailer_header_still_works() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             // No Trailer: header declared
-            respond(payload.req_handle, 200, vec![]).unwrap();
+            respond(server_ep.handles(), payload.req_handle, 200, vec![]).unwrap();
             let h = payload.res_body_handle;
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
-                stream::send_chunk(h, Bytes::from("works")).await.unwrap();
-                stream::finish_body(h).unwrap();
+                server_ep
+                    .handles()
+                    .send_chunk(h, Bytes::from("works"))
+                    .await
+                    .unwrap();
+                server_ep.handles().finish_body(h).unwrap();
                 // Deliberately NOT calling send_trailers
             });
         },
@@ -827,7 +894,7 @@ async fn response_without_trailer_header_still_works() {
     assert_eq!(res.status, 200);
 
     let mut body = Vec::new();
-    while let Some(chunk) = next_chunk(res.body_handle).await.unwrap() {
+    while let Some(chunk) = client_ep.handles().next_chunk(res.body_handle).await.unwrap() {
         body.extend_from_slice(&chunk);
     }
     assert_eq!(String::from_utf8(body).unwrap(), "works");
@@ -863,12 +930,16 @@ async fn pool_reuses_connection_for_sequential_requests() {
         move |payload: RequestPayload| {
             rc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             respond(
+                server_ep.handles(),
                 payload.req_handle,
                 200,
                 vec![("content-length".into(), "0".into())],
             )
             .unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -887,7 +958,7 @@ async fn pool_reuses_connection_for_sequential_requests() {
     .unwrap();
     assert_eq!(res1.status, 200);
     // Drain body to complete the request.
-    while let Some(_) = next_chunk(res1.body_handle).await.unwrap() {}
+    while let Some(_) = client_ep.handles().next_chunk(res1.body_handle).await.unwrap() {}
 
     // Second request — should reuse the cached connection (no new handshake).
     let res2 = fetch(
@@ -903,7 +974,7 @@ async fn pool_reuses_connection_for_sequential_requests() {
     .await
     .unwrap();
     assert_eq!(res2.status, 200);
-    while let Some(_) = next_chunk(res2.body_handle).await.unwrap() {}
+    while let Some(_) = client_ep.handles().next_chunk(res2.body_handle).await.unwrap() {}
 
     // Third request for good measure.
     let res3 = fetch(
@@ -919,7 +990,7 @@ async fn pool_reuses_connection_for_sequential_requests() {
     .await
     .unwrap();
     assert_eq!(res3.status, 200);
-    while let Some(_) = next_chunk(res3.body_handle).await.unwrap() {}
+    while let Some(_) = client_ep.handles().next_chunk(res3.body_handle).await.unwrap() {}
 
     // All three requests should have been served.
     assert_eq!(request_count.load(std::sync::atomic::Ordering::SeqCst), 3);
@@ -936,12 +1007,16 @@ async fn pool_concurrent_requests_share_connection() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             respond(
+                server_ep.handles(),
                 payload.req_handle,
                 200,
                 vec![("content-length".into(), "0".into())],
             )
             .unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -965,7 +1040,7 @@ async fn pool_concurrent_requests_share_connection() {
             .await
             .unwrap();
             assert_eq!(res.status, 200);
-            while let Some(_) = next_chunk(res.body_handle).await.unwrap() {}
+            while let Some(_) = ep.handles().next_chunk(res.body_handle).await.unwrap() {}
         }));
     }
 
@@ -993,18 +1068,23 @@ async fn pool_different_peers_get_separate_connections() {
     let addrs1 = server_addrs(&server1);
     let addrs2 = server_addrs(&server2);
 
-    for ep in [&server1, &server2] {
+    for ep in [server1.clone(), server2.clone()] {
+        let ep_handler = ep.clone();
         serve(
-            ep.clone(),
+            ep,
             ServeOptions::default(),
             move |payload: RequestPayload| {
                 respond(
+                    ep_handler.handles(),
                     payload.req_handle,
                     200,
                     vec![("content-length".into(), "0".into())],
                 )
                 .unwrap();
-                stream::finish_body(payload.res_body_handle).unwrap();
+                ep_handler
+                    .handles()
+                    .finish_body(payload.res_body_handle)
+                    .unwrap();
             },
         );
     }
@@ -1027,11 +1107,11 @@ async fn pool_different_peers_get_separate_connections() {
 
     let r1 = fetch_retry!(&id1, &addrs1);
     assert_eq!(r1.status, 200);
-    while let Some(_) = next_chunk(r1.body_handle).await.unwrap() {}
+    while let Some(_) = client.handles().next_chunk(r1.body_handle).await.unwrap() {}
 
     let r2 = fetch_retry!(&id2, &addrs2);
     assert_eq!(r2.status, 200);
-    while let Some(_) = next_chunk(r2.body_handle).await.unwrap() {}
+    while let Some(_) = client.handles().next_chunk(r2.body_handle).await.unwrap() {}
 
     // Both succeeded with separate connections to different peers.
     assert_ne!(id1, id2);
@@ -1070,12 +1150,16 @@ async fn header_bomb_rejected() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             respond(
+                server_ep.handles(),
                 payload.req_handle,
                 200,
                 vec![("content-length".into(), "0".into())],
             )
             .unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -1129,8 +1213,17 @@ async fn response_header_bomb_rejected() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             let big_value = "Y".repeat(200);
-            respond(payload.req_handle, 200, vec![("x-huge".into(), big_value)]).unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            respond(
+                server_ep.handles(),
+                payload.req_handle,
+                200,
+                vec![("x-huge".into(), big_value)],
+            )
+            .unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -1166,6 +1259,7 @@ async fn default_limits_allow_normal_traffic() {
         ServeOptions::default(),
         move |payload: RequestPayload| {
             respond(
+                server_ep.handles(),
                 payload.req_handle,
                 200,
                 vec![("content-length".into(), "5".into())],
@@ -1173,11 +1267,14 @@ async fn default_limits_allow_normal_traffic() {
             .unwrap();
 
             let handle = payload.res_body_handle;
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
-                stream::send_chunk(handle, Bytes::from_static(b"hello"))
+                server_ep
+                    .handles()
+                    .send_chunk(handle, Bytes::from_static(b"hello"))
                     .await
                     .unwrap();
-                stream::finish_body(handle).unwrap();
+                server_ep.handles().finish_body(handle).unwrap();
             });
         },
     );
@@ -1197,10 +1294,10 @@ async fn default_limits_allow_normal_traffic() {
     .unwrap();
     assert_eq!(res.status, 200);
 
-    let chunk = next_chunk(res.body_handle).await.unwrap();
+    let chunk = client_ep.handles().next_chunk(res.body_handle).await.unwrap();
     assert_eq!(chunk.unwrap().as_ref(), b"hello");
 
-    let eof = next_chunk(res.body_handle).await.unwrap();
+    let eof = client_ep.handles().next_chunk(res.body_handle).await.unwrap();
     assert!(eof.is_none());
 }
 
@@ -1222,21 +1319,23 @@ async fn body_limit_exceeded_resets_stream() {
             let body_h = payload.req_body_handle;
             let res_h = payload.res_body_handle;
             let req_h = payload.req_handle;
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
                 let mut total = 0usize;
-                while let Ok(Some(chunk)) = next_chunk(body_h).await {
+                while let Ok(Some(chunk)) = server_ep.handles().next_chunk(body_h).await {
                     total += chunk.len();
                 }
                 // Respond with how many bytes we got.
                 let body = format!("{total}");
                 respond(
+                    server_ep.handles(),
                     req_h,
                     200,
                     vec![("content-type".into(), "text/plain".into())],
                 )
                 .unwrap();
-                stream::send_chunk(res_h, Bytes::from(body)).await.unwrap();
-                stream::finish_body(res_h).unwrap();
+                server_ep.handles().send_chunk(res_h, Bytes::from(body)).await.unwrap();
+                server_ep.handles().finish_body(res_h).unwrap();
             });
         },
     );
@@ -1266,7 +1365,7 @@ async fn body_limit_exceeded_resets_stream() {
     // The request might succeed with a partial body or fail entirely;
     // either way the server should not have received all 256 bytes.
     if let Ok(res) = result {
-        if let Ok(Some(chunk)) = next_chunk(res.body_handle).await {
+        if let Ok(Some(chunk)) = client_ep.handles().next_chunk(res.body_handle).await {
             let received: usize = std::str::from_utf8(&chunk)
                 .unwrap_or("0")
                 .parse()
@@ -1343,16 +1442,25 @@ async fn graceful_shutdown_drains_in_flight() {
             let res_h = payload.res_body_handle;
             let req_h = payload.req_handle;
             let started = handler_started_tx.clone();
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
                 // Signal that the handler is running.
                 started.notify_one();
                 // Simulate a slow handler (200ms is enough to prove drain waited).
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                respond(req_h, 200, vec![("content-length".into(), "2".into())]).unwrap();
-                stream::send_chunk(res_h, Bytes::from_static(b"ok"))
+                respond(
+                    server_ep.handles(),
+                    req_h,
+                    200,
+                    vec![("content-length".into(), "2".into())],
+                )
+                .unwrap();
+                server_ep
+                    .handles()
+                    .send_chunk(res_h, Bytes::from_static(b"ok"))
                     .await
                     .unwrap();
-                stream::finish_body(res_h).unwrap();
+                server_ep.handles().finish_body(res_h).unwrap();
             });
         },
     );
@@ -1443,17 +1551,22 @@ async fn shutdown_rejects_new_requests() {
     let server_id = node_id(&server_ep);
     let addrs = server_addrs(&server_ep);
 
+    let server_ep_handler = server_ep.clone();
     let handle = serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
             respond(
+                server_ep_handler.handles(),
                 payload.req_handle,
                 200,
                 vec![("content-length".into(), "0".into())],
             )
             .unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            server_ep_handler
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 
@@ -1471,7 +1584,7 @@ async fn shutdown_rejects_new_requests() {
     .await
     .unwrap();
     assert_eq!(res.status, 200);
-    while let Ok(Some(_)) = next_chunk(res.body_handle).await {}
+    while let Ok(Some(_)) = client_ep.handles().next_chunk(res.body_handle).await {}
 
     // Shut down the serve loop.
     handle.drain().await;
@@ -1538,13 +1651,18 @@ async fn large_body_round_trip() {
             let res_body_handle = payload.res_body_handle;
             let req_handle = payload.req_handle;
 
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
-                respond(req_handle, 200, vec![]).unwrap();
+                respond(server_ep.handles(), req_handle, 200, vec![]).unwrap();
 
-                while let Ok(Some(chunk)) = next_chunk(req_body_handle).await {
-                    stream::send_chunk(res_body_handle, chunk).await.unwrap();
+                while let Ok(Some(chunk)) = server_ep.handles().next_chunk(req_body_handle).await {
+                    server_ep
+                        .handles()
+                        .send_chunk(res_body_handle, chunk)
+                        .await
+                        .unwrap();
                 }
-                stream::finish_body(res_body_handle).unwrap();
+                server_ep.handles().finish_body(res_body_handle).unwrap();
             });
         },
     );
@@ -1553,17 +1671,20 @@ async fn large_body_round_trip() {
     let data: Vec<u8> = (0u8..=255).cycle().take(1024 * 1024).collect();
 
     // Allocate a body writer so we can stream the request body.
-    let (writer_handle, body_reader) = stream::alloc_body_writer();
+    let (writer_handle, body_reader) = client_ep.handles().alloc_body_writer().unwrap();
 
     // Send the body in chunks concurrently with fetch.
     let data_clone = data.clone();
+    let client_ep_send = client_ep.clone();
     let send_task = tokio::spawn(async move {
         for chunk in data_clone.chunks(8192) {
-            stream::send_chunk(writer_handle, Bytes::copy_from_slice(chunk))
+            client_ep_send
+                .handles()
+                .send_chunk(writer_handle, Bytes::copy_from_slice(chunk))
                 .await
                 .unwrap();
         }
-        stream::finish_body(writer_handle).unwrap();
+        client_ep_send.handles().finish_body(writer_handle).unwrap();
     });
 
     let res = fetch(
@@ -1582,7 +1703,7 @@ async fn large_body_round_trip() {
     assert_eq!(res.status, 200);
 
     let mut received = Vec::new();
-    while let Ok(Some(chunk)) = next_chunk(res.body_handle).await {
+    while let Ok(Some(chunk)) = client_ep.handles().next_chunk(res.body_handle).await {
         received.extend_from_slice(&chunk);
     }
     assert_eq!(received.len(), data.len());
@@ -1599,19 +1720,21 @@ async fn mutual_fetch() {
     let addrs_b = server_addrs(&ep_b);
 
     // Both nodes serve a handler that responds with their own node ID.
-    for (ep, id) in [(&ep_a, id_a.clone()), (&ep_b, id_b.clone())] {
+    for (ep, id) in [(ep_a.clone(), id_a.clone()), (ep_b.clone(), id_b.clone())] {
         let my_id = id.clone();
+        let ep_handler = ep.clone();
         serve(
-            ep.clone(),
+            ep,
             ServeOptions::default(),
             move |payload: RequestPayload| {
                 let body = Bytes::from(my_id.clone().into_bytes());
                 let res_body = payload.res_body_handle;
                 let req = payload.req_handle;
+                let ep_spawn = ep_handler.clone();
                 tokio::spawn(async move {
-                    respond(req, 200, vec![]).unwrap();
-                    stream::send_chunk(res_body, body).await.unwrap();
-                    stream::finish_body(res_body).unwrap();
+                    respond(ep_spawn.handles(), req, 200, vec![]).unwrap();
+                    ep_spawn.handles().send_chunk(res_body, body).await.unwrap();
+                    ep_spawn.handles().finish_body(res_body).unwrap();
                 });
             },
         );
@@ -1628,14 +1751,14 @@ async fn mutual_fetch() {
 
     // A fetching B should get B's ID.
     let mut body_ab = Vec::new();
-    while let Ok(Some(c)) = next_chunk(res_ab.body_handle).await {
+    while let Ok(Some(c)) = ep_a.handles().next_chunk(res_ab.body_handle).await {
         body_ab.extend_from_slice(&c);
     }
     assert_eq!(String::from_utf8(body_ab).unwrap(), id_b);
 
     // B fetching A should get A's ID.
     let mut body_ba = Vec::new();
-    while let Ok(Some(c)) = next_chunk(res_ba.body_handle).await {
+    while let Ok(Some(c)) = ep_b.handles().next_chunk(res_ba.body_handle).await {
         body_ba.extend_from_slice(&c);
     }
     assert_eq!(String::from_utf8(body_ba).unwrap(), id_a);
@@ -1662,10 +1785,11 @@ async fn fetch_json_post() {
             let res_body_handle = payload.res_body_handle;
             let req_handle = payload.req_handle;
 
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
                 // Read request body.
                 let mut body = Vec::new();
-                while let Ok(Some(chunk)) = next_chunk(req_body_handle).await {
+                while let Ok(Some(chunk)) = server_ep.handles().next_chunk(req_body_handle).await {
                     body.extend_from_slice(&chunk);
                 }
 
@@ -1674,29 +1798,35 @@ async fn fetch_json_post() {
 
                 // Echo it back as JSON with content-type.
                 respond(
+                    server_ep.handles(),
                     req_handle,
                     200,
                     vec![("content-type".into(), "application/json".into())],
                 )
                 .unwrap();
-                stream::send_chunk(res_body_handle, Bytes::from(body))
+                server_ep
+                    .handles()
+                    .send_chunk(res_body_handle, Bytes::from(body))
                     .await
                     .unwrap();
-                stream::finish_body(res_body_handle).unwrap();
+                server_ep.handles().finish_body(res_body_handle).unwrap();
             });
         },
     );
 
     let json_body = b"{\"hello\":\"world\"}";
-    let (writer_handle, body_reader) = stream::alloc_body_writer();
+    let (writer_handle, body_reader) = client_ep.handles().alloc_body_writer().unwrap();
 
     let headers = vec![("content-type".to_string(), "application/json".to_string())];
 
+    let client_ep_send = client_ep.clone();
     let send_task = tokio::spawn(async move {
-        stream::send_chunk(writer_handle, Bytes::from_static(json_body))
+        client_ep_send
+            .handles()
+            .send_chunk(writer_handle, Bytes::from_static(json_body))
             .await
             .unwrap();
-        stream::finish_body(writer_handle).unwrap();
+        client_ep_send.handles().finish_body(writer_handle).unwrap();
     });
 
     let res = fetch(
@@ -1722,7 +1852,7 @@ async fn fetch_json_post() {
     assert_eq!(ct, Some("application/json"));
 
     let mut body = Vec::new();
-    while let Ok(Some(chunk)) = next_chunk(res.body_handle).await {
+    while let Ok(Some(chunk)) = client_ep.handles().next_chunk(res.body_handle).await {
         body.extend_from_slice(&chunk);
     }
     assert_eq!(&body, json_body);
@@ -1752,8 +1882,8 @@ async fn serve_concurrency_limit() {
             let req_handle = payload.req_handle;
             let res_body = payload.res_body_handle;
             // Handlers complete immediately.
-            respond(req_handle, 200, vec![]).unwrap();
-            stream::finish_body(res_body).unwrap();
+            respond(server_ep.handles(), req_handle, 200, vec![]).unwrap();
+            server_ep.handles().finish_body(res_body).unwrap();
         },
     );
 
@@ -1849,6 +1979,7 @@ async fn node_close_drains_in_flight() {
             let req_handle = payload.req_handle;
             let res_body = payload.res_body_handle;
             let tx_clone = tx.clone();
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
                 // Signal the test that the handler is in progress.
                 if let Some(tx) = tx_clone.lock().await.take() {
@@ -1856,8 +1987,8 @@ async fn node_close_drains_in_flight() {
                 }
                 // Small pause to simulate work.
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                respond(req_handle, 200, vec![]).unwrap();
-                stream::finish_body(res_body).unwrap();
+                respond(server_ep.handles(), req_handle, 200, vec![]).unwrap();
+                server_ep.handles().finish_body(res_body).unwrap();
             });
         },
     );
@@ -1910,22 +2041,26 @@ async fn body_exceeds_limit_resets_stream() {
             let res_body = payload.res_body_handle;
             // Drain the body (triggers limit check in server).
             let req_body = payload.req_body_handle;
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
-                while let Ok(Some(_)) = next_chunk(req_body).await {}
-                respond(req_handle, 200, vec![]).unwrap();
-                stream::finish_body(res_body).unwrap();
+                while let Ok(Some(_)) = server_ep.handles().next_chunk(req_body).await {}
+                respond(server_ep.handles(), req_handle, 200, vec![]).unwrap();
+                server_ep.handles().finish_body(res_body).unwrap();
             });
         },
     );
 
     // Send a 10KB body — well over the 100-byte limit.
     let big_body = vec![b'x'; 10_000];
-    let (writer_handle, body_reader) = stream::alloc_body_writer();
+    let (writer_handle, body_reader) = client_ep.handles().alloc_body_writer().unwrap();
+    let client_ep_send = client_ep.clone();
     tokio::spawn(async move {
-        stream::send_chunk(writer_handle, Bytes::from(big_body))
+        client_ep_send
+            .handles()
+            .send_chunk(writer_handle, Bytes::from(big_body))
             .await
             .unwrap();
-        stream::finish_body(writer_handle).unwrap();
+        client_ep_send.handles().finish_body(writer_handle).unwrap();
     });
 
     let result = fetch(
@@ -1963,12 +2098,13 @@ async fn request_timeout_fires() {
         move |payload: RequestPayload| {
             let req_handle = payload.req_handle;
             let res_body = payload.res_body_handle;
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
                 // Sleep longer than the server timeout.
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 // The handler may still respond but it's racing the timeout.
-                let _ = respond(req_handle, 200, vec![]);
-                let _ = stream::finish_body(res_body);
+                let _ = respond(server_ep.handles(), req_handle, 200, vec![]);
+                let _ = server_ep.handles().finish_body(res_body);
             });
         },
     );
@@ -2103,11 +2239,12 @@ async fn concurrent_requests_under_tight_concurrency() {
         move |payload: RequestPayload| {
             let req_handle = payload.req_handle;
             let res_body = payload.res_body_handle;
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
                 // Small delay to keep slots occupied.
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                respond(req_handle, 200, vec![]).unwrap();
-                stream::finish_body(res_body).unwrap();
+                respond(server_ep.handles(), req_handle, 200, vec![]).unwrap();
+                server_ep.handles().finish_body(res_body).unwrap();
             });
         },
     );
@@ -2164,29 +2301,31 @@ async fn cancel_mid_stream_no_panic() {
             if let Some(tx) = request_arrived_tx.lock().unwrap().take() {
                 let _ = tx.send(());
             }
+            let server_ep = server_ep.clone();
             tokio::spawn(async move {
-                respond(req_handle, 200, vec![]).unwrap();
+                respond(server_ep.handles(), req_handle, 200, vec![]).unwrap();
                 // Write chunks slowly — the client will cancel mid-stream.
                 for i in 0..100 {
                     let chunk = Bytes::from(format!("chunk-{i}\n"));
-                    if stream::send_chunk(res_body, chunk).await.is_err() {
+                    if server_ep.handles().send_chunk(res_body, chunk).await.is_err() {
                         break; // Client cancelled — expected.
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
-                let _ = stream::finish_body(res_body);
+                let _ = server_ep.handles().finish_body(res_body);
             });
         },
     );
 
-    let token = alloc_fetch_token(0);
+    let token = client_ep.handles().alloc_fetch_token().unwrap();
 
     // Cancel as soon as server starts responding.
+    let client_ep_cancel = client_ep.clone();
     tokio::spawn(async move {
         let _ = request_arrived_rx.await;
         // Small delay to let a few chunks through.
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        cancel_in_flight(token);
+        client_ep_cancel.handles().cancel_in_flight(token);
     });
 
     let result = fetch(
@@ -2231,8 +2370,11 @@ async fn pool_eviction_single_slot() {
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
-            respond(payload.req_handle, 200, vec![]).unwrap();
-            stream::finish_body(payload.res_body_handle).unwrap();
+            respond(server_ep.handles(), payload.req_handle, 200, vec![]).unwrap();
+            server_ep
+                .handles()
+                .finish_body(payload.res_body_handle)
+                .unwrap();
         },
     );
 

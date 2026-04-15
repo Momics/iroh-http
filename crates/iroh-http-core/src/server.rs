@@ -26,9 +26,7 @@ use crate::{
     client::{body_from_reader, pump_hyper_body_to_channel_limited},
     io::IrohStream,
     stream::{
-        allocate_req_handle, drain_timeout, insert_reader, insert_trailer_receiver,
-        insert_trailer_sender, insert_writer, make_body_channel, remove_trailer_sender,
-        take_req_sender, ResponseHeadEntry,
+        HandleStore, ResponseHeadEntry,
     },
     CoreError, IrohEndpoint, RequestPayload,
 };
@@ -99,6 +97,7 @@ impl ServeHandle {
 // ── respond() ────────────────────────────────────────────────────────────────
 
 pub fn respond(
+    handles: &HandleStore,
     req_handle: u64,
     status: u16,
     headers: Vec<(String, String)>,
@@ -115,7 +114,7 @@ pub fn respond(
     }
 
     let sender =
-        take_req_sender(req_handle).ok_or_else(|| CoreError::invalid_handle(req_handle as u32))?;
+        handles.take_req_sender(req_handle).ok_or_else(|| CoreError::invalid_handle(req_handle as u32))?;
     sender
         .send(ResponseHeadEntry { status, headers })
         .map_err(|_| CoreError::internal("serve task dropped before respond"))
@@ -164,7 +163,7 @@ impl Drop for PeerConnectionGuard {
 #[derive(Clone)]
 struct RequestService {
     on_request: Arc<dyn Fn(RequestPayload) + Send + Sync>,
-    ep_idx: u32,
+    endpoint: IrohEndpoint,
     own_node_id: Arc<String>,
     remote_node_id: Option<String>,
     max_request_body_bytes: Option<usize>,
@@ -193,7 +192,7 @@ impl RequestService {
         self,
         mut req: hyper::Request<Incoming>,
     ) -> Result<hyper::Response<BoxBody>, BoxError> {
-        let ep_idx = self.ep_idx;
+        let handles = self.endpoint.handles();
         let own_node_id = &*self.own_node_id;
         let remote_node_id = self.remote_node_id.clone().unwrap_or_default();
         let max_request_body_bytes = self.max_request_body_bytes;
@@ -294,12 +293,14 @@ impl RequestService {
         // ── Allocate channels ────────────────────────────────────────────────
 
         // Request body: writer pumped from hyper; reader given to JS.
-        let (req_body_writer, req_body_reader) = make_body_channel();
-        let req_body_handle = insert_reader(ep_idx, req_body_reader);
+        let (req_body_writer, req_body_reader) = handles.make_body_channel();
+        let req_body_handle = handles.insert_reader(req_body_reader)
+            .map_err(|e| -> BoxError { e.into() })?;
 
         // Response body: writer given to JS (sendChunk); reader feeds hyper response.
-        let (res_body_writer, res_body_reader) = make_body_channel();
-        let res_body_handle = insert_writer(ep_idx, res_body_writer);
+        let (res_body_writer, res_body_reader) = handles.make_body_channel();
+        let res_body_handle = handles.insert_writer(res_body_writer)
+            .map_err(|e| -> BoxError { e.into() })?;
 
         // ── Trailer channels (non-duplex only) ───────────────────────────────
 
@@ -307,10 +308,12 @@ impl RequestService {
             if !is_bidi {
                 // Request trailers: pump delivers them; JS reads via nextTrailer.
                 let (rq_tx, rq_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-                let rq_h = insert_trailer_receiver(ep_idx, rq_rx);
+                let rq_h = handles.insert_trailer_receiver(rq_rx)
+                    .map_err(|e| -> BoxError { e.into() })?;
                 // Response trailers: JS delivers via sendTrailers; pump appends to body.
                 let (rs_tx, rs_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-                let rs_h = insert_trailer_sender(ep_idx, rs_tx);
+                let rs_h = handles.insert_trailer_sender(rs_tx)
+                    .map_err(|e| -> BoxError { e.into() })?;
                 (rq_h, rs_h, Some(rq_tx), Some(rs_rx))
             } else {
                 (0u64, 0u64, None, None)
@@ -319,7 +322,8 @@ impl RequestService {
         // ── Allocate response-head rendezvous ────────────────────────────────
 
         let (head_tx, head_rx) = tokio::sync::oneshot::channel::<ResponseHeadEntry>();
-        let req_handle = allocate_req_handle(ep_idx, head_tx);
+        let req_handle = handles.allocate_req_handle(head_tx)
+            .map_err(|e| -> BoxError { e.into() })?;
 
         // ── Pump request body ────────────────────────────────────────────────
 
@@ -336,12 +340,13 @@ impl RequestService {
         let duplex_req_body_writer = if !is_bidi {
             let body = req.into_body();
             let trailer_tx = req_trailer_tx.expect("non-duplex has req_trailer_tx");
+            let frame_timeout = handles.drain_timeout();
             tokio::spawn(pump_hyper_body_to_channel_limited(
                 body,
                 req_body_writer,
                 trailer_tx,
                 max_request_body_bytes,
-                drain_timeout(),
+                frame_timeout,
                 body_overflow_tx,
             ));
             None
@@ -494,7 +499,7 @@ impl RequestService {
         let trailer_rx_for_body = if has_trailer_hdr {
             opt_res_trailer_rx
         } else {
-            remove_trailer_sender(res_trailers_handle);
+            handles.remove_trailer_sender(res_trailers_handle);
             None
         };
 
@@ -569,7 +574,6 @@ where
     let max_header_size = endpoint.max_header_size();
     #[cfg(feature = "compression")]
     let compression = endpoint.compression().cloned();
-    let ep_idx = endpoint.inner.endpoint_idx;
     let own_node_id = Arc::new(endpoint.node_id().to_string());
     let on_request = Arc::new(on_request) as Arc<dyn Fn(RequestPayload) + Send + Sync>;
 
@@ -582,7 +586,7 @@ where
 
     let base_svc = RequestService {
         on_request,
-        ep_idx,
+        endpoint: endpoint.clone(),
         own_node_id,
         remote_node_id: None,
         max_request_body_bytes,
