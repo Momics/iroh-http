@@ -105,7 +105,7 @@ pub fn respond(
 
     let sender = handles
         .take_req_sender(req_handle)
-        .ok_or_else(|| CoreError::invalid_handle(req_handle as u32))?;
+        .ok_or_else(|| CoreError::invalid_handle(req_handle))?;
     sender
         .send(ResponseHeadEntry { status, headers })
         .map_err(|_| CoreError::internal("serve task dropped before respond"))

@@ -439,7 +439,7 @@ impl HandleStore {
             let reg = self.readers.lock().unwrap_or_else(|e| e.into_inner());
             let entry = reg
                 .get(handle_to_reader_key(handle))
-                .ok_or_else(|| CoreError::invalid_handle(handle as u32))?;
+                .ok_or_else(|| CoreError::invalid_handle(handle))?;
             (entry.value.rx.clone(), entry.value.cancel.clone())
         };
 
@@ -470,7 +470,7 @@ impl HandleStore {
             let reg = self.writers.lock().unwrap_or_else(|e| e.into_inner());
             let entry = reg
                 .get(handle_to_writer_key(handle))
-                .ok_or_else(|| CoreError::invalid_handle(handle as u32))?;
+                .ok_or_else(|| CoreError::invalid_handle(handle))?;
             (entry.value.tx.clone(), entry.value.drain_timeout)
         };
         let max = self.config.max_chunk_size;
@@ -500,7 +500,7 @@ impl HandleStore {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(handle_to_writer_key(handle))
-            .ok_or_else(|| CoreError::invalid_handle(handle as u32))?;
+            .ok_or_else(|| CoreError::invalid_handle(handle))?;
         Ok(())
     }
 
@@ -547,7 +547,7 @@ impl HandleStore {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(handle_to_trailer_tx_key(handle))
-            .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
+            .ok_or_else(|| CoreError::invalid_handle(handle))?
             .value;
         tx.send(trailers)
             .map_err(|_| CoreError::internal("trailer receiver dropped"))
@@ -563,7 +563,7 @@ impl HandleStore {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(handle_to_trailer_rx_key(handle))
-            .ok_or_else(|| CoreError::invalid_handle(handle as u32))?
+            .ok_or_else(|| CoreError::invalid_handle(handle))?
             .value;
         match rx.await {
             Ok(trailers) => Ok(Some(trailers)),
