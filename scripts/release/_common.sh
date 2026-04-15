@@ -40,13 +40,16 @@ try_publish() {
   local label="$1" cmd="$2"
   local tmpfile rc=0
   tmpfile=$(mktemp)
-  # Use script(1) to run with a PTY so interactive prompts work,
-  # while also capturing output for error detection.
   eval "$cmd" 2>&1 | tee "$tmpfile" || rc=${PIPESTATUS[0]}
   if [[ $rc -eq 0 ]]; then
     ok "$label"
-  elif grep -qiE "E403|previously published|already exists|EPUBLISHCONFLICT|already been published" "$tmpfile"; then
+  elif grep -qiE "previously published|cannot publish over|already been published|EPUBLISHCONFLICT|already exists at version" "$tmpfile"; then
+    # Version already on registry — safe to skip
     ok "$label (already published — skipped)"
+  elif grep -qiE "two-factor|2fa|granular access token" "$tmpfile"; then
+    # 2FA required — not a skip, it's a real auth error
+    rm -f "$tmpfile"
+    die "publish failed: $label (npm 2FA required — use an automation token or granular token with bypass-2fa)"
   else
     rm -f "$tmpfile"
     die "publish failed: $label"
