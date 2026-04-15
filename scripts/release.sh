@@ -127,7 +127,7 @@ echo ""
 section "2. Build (all platforms)"
 
 step "npm run build:all (core → shared → node:all → tauri → deno:all)"
-npm run build:all 2>&1 | tail -10
+npm run build:all 2>&1 || die "build failed"
 ok "all packages built"
 
 # List what we built:
