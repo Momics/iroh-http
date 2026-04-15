@@ -13,9 +13,10 @@ For cross-compilation (all platforms from macOS):
 | Tool | Install |
 |------|---------|
 | `cargo-zigbuild` | `cargo install cargo-zigbuild` |
-| `cargo-xwin` | `cargo install cargo-xwin` (Node Windows target) |
+| `cargo-xwin` | `cargo install cargo-xwin` (Node Windows MSVC target) |
 | `zig` | `brew install zig` |
-| `mingw-w64` | `brew install mingw-w64` (Deno Windows target) |
+| `mingw-w64` | `brew install mingw-w64` (Deno Windows GNU target) |
+| LLVM | `brew install llvm lld` (required by `cargo-xwin` on macOS: `clang-cl`, `lld-link`, `llvm-lib`) |
 | Rust targets | `rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc x86_64-pc-windows-gnu` |
 
 ## Building locally
@@ -78,8 +79,9 @@ git add -u && git commit -m "chore: bump version to 0.2.0"
 One command to build (all platforms), test, version-bump, and publish:
 
 ```sh
-./scripts/release.sh 0.2.0           # full release
-./scripts/release.sh 0.2.0 --dry-run # everything except publish + push
+# LLVM bin must be on PATH for the Node Windows (MSVC) cross-compile step:
+PATH="/opt/homebrew/opt/llvm/bin:$PATH" ./scripts/release.sh 0.2.0           # full release
+PATH="/opt/homebrew/opt/llvm/bin:$PATH" ./scripts/release.sh 0.2.0 --dry-run # everything except publish + push
 ```
 
 The release script:
@@ -87,7 +89,7 @@ The release script:
 2. **Build** — Rust workspace, TS shared, Node (4 platforms), Deno (5 platforms)
 3. **Test** — cargo test, clippy, fmt, tsc, Node e2e, Deno smoke
 4. **Version bump** — updates all 12 manifests via `version.sh`
-5. **Publish** — crates.io (in dependency order), npm, JSR
+5. **Publish** — npm and JSR via `npm run publish:*` scripts (crates.io steps are present but commented out — uncomment `publish:tauri:cargo` when releasing Tauri)
 6. **Git** — commit, tag `v0.2.0`, print push commands
 
 All cross-compilation happens locally using `cargo-zigbuild` (Linux targets), plain `cargo` (macOS/Windows targets), and `zig` as a linker. No CI needed.
@@ -99,9 +101,9 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin \
   x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
   x86_64-pc-windows-msvc x86_64-pc-windows-gnu
 cargo install cargo-zigbuild cargo-xwin
-brew install zig mingw-w64
+brew install zig mingw-w64 llvm lld
 npm adduser               # npm auth
-cargo login               # crates.io auth
+# cargo login             # only needed when publishing tauri-plugin-iroh-http to crates.io
 ```
 
 ## Release checklist (manual, for now)
@@ -111,10 +113,15 @@ When you're ready to tag a release:
 1. `./scripts/version.sh X.Y.Z`
 2. `./scripts/build.sh` — verify everything builds clean
 3. Commit and tag: `git tag vX.Y.Z`
-4. Publish (when ready):
-   - **npm:** `cd packages/iroh-http-shared && npm publish` (repeat for node, tauri)
-   - **crates.io:** `cargo publish -p iroh-http-core` (then discovery)
-   - **JSR:** `cd packages/iroh-http-shared && deno publish`
-   - **Deno:** `cd packages/iroh-http-deno && deno publish`
+4. Publish (when ready) — individual commands are in `package.json`:
+   ```sh
+   npm run publish:shared        # @momics/iroh-http-shared → npm
+   npm run publish:shared:jsr    # @momics/iroh-http-shared → JSR
+   npm run publish:node          # @momics/iroh-http-node → npm
+   npm run publish:deno          # @momics/iroh-http-deno → JSR
+   # npm run publish:tauri       # @momics/iroh-http-tauri → npm (when ready)
+   # npm run publish:tauri:cargo # tauri-plugin-iroh-http → crates.io (when ready)
+   ```
+   Or run the full release script which calls these in order.
 
-Order matters: shared crates/packages first, then platform packages that depend on them.
+Order matters: shared first, then platform packages that depend on it.
