@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/iroh-http-core",
     "crates/iroh-http-discovery",
+    "crates/iroh-http-adapter",
     "packages/iroh-http-node",
     "packages/iroh-http-deno",
 ]

@@ -13,6 +13,8 @@ use tauri::{command, ipc::Channel};
 
 use crate::state;
 
+use iroh_http_adapter::{core_error_to_json, format_error_json};
+
 // ── Endpoint ──────────────────────────────────────────────────────────────────
 
 /// Options for creating an Iroh endpoint from the Tauri frontend.
@@ -120,7 +122,7 @@ pub async fn create_endpoint(
 
     let ep = iroh_http_core::endpoint::IrohEndpoint::bind(opts)
         .await
-        .map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .map_err(|e| core_error_to_json(&e))?;
 
     let node_id = ep.node_id().to_string();
     let keypair = ep.secret_key_bytes().to_vec();
@@ -139,7 +141,7 @@ pub async fn create_endpoint(
 #[command]
 pub async fn close_endpoint(endpoint_handle: u64, force: Option<bool>) -> Result<(), String> {
     let ep = state::remove_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("node closed or not found (handle {endpoint_handle})")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("node closed or not found (handle {endpoint_handle})")))?;
     if force.unwrap_or(false) {
         ep.close_force().await;
     } else {
@@ -154,7 +156,7 @@ pub async fn close_endpoint(endpoint_handle: u64, force: Option<bool>) -> Result
 #[command]
 pub async fn ping(endpoint_handle: u64) -> Result<bool, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("endpoint not found: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("endpoint not found: {endpoint_handle}")))?;
     // If the endpoint exists, it's alive.
     let _ = ep.raw().id();
     Ok(true)
@@ -173,7 +175,7 @@ pub struct NodeAddrPayload {
 #[command]
 pub fn node_addr(endpoint_handle: u64) -> Result<NodeAddrPayload, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let info = ep.node_addr();
     Ok(NodeAddrPayload { id: info.id, addrs: info.addrs })
 }
@@ -182,16 +184,16 @@ pub fn node_addr(endpoint_handle: u64) -> Result<NodeAddrPayload, String> {
 #[command]
 pub fn node_ticket(endpoint_handle: u64) -> Result<String, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     iroh_http_core::node_ticket(&ep)
-        .map_err(|e| iroh_http_core::format_error_json("INTERNAL", e.message))
+        .map_err(|e| format_error_json("INTERNAL", e.message))
 }
 
 /// Home relay URL, or null if not connected to a relay.
 #[command]
 pub fn home_relay(endpoint_handle: u64) -> Result<Option<String>, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     Ok(ep.home_relay())
 }
 
@@ -199,7 +201,7 @@ pub fn home_relay(endpoint_handle: u64) -> Result<Option<String>, String> {
 #[command]
 pub async fn peer_info(endpoint_handle: u64, node_id: String) -> Result<Option<NodeAddrPayload>, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     Ok(ep.peer_info(&node_id).await.map(|info| NodeAddrPayload { id: info.id, addrs: info.addrs }))
 }
 
@@ -207,7 +209,7 @@ pub async fn peer_info(endpoint_handle: u64, node_id: String) -> Result<Option<N
 #[command]
 pub async fn peer_stats(endpoint_handle: u64, node_id: String) -> Result<Option<iroh_http_core::PeerStats>, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     Ok(ep.peer_stats(&node_id).await)
 }
 
@@ -217,8 +219,8 @@ pub async fn peer_stats(endpoint_handle: u64, node_id: String) -> Result<Option<
 #[command]
 pub async fn next_chunk(endpoint_handle: u64, handle: u64) -> Result<Option<String>, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
-    let chunk = ep.handles().next_chunk(handle).await.map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    let chunk = ep.handles().next_chunk(handle).await.map_err(|e| core_error_to_json(&e))?;
     Ok(chunk.map(|b| B64.encode(&b[..])))
 }
 
@@ -226,24 +228,24 @@ pub async fn next_chunk(endpoint_handle: u64, handle: u64) -> Result<Option<Stri
 #[command]
 pub async fn send_chunk(endpoint_handle: u64, handle: u64, chunk: String) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
-    let bytes = B64.decode(&chunk).map_err(|e| iroh_http_core::format_error_json("INVALID_INPUT", format!("base64 decode: {e}")))?;
-    ep.handles().send_chunk(handle, Bytes::from(bytes)).await.map_err(|e| iroh_http_core::core_error_to_json(&e))
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    let bytes = B64.decode(&chunk).map_err(|e| format_error_json("INVALID_INPUT", format!("base64 decode: {e}")))?;
+    ep.handles().send_chunk(handle, Bytes::from(bytes)).await.map_err(|e| core_error_to_json(&e))
 }
 
 /// Signal end-of-body for a writer handle.
 #[command]
 pub fn finish_body(endpoint_handle: u64, handle: u64) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
-    ep.handles().finish_body(handle).map_err(|e| iroh_http_core::core_error_to_json(&e))
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    ep.handles().finish_body(handle).map_err(|e| core_error_to_json(&e))
 }
 
 /// Cancel a body reader, signalling EOF.
 #[command]
 pub fn cancel_request(endpoint_handle: u64, handle: u64) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     ep.handles().cancel_reader(handle);
     Ok(())
 }
@@ -252,8 +254,8 @@ pub fn cancel_request(endpoint_handle: u64, handle: u64) -> Result<(), String> {
 #[command]
 pub async fn next_trailer(endpoint_handle: u64, handle: u64) -> Result<Option<Vec<Vec<String>>>, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
-    let trailers = ep.handles().next_trailer(handle).await.map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    let trailers = ep.handles().next_trailer(handle).await.map_err(|e| core_error_to_json(&e))?;
     Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
 }
 
@@ -261,20 +263,20 @@ pub async fn next_trailer(endpoint_handle: u64, handle: u64) -> Result<Option<Ve
 #[command]
 pub fn send_trailers(endpoint_handle: u64, handle: u64, trailers: Vec<Vec<String>>) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let pairs: Vec<(String, String)> = trailers
         .into_iter()
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
-    ep.handles().send_trailers(handle, pairs).map_err(|e| iroh_http_core::core_error_to_json(&e))
+    ep.handles().send_trailers(handle, pairs).map_err(|e| core_error_to_json(&e))
 }
 
 /// Allocate a body writer handle for streaming request bodies.
 #[command]
 pub fn alloc_body_writer(endpoint_handle: u64) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
-    let (handle, reader) = ep.handles().alloc_body_writer().map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    let (handle, reader) = ep.handles().alloc_body_writer().map_err(|e| core_error_to_json(&e))?;
     ep.handles().store_pending_reader(handle, reader);
     Ok(handle)
 }
@@ -283,15 +285,15 @@ pub fn alloc_body_writer(endpoint_handle: u64) -> Result<u64, String> {
 #[command]
 pub fn alloc_fetch_token(endpoint_handle: u64) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
-    ep.handles().alloc_fetch_token().map_err(|e| iroh_http_core::core_error_to_json(&e))
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    ep.handles().alloc_fetch_token().map_err(|e| core_error_to_json(&e))
 }
 
 /// Cancel an in-flight fetch by its token.
 #[command]
 pub fn cancel_in_flight(endpoint_handle: u64, token: u64) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     ep.handles().cancel_in_flight(token);
     Ok(())
 }
@@ -327,7 +329,7 @@ pub struct FfiResponsePayload {
 #[command]
 pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String> {
     let ep = state::get_endpoint(args.endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
 
     let pairs: Vec<(String, String)> = args
         .headers
@@ -339,7 +341,7 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
 
     let addrs = parse_direct_addrs(&args.direct_addrs)?;
     let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.fetch_token, addrs.as_deref())
-        .await.map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .await.map_err(|e| core_error_to_json(&e))?;
 
     let resp_headers: Vec<Vec<String>> = res
         .headers
@@ -381,7 +383,7 @@ pub async fn serve(
     channel: Channel<ServeEventPayload>,
 ) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
 
     let handle = iroh_http_core::serve(
         ep.clone(),
@@ -419,7 +421,7 @@ pub async fn serve(
 #[command]
 pub fn stop_serve(endpoint_handle: u64) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     ep.stop_serve();
     Ok(())
 }
@@ -439,13 +441,13 @@ pub struct RespondArgs {
 #[command]
 pub fn respond_to_request(args: RespondArgs) -> Result<(), String> {
     let ep = state::get_endpoint(args.endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
     let headers: Vec<(String, String)> = args
         .headers
         .into_iter()
         .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
         .collect();
-    respond(ep.handles(), args.req_handle, args.status, headers).map_err(|e| iroh_http_core::core_error_to_json(&e))
+    respond(ep.handles(), args.req_handle, args.status, headers).map_err(|e| core_error_to_json(&e))
 }
 
 // ── rawConnect ────────────────────────────────────────────────────────────────
@@ -472,7 +474,7 @@ pub struct FfiDuplexStreamPayload {
 #[command]
 pub async fn raw_connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload, String> {
     let ep = state::get_endpoint(args.endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
 
     let pairs: Vec<(String, String)> = args
         .headers
@@ -481,7 +483,7 @@ pub async fn raw_connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload,
         .collect();
 
     let duplex = iroh_http_core::raw_connect(&ep, &args.node_id, &args.path, &pairs)
-        .await.map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .await.map_err(|e| core_error_to_json(&e))?;
 
     Ok(FfiDuplexStreamPayload {
         read_handle: duplex.read_handle,
@@ -504,7 +506,7 @@ pub struct SessionConnectArgs {
 #[command]
 pub async fn session_connect(args: SessionConnectArgs) -> Result<u64, String> {
     let ep = state::get_endpoint(args.endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {}", args.endpoint_handle)))?;
 
     // TAURI-003: fail fast on invalid address strings rather than silently discarding them.
     let addrs: Option<Vec<std::net::SocketAddr>> = match args.direct_addrs.as_ref() {
@@ -514,7 +516,7 @@ pub async fn session_connect(args: SessionConnectArgs) -> Result<u64, String> {
             for s in v {
                 match s.parse::<std::net::SocketAddr>() {
                     Ok(a) => parsed.push(a),
-                    Err(_) => return Err(iroh_http_core::format_error_json(
+                    Err(_) => return Err(format_error_json(
                         "INVALID_INPUT",
                         format!("invalid socket address {:?}", s),
                     )),
@@ -525,7 +527,7 @@ pub async fn session_connect(args: SessionConnectArgs) -> Result<u64, String> {
     };
 
     iroh_http_core::session_connect(&ep, &args.node_id, addrs.as_deref())
-        .await.map_err(|e| iroh_http_core::core_error_to_json(&e))
+        .await.map_err(|e| core_error_to_json(&e))
 }
 
 /// Handles for a bidirectional stream on a session.
@@ -540,9 +542,9 @@ pub struct SessionBidiStreamPayload {
 #[command]
 pub async fn session_create_bidi_stream(endpoint_handle: u64, session_handle: u64) -> Result<SessionBidiStreamPayload, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let duplex = iroh_http_core::session_create_bidi_stream(&ep, session_handle)
-        .await.map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .await.map_err(|e| core_error_to_json(&e))?;
     Ok(SessionBidiStreamPayload {
         read_handle: duplex.read_handle,
         write_handle: duplex.write_handle,
@@ -554,9 +556,9 @@ pub async fn session_create_bidi_stream(endpoint_handle: u64, session_handle: u6
 #[command]
 pub async fn session_next_bidi_stream(endpoint_handle: u64, session_handle: u64) -> Result<Option<SessionBidiStreamPayload>, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let result = iroh_http_core::session_next_bidi_stream(&ep, session_handle)
-        .await.map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .await.map_err(|e| core_error_to_json(&e))?;
     Ok(result.map(|d| SessionBidiStreamPayload {
         read_handle: d.read_handle,
         write_handle: d.write_handle,
@@ -567,9 +569,9 @@ pub async fn session_next_bidi_stream(endpoint_handle: u64, session_handle: u64)
 #[command]
 pub async fn session_close(endpoint_handle: u64, session_handle: u64, close_code: Option<u32>, reason: Option<String>) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     iroh_http_core::session_close(&ep, session_handle, close_code.unwrap_or(0), reason.as_deref().unwrap_or(""))
-        .map_err(|e| iroh_http_core::core_error_to_json(&e))
+        .map_err(|e| core_error_to_json(&e))
 }
 
 /// Wait for a session to close. Returns { closeCode, reason }.
@@ -583,10 +585,10 @@ pub struct CloseInfoPayload {
 #[command]
 pub async fn session_closed(endpoint_handle: u64, session_handle: u64) -> Result<CloseInfoPayload, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let info = iroh_http_core::session_closed(&ep, session_handle)
         .await
-        .map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .map_err(|e| core_error_to_json(&e))?;
     Ok(CloseInfoPayload {
         close_code: info.close_code,
         reason: info.reason,
@@ -598,10 +600,10 @@ pub async fn session_closed(endpoint_handle: u64, session_handle: u64) -> Result
 #[command]
 pub async fn session_create_uni_stream(endpoint_handle: u64, session_handle: u64) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     iroh_http_core::session_create_uni_stream(&ep, session_handle)
         .await
-        .map_err(|e| iroh_http_core::core_error_to_json(&e))
+        .map_err(|e| core_error_to_json(&e))
 }
 
 /// Accept the next incoming unidirectional stream on a session.
@@ -609,31 +611,31 @@ pub async fn session_create_uni_stream(endpoint_handle: u64, session_handle: u64
 #[command]
 pub async fn session_next_uni_stream(endpoint_handle: u64, session_handle: u64) -> Result<Option<u64>, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     iroh_http_core::session_next_uni_stream(&ep, session_handle)
         .await
-        .map_err(|e| iroh_http_core::core_error_to_json(&e))
+        .map_err(|e| core_error_to_json(&e))
 }
 
 /// Send a datagram on a session. Data is base64-encoded.
 #[command]
 pub async fn session_send_datagram(endpoint_handle: u64, session_handle: u64, data: String) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let bytes = B64.decode(&data)
         .map_err(|e| format!("base64 decode: {e}"))?;
     iroh_http_core::session_send_datagram(&ep, session_handle, &bytes)
-        .map_err(|e| iroh_http_core::core_error_to_json(&e))
+        .map_err(|e| core_error_to_json(&e))
 }
 
 /// Receive the next datagram on a session. Returns base64, or null when closed.
 #[command]
 pub async fn session_recv_datagram(endpoint_handle: u64, session_handle: u64) -> Result<Option<String>, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let result = iroh_http_core::session_recv_datagram(&ep, session_handle)
         .await
-        .map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .map_err(|e| core_error_to_json(&e))?;
     Ok(result.map(|d| B64.encode(&d)))
 }
 
@@ -641,9 +643,9 @@ pub async fn session_recv_datagram(endpoint_handle: u64, session_handle: u64) ->
 #[command]
 pub fn session_max_datagram_size(endpoint_handle: u64, session_handle: u64) -> Result<Option<u32>, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let result = iroh_http_core::session_max_datagram_size(&ep, session_handle)
-        .map_err(|e| iroh_http_core::core_error_to_json(&e))?;
+        .map_err(|e| core_error_to_json(&e))?;
     Ok(result.map(|s| s as u32))
 }
 
@@ -743,10 +745,10 @@ pub struct PeerDiscoveryEventPayload {
 #[cfg(all(feature = "discovery", not(mobile)))]
 pub async fn mdns_browse(endpoint_handle: u64, service_name: String) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let session = iroh_http_discovery::start_browse(ep.raw(), &service_name)
         .await
-        .map_err(|e| iroh_http_core::format_error_json("REFUSED", e))?;
+        .map_err(|e| format_error_json("REFUSED", e))?;
     let handle = browse_slab().lock().unwrap().insert(Arc::new(TokioMutex::new(session))) as u64;
     Ok(handle)
 }
@@ -754,7 +756,7 @@ pub async fn mdns_browse(endpoint_handle: u64, service_name: String) -> Result<u
 #[command]
 #[cfg(all(not(feature = "discovery"), not(mobile)))]
 pub async fn mdns_browse(_endpoint_handle: u64, _service_name: String) -> Result<u64, String> {
-    Err(iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"))
+    Err(format_error_json("UNKNOWN", "discovery feature not enabled in this build"))
 }
 
 #[command]
@@ -766,7 +768,7 @@ pub async fn mdns_browse<R: tauri::Runtime>(
 ) -> Result<u64, String> {
     state
         .browse_start(&service_name)
-        .map_err(|e| iroh_http_core::format_error_json("REFUSED", e))
+        .map_err(|e| format_error_json("REFUSED", e))
 }
 
 /// Poll the next discovery event from a browse session.
@@ -775,7 +777,7 @@ pub async fn mdns_browse<R: tauri::Runtime>(
 pub async fn mdns_next_event(browse_handle: u64) -> Result<Option<PeerDiscoveryEventPayload>, String> {
     let session = {
         browse_slab().lock().unwrap().get(browse_handle as usize).cloned()
-    }.ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid browse handle: {browse_handle}")))?;
+    }.ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid browse handle: {browse_handle}")))?;
     let event = session.lock().await.next_event().await;
     Ok(event.map(|ev| PeerDiscoveryEventPayload {
         is_active: ev.is_active,
@@ -787,7 +789,7 @@ pub async fn mdns_next_event(browse_handle: u64) -> Result<Option<PeerDiscoveryE
 #[command]
 #[cfg(all(not(feature = "discovery"), not(mobile)))]
 pub async fn mdns_next_event(_browse_handle: u64) -> Result<Option<PeerDiscoveryEventPayload>, String> {
-    Err(iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"))
+    Err(format_error_json("UNKNOWN", "discovery feature not enabled in this build"))
 }
 
 #[command]
@@ -820,7 +822,7 @@ pub async fn mdns_next_event<R: tauri::Runtime>(
     // No buffered events — poll native layer.
     let mut events = state
         .browse_poll(browse_handle)
-        .map_err(|e| iroh_http_core::format_error_json("INVALID_HANDLE", e))?;
+        .map_err(|e| format_error_json("INVALID_HANDLE", e))?;
 
     let first = events.drain(..1.min(events.len())).next();
 
@@ -871,9 +873,9 @@ pub fn mdns_browse_close<R: tauri::Runtime>(
 #[cfg(all(feature = "discovery", not(mobile)))]
 pub fn mdns_advertise(endpoint_handle: u64, service_name: String) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let session = iroh_http_discovery::start_advertise(ep.raw(), &service_name)
-        .map_err(|e| iroh_http_core::format_error_json("REFUSED", e))?;
+        .map_err(|e| format_error_json("REFUSED", e))?;
     let handle = advertise_slab().lock().unwrap().insert(session) as u64;
     Ok(handle)
 }
@@ -881,7 +883,7 @@ pub fn mdns_advertise(endpoint_handle: u64, service_name: String) -> Result<u64,
 #[command]
 #[cfg(all(not(feature = "discovery"), not(mobile)))]
 pub fn mdns_advertise(_endpoint_handle: u64, _service_name: String) -> Result<u64, String> {
-    Err(iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"))
+    Err(format_error_json("UNKNOWN", "discovery feature not enabled in this build"))
 }
 
 #[command]
@@ -894,12 +896,12 @@ pub fn mdns_advertise<R: tauri::Runtime>(
     // TAURI-014: Resolve node identity so native advertise can publish TXT
     // metadata (pk, relay) that browse expects.
     let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let node_id = ep.node_id().to_string();
     let relay = ep.home_relay();
     state
         .advertise_start(&service_name, &node_id, relay.as_deref())
-        .map_err(|e| iroh_http_core::format_error_json("REFUSED", e))
+        .map_err(|e| format_error_json("REFUSED", e))
 }
 
 /// Stop advertising this node on the local network.

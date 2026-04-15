@@ -8,9 +8,9 @@
 
 use iroh_http_core::{
     parse_node_addr, respond, HandleStore, NodeAddrInfo, StoreConfig,
-    base32_encode, core_error_to_json, format_error_json,
+    base32_encode,
     secret_key_sign, public_key_verify, generate_secret_key,
-    parse_direct_addrs, CoreError, ErrorCode,
+    parse_direct_addrs,
 };
 use proptest::prelude::*;
 
@@ -84,29 +84,6 @@ proptest! {
         data in prop::collection::vec(any::<u8>(), 0..128),
     ) {
         let _ = secret_key_sign(&sk, &data);
-    }
-}
-
-// ── lib.rs: error serialization ──────────────────────────────────────────────
-
-proptest! {
-    /// core_error_to_json must produce valid JSON for any message content.
-    #[test]
-    fn core_error_to_json_always_valid(msg in "\\PC{0,256}") {
-        let err = CoreError { code: ErrorCode::Internal, message: msg };
-        let json = core_error_to_json(&err);
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        prop_assert_eq!(parsed["code"].as_str().unwrap(), "UNKNOWN");
-    }
-
-    /// format_error_json must produce valid JSON for any code/message.
-    #[test]
-    fn format_error_json_always_valid(
-        code in "[A-Z_]{1,20}",
-        msg in "\\PC{0,256}",
-    ) {
-        let json = format_error_json(&code, &msg);
-        let _: serde_json::Value = serde_json::from_str(&json).unwrap();
     }
 }
 

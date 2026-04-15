@@ -689,7 +689,11 @@ where
                         // CompressionLayer (zstd-only, for responses ≥ min_body_bytes).
                         #[cfg(feature = "compression")]
                         let hyper_svc = {
-                            use tower_http::compression::{predicate::SizeAbove, CompressionLayer};
+                            use http::{Extensions, HeaderMap, StatusCode, Version};
+                            use tower_http::compression::{
+                                predicate::SizeAbove, CompressionLayer,
+                            };
+
                             let min_bytes = svc
                                 .compression
                                 .as_ref()
@@ -700,9 +704,37 @@ where
                                 use tower_http::compression::CompressionLevel;
                                 layer = layer.quality(CompressionLevel::Precise(level as i32));
                             }
+                            // Compound predicate — protocol correctness only, no app-layer policy.
+                            //   1. Body is at least min_body_bytes (avoid CPU cost on tiny frames).
+                            //   2. Response does not already carry Content-Encoding — re-encoding
+                            //      a pre-encoded payload would corrupt it (RFC 9110 §8.4).
+                            //   3. Cache-Control: no-transform — caller has opted out of any
+                            //      content transformation (RFC 9111 §5.2.2.7).
+                            //
+                            // Content-Type exclusions are intentionally absent: deciding which
+                            // media types are worth compressing is application policy, not transport
+                            // semantics.  Callers opt out via Content-Encoding or no-transform.
+                            let not_pre_compressed =
+                                |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
+                                    !h.contains_key(http::header::CONTENT_ENCODING)
+                                };
+                            let not_no_transform =
+                                |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
+                                    h.get(http::header::CACHE_CONTROL)
+                                        .and_then(|v| v.to_str().ok())
+                                        .map(|v| {
+                                            !v.split(',').any(|d| {
+                                                d.trim().eq_ignore_ascii_case("no-transform")
+                                            })
+                                        })
+                                        .unwrap_or(true)
+                                };
+                            let predicate = SizeAbove::new(min_bytes as u16)
+                                .and(not_pre_compressed)
+                                .and(not_no_transform);
                             TowerToHyperService::new(
                                 tower::ServiceBuilder::new()
-                                    .layer(layer.compress_when(SizeAbove::new(min_bytes as u16)))
+                                    .layer(layer.compress_when(predicate))
                                     .service(TimeoutService::new(svc, timeout_dur)),
                             )
                         };

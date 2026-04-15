@@ -55,6 +55,8 @@ fn insert_endpoint(ep: IrohEndpoint) -> u32 {
     registry::insert_endpoint(ep) as u32
 }
 
+use iroh_http_adapter::{core_error_to_json, format_error_json};
+
 // ── Helper ────────────────────────────────────────────────────────────────────
 
 fn ok(v: impl Serialize) -> Value {
@@ -62,15 +64,15 @@ fn ok(v: impl Serialize) -> Value {
 }
 
 fn err(s: impl std::fmt::Display) -> Value {
-    json!({ "err": iroh_http_core::format_error_json("UNKNOWN", s) })
+    json!({ "err": format_error_json("UNKNOWN", s) })
 }
 
 fn err_code(code: &str, s: impl std::fmt::Display) -> Value {
-    json!({ "err": iroh_http_core::format_error_json(code, s) })
+    json!({ "err": format_error_json(code, s) })
 }
 
 fn err_core(e: iroh_http_core::CoreError) -> Value {
-    json!({ "err": iroh_http_core::core_error_to_json(&e) })
+    json!({ "err": core_error_to_json(&e) })
 }
 
 /// Extract and look up the endpoint from a JSON payload's `endpointHandle`.

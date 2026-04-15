@@ -16,6 +16,7 @@ compression = ["iroh-http-core/compression"]
 
 [dependencies]
 iroh-http-core = { path = "../../crates/iroh-http-core" }
+iroh-http-adapter = { path = "../../crates/iroh-http-adapter" }
 iroh-http-discovery = { path = "../../crates/iroh-http-discovery", optional = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }

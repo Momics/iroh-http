@@ -199,10 +199,18 @@ async fn do_fetch(
         // Tell the server we accept chunked trailers (required for HTTP/1.1 trailer delivery).
         .header("te", "trailers");
 
-    // When compression is enabled, advertise zstd-only Accept-Encoding.
+    // When compression is enabled, advertise zstd-only Accept-Encoding — but
+    // only if the caller has not already set Accept-Encoding.  A caller passing
+    // `Accept-Encoding: identity` is opting out of compression and must not be
+    // overridden.
     #[cfg(feature = "compression")]
     {
-        req_builder = req_builder.header("accept-encoding", "zstd");
+        let has_accept_encoding = headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("accept-encoding"));
+        if !has_accept_encoding {
+            req_builder = req_builder.header("accept-encoding", "zstd");
+        }
     }
 
     for (k, v) in headers {
