@@ -439,21 +439,27 @@ pub(crate) fn body_from_reader(
 // ── Path extraction ───────────────────────────────────────────────────────────
 
 pub(crate) fn extract_path(url: &str) -> String {
-    if let Some(idx) = url.find("://") {
+    let raw = if let Some(idx) = url.find("://") {
         let after_scheme = &url[idx + 3..];
         if let Some(slash) = after_scheme.find('/') {
-            return after_scheme[slash..].to_string();
+            after_scheme[slash..].to_string()
+        } else if let Some(q) = after_scheme.find('?') {
+            // No path segment — check for query string (e.g. "httpi://node?x=1").
+            format!("/{}", &after_scheme[q..])
+        } else {
+            "/".to_string()
         }
-        // No path segment — check for query string (e.g. "httpi://node?x=1").
-        if let Some(q) = after_scheme.find('?') {
-            return format!("/{}", &after_scheme[q..]);
-        }
-        return "/".to_string();
-    }
-    if url.starts_with('/') {
+    } else if url.starts_with('/') {
         url.to_string()
     } else {
         format!("/{url}")
+    };
+
+    // RFC 9110 §4.1: fragment identifiers are client-side only and must
+    // never appear in the request-target sent on the wire.
+    match raw.find('#') {
+        Some(pos) => raw[..pos].to_string(),
+        None => raw,
     }
 }
 
@@ -583,7 +589,10 @@ mod tests {
 
     #[test]
     fn extract_path_fragment() {
-        assert_eq!(extract_path("httpi://node/path#frag"), "/path#frag");
+        // RFC 9110 §4.1: fragments must be stripped before sending.
+        assert_eq!(extract_path("httpi://node/path#frag"), "/path");
+        assert_eq!(extract_path("httpi://node/path?q=1#frag"), "/path?q=1");
+        assert_eq!(extract_path("/local#frag"), "/local");
     }
 
     #[test]
