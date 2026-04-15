@@ -5,92 +5,79 @@
 The primary near-term goal. The library works; this is about making it
 releasable and trustworthy for public consumption.
 
-### Blockers before any release
+### Done
 
-**Node.js — napi-rs platform packages not configured**
+- [x] crates.io publish metadata (`repository`, `documentation`, `keywords`, `categories`)
+- [x] Release CI workflow (`release.yml` with cross-platform matrix build)
+- [x] CI workflow (`ci.yml` — Rust check, TypeScript typecheck, E2E tests)
+- [x] Clean repository state (`.gitignore` for workspace/, .obsidian/, generated files)
+- [x] Issue templates (`bug.yml`, `feature.yml`)
+- [x] Cross-platform builds: Node (5 targets), Deno (5 targets)
+- [x] Build logic lives in each package (not root shell scripts)
+- [x] All GitHub issues (#1–#6) resolved
+
+### Remaining before v1.0
+
+**Node.js — napi-rs platform packages**
 
 napi-rs multi-platform distribution requires one small package per platform
 (e.g. `@momics/iroh-http-node-darwin-arm64`) listed as
-`optionalDependencies` in the main package. The main `package.json` only has
-`"files": ["*.node"]` — a user installing on Linux gets nothing.
+`optionalDependencies` in the main package. Without this, a user installing
+on a different platform gets no `.node` binary. napi-rs has a
+[`@napi-rs/cli artifacts`](https://napi.rs/docs/cross-build/summary)
+command that generates these packages.
 
-`index.darwin-arm64.node` is also tracked in git and needs to be untracked.
+**`CHANGELOG.md`**
 
-**crates.io — publish metadata missing**
+Standard expectation for published packages. Options:
+- **`git-cliff`** — generates a changelog from conventional commit messages.
+  Run `git cliff -o CHANGELOG.md` before each release. Zero config if
+  commits follow `feat:`, `fix:`, `refactor:` prefixes.
+- **GitHub release notes** — auto-generated from PR titles when creating a
+  release. Good for GitHub-native consumers, but doesn't produce a file in
+  the repo.
+- **`release-please`** — Google's bot that watches commits, opens a PR with
+  version bump + changelog, and publishes on merge. Heavier but fully
+  automated.
 
-`iroh-http-core` and `iroh-http-discovery` are missing `repository`,
-`documentation`, `keywords`, and `categories` in their `[package]` sections.
-Add to each:
+Recommendation: use `git-cliff` in `release.sh` so the changelog is always
+in the repo and reproducible from git history.
 
-```toml
-repository    = "https://github.com/momics/iroh-http"
-documentation = "https://docs.rs/iroh-http-core"
-keywords      = ["p2p", "http", "quic", "iroh"]
-categories    = ["network-programming", "web-programming"]
-```
+**`SECURITY.md`**
 
-**No release CI workflow**
-
-`ci.yml` runs check + test. There is no `release.yml` that fires on `git tag
-v*` to build cross-platform binaries and publish to npm, JSR, and
-crates.io. napi-rs has a turnkey GitHub Actions template.
-
-**Unclean repository state**
-
-- `workspace/` and `.obsidian/` are not gitignored. Add to `.gitignore`.
-- `git rm --cached packages/iroh-http-node/index.darwin-arm64.node`
-- Untrack any committed generated files (`lib.js`, `lib.d.ts`, source maps)
-  that are already in `.gitignore`.
-
-### Files to add before v1.0
-
-| File | Why |
-|------|-----|
-| `.github/workflows/release.yml` | Automated cross-platform build + publish on tag |
-| `CHANGELOG.md` | Standard for any published package; users expect it |
-| `SECURITY.md` | Required if open-sourcing; good practice either way |
-| `.github/ISSUE_TEMPLATE/bug_report.md` | Bug report template |
-| `.github/ISSUE_TEMPLATE/feature_request.md` | Feature request template |
+Required for responsible open source, especially for a library handling
+Ed25519 keys and peer identity. Should describe:
+- How to report vulnerabilities privately (use GitHub Security Advisories)
+- Supported versions
+- Disclosure timeline
 
 ### Distribution channels
 
 | Package | Platform | Status |
 |---------|----------|--------|
-| `@momics/iroh-http-shared` | npm + JSR | Config looks correct |
-| `@momics/iroh-http-node` | npm | **Broken** — platform packages not configured |
-| `@momics/iroh-http-deno` | JSR | Config looks correct |
-| `@momics/iroh-http-tauri` | npm | Config looks correct |
-| `iroh-http-core` | crates.io | Missing publish metadata |
-| `iroh-http-discovery` | crates.io | Missing publish metadata |
+| `@momics/iroh-http-shared` | npm + JSR | ✅ Published |
+| `@momics/iroh-http-node` | npm | ⚠️ Platform packages not configured |
+| `@momics/iroh-http-deno` | JSR + GitHub releases | ✅ Published, runtime binary download |
+| `@momics/iroh-http-tauri` | npm | ✅ Config correct |
+| `iroh-http-core` | crates.io | ✅ Metadata complete |
+| `iroh-http-discovery` | crates.io | ✅ Metadata complete |
 
 ---
 
 ## Horizon 2 — Open Source
 
-**Recommendation: stay private through Horizon 1, open source after.**
+### Pre-open-source checklist
 
-### Why not open source today
-
-- Code quality needs to be defensible before public scrutiny.
-- Release infrastructure (no `release.yml`, broken napi-rs setup) isn't ready.
-- Opening mid-patch creates a confusing first impression.
-
-### Why open source eventually
-
-- iroh-http is a trust-based protocol. Users connecting nodes by public key
-  will want to audit the library that manages those keys.
-- The whole project (docs, recipes, `CONTRIBUTING.md`) is already written for
-  a public audience.
-- p2p networking libraries without open source rarely get adoption. The
-  network effect depends on community visibility.
-
-### Path to open source
-
-1. Complete the Horizon 1 checklist
-2. Untrack committed binaries; gitignore `workspace/` and `.obsidian/`
-3. Add `CHANGELOG.md` and `SECURITY.md`
-4. Get tests green end-to-end
-5. Open source the repository
+1. [ ] Fix Node.js napi-rs platform package split
+2. [ ] Add `CHANGELOG.md` (via `git-cliff` or equivalent)
+3. [ ] Add `SECURITY.md`
+4. [ ] Re-enable CI workflows (`push: [main]`, `pull_request: [main]`)
+5. [ ] Move release flow from `scripts/release.sh` to GitHub Actions
+       (`release.yml` triggered by `v*` tags)
+6. [ ] Run `release.sh --dry-run` end-to-end to validate publish flow
+7. [ ] Decide on npm scope: keep `@momics/` or use `iroh-http`
+8. [ ] Final sweep: no internal references, credentials, or private URLs
+9. [ ] Make repository public on GitHub
 
 ---
 
