@@ -3,15 +3,24 @@
 # release.sh — Build, test, version-bump, and publish iroh-http from one machine.
 #
 # Usage:
-#   ./scripts/release.sh <new-version>       # full release
-#   ./scripts/release.sh <new-version> --dry-run   # everything except publish
+#   ./scripts/release.sh <version>                         # full release
+#   ./scripts/release.sh <version> --only=node            # Node.js packages only
+#   ./scripts/release.sh <version> --only=deno            # Deno package only
+#   ./scripts/release.sh <version> --dry-run              # no publish or push
+#   ./scripts/release.sh <version> --only=deno --dry-run
+#
+# Or via npm (preferred):
+#   npm run release:all  -- 0.2.0
+#   npm run release:node -- 0.2.0
+#   npm run release:deno -- 0.2.0
+#   npm run release:deno -- 0.2.0 --dry-run
 #
 # What it does (in order):
-#   1. Preflight  — checks tools, clean working tree, registry auth
-#   2. Build      — Rust workspace, TS, Node (4 platforms), Deno (5 platforms)
-#   3. Test       — cargo test, Node e2e, Deno smoke
-#   4. Version    — bumps all 10 manifests via version.sh
-#   5. Publish    — npm, JSR, crates.io (tauri plugin)
+#   1. Preflight  — checks tools, clean working tree, registry auth (scoped to --only)
+#   2. Build      — targets selected by --only (Node: 4 platforms, Deno: 5 platforms)
+#   3. Test       — cargo test always; platform tests scoped to --only
+#   4. Version    — bumps all manifests via version.sh (always, keeps versions in sync)
+#   5. Publish    — npm/JSR for selected packages; shared published first, skipped if already exists
 #   6. Tag + push — git commit, tag, push
 #
 # Prerequisites:
@@ -31,21 +40,36 @@ cd "$ROOT"
 
 # ── Parse args ─────────────────────────────────────────────────────────────────
 
-if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <new-version> [--dry-run]"
+VERSION=""
+DRY_RUN=false
+ONLY="all"
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run)  DRY_RUN=true ;;
+    --only=*)   ONLY="${arg#--only=}" ;;
+    -*)         echo "Unknown flag: $arg"; exit 1 ;;
+    *)          VERSION="$arg" ;;
+  esac
+done
+
+if [[ -z "$VERSION" ]]; then
+  echo "Usage: $0 <version> [--only=all|node|deno] [--dry-run]"
   echo "  e.g. $0 0.2.0"
-  echo "  e.g. $0 0.2.0 --dry-run"
+  echo "  e.g. $0 0.2.0 --only=deno"
+  echo "  e.g. $0 0.2.0 --only=node --dry-run"
   exit 1
 fi
-
-VERSION="$1"
-DRY_RUN=false
-[[ "${2:-}" == "--dry-run" ]] && DRY_RUN=true
 
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
   echo "Error: '$VERSION' is not valid semver (expected X.Y.Z or X.Y.Z-pre)"
   exit 1
 fi
+
+case "$ONLY" in
+  all|node|deno) ;;
+  *) echo "Error: --only must be 'all', 'node', or 'deno' (got: '$ONLY')"; exit 1 ;;
+esac
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -80,23 +104,26 @@ for cmd in cargo rustup node deno zig npx; do
 done
 ok "all required tools found"
 
-# Rust targets
+# Rust targets — only check what --only actually builds
 REQUIRED_TARGETS=(
   aarch64-apple-darwin x86_64-apple-darwin
   x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
-  x86_64-pc-windows-msvc x86_64-pc-windows-gnu
 )
+[[ "$ONLY" != "deno" ]] && REQUIRED_TARGETS+=(x86_64-pc-windows-msvc)  # Node Windows MSVC
+[[ "$ONLY" != "node" ]] && REQUIRED_TARGETS+=(x86_64-pc-windows-gnu)   # Deno Windows GNU
 INSTALLED_TARGETS=$(rustup target list --installed)
 for t in "${REQUIRED_TARGETS[@]}"; do
   echo "$INSTALLED_TARGETS" | grep -q "^${t}$" || die "missing rustup target: $t (run: rustup target add $t)"
 done
-ok "all Rust cross-compile targets installed"
+ok "all required Rust targets installed"
 
-# cargo-zigbuild + cargo-xwin
+# cargo-zigbuild always needed; cargo-xwin only for Node (Windows MSVC target)
 command -v cargo-zigbuild &>/dev/null || die "cargo-zigbuild not found (run: cargo install cargo-zigbuild)"
-command -v cargo-xwin &>/dev/null || die "cargo-xwin not found (run: cargo install cargo-xwin)"
 ok "cargo-zigbuild available"
-ok "cargo-xwin available"
+if [[ "$ONLY" != "deno" ]]; then
+  command -v cargo-xwin &>/dev/null || die "cargo-xwin not found (run: cargo install cargo-xwin)"
+  ok "cargo-xwin available"
+fi
 
 # Clean working tree (allow untracked)
 if [[ -n "$(git diff --stat)" ]] || [[ -n "$(git diff --cached --stat)" ]]; then
@@ -107,44 +134,60 @@ ok "working tree clean"
 # Registry auth checks (warn only in dry-run)
 if ! $DRY_RUN; then
   step "checking registry credentials…"
-  # npm — check we can whoami
-  npm whoami &>/dev/null || die "not logged in to npm (run: npm adduser)"
-  ok "npm authenticated"
+  # npm — only needed when publishing Node packages
+  if [[ "$ONLY" != "deno" ]]; then
+    npm whoami &>/dev/null || die "not logged in to npm (run: npm adduser)"
+    ok "npm authenticated"
+  fi
 
-  # crates.io — needed for tauri-plugin-iroh-http
-  [[ -f "$HOME/.cargo/credentials.toml" ]] || [[ -n "${CARGO_REGISTRY_TOKEN:-}" ]] \
-    || die "no crates.io token (run: cargo login)"
-  ok "crates.io token found"
+  # crates.io — only needed when publish:tauri:cargo is enabled
+  # [[ -f "$HOME/.cargo/credentials.toml" ]] || [[ -n "${CARGO_REGISTRY_TOKEN:-}" ]] \
+  #   || die "no crates.io token (run: cargo login)"
+  # ok "crates.io token found"
 fi
 
 echo ""
-echo -e "  ${BOLD}Release plan:${NC} v$VERSION"
+echo -e "  ${BOLD}Release plan:${NC} v$VERSION  [--only=$ONLY]"
 $DRY_RUN && echo -e "  ${YELLOW}DRY RUN — will not publish or push${NC}"
 echo ""
 
 # ── 2. Build ───────────────────────────────────────────────────────────────────
 
-section "2. Build (all platforms)"
+section "2. Build  [--only=$ONLY]"
 
-step "npm run build:all (core → shared → node:all → tauri → deno:all)"
-npm run build:all 2>&1 || die "build failed"
-ok "all packages built"
-
-# List what we built:
 NODE_PKG="packages/iroh-http-node"
-echo "  Node binaries:"
-ls -lh "$NODE_PKG"/*.node 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
-echo "  Deno binaries:"
-ls -lh packages/iroh-http-deno/lib/libiroh_http_deno.* 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
 
-echo "  Built Deno binaries:"
-ls -lh packages/iroh-http-deno/lib/libiroh_http_deno.* 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
+if [[ "$ONLY" == "node" || "$ONLY" == "all" ]]; then
+  step "build:core + build:shared + build:node:all"
+  npm run build:core   || die "build:core failed"
+  npm run build:shared || die "build:shared failed"
+  npm run build:node:all || die "build:node:all failed"
+  ok "Node binaries built"
+  ls -lh "$NODE_PKG"/*.node 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
+fi
+
+if [[ "$ONLY" == "deno" ]]; then
+  step "build:core + build:shared + build:deno:all"
+  npm run build:core     || die "build:core failed"
+  npm run build:shared   || die "build:shared failed"
+  npm run build:deno:all || die "build:deno:all failed"
+  ok "Deno binaries built"
+  ls -lh packages/iroh-http-deno/lib/libiroh_http_deno.* 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
+fi
+
+if [[ "$ONLY" == "all" ]]; then
+  step "build:tauri + build:deno:all"
+  npm run build:tauri    || die "build:tauri failed"
+  npm run build:deno:all || die "build:deno:all failed"
+  ok "Deno + Tauri binaries built"
+  ls -lh packages/iroh-http-deno/lib/libiroh_http_deno.* 2>/dev/null | awk '{print "    " $NF " (" $5 ")"}'
+fi
 
 # ── 3. Test ────────────────────────────────────────────────────────────────────
 
-section "3. Test"
+section "3. Test  [--only=$ONLY]"
 
-# 3a. Rust
+# 3a. Rust (always)
 step "cargo test --workspace"
 cargo test --workspace 2>&1 | grep 'test result:' | while read -r line; do
   echo "    $line"
@@ -152,41 +195,43 @@ done
 RUST_EXIT=${PIPESTATUS[0]}
 [[ $RUST_EXIT -eq 0 ]] && ok "Rust tests" || warn_or_die "Rust tests failed"
 
-# 3b. cargo clippy
+# 3b. cargo clippy (always)
 step "cargo clippy"
 cargo clippy --workspace -- -D warnings 2>&1 | tail -3
 ok "clippy"
 
-# 3c. cargo fmt
+# 3c. cargo fmt (always)
 step "cargo fmt --check"
 cargo fmt --all -- --check 2>&1 || warn_or_die "cargo fmt check failed"
 ok "formatting"
 
-# 3d. TypeScript typecheck
+# 3d. TypeScript typecheck (always)
 step "npm run typecheck"
 npm run typecheck 2>&1 | tail -3
 ok "TypeScript typecheck"
 
-# 3e. Node e2e
-step "Node e2e tests"
-node "$NODE_PKG/test/e2e.mjs" 2>&1 | tail -5
-ok "Node e2e (14 tests)"
+# 3e. Node tests (node or all)
+if [[ "$ONLY" == "node" || "$ONLY" == "all" ]]; then
+  step "Node e2e tests"
+  node "$NODE_PKG/test/e2e.mjs" 2>&1 | tail -5
+  ok "Node e2e (14 tests)"
 
-# 3f. Node compliance
-if [[ -f "$NODE_PKG/test/compliance.mjs" ]]; then
-  step "Node compliance tests"
-  node "$NODE_PKG/test/compliance.mjs" 2>&1 | tail -3
-  ok "Node compliance"
+  if [[ -f "$NODE_PKG/test/compliance.mjs" ]]; then
+    step "Node compliance tests"
+    node "$NODE_PKG/test/compliance.mjs" 2>&1 | tail -3
+    ok "Node compliance"
+  fi
 fi
 
-# 3g. Deno tests
-step "Deno smoke tests"
-deno test --allow-read --allow-ffi --allow-env --allow-net packages/iroh-http-deno/test/smoke.test.ts 2>&1 | tail -3
-ok "Deno tests (23 tests)"
+# 3f. Deno tests (deno or all)
+if [[ "$ONLY" == "deno" || "$ONLY" == "all" ]]; then
+  step "Deno smoke tests"
+  deno test --allow-read --allow-ffi --allow-env --allow-net packages/iroh-http-deno/test/smoke.test.ts 2>&1 | tail -3
+  ok "Deno tests (23 tests)"
+fi
 
 echo ""
-TOTAL_TESTS="93 Rust + 14 Node + 23 Deno"
-ok "All tests passed ($TOTAL_TESTS)"
+ok "All applicable tests passed"
 
 # ── 4. Version bump ───────────────────────────────────────────────────────────
 
@@ -197,33 +242,41 @@ ok "version.sh updated all manifests"
 
 # ── 5. Publish ─────────────────────────────────────────────────────────────────
 
-section "5. Publish"
+section "5. Publish  [--only=$ONLY]"
+
+# Helper: publish to npm/JSR; gracefully skip if this version is already published.
+_try_publish() {
+  local label="$1" cmd="$2"
+  local out rc=0
+  out=$(eval "$cmd" 2>&1) || rc=$?
+  if [[ $rc -eq 0 ]]; then
+    ok "$label"
+  elif echo "$out" | grep -qiE "E403|previously published|already exists|EPUBLISHCONFLICT|already been published"; then
+    ok "$label (v$VERSION already published — skipped)"
+  else
+    echo "$out"
+    die "publish failed: $label"
+  fi
+}
 
 if $DRY_RUN; then
-  skip "npm (dry-run)"
-  skip "JSR (dry-run)"
-  skip "crates.io (dry-run)"
+  skip "publish --only=$ONLY (dry-run)"
 else
-  # ── Enabled packages ────────────────────────────────────────────────────────
-  # Comment out any package you are not ready to release yet.
+  # shared always goes first (npm + JSR); skipped gracefully if already at this version.
+  _try_publish "@momics/iroh-http-shared → npm" "npm run publish:shared"
+  _try_publish "@momics/iroh-http-shared → JSR" "npm run publish:shared:jsr"
 
-  npm run publish:shared
-  ok "@momics/iroh-http-shared → npm"
+  if [[ "$ONLY" == "node" || "$ONLY" == "all" ]]; then
+    _try_publish "@momics/iroh-http-node → npm" "npm run publish:node"
+  fi
 
-  npm run publish:node
-  ok "@momics/iroh-http-node → npm"
+  if [[ "$ONLY" == "deno" || "$ONLY" == "all" ]]; then
+    _try_publish "@momics/iroh-http-deno → JSR" "npm run publish:deno"
+  fi
 
-  npm run publish:shared:jsr
-  ok "@momics/iroh-http-shared → JSR"
-
-  npm run publish:deno
-  ok "@momics/iroh-http-deno → JSR"
-
-  # npm run publish:tauri
-  # ok "@momics/iroh-http-tauri → npm"
-
-  # npm run publish:tauri:cargo
-  # ok "tauri-plugin-iroh-http → crates.io"
+  # Tauri — uncomment when ready:
+  # _try_publish "@momics/iroh-http-tauri → npm"      "npm run publish:tauri"
+  # _try_publish "tauri-plugin-iroh-http → crates.io" "npm run publish:tauri:cargo"
 fi
 
 # ── 6. Git tag + push ─────────────────────────────────────────────────────────
