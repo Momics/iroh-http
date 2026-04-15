@@ -19,6 +19,7 @@ pub use endpoint::{
     parse_direct_addrs, IrohEndpoint, NodeAddrInfo, NodeOptions, PathInfo, PeerStats,
 };
 pub use registry::{get_endpoint, insert_endpoint, remove_endpoint};
+pub use server::respond;
 pub use server::serve;
 pub use server::ServeHandle;
 pub use server::ServerLimits;
@@ -29,7 +30,6 @@ pub use session::{
     session_send_datagram, CloseInfo,
 };
 pub use stream::{BodyReader, HandleStore, StoreConfig};
-pub use server::respond;
 
 // ── Structured error types ────────────────────────────────────────────────────
 
@@ -193,9 +193,8 @@ pub(crate) fn parse_node_id(s: &str) -> Result<iroh::PublicKey, CoreError> {
 /// instead of being masked as empty strings.
 pub fn node_ticket(ep: &IrohEndpoint) -> Result<String, CoreError> {
     let info = ep.node_addr();
-    serde_json::to_string(&info).map_err(|e| {
-        CoreError::internal(format!("failed to serialize node ticket: {e}"))
-    })
+    serde_json::to_string(&info)
+        .map_err(|e| CoreError::internal(format!("failed to serialize node ticket: {e}")))
 }
 
 /// Parsed node address from a ticket string, bare node ID, or JSON address info.
@@ -318,5 +317,4 @@ mod tests {
         assert!(e.to_string().contains("Timeout"));
         assert!(e.to_string().contains("30s elapsed"));
     }
-
 }

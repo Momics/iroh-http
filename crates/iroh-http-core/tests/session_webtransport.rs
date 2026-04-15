@@ -3,8 +3,8 @@
 use bytes::Bytes;
 use iroh_http_core::{
     session_accept, session_close, session_closed, session_connect, session_create_uni_stream,
-    session_max_datagram_size, session_next_uni_stream, session_recv_datagram, session_send_datagram,
-    IrohEndpoint, NodeOptions,
+    session_max_datagram_size, session_next_uni_stream, session_recv_datagram,
+    session_send_datagram, IrohEndpoint, NodeOptions,
 };
 
 /// Create a pair of locally-connected endpoints (relay disabled).
@@ -56,8 +56,7 @@ async fn session_uni_stream_send_recv() {
     let session_a = session_connect(&a_ep, &b_id, Some(&b_addrs)).await.unwrap();
     let write_handle = session_create_uni_stream(&a_ep, session_a).await.unwrap();
 
-    a_ep
-        .handles()
+    a_ep.handles()
         .send_chunk(write_handle, Bytes::from_static(b"uni-hello"))
         .await
         .unwrap();
@@ -101,8 +100,7 @@ async fn session_multiple_uni_streams() {
     for i in 0..3u8 {
         let write_handle = session_create_uni_stream(&a_ep, session_a).await.unwrap();
         let msg = format!("msg-{i}");
-        a_ep
-            .handles()
+        a_ep.handles()
             .send_chunk(write_handle, Bytes::from(msg.into_bytes()))
             .await
             .unwrap();
@@ -158,7 +156,10 @@ async fn session_datagram_round_trip() {
     session_send_datagram(&a_ep, session_a, b"ping").unwrap();
 
     // Receive the reply.
-    let reply = session_recv_datagram(&a_ep, session_a).await.unwrap().unwrap();
+    let reply = session_recv_datagram(&a_ep, session_a)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(reply, b"pong");
 
     let (session_b, received) = b_handle.await.unwrap();

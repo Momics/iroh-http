@@ -73,7 +73,11 @@ async fn basic_get_200() {
     assert!(res.url.starts_with("httpi://"));
     assert!(res.url.contains("/hello"));
 
-    let chunk = client_ep.handles().next_chunk(res.body_handle).await.unwrap();
+    let chunk = client_ep
+        .handles()
+        .next_chunk(res.body_handle)
+        .await
+        .unwrap();
     assert!(chunk.is_none());
 }
 
@@ -107,7 +111,11 @@ async fn get_with_body() {
             let handle = payload.res_body_handle;
             let server_ep = server_ep.clone();
             tokio::spawn(async move {
-                server_ep.handles().send_chunk(handle, body_bytes).await.unwrap();
+                server_ep
+                    .handles()
+                    .send_chunk(handle, body_bytes)
+                    .await
+                    .unwrap();
                 server_ep.handles().finish_body(handle).unwrap();
             });
         },
@@ -128,7 +136,12 @@ async fn get_with_body() {
     assert_eq!(res.status, 200);
 
     let mut body = Vec::new();
-    while let Some(chunk) = client_ep.handles().next_chunk(res.body_handle).await.unwrap() {
+    while let Some(chunk) = client_ep
+        .handles()
+        .next_chunk(res.body_handle)
+        .await
+        .unwrap()
+    {
         body.extend_from_slice(&chunk);
     }
     assert_eq!(String::from_utf8(body).unwrap(), "/echo/test");
@@ -206,7 +219,12 @@ async fn post_with_request_body() {
     assert_eq!(res.status, 200);
 
     let mut body = Vec::new();
-    while let Some(chunk) = client_ep.handles().next_chunk(res.body_handle).await.unwrap() {
+    while let Some(chunk) = client_ep
+        .handles()
+        .next_chunk(res.body_handle)
+        .await
+        .unwrap()
+    {
         body.extend_from_slice(&chunk);
     }
     assert_eq!(
@@ -447,7 +465,12 @@ async fn multiple_sequential_requests() {
         assert_eq!(res.status, 200);
 
         let mut body = Vec::new();
-        while let Some(chunk) = client_ep.handles().next_chunk(res.body_handle).await.unwrap() {
+        while let Some(chunk) = client_ep
+            .handles()
+            .next_chunk(res.body_handle)
+            .await
+            .unwrap()
+        {
             body.extend_from_slice(&chunk);
         }
         assert_eq!(String::from_utf8(body).unwrap(), format!("request #{i}"));
@@ -506,7 +529,12 @@ async fn response_trailers() {
     .unwrap();
     assert_eq!(res.status, 200);
 
-    while let Some(_chunk) = client_ep.handles().next_chunk(res.body_handle).await.unwrap() {}
+    while let Some(_chunk) = client_ep
+        .handles()
+        .next_chunk(res.body_handle)
+        .await
+        .unwrap()
+    {}
 
     let trailers = client_ep
         .handles()
@@ -894,7 +922,12 @@ async fn response_without_trailer_header_still_works() {
     assert_eq!(res.status, 200);
 
     let mut body = Vec::new();
-    while let Some(chunk) = client_ep.handles().next_chunk(res.body_handle).await.unwrap() {
+    while let Some(chunk) = client_ep
+        .handles()
+        .next_chunk(res.body_handle)
+        .await
+        .unwrap()
+    {
         body.extend_from_slice(&chunk);
     }
     assert_eq!(String::from_utf8(body).unwrap(), "works");
@@ -958,7 +991,12 @@ async fn pool_reuses_connection_for_sequential_requests() {
     .unwrap();
     assert_eq!(res1.status, 200);
     // Drain body to complete the request.
-    while let Some(_) = client_ep.handles().next_chunk(res1.body_handle).await.unwrap() {}
+    while let Some(_) = client_ep
+        .handles()
+        .next_chunk(res1.body_handle)
+        .await
+        .unwrap()
+    {}
 
     // Second request — should reuse the cached connection (no new handshake).
     let res2 = fetch(
@@ -974,7 +1012,12 @@ async fn pool_reuses_connection_for_sequential_requests() {
     .await
     .unwrap();
     assert_eq!(res2.status, 200);
-    while let Some(_) = client_ep.handles().next_chunk(res2.body_handle).await.unwrap() {}
+    while let Some(_) = client_ep
+        .handles()
+        .next_chunk(res2.body_handle)
+        .await
+        .unwrap()
+    {}
 
     // Third request for good measure.
     let res3 = fetch(
@@ -990,7 +1033,12 @@ async fn pool_reuses_connection_for_sequential_requests() {
     .await
     .unwrap();
     assert_eq!(res3.status, 200);
-    while let Some(_) = client_ep.handles().next_chunk(res3.body_handle).await.unwrap() {}
+    while let Some(_) = client_ep
+        .handles()
+        .next_chunk(res3.body_handle)
+        .await
+        .unwrap()
+    {}
 
     // All three requests should have been served.
     assert_eq!(request_count.load(std::sync::atomic::Ordering::SeqCst), 3);
@@ -1294,10 +1342,18 @@ async fn default_limits_allow_normal_traffic() {
     .unwrap();
     assert_eq!(res.status, 200);
 
-    let chunk = client_ep.handles().next_chunk(res.body_handle).await.unwrap();
+    let chunk = client_ep
+        .handles()
+        .next_chunk(res.body_handle)
+        .await
+        .unwrap();
     assert_eq!(chunk.unwrap().as_ref(), b"hello");
 
-    let eof = client_ep.handles().next_chunk(res.body_handle).await.unwrap();
+    let eof = client_ep
+        .handles()
+        .next_chunk(res.body_handle)
+        .await
+        .unwrap();
     assert!(eof.is_none());
 }
 
@@ -1334,7 +1390,11 @@ async fn body_limit_exceeded_resets_stream() {
                     vec![("content-type".into(), "text/plain".into())],
                 )
                 .unwrap();
-                server_ep.handles().send_chunk(res_h, Bytes::from(body)).await.unwrap();
+                server_ep
+                    .handles()
+                    .send_chunk(res_h, Bytes::from(body))
+                    .await
+                    .unwrap();
                 server_ep.handles().finish_body(res_h).unwrap();
             });
         },
@@ -2307,7 +2367,12 @@ async fn cancel_mid_stream_no_panic() {
                 // Write chunks slowly — the client will cancel mid-stream.
                 for i in 0..100 {
                     let chunk = Bytes::from(format!("chunk-{i}\n"));
-                    if server_ep.handles().send_chunk(res_body, chunk).await.is_err() {
+                    if server_ep
+                        .handles()
+                        .send_chunk(res_body, chunk)
+                        .await
+                        .is_err()
+                    {
                         break; // Client cancelled — expected.
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;

@@ -25,9 +25,7 @@ use crate::{
     base32_encode,
     client::{body_from_reader, pump_hyper_body_to_channel_limited},
     io::IrohStream,
-    stream::{
-        HandleStore, ResponseHeadEntry,
-    },
+    stream::{HandleStore, ResponseHeadEntry},
     CoreError, IrohEndpoint, RequestPayload,
 };
 
@@ -113,8 +111,9 @@ pub fn respond(
         })?;
     }
 
-    let sender =
-        handles.take_req_sender(req_handle).ok_or_else(|| CoreError::invalid_handle(req_handle as u32))?;
+    let sender = handles
+        .take_req_sender(req_handle)
+        .ok_or_else(|| CoreError::invalid_handle(req_handle as u32))?;
     sender
         .send(ResponseHeadEntry { status, headers })
         .map_err(|_| CoreError::internal("serve task dropped before respond"))
@@ -220,7 +219,9 @@ impl RequestService {
                 .filter(|(k, _)| !k.as_str().eq_ignore_ascii_case("peer-id"))
                 .map(|(k, v)| k.as_str().len() + v.as_bytes().len() + 4) // ": " + "\r\n"
                 .sum::<usize>()
-                + "peer-id".len() + remote_node_id.len() + 4
+                + "peer-id".len()
+                + remote_node_id.len()
+                + 4
                 + req.uri().to_string().len()
                 + method.len()
                 + 12; // "HTTP/1.1 \r\n\r\n" overhead
@@ -294,12 +295,14 @@ impl RequestService {
 
         // Request body: writer pumped from hyper; reader given to JS.
         let (req_body_writer, req_body_reader) = handles.make_body_channel();
-        let req_body_handle = handles.insert_reader(req_body_reader)
+        let req_body_handle = handles
+            .insert_reader(req_body_reader)
             .map_err(|e| -> BoxError { e.into() })?;
 
         // Response body: writer given to JS (sendChunk); reader feeds hyper response.
         let (res_body_writer, res_body_reader) = handles.make_body_channel();
-        let res_body_handle = handles.insert_writer(res_body_writer)
+        let res_body_handle = handles
+            .insert_writer(res_body_writer)
             .map_err(|e| -> BoxError { e.into() })?;
 
         // ── Trailer channels (non-duplex only) ───────────────────────────────
@@ -308,11 +311,13 @@ impl RequestService {
             if !is_bidi {
                 // Request trailers: pump delivers them; JS reads via nextTrailer.
                 let (rq_tx, rq_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-                let rq_h = handles.insert_trailer_receiver(rq_rx)
+                let rq_h = handles
+                    .insert_trailer_receiver(rq_rx)
                     .map_err(|e| -> BoxError { e.into() })?;
                 // Response trailers: JS delivers via sendTrailers; pump appends to body.
                 let (rs_tx, rs_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-                let rs_h = handles.insert_trailer_sender(rs_tx)
+                let rs_h = handles
+                    .insert_trailer_sender(rs_tx)
                     .map_err(|e| -> BoxError { e.into() })?;
                 (rq_h, rs_h, Some(rq_tx), Some(rs_rx))
             } else {
@@ -322,7 +327,8 @@ impl RequestService {
         // ── Allocate response-head rendezvous ────────────────────────────────
 
         let (head_tx, head_rx) = tokio::sync::oneshot::channel::<ResponseHeadEntry>();
-        let req_handle = handles.allocate_req_handle(head_tx)
+        let req_handle = handles
+            .allocate_req_handle(head_tx)
             .map_err(|e| -> BoxError { e.into() })?;
 
         // ── Pump request body ────────────────────────────────────────────────
@@ -690,9 +696,7 @@ where
                         #[cfg(feature = "compression")]
                         let hyper_svc = {
                             use http::{Extensions, HeaderMap, StatusCode, Version};
-                            use tower_http::compression::{
-                                predicate::SizeAbove, CompressionLayer,
-                            };
+                            use tower_http::compression::{predicate::SizeAbove, CompressionLayer};
 
                             let min_bytes = svc
                                 .compression

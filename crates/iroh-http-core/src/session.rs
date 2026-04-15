@@ -9,9 +9,7 @@ use serde::Serialize;
 
 use crate::{
     parse_node_addr,
-    stream::{
-        pump_body_to_quic_send, pump_quic_recv_to_body, HandleStore, SessionEntry,
-    },
+    stream::{pump_body_to_quic_send, pump_quic_recv_to_body, HandleStore, SessionEntry},
     CoreError, FfiDuplexStream, IrohEndpoint, ALPN_DUPLEX,
 };
 
@@ -165,10 +163,7 @@ pub fn session_close(
 /// Wait for the QUIC handshake to complete on a session.
 ///
 /// Resolves immediately if the handshake has already completed.
-pub async fn session_ready(
-    endpoint: &IrohEndpoint,
-    session_handle: u64,
-) -> Result<(), CoreError> {
+pub async fn session_ready(endpoint: &IrohEndpoint, session_handle: u64) -> Result<(), CoreError> {
     // Validate handle exists — keeps error behavior consistent with other session APIs.
     let _conn = get_conn(endpoint, session_handle)?;
     // iroh connections are fully established by the time session_connect returns,

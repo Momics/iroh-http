@@ -65,7 +65,10 @@ async fn session_bidi_stream_round_trip() {
             .send_chunk(stream.write_handle, Bytes::from(received.clone()))
             .await
             .unwrap();
-        b_ep_spawn.handles().finish_body(stream.write_handle).unwrap();
+        b_ep_spawn
+            .handles()
+            .finish_body(stream.write_handle)
+            .unwrap();
 
         // Do NOT session_close here — it abruptly kills the connection
         // before the pump task can flush. Let the test end naturally.
@@ -142,7 +145,10 @@ async fn session_multiple_bidi_streams() {
                 .send_chunk(stream.write_handle, Bytes::from(reply))
                 .await
                 .unwrap();
-            b_ep_spawn.handles().finish_body(stream.write_handle).unwrap();
+            b_ep_spawn
+                .handles()
+                .finish_body(stream.write_handle)
+                .unwrap();
         }
 
         session_b
@@ -160,12 +166,7 @@ async fn session_multiple_bidi_streams() {
         a_ep.handles().finish_body(stream.write_handle).unwrap();
 
         let mut reply = Vec::new();
-        while let Some(chunk) = a_ep
-            .handles()
-            .next_chunk(stream.read_handle)
-            .await
-            .unwrap()
-        {
+        while let Some(chunk) = a_ep.handles().next_chunk(stream.read_handle).await.unwrap() {
             reply.extend_from_slice(&chunk);
         }
         assert_eq!(reply[0], i);
@@ -212,7 +213,10 @@ async fn session_bidi_stream_backpressure() {
             total += chunk.len();
         }
 
-        b_ep_spawn.handles().finish_body(stream.write_handle).unwrap();
+        b_ep_spawn
+            .handles()
+            .finish_body(stream.write_handle)
+            .unwrap();
         (session_b, total)
     });
 
@@ -223,7 +227,8 @@ async fn session_bidi_stream_backpressure() {
     let chunk = Bytes::from(vec![0xABu8; 1024]);
     let num_chunks = 200;
     for _ in 0..num_chunks {
-        a_ep.handles().send_chunk(stream.write_handle, chunk.clone())
+        a_ep.handles()
+            .send_chunk(stream.write_handle, chunk.clone())
             .await
             .unwrap();
     }
@@ -259,7 +264,10 @@ async fn session_bidi_stream_clean_close() {
             .unwrap();
 
         // Finish both sides.
-        b_ep_spawn.handles().finish_body(stream.write_handle).unwrap();
+        b_ep_spawn
+            .handles()
+            .finish_body(stream.write_handle)
+            .unwrap();
         let eof = b_ep_spawn
             .handles()
             .next_chunk(stream.read_handle)

@@ -239,7 +239,9 @@ async fn create_endpoint(p: Value) -> Value {
             // ISS-020: validate compression level range before cast.
             if let Some(level) = args.compression_level {
                 if level < 0 {
-                    return err(format!("compressionLevel must be non-negative, got {level}"));
+                    return err(format!(
+                        "compressionLevel must be non-negative, got {level}"
+                    ));
                 }
             }
             Some(iroh_http_core::CompressionOptions {

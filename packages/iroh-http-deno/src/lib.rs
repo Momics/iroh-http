@@ -128,7 +128,11 @@ pub extern "C" fn iroh_http_call(
             {
                 if entry.data.len() <= out_cap {
                     unsafe {
-                        std::ptr::copy_nonoverlapping(entry.data.as_ptr(), out_ptr, entry.data.len());
+                        std::ptr::copy_nonoverlapping(
+                            entry.data.as_ptr(),
+                            out_ptr,
+                            entry.data.len(),
+                        );
                     }
                     return entry.data.len() as i32;
                 }
@@ -162,15 +166,16 @@ pub extern "C" fn iroh_http_call(
                 std::ptr::copy_nonoverlapping(token_bytes.as_ptr(), out_ptr, 8);
             }
         }
-        let mut cache = overflow_cache()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut cache = overflow_cache().lock().unwrap_or_else(|e| e.into_inner());
         // ISS-014: evict before inserting to enforce size/time bounds.
         evict_overflow(&mut cache);
-        cache.insert(token, OverflowEntry {
-            data: encoded,
-            created: std::time::Instant::now(),
-        });
+        cache.insert(
+            token,
+            OverflowEntry {
+                data: encoded,
+                created: std::time::Instant::now(),
+            },
+        );
         return -(len as i32);
     }
     // SAFETY: `out_ptr` is non-null (checked above) and `out_cap >= len`.

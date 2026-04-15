@@ -13,9 +13,7 @@ use crate::{
     base32_encode,
     io::IrohStream,
     parse_node_addr,
-    stream::{
-        HandleStore, BodyReader, BodyWriter,
-    },
+    stream::{BodyReader, BodyWriter, HandleStore},
     CoreError, FfiDuplexStream, FfiResponse, IrohEndpoint, ALPN, ALPN_DUPLEX,
 };
 
@@ -369,7 +367,9 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
                     trailers_vec = hdrs
                         .iter()
                         .filter_map(|(k, v)| {
-                            v.to_str().ok().map(|s| (k.as_str().to_string(), s.to_string()))
+                            v.to_str()
+                                .ok()
+                                .map(|s| (k.as_str().to_string(), s.to_string()))
                         })
                         .collect();
                 }
@@ -416,10 +416,7 @@ pub(crate) fn body_from_reader(
                                     }
                                 }
                                 if !map.is_empty() {
-                                    return Some((
-                                        Ok(Frame::trailers(map)),
-                                        (reader, None, true),
-                                    ));
+                                    return Some((Ok(Frame::trailers(map)), (reader, None, true)));
                                 }
                             }
                             Ok(Err(_)) => {
