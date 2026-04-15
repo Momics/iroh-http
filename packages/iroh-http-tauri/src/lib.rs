@@ -56,8 +56,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .setup(|_app, _api| {
             #[cfg(mobile)]
             {
+                // ISS-009: return recoverable error instead of panicking on init failure.
                 let mdns = mobile_mdns::init(_app, _api)
-                    .expect("failed to initialize mobile mDNS plugin");
+                    .map_err(|e| e.into())?;
                 _app.manage(mdns);
             }
             Ok(())

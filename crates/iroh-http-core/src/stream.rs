@@ -53,11 +53,14 @@ static BACKPRESSURE_CONFIGURED: std::sync::atomic::AtomicBool =
 /// Clamps `channel_capacity` to a minimum of 1 (zero would panic in
 /// `tokio::sync::mpsc::channel`) and `max_chunk_bytes` to a minimum of 1
 /// (zero would cause `send_chunk` to loop without progress).
+/// ISS-008: returns `Err` with a descriptive message when a second endpoint
+/// requests different backpressure parameters, making the mismatch visible
+/// to callers rather than silently ignoring the new values.
 pub fn configure_backpressure(
     channel_capacity: usize,
     max_chunk_bytes: usize,
     drain_timeout_ms: u64,
-) {
+) -> Result<(), String> {
     let cap = channel_capacity.max(1);
     let chunk = max_chunk_bytes.max(1);
 
@@ -73,18 +76,22 @@ pub fn configure_backpressure(
         CHANNEL_CAPACITY.store(cap, std::sync::atomic::Ordering::Relaxed);
         MAX_CHUNK_SIZE.store(chunk, std::sync::atomic::Ordering::Relaxed);
         DRAIN_TIMEOUT_MS.store(drain_timeout_ms, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     } else {
-        // Warn if the caller requested different values than the active config.
+        // Reject if the caller requested different values than the active config.
         let active_cap = CHANNEL_CAPACITY.load(std::sync::atomic::Ordering::Relaxed);
         let active_chunk = MAX_CHUNK_SIZE.load(std::sync::atomic::Ordering::Relaxed);
         let active_drain = DRAIN_TIMEOUT_MS.load(std::sync::atomic::Ordering::Relaxed);
         if cap != active_cap || chunk != active_chunk || drain_timeout_ms != active_drain {
-            tracing::warn!(
-                "iroh-http: backpressure config already set (capacity={active_cap}, \
-                 chunk={active_chunk}, drain={active_drain}ms); ignoring new values \
+            Err(format!(
+                "backpressure config already set (capacity={active_cap}, \
+                 chunk={active_chunk}, drain={active_drain}ms); cannot apply new values \
                  (capacity={cap}, chunk={chunk}, drain={drain_timeout_ms}ms). \
                  Backpressure parameters are process-global."
-            );
+            ))
+        } else {
+            // Same values — no conflict.
+            Ok(())
         }
     }
 }
@@ -168,6 +175,9 @@ fn handle_to_request_head_key(h: u64) -> RequestHeadKey {
 /// the registry's `std::sync::Mutex`.
 pub struct BodyReader {
     pub(crate) rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Bytes>>>,
+    /// ISS-010: cancellation signal — notified when `cancel_reader` is called
+    /// so in-flight `next_chunk` awaits terminate promptly.
+    pub(crate) cancel: Arc<tokio::sync::Notify>,
 }
 
 /// Producer end — stored in the writer registry.
@@ -184,14 +194,22 @@ pub fn make_body_channel() -> (BodyWriter, BodyReader) {
         BodyWriter { tx },
         BodyReader {
             rx: Arc::new(tokio::sync::Mutex::new(rx)),
+            cancel: Arc::new(tokio::sync::Notify::new()),
         },
     )
 }
 
 impl BodyReader {
-    /// Receive the next chunk.  Returns `None` when the writer is gone (EOF).
+    /// Receive the next chunk.  Returns `None` when the writer is gone (EOF)
+    /// or when the reader has been cancelled.
     pub async fn next_chunk(&self) -> Option<Bytes> {
-        self.rx.lock().await.recv().await
+        let cancel = self.cancel.clone();
+        let rx = self.rx.clone();
+        tokio::select! {
+            biased;
+            _ = cancel.notified() => None,
+            chunk = async { rx.lock().await.recv().await } => chunk,
+        }
     }
 }
 
@@ -272,9 +290,28 @@ pub(crate) fn remove_fetch_token(token: u64) {
         .remove(handle_to_fetch_cancel_key(token));
 }
 
-fn pending_readers_map() -> &'static Mutex<HashMap<u64, BodyReader>> {
-    static R: OnceLock<Mutex<HashMap<u64, BodyReader>>> = OnceLock::new();
+/// ISS-018: pending readers are tracked with insertion time for TTL sweep.
+struct PendingReaderEntry {
+    reader: BodyReader,
+    created: Instant,
+}
+
+fn pending_readers_map() -> &'static Mutex<HashMap<u64, PendingReaderEntry>> {
+    static R: OnceLock<Mutex<HashMap<u64, PendingReaderEntry>>> = OnceLock::new();
     R.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// ISS-018: sweep stale pending readers that exceed the TTL.
+fn sweep_pending_readers(ttl: Duration) {
+    let mut map = pending_readers_map()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let before = map.len();
+    map.retain(|_, e| e.created.elapsed() < ttl);
+    let removed = before - map.len();
+    if removed > 0 {
+        tracing::debug!("[iroh-http] swept {removed} stale pending readers (ttl={ttl:?})");
+    }
 }
 
 fn trailer_tx_registry() -> &'static Mutex<SlotMap<TrailerTxKey, Entry<TrailerTx>>> {
@@ -391,7 +428,10 @@ pub fn store_pending_reader(writer_handle: u64, reader: BodyReader) {
     pending_readers_map()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(writer_handle, reader);
+        .insert(writer_handle, PendingReaderEntry {
+            reader,
+            created: Instant::now(),
+        });
 }
 
 /// Claim the reader that was paired with `writer_handle`.
@@ -401,6 +441,7 @@ pub fn claim_pending_reader(writer_handle: u64) -> Option<BodyReader> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(&writer_handle)
+        .map(|e| e.reader)
 }
 
 // ── Bridge methods (nextChunk / sendChunk / finishBody) ───────────────────────
@@ -483,11 +524,17 @@ pub fn finish_body(handle: u64) -> Result<(), CoreError> {
 
 /// Drop a body reader from the global registry, causing any pending `nextChunk`
 /// to return an error and signalling EOF on a cancelled fetch.
+///
+/// ISS-010: notify the cancellation signal so in-flight `next_chunk` awaits
+/// terminate promptly rather than hanging until the writer is dropped.
 pub fn cancel_reader(handle: u64) {
-    reader_registry()
+    let entry = reader_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(handle_to_reader_key(handle));
+    if let Some(e) = entry {
+        e.value.cancel.notify_waiters();
+    }
 }
 
 // ── Trailer operations ────────────────────────────────────────────────────────
@@ -600,7 +647,7 @@ pub(crate) fn allocate_req_handle(
 }
 
 /// Remove and return the response-head sender for the given handle.
-pub(crate) fn take_req_sender(
+pub fn take_req_sender(
     handle: u64,
 ) -> Option<tokio::sync::oneshot::Sender<ResponseHeadEntry>> {
     request_head_registry()
@@ -695,6 +742,28 @@ fn sweep_all(ttl: Duration) {
             .unwrap_or_else(|e| e.into_inner()),
         ttl,
     );
+    // ISS-007: sweep request_head_registry to prevent leaks on timeout/early-exit.
+    sweep_registry(
+        &mut *request_head_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+        ttl,
+    );
+    // ISS-007: sweep session and fetch_cancel registries for completeness.
+    sweep_registry(
+        &mut *session_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+        ttl,
+    );
+    sweep_registry(
+        &mut *fetch_cancel_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+        ttl,
+    );
+    // ISS-018: sweep pending_readers_map to prevent unbounded growth.
+    sweep_pending_readers(ttl);
 }
 
 fn sweep_registry<K: slotmap::Key, T>(registry: &mut SlotMap<K, Entry<T>>, ttl: Duration) {

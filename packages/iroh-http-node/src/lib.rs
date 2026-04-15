@@ -186,6 +186,15 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                 compression: if o.compression_min_body_bytes.is_some()
                     || o.compression_level.is_some()
                 {
+                    // ISS-020: validate compression level range before cast.
+                    if let Some(level) = o.compression_level {
+                        if level < 0 {
+                            return Err(napi::Error::new(
+                                Status::InvalidArg,
+                                format!("compressionLevel must be non-negative, got {level}"),
+                            ));
+                        }
+                    }
                     Some(iroh_http_core::CompressionOptions {
                         min_body_bytes: o
                             .compression_min_body_bytes
@@ -421,7 +430,9 @@ pub fn node_addr(endpoint_handle: u32) -> napi::Result<JsNodeAddrInfo> {
 #[napi]
 pub fn node_ticket(endpoint_handle: u32) -> napi::Result<String> {
     let ep = get_endpoint(endpoint_handle)?;
-    Ok(iroh_http_core::node_ticket(&ep))
+    iroh_http_core::node_ticket(&ep).map_err(|e| {
+        napi::Error::new(Status::GenericFailure, e.message)
+    })
 }
 
 /// Home relay URL, or null if not connected to a relay.
@@ -742,11 +753,24 @@ pub fn raw_serve(endpoint_handle: u32, handler: JsFunction) -> napi::Result<()> 
         ep.serve_options(),
         move |payload: RequestPayload| {
             let tsfn = Arc::clone(&tsfn);
-            // Fire-and-forget: JS calls rawRespond explicitly.
-            tsfn.call(
+            let req_handle = payload.req_handle;
+            // ISS-019: check TSFN enqueue status; on failure respond with 503
+            // immediately so the request doesn't stall until timeout.
+            let status = tsfn.call(
                 payload,
                 napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
             );
+            if status != napi::Status::Ok {
+                tracing::warn!(
+                    "iroh-http-node: TSFN enqueue failed ({status:?}), responding 503"
+                );
+                let _ = iroh_http_core::stream::take_req_sender(req_handle).map(|tx| {
+                    let _ = tx.send(iroh_http_core::stream::ResponseHeadEntry {
+                        status: 503,
+                        headers: vec![("content-length".to_string(), "0".to_string())],
+                    });
+                });
+            }
         },
     );
     ep.set_serve_handle(handle);

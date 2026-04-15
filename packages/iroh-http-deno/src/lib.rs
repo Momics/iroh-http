@@ -34,9 +34,39 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
 
 static OVERFLOW_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-fn overflow_cache() -> &'static Mutex<HashMap<u64, Vec<u8>>> {
-    static C: OnceLock<Mutex<HashMap<u64, Vec<u8>>>> = OnceLock::new();
+/// ISS-014: maximum number of cached overflow entries to prevent unbounded growth.
+const OVERFLOW_MAX_ENTRIES: usize = 256;
+/// ISS-014: maximum total bytes across all cached entries.
+const OVERFLOW_MAX_BYTES: usize = 64 * 1024 * 1024; // 64 MB
+
+/// Overflow entry with insertion timestamp for TTL eviction.
+struct OverflowEntry {
+    data: Vec<u8>,
+    created: std::time::Instant,
+}
+
+/// TTL for overflow cache entries.
+const OVERFLOW_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn overflow_cache() -> &'static Mutex<HashMap<u64, OverflowEntry>> {
+    static C: OnceLock<Mutex<HashMap<u64, OverflowEntry>>> = OnceLock::new();
     C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Evict expired and over-budget entries from the overflow cache.
+fn evict_overflow(cache: &mut HashMap<u64, OverflowEntry>) {
+    // Remove expired entries first.
+    cache.retain(|_, e| e.created.elapsed() < OVERFLOW_TTL);
+    // If still over budget, remove oldest entries until within limits.
+    while cache.len() > OVERFLOW_MAX_ENTRIES
+        || cache.values().map(|e| e.data.len()).sum::<usize>() > OVERFLOW_MAX_BYTES
+    {
+        if let Some((&oldest_key, _)) = cache.iter().min_by_key(|(_, e)| e.created) {
+            cache.remove(&oldest_key);
+        } else {
+            break;
+        }
+    }
 }
 
 /// Single-dispatch FFI entry point.
@@ -91,23 +121,23 @@ pub extern "C" fn iroh_http_call(
     if method == "__cached" {
         if payload_len >= 8 {
             let token = u64::from_le_bytes(payload[0..8].try_into().unwrap());
-            if let Some(cached) = overflow_cache()
+            if let Some(entry) = overflow_cache()
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .remove(&token)
             {
-                if cached.len() <= out_cap {
+                if entry.data.len() <= out_cap {
                     unsafe {
-                        std::ptr::copy_nonoverlapping(cached.as_ptr(), out_ptr, cached.len());
+                        std::ptr::copy_nonoverlapping(entry.data.as_ptr(), out_ptr, entry.data.len());
                     }
-                    return cached.len() as i32;
+                    return entry.data.len() as i32;
                 }
                 // Buffer still too small — put it back (shouldn't happen).
-                let len = cached.len();
+                let len = entry.data.len();
                 overflow_cache()
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .insert(token, cached);
+                    .insert(token, entry);
                 return -(len as i32);
             }
         }
@@ -132,10 +162,15 @@ pub extern "C" fn iroh_http_call(
                 std::ptr::copy_nonoverlapping(token_bytes.as_ptr(), out_ptr, 8);
             }
         }
-        overflow_cache()
+        let mut cache = overflow_cache()
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(token, encoded);
+            .unwrap_or_else(|e| e.into_inner());
+        // ISS-014: evict before inserting to enforce size/time bounds.
+        evict_overflow(&mut cache);
+        cache.insert(token, OverflowEntry {
+            data: encoded,
+            created: std::time::Instant::now(),
+        });
         return -(len as i32);
     }
     // SAFETY: `out_ptr` is non-null (checked above) and `out_cap >= len`.

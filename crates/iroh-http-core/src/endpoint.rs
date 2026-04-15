@@ -268,6 +268,7 @@ impl IrohEndpoint {
         let ep = builder.bind().await.map_err(classify_bind_error)?;
 
         // Apply backpressure config for all future channel allocations.
+        // ISS-008: reject mismatched second initialization with explicit error.
         crate::stream::configure_backpressure(
             opts.channel_capacity
                 .unwrap_or(crate::stream::DEFAULT_CHANNEL_CAPACITY),
@@ -275,7 +276,8 @@ impl IrohEndpoint {
                 .unwrap_or(crate::stream::DEFAULT_MAX_CHUNK_SIZE),
             opts.drain_timeout_ms
                 .unwrap_or(crate::stream::DEFAULT_DRAIN_TIMEOUT_MS),
-        );
+        )
+        .map_err(crate::CoreError::invalid_input)?;
 
         // Start slab TTL sweep if configured.
         crate::stream::start_slab_sweep(

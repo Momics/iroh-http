@@ -183,7 +183,8 @@ pub fn node_addr(endpoint_handle: u64) -> Result<NodeAddrPayload, String> {
 pub fn node_ticket(endpoint_handle: u64) -> Result<String, String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| iroh_http_core::format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
-    Ok(iroh_http_core::node_ticket(&ep))
+    iroh_http_core::node_ticket(&ep)
+        .map_err(|e| iroh_http_core::format_error_json("INTERNAL", e.message))
 }
 
 /// Home relay URL, or null if not connected to a relay.
@@ -316,7 +317,7 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
 
     let req_body_reader = args.req_body_handle.and_then(iroh_http_core::stream::claim_pending_reader);
 
-    let addrs = parse_direct_addrs(&args.direct_addrs).map_err(|e| e)?;
+    let addrs = parse_direct_addrs(&args.direct_addrs)?;
     let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.fetch_token, addrs.as_deref())
         .await.map_err(|e| iroh_http_core::core_error_to_json(&e))?;
 
@@ -658,6 +659,23 @@ use tokio::sync::Mutex as TokioMutex;
 #[cfg(feature = "discovery")]
 type BrowseHandle = Arc<TokioMutex<iroh_http_discovery::BrowseSession>>;
 
+/// ISS-017: shared mobile mDNS event buffer, accessible from both
+/// `mdns_next_event` and `mdns_browse_close` to clear stale events.
+#[cfg(mobile)]
+fn mobile_mdns_buffer(
+) -> &'static Mutex<std::collections::HashMap<u64, std::collections::VecDeque<crate::mobile_mdns::MobileDiscoveryEvent>>>
+{
+    static BUFFER: OnceLock<
+        Mutex<
+            std::collections::HashMap<
+                u64,
+                std::collections::VecDeque<crate::mobile_mdns::MobileDiscoveryEvent>,
+            >,
+        >,
+    > = OnceLock::new();
+    BUFFER.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
 #[cfg(feature = "discovery")]
 fn browse_slab() -> &'static Mutex<slab::Slab<BrowseHandle>> {
     static S: OnceLock<Mutex<slab::Slab<BrowseHandle>>> = OnceLock::new();
@@ -742,9 +760,7 @@ pub async fn mdns_next_event<R: tauri::Runtime>(
 
     // TAURI-013: Buffer surplus events from browse_poll so they are not lost.
     // Each browse_handle gets its own queue.
-    static BUFFER: OnceLock<Mutex<HashMap<u64, VecDeque<crate::mobile_mdns::MobileDiscoveryEvent>>>> =
-        OnceLock::new();
-    let buffer = BUFFER.get_or_init(|| Mutex::new(HashMap::new()));
+    let buffer = mobile_mdns_buffer();
 
     // Return a buffered event if available.
     {
@@ -802,6 +818,11 @@ pub fn mdns_browse_close<R: tauri::Runtime>(
     browse_handle: u64,
 ) {
     let _ = state.browse_stop(browse_handle);
+    // ISS-017: clear stale buffered events for the closed browse session.
+    mobile_mdns_buffer()
+        .lock()
+        .unwrap()
+        .remove(&browse_handle);
 }
 
 /// Start advertising this node on the local network via mDNS.
