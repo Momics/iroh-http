@@ -1,5 +1,5 @@
 {
   "deno.enable": false,
   "deno.enablePaths": ["./packages/iroh-http-deno", "./tests/http-compliance", "./examples/deno"],
-  "js/ts.tsdk.path": "node_modules/typescript/lib"
+  "js/ts.tsdk.path": "node_modules/typescript/lib",
 }
