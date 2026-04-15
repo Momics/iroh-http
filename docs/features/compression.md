@@ -31,6 +31,41 @@ When `compression` is enabled:
 
 The JS handler never sees compressed bytes in either direction.
 
+## Transferring pre-compressed content
+
+If you are serving a file that is already compressed (e.g. a `.zst` archive,
+an image, an encrypted blob), the Rust layer will not re-compress it.
+Compression is skipped automatically when any of the following are true:
+
+| Condition | Mechanism |
+|---|---|
+| Response already has `Content-Encoding` set | Body is pre-encoded; re-compressing would corrupt it |
+| `Content-Type` is `image/*`, `audio/*`, `video/*`, `application/zstd`, or `application/octet-stream` | Content is already opaque or compressed |
+| Response carries `Cache-Control: no-transform` | Proxy / transform opt-out per RFC 9111 §5.2.2.7 |
+| Body is smaller than `minBodyBytes` | Not worth the CPU cost |
+
+To serve a `.zst` file and have the peer receive the raw compressed bytes:
+
+```ts
+// Server side — return the file with the correct content type.
+// The Rust layer sees Content-Type: application/zstd and skips compression.
+node.serve((_req) =>
+  new Response(await Deno.readFile("archive.tar.zst"), {
+    headers: { "content-type": "application/zstd" },
+  })
+);
+```
+
+To opt out of compression on a per-request basis from the fetch side:
+
+```ts
+// Pass Accept-Encoding: identity — the Rust layer will not inject its own
+// Accept-Encoding header when the caller has already provided one.
+const res = await node.fetch(peerId, "/file", {
+  headers: { "accept-encoding": "identity" },
+});
+```
+
 ## Why at the Rust layer
 
 Compression must intercept the byte stream before it crosses the FFI boundary.

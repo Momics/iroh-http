@@ -29,13 +29,15 @@ use slab::Slab;
 #[cfg(feature = "discovery")]
 use tokio::sync::Mutex as TokioMutex;
 
+use iroh_http_adapter::{core_error_to_json, format_error_json};
+
 // ── Endpoint helpers ──────────────────────────────────────────────────────────
 
 fn get_endpoint(handle: u32) -> napi::Result<IrohEndpoint> {
     registry::get_endpoint(handle as u64).ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
-            iroh_http_core::format_error_json(
+            format_error_json(
                 "INVALID_HANDLE",
                 format!("node closed or not found (handle {handle})"),
             ),
@@ -209,7 +211,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
     let ep = IrohEndpoint::bind(opts).await.map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })?;
 
@@ -233,7 +235,7 @@ pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> napi::
     let ep = registry::remove_endpoint(endpoint_handle as u64).ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
-            iroh_http_core::format_error_json("INVALID_HANDLE", "node closed or not found"),
+            format_error_json("INVALID_HANDLE", "node closed or not found"),
         )
     })?;
     if force.unwrap_or(false) {
@@ -268,7 +270,7 @@ pub async fn mdns_browse(endpoint_handle: u32, service_name: String) -> napi::Re
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::format_error_json("REFUSED", e),
+                format_error_json("REFUSED", e),
             )
         })?;
     let handle = browse_slab()
@@ -283,7 +285,7 @@ pub async fn mdns_browse(endpoint_handle: u32, service_name: String) -> napi::Re
 pub async fn mdns_browse(_endpoint_handle: u32, _service_name: String) -> napi::Result<u32> {
     Err(napi::Error::new(
         Status::GenericFailure,
-        iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"),
+        format_error_json("UNKNOWN", "discovery feature not enabled in this build"),
     ))
 }
 
@@ -302,7 +304,7 @@ pub async fn mdns_next_event(browse_handle: u32) -> napi::Result<Option<JsPeerDi
     .ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
-            iroh_http_core::format_error_json(
+            format_error_json(
                 "INVALID_HANDLE",
                 format!("invalid browse handle: {browse_handle}"),
             ),
@@ -321,7 +323,7 @@ pub async fn mdns_next_event(browse_handle: u32) -> napi::Result<Option<JsPeerDi
 pub async fn mdns_next_event(_browse_handle: u32) -> napi::Result<Option<JsPeerDiscoveryEvent>> {
     Err(napi::Error::new(
         Status::GenericFailure,
-        iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"),
+        format_error_json("UNKNOWN", "discovery feature not enabled in this build"),
     ))
 }
 
@@ -348,7 +350,7 @@ pub fn mdns_advertise(endpoint_handle: u32, service_name: String) -> napi::Resul
     let session = iroh_http_discovery::start_advertise(ep.raw(), &service_name).map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::format_error_json("REFUSED", e),
+            format_error_json("REFUSED", e),
         )
     })?;
     let handle = advertise_slab().lock().unwrap().insert(session) as u32;
@@ -360,7 +362,7 @@ pub fn mdns_advertise(endpoint_handle: u32, service_name: String) -> napi::Resul
 pub fn mdns_advertise(_endpoint_handle: u32, _service_name: String) -> napi::Result<u32> {
     Err(napi::Error::new(
         Status::GenericFailure,
-        iroh_http_core::format_error_json("UNKNOWN", "discovery feature not enabled in this build"),
+        format_error_json("UNKNOWN", "discovery feature not enabled in this build"),
     ))
 }
 
@@ -490,7 +492,7 @@ pub async fn js_next_chunk(endpoint_handle: u32, handle: BigInt) -> napi::Result
     let chunk = ep.handles().next_chunk(handle.get_u64().1).await.map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })?;
     Ok(chunk.map(|b| Buffer::from(b.to_vec())))
@@ -506,7 +508,7 @@ pub async fn js_send_chunk(endpoint_handle: u32, handle: BigInt, chunk: Uint8Arr
     ep.handles().send_chunk(handle.get_u64().1, bytes).await.map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })
 }
@@ -520,7 +522,7 @@ pub fn js_finish_body(endpoint_handle: u32, handle: BigInt) -> napi::Result<()> 
     ep.handles().finish_body(handle.get_u64().1).map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })
 }
@@ -542,7 +544,7 @@ pub async fn js_next_trailer(endpoint_handle: u32, handle: BigInt) -> napi::Resu
     let trailers = ep.handles().next_trailer(handle.get_u64().1).await.map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })?;
     Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
@@ -565,7 +567,7 @@ pub fn js_send_trailers(endpoint_handle: u32, handle: BigInt, trailers: Vec<Vec<
     ep.handles().send_trailers(handle.get_u64().1, pairs).map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })
 }
@@ -580,7 +582,7 @@ pub fn js_alloc_body_writer(endpoint_handle: u32) -> napi::Result<u64> {
     let (handle, reader) = ep.handles().alloc_body_writer().map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })?;
     ep.handles().store_pending_reader(handle, reader);
@@ -596,7 +598,7 @@ pub fn js_alloc_fetch_token(endpoint_handle: u32) -> napi::Result<u64> {
     ep.handles().alloc_fetch_token().map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })
 }
@@ -676,7 +678,7 @@ pub async fn raw_fetch(
     .map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })?;
 
@@ -846,7 +848,7 @@ pub async fn raw_connect(
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::core_error_to_json(&e),
+                core_error_to_json(&e),
             )
         })?;
 
@@ -874,7 +876,7 @@ pub async fn session_connect(
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::core_error_to_json(&e),
+                core_error_to_json(&e),
             )
         })?;
     Ok(handle)
@@ -898,7 +900,7 @@ pub async fn session_create_bidi_stream(
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::core_error_to_json(&e),
+                core_error_to_json(&e),
             )
         })?;
     Ok(JsSessionBidiStream {
@@ -920,7 +922,7 @@ pub async fn session_next_bidi_stream(
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::core_error_to_json(&e),
+                core_error_to_json(&e),
             )
         })?;
     Ok(result.map(|d| JsSessionBidiStream {
@@ -947,7 +949,7 @@ pub async fn session_close_handle(
     .map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })
 }
@@ -967,7 +969,7 @@ pub async fn session_closed(endpoint_handle: u32, session_handle: BigInt) -> nap
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::core_error_to_json(&e),
+                core_error_to_json(&e),
             )
         })?;
     Ok(JsCloseInfo {
@@ -986,7 +988,7 @@ pub async fn session_create_uni_stream(endpoint_handle: u32, session_handle: Big
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::core_error_to_json(&e),
+                core_error_to_json(&e),
             )
         })
 }
@@ -1001,7 +1003,7 @@ pub async fn session_next_uni_stream(endpoint_handle: u32, session_handle: BigIn
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::core_error_to_json(&e),
+                core_error_to_json(&e),
             )
         })
 }
@@ -1013,7 +1015,7 @@ pub async fn session_send_datagram(endpoint_handle: u32, session_handle: BigInt,
     iroh_http_core::session_send_datagram(&ep, session_handle.get_u64().1, data.as_ref()).map_err(|e| {
         napi::Error::new(
             Status::GenericFailure,
-            iroh_http_core::core_error_to_json(&e),
+            core_error_to_json(&e),
         )
     })
 }
@@ -1027,7 +1029,7 @@ pub async fn session_recv_datagram(endpoint_handle: u32, session_handle: BigInt)
         .map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::core_error_to_json(&e),
+                core_error_to_json(&e),
             )
         })?;
     Ok(result.map(Buffer::from))
@@ -1042,7 +1044,7 @@ pub fn session_max_datagram_size(endpoint_handle: u32, session_handle: BigInt) -
         iroh_http_core::session_max_datagram_size(&ep, session_handle.get_u64().1).map_err(|e| {
             napi::Error::new(
                 Status::GenericFailure,
-                iroh_http_core::core_error_to_json(&e),
+                core_error_to_json(&e),
             )
         })?;
     Ok(result.map(|s| s as u32))

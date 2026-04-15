@@ -123,34 +123,6 @@ impl std::fmt::Display for CoreError {
 
 impl std::error::Error for CoreError {}
 
-// Adapters need to classify errors into JSON for the FFI boundary.
-
-/// Serialize a `CoreError` as a structured JSON error object for the FFI boundary.
-pub fn core_error_to_json(e: &CoreError) -> String {
-    let code = match e.code {
-        ErrorCode::InvalidInput => "INVALID_INPUT",
-        ErrorCode::ConnectionFailed => "REFUSED",
-        ErrorCode::Timeout => "TIMEOUT",
-        ErrorCode::BodyTooLarge => "BODY_TOO_LARGE",
-        ErrorCode::HeaderTooLarge => "HEADER_TOO_LARGE",
-        ErrorCode::PeerRejected => "PEER_REJECTED",
-        ErrorCode::Cancelled => "CANCELLED",
-        ErrorCode::Internal => "UNKNOWN",
-    };
-    let json_msg = serde_json::Value::String(e.message.clone());
-    format!("{{\"code\":\"{code}\",\"message\":{json_msg}}}")
-}
-
-/// Serialize any error as a structured JSON error object with an explicit code.
-///
-/// Use this instead of the removed `classify_error_json` — callers that know the
-/// semantic error code at the call site should pass it directly rather than
-/// inferring it from a string.
-pub fn format_error_json(code: &str, msg: impl std::fmt::Display) -> String {
-    let json_msg = serde_json::Value::String(msg.to_string());
-    format!("{{\"code\":\"{code}\",\"message\":{json_msg}}}")
-}
-
 // ── ALPN protocol identifiers ─────────────────────────────────────────────────
 
 /// ALPN for the HTTP/1.1-over-QUIC protocol (version 2 wire format).
@@ -347,10 +319,4 @@ mod tests {
         assert!(e.to_string().contains("30s elapsed"));
     }
 
-    #[test]
-    fn core_error_to_json_timeout() {
-        let e = CoreError::timeout("timed out");
-        let json = core_error_to_json(&e);
-        assert!(json.contains("\"code\":\"TIMEOUT\""));
-    }
 }
