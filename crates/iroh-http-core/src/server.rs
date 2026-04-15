@@ -294,14 +294,15 @@ impl RequestService {
         // ── Allocate channels ────────────────────────────────────────────────
 
         // Request body: writer pumped from hyper; reader given to JS.
+        let mut guard = handles.insert_guard();
         let (req_body_writer, req_body_reader) = handles.make_body_channel();
-        let req_body_handle = handles
+        let req_body_handle = guard
             .insert_reader(req_body_reader)
             .map_err(|e| -> BoxError { e.into() })?;
 
         // Response body: writer given to JS (sendChunk); reader feeds hyper response.
         let (res_body_writer, res_body_reader) = handles.make_body_channel();
-        let res_body_handle = handles
+        let res_body_handle = guard
             .insert_writer(res_body_writer)
             .map_err(|e| -> BoxError { e.into() })?;
 
@@ -311,12 +312,12 @@ impl RequestService {
             if !is_bidi {
                 // Request trailers: pump delivers them; JS reads via nextTrailer.
                 let (rq_tx, rq_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-                let rq_h = handles
+                let rq_h = guard
                     .insert_trailer_receiver(rq_rx)
                     .map_err(|e| -> BoxError { e.into() })?;
                 // Response trailers: JS delivers via sendTrailers; pump appends to body.
                 let (rs_tx, rs_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-                let rs_h = handles
+                let rs_h = guard
                     .insert_trailer_sender(rs_tx)
                     .map_err(|e| -> BoxError { e.into() })?;
                 (rq_h, rs_h, Some(rq_tx), Some(rs_rx))
@@ -327,9 +328,11 @@ impl RequestService {
         // ── Allocate response-head rendezvous ────────────────────────────────
 
         let (head_tx, head_rx) = tokio::sync::oneshot::channel::<ResponseHeadEntry>();
-        let req_handle = handles
+        let req_handle = guard
             .allocate_req_handle(head_tx)
             .map_err(|e| -> BoxError { e.into() })?;
+
+        guard.commit();
 
         // ── Pump request body ────────────────────────────────────────────────
 
