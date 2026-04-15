@@ -204,35 +204,26 @@ if $DRY_RUN; then
   skip "JSR (dry-run)"
   skip "crates.io (dry-run)"
 else
-  # 5a. npm: shared (pure TS, no native code)
-  step "npm: @momics/iroh-http-shared"
-  (cd packages/iroh-http-shared && npm publish --access public 2>&1 | tail -3)
+  # ── Enabled packages ────────────────────────────────────────────────────────
+  # Comment out any package you are not ready to release yet.
+
+  npm run publish:shared
   ok "@momics/iroh-http-shared → npm"
 
-  # 5c. npm: node (includes all platform .node files)
-  step "npm: @momics/iroh-http-node"
-  (cd packages/iroh-http-node && npm publish --access public 2>&1 | tail -3)
+  npm run publish:node
   ok "@momics/iroh-http-node → npm"
 
-  # 5d. npm: tauri plugin guest-js
-  step "npm: @momics/iroh-http-tauri"
-  (cd packages/iroh-http-tauri && npm publish --access public 2>&1 | tail -3)
-  ok "@momics/iroh-http-tauri → npm"
-
-  # 5e. JSR: shared
-  step "JSR: @momics/iroh-http-shared"
-  (cd packages/iroh-http-shared && npx jsr publish 2>&1 | tail -3)
+  npm run publish:shared:jsr
   ok "@momics/iroh-http-shared → JSR"
 
-  # 5f. JSR: deno (includes all platform native libs)
-  step "JSR: @momics/iroh-http-deno"
-  (cd packages/iroh-http-deno && deno publish 2>&1 | tail -3)
+  npm run publish:deno
   ok "@momics/iroh-http-deno → JSR"
 
-  # 5g. crates.io: tauri plugin Rust host crate
-  step "crates.io: tauri-plugin-iroh-http"
-  (cd packages/iroh-http-tauri && cargo publish 2>&1 | tail -3)
-  ok "tauri-plugin-iroh-http → crates.io"
+  # npm run publish:tauri
+  # ok "@momics/iroh-http-tauri → npm"
+
+  # npm run publish:tauri:cargo
+  # ok "tauri-plugin-iroh-http → crates.io"
 fi
 
 # ── 6. Git tag + push ─────────────────────────────────────────────────────────

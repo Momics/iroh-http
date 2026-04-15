@@ -25,6 +25,12 @@
     "test": "npm run test:rust && npm run test:node && npm run test:deno && npm run test:interop",
     "prerelease": "npm run build && npm run test",
     "release": "bash scripts/release.sh",
-    "release:dry": "bash scripts/release.sh --dry-run"
+    "release:dry": "bash scripts/release.sh --dry-run",
+    "publish:shared":      "npm publish --access public -w packages/iroh-http-shared",
+    "publish:shared:jsr":  "cd packages/iroh-http-shared && npx jsr publish",
+    "publish:node":        "npm publish --access public -w packages/iroh-http-node",
+    "publish:deno":        "cd packages/iroh-http-deno && deno publish",
+    "publish:tauri":       "npm publish --access public -w packages/iroh-http-tauri",
+    "publish:tauri:cargo": "cd packages/iroh-http-tauri && cargo publish"
   }
 }
