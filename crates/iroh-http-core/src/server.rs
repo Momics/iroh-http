@@ -768,7 +768,7 @@ where
         }
 
         let drain_result =
-            tokio::time::timeout(drain_dur, drain_sem.acquire_many(max as u32)).await;
+            tokio::time::timeout(drain_dur, drain_sem.acquire_many(max.min(u32::MAX as usize) as u32)).await;
         match drain_result {
             Ok(Ok(_)) => tracing::info!("iroh-http: all in-flight requests drained"),
             Ok(Err(_)) => tracing::warn!("iroh-http: semaphore closed during drain"),
