@@ -35,7 +35,7 @@
     "release:publish":     "bash scripts/release/publish.sh",
     "release:tag":         "bash scripts/release/tag.sh",
     "publish:shared":      "npm publish --access public -w packages/iroh-http-shared",
-    "publish:shared:jsr":  "cd packages/iroh-http-shared && npx jsr publish",
+    "publish:shared:jsr":  "cd packages/iroh-http-shared && deno publish",
     "publish:node":        "npm publish --access public -w packages/iroh-http-node",
     "publish:deno":        "cd packages/iroh-http-deno && deno publish",
     "publish:tauri":       "npm publish --access public -w packages/iroh-http-tauri",
