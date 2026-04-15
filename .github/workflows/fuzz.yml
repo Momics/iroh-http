@@ -1,0 +1,57 @@
+name: Fuzz
+
+on:
+  schedule:
+    # Every night at 03:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz iroh-http-core
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_parse_node_addr
+          - fuzz_handle_store
+          - fuzz_respond
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/iroh-http-core/fuzz -> target
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      # Restore any previously saved corpus.
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: crates/iroh-http-core/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      - name: Run fuzzer (5 minutes)
+        run: |
+          cd crates/iroh-http-core
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=300 \
+            -max_len=1024
+
+      # Save corpus for next run — new inputs discovered by the fuzzer
+      # are added to the corpus directory automatically.
+      - name: Save corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: crates/iroh-http-core/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.sha }}
