@@ -117,6 +117,8 @@ pub struct JsNodeOptions {
     pub max_request_body_bytes: Option<f64>,
     /// Maximum header block size in bytes.  Default: 65536.
     pub max_header_bytes: Option<f64>,
+    /// Maximum total QUIC connections the server will accept.  Default: unlimited.
+    pub max_total_connections: Option<f64>,
 }
 
 /// Info returned after a successful `createEndpoint` call.
@@ -178,6 +180,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                     max_request_body_bytes: o.max_request_body_bytes.map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes")).transpose()?,
                     max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
                     drain_timeout_secs: None,
+                    max_total_connections: o.max_total_connections.map(|v| safe_f64_to_usize(v, "maxTotalConnections")).transpose()?,
                 },
                 #[cfg(feature = "compression")]
                 // NODE-003: enable compression when level or minBodyBytes is provided.

@@ -51,6 +51,7 @@ pub struct CreateEndpointArgs {
     /// TAURI-002: pool-tuning options previously ignored.
     pub max_pooled_connections: Option<usize>,
     pub pool_idle_timeout_ms: Option<u64>,
+    pub max_total_connections: Option<usize>,
 }
 
 /// Info returned after a successful endpoint bind.
@@ -106,6 +107,7 @@ pub async fn create_endpoint(
                 max_request_body_bytes: a.max_request_body_bytes,
                 max_consecutive_errors: a.max_consecutive_errors,
                 drain_timeout_secs: None,
+                max_total_connections: a.max_total_connections,
             },
             #[cfg(feature = "compression")]
             compression: if a.compression_min_body_bytes.is_some() || a.compression_level.is_some() {
