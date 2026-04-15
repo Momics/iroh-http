@@ -333,6 +333,12 @@ export interface NodeOptions {
    */
   maxHeaderBytes?: number;
 
+  /**
+   * Maximum total QUIC connections the server will accept.
+   * `undefined` means unlimited (default).
+   */
+  maxTotalConnections?: number;
+
   // ── Reconnect ──────────────────────────────────────────────────────────────
   /**
    * Automatic reconnect configuration.

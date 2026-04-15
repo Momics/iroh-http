@@ -57,6 +57,7 @@ pub struct ServerLimits {
     pub max_connections_per_peer: Option<usize>,
     pub max_request_body_bytes: Option<usize>,
     pub drain_timeout_secs: Option<u64>,
+    pub max_total_connections: Option<usize>,
 }
 
 /// Backward-compatible alias — existing code that names `ServeOptions` keeps
@@ -575,6 +576,7 @@ where
         .max_connections_per_peer
         .unwrap_or(DEFAULT_MAX_CONNECTIONS_PER_PEER);
     let max_request_body_bytes = options.max_request_body_bytes;
+    let max_total_connections = options.max_total_connections;
     let drain_timeout = std::time::Duration::from_secs(
         options
             .drain_timeout_secs
@@ -612,6 +614,7 @@ where
     let shutdown_listen = shutdown_notify.clone();
     let drain_sem = drain_semaphore.clone();
     let drain_dur = drain_timeout;
+    let total_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     let join = tokio::spawn(async move {
         let ep = endpoint.raw().clone();
@@ -649,6 +652,19 @@ where
             };
 
             let remote_pk = conn.remote_id();
+
+            // Enforce total connection limit.
+            if let Some(max_total) = max_total_connections {
+                let current = total_connections.load(std::sync::atomic::Ordering::Relaxed);
+                if current >= max_total {
+                    tracing::warn!(
+                        "iroh-http: total connection limit reached ({current}/{max_total})"
+                    );
+                    conn.close(0u32.into(), b"server at capacity");
+                    continue;
+                }
+            }
+
             let guard =
                 match PeerConnectionGuard::acquire(&peer_counts, remote_pk, max_conns_per_peer) {
                     Some(g) => g,
@@ -673,8 +689,18 @@ where
             };
 
             let conn_drain = drain_semaphore.clone();
+            let conn_total = total_connections.clone();
+            conn_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             tokio::spawn(async move {
                 let _guard = guard;
+                // Decrement total connection count when this task exits.
+                struct TotalGuard(Arc<std::sync::atomic::AtomicUsize>);
+                impl Drop for TotalGuard {
+                    fn drop(&mut self) {
+                        self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+                let _total_guard = TotalGuard(conn_total);
 
                 loop {
                     let (send, recv) = match conn.accept_bi().await {

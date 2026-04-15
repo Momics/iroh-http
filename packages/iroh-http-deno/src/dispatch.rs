@@ -176,6 +176,7 @@ struct CreateEndpointPayload {
     request_timeout: Option<u64>,
     max_request_body_bytes: Option<usize>,
     max_header_bytes: Option<usize>,
+    max_total_connections: Option<usize>,
 }
 
 async fn create_endpoint(p: Value) -> Value {
@@ -231,6 +232,7 @@ async fn create_endpoint(p: Value) -> Value {
             max_request_body_bytes: args.max_request_body_bytes,
             max_consecutive_errors: args.max_consecutive_errors,
             drain_timeout_secs: None,
+            max_total_connections: args.max_total_connections,
         },
         #[cfg(feature = "compression")]
         compression: if args.compression_min_body_bytes.is_some()
