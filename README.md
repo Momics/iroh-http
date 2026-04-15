@@ -120,20 +120,44 @@ See the [docs/](docs/) folder for architecture details and the [examples/](examp
 
 ## Development
 
+All commands run from the repository root via npm scripts:
+
 ```sh
-# Build all Rust crates
-cargo build --workspace
+npm install                # install workspace dependencies (once)
 
-# Check (fast, no linking)
-cargo check --workspace
-
-# TypeScript (Node.js + Tauri)
-npm install
-npm run typecheck
-
-# Tauri plugin (standalone workspace)
-cd packages/iroh-http-tauri && cargo check
+npm run check              # fast typecheck: cargo check + tsc (no linking)
+npm run lint               # cargo fmt --check + clippy
+npm run build              # build everything: Rust, TypeScript, Node, Deno, Tauri
+npm run test               # test everything: Rust, Node e2e, Deno, cross-runtime interop
 ```
+
+### Build & test individual platforms
+
+```sh
+npm run build:core         # Rust workspace only (release)
+npm run build:node         # Node.js native addon (current platform)
+npm run build:deno         # Deno native library (current platform)
+npm run build:tauri        # Tauri plugin TypeScript
+npm run build:all          # all platforms (cross-compile, needs zigbuild)
+
+npm run test:rust          # cargo test (unit + integration + property tests)
+npm run test:node          # Node.js smoke + e2e + compliance
+npm run test:deno          # Deno smoke + compliance
+npm run test:interop       # cross-runtime compliance (node ↔ deno)
+```
+
+### Release
+
+```sh
+npm run release:dry -- 0.2.0   # dry run: build → test → version bump (no publish)
+npm run release -- 0.2.0       # full release: build → test → bump → publish → tag → push
+```
+
+The release script runs build and test automatically before publishing. See
+[scripts/release.sh](scripts/release.sh) for details and prerequisites.
+
+For more details on testing infrastructure (property tests, fuzz targets,
+CI configuration), see [docs/build-and-test.md](docs/build-and-test.md).
 
 ## Acknowledgements
 
