@@ -672,13 +672,28 @@ impl HandleStore {
     }
 
     fn sweep_registry<K: slotmap::Key, T>(registry: &Mutex<SlotMap<K, Timed<T>>>, ttl: Duration) {
-        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
-        let before = reg.len();
-        reg.retain(|_, e| !e.is_expired(ttl));
-        let removed = before - reg.len();
-        if removed > 0 {
-            tracing::debug!("[iroh-http] swept {removed} expired registry entries (ttl={ttl:?})");
+        // Phase 1: collect expired keys under a brief read lock.
+        let expired: Vec<K> = {
+            let reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+            reg.iter()
+                .filter(|(_, e)| e.is_expired(ttl))
+                .map(|(k, _)| k)
+                .collect()
+        };
+
+        if expired.is_empty() {
+            return;
         }
+
+        // Phase 2: remove expired entries. Lock is held only for removals.
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        for key in &expired {
+            reg.remove(*key);
+        }
+        tracing::debug!(
+            "[iroh-http] swept {} expired registry entries (ttl={ttl:?})",
+            expired.len()
+        );
         // Compact when empty to reclaim backing memory after traffic bursts.
         if reg.is_empty() && reg.capacity() > 128 {
             *reg = SlotMap::with_key();
@@ -702,7 +717,7 @@ impl HandleStore {
 // ── Shared pump helpers ───────────────────────────────────────────────────────
 
 /// Default read buffer size for QUIC stream reads.
-const PUMP_READ_BUF: usize = 64 * 1024;
+pub(crate) const PUMP_READ_BUF: usize = 64 * 1024;
 
 /// Pump raw bytes from a QUIC `RecvStream` into a `BodyWriter`.
 ///

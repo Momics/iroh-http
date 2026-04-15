@@ -10,7 +10,6 @@ use hyper::body::Frame;
 use hyper_util::rt::TokioIo;
 
 use crate::{
-    base32_encode,
     io::IrohStream,
     parse_node_addr,
     stream::{BodyReader, BodyWriter, HandleStore},
@@ -127,10 +126,12 @@ pub async fn fetch(
         .map_err(CoreError::connection_failed)?;
 
     let conn = pooled.conn.clone();
+    let remote_str = pooled.remote_id_str.clone();
 
     let result = do_fetch(
         handles,
         conn,
+        &remote_str,
         url,
         http_method,
         headers,
@@ -155,9 +156,11 @@ pub async fn fetch(
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn do_fetch(
     handles: &HandleStore,
     conn: iroh::endpoint::Connection,
+    remote_str: &str,
     url: &str,
     method: Method,
     headers: &[(String, String)],
@@ -187,13 +190,12 @@ async fn do_fetch(
     tokio::spawn(conn_task);
 
     let path = extract_path(url);
-    let remote_str = base32_encode(conn.remote_id().as_bytes());
 
     // Build the hyper request.
     let mut req_builder = hyper::Request::builder()
         .method(method)
         .uri(&path)
-        .header(hyper::header::HOST, &remote_str)
+        .header(hyper::header::HOST, remote_str)
         // Tell the server we accept chunked trailers (required for HTTP/1.1 trailer delivery).
         .header("te", "trailers");
 
@@ -579,7 +581,7 @@ async fn pump_upgraded(
 
     tokio::join!(
         async {
-            let mut buf = vec![0u8; 16 * 1024];
+            let mut buf = vec![0u8; crate::stream::PUMP_READ_BUF];
             loop {
                 use tokio::io::AsyncReadExt;
                 match recv.read(&mut buf).await {

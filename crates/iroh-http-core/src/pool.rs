@@ -18,11 +18,14 @@ use iroh::PublicKey;
 #[derive(Clone)]
 pub(crate) struct PooledConnection {
     pub conn: Connection,
+    /// Cached base32-encoded remote node ID, computed once per connection.
+    pub remote_id_str: String,
 }
 
 impl PooledConnection {
     pub fn new(conn: Connection) -> Self {
-        Self { conn }
+        let remote_id_str = crate::base32_encode(conn.remote_id().as_bytes());
+        Self { conn, remote_id_str }
     }
 }
 
@@ -30,7 +33,7 @@ impl PooledConnection {
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct PoolKey {
     node_id: PublicKey,
-    alpn: Vec<u8>,
+    alpn: &'static [u8],
 }
 
 /// Thread-safe QUIC connection pool backed by moka.
@@ -62,7 +65,7 @@ impl ConnectionPool {
     pub async fn get_or_connect<F, Fut>(
         &self,
         node_id: PublicKey,
-        alpn: &[u8],
+        alpn: &'static [u8],
         connect_fn: F,
     ) -> Result<PooledConnection, String>
     where
@@ -71,7 +74,7 @@ impl ConnectionPool {
     {
         let key = PoolKey {
             node_id,
-            alpn: alpn.to_vec(),
+            alpn,
         };
 
         // Phase 1: check for a live cached connection (no lock held while awaiting).
@@ -115,10 +118,10 @@ impl ConnectionPool {
     /// Return an existing live connection for `(node_id, alpn)` without
     /// establishing a new one.  Returns `None` if the connection is not
     /// cached or has been closed.
-    pub async fn get_existing(&self, node_id: PublicKey, alpn: &[u8]) -> Option<PooledConnection> {
+    pub async fn get_existing(&self, node_id: PublicKey, alpn: &'static [u8]) -> Option<PooledConnection> {
         let key = PoolKey {
             node_id,
-            alpn: alpn.to_vec(),
+            alpn,
         };
         let pooled = self.cache.get(&key).await?;
         if pooled.conn.close_reason().is_none() {
