@@ -2438,6 +2438,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-http-adapter"
+version = "0.1.0"
+dependencies = [
+ "iroh-http-core",
+ "serde_json",
+]
+
+[[package]]
 name = "iroh-http-core"
 version = "0.1.0"
 dependencies = [
@@ -5448,6 +5456,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "iroh-http-adapter",
  "iroh-http-core",
  "iroh-http-discovery",
  "serde",
