@@ -22,3 +22,4 @@ Peer-to-peer HTTP over Iroh QUIC transport. Rust core + FFI adapters for Node.js
 ## Skills
 
 - [manage-issues](.github/skills/manage-issues/SKILL.md) — create, close, and label GitHub issues. Includes regression test policy and commit-linking format.
+- [git-conventions](.github/skills/git-conventions/SKILL.md) — commit messages, branch names, PR titles. Follow Conventional Commits for every commit.
