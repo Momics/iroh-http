@@ -208,25 +208,20 @@ impl RequestService {
             .to_string();
         // Strip any client-supplied peer-id to prevent spoofing,
         // then inject the authenticated identity from the QUIC connection.
-        let req_headers: Vec<(String, String)> = req
-            .headers()
-            .iter()
-            .filter(|(k, _)| !k.as_str().eq_ignore_ascii_case("peer-id"))
-            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
-            .chain(std::iter::once((
-                "peer-id".to_string(),
-                remote_node_id.clone(),
-            )))
-            .collect();
+        //
+        // ISS-011: Use raw byte length for header-size accounting to prevent
+        // bypass via non-UTF8 values.  Reject non-UTF8 header values with 400
+        // instead of silently converting them to empty strings.
 
-        // ISS-003: Post-parse header byte enforcement. Hyper's parser limit guards
-        // during parsing, but we also check the measured size here so that 431 is
-        // returned as an HTTP response rather than a transport error.
+        // First pass: measure header bytes using raw values (before lossy conversion).
         if let Some(limit) = max_header_size {
-            let header_bytes: usize = req_headers
+            let header_bytes: usize = req
+                .headers()
                 .iter()
-                .map(|(k, v)| k.len() + v.len() + 4) // ": " + "\r\n"
+                .filter(|(k, _)| !k.as_str().eq_ignore_ascii_case("peer-id"))
+                .map(|(k, v)| k.as_str().len() + v.as_bytes().len() + 4) // ": " + "\r\n"
                 .sum::<usize>()
+                + "peer-id".len() + remote_node_id.len() + 4
                 + req.uri().to_string().len()
                 + method.len()
                 + 12; // "HTTP/1.1 \r\n\r\n" overhead
@@ -239,11 +234,55 @@ impl RequestService {
             }
         }
 
+        // Build header list — reject non-UTF8 values instead of silently dropping.
+        let mut req_headers: Vec<(String, String)> = Vec::new();
+        for (k, v) in req.headers().iter() {
+            if k.as_str().eq_ignore_ascii_case("peer-id") {
+                continue;
+            }
+            match v.to_str() {
+                Ok(s) => req_headers.push((k.as_str().to_string(), s.to_string())),
+                Err(_) => {
+                    let resp = hyper::Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(box_body(http_body_util::Full::new(Bytes::from_static(
+                            b"non-UTF8 header value",
+                        ))))
+                        .unwrap();
+                    return Ok(resp);
+                }
+            }
+        }
+        req_headers.push(("peer-id".to_string(), remote_node_id.clone()));
+
         let url = format!("httpi://{own_node_id}{path_and_query}");
 
-        let is_bidi = req_headers.iter().any(|(k, v)| {
+        // ISS-015: strict duplex upgrade validation — require CONNECT method +
+        // Upgrade: iroh-duplex + Connection: upgrade headers.
+        let has_upgrade_header = req_headers.iter().any(|(k, v)| {
             k.eq_ignore_ascii_case("upgrade") && v.eq_ignore_ascii_case("iroh-duplex")
         });
+        let has_connection_upgrade = req_headers.iter().any(|(k, v)| {
+            k.eq_ignore_ascii_case("connection")
+                && v.split(',')
+                    .any(|tok| tok.trim().eq_ignore_ascii_case("upgrade"))
+        });
+        let is_connect = req.method() == http::Method::CONNECT;
+
+        let is_bidi = if has_upgrade_header {
+            if !has_connection_upgrade || !is_connect {
+                let resp = hyper::Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(box_body(http_body_util::Full::new(Bytes::from_static(
+                        b"duplex upgrade requires CONNECT method with Connection: upgrade header",
+                    ))))
+                    .unwrap();
+                return Ok(resp);
+            }
+            true
+        } else {
+            false
+        };
 
         // For duplex: capture the upgrade future BEFORE consuming the request.
         let upgrade_future = if is_bidi {
@@ -436,8 +475,10 @@ impl RequestService {
                 }
             });
 
+            // ISS-015: emit both Connection and Upgrade headers in 101 response.
             let resp = hyper::Response::builder()
                 .status(StatusCode::SWITCHING_PROTOCOLS)
+                .header(hyper::header::CONNECTION, "Upgrade")
                 .header(hyper::header::UPGRADE, "iroh-duplex")
                 .body(box_body(http_body_util::Empty::new()))
                 .unwrap();

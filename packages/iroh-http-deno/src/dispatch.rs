@@ -225,7 +225,12 @@ async fn create_endpoint(p: Value) -> Value {
         compression: if args.compression_min_body_bytes.is_some()
             || args.compression_level.is_some()
         {
-            // DENO-003: enable compression when either minBodyBytes or level is set.
+            // ISS-020: validate compression level range before cast.
+            if let Some(level) = args.compression_level {
+                if level < 0 {
+                    return err(format!("compressionLevel must be non-negative, got {level}"));
+                }
+            }
             Some(iroh_http_core::CompressionOptions {
                 min_body_bytes: args.compression_min_body_bytes.unwrap_or(512),
                 level: args.compression_level.map(|v| v as u32),
@@ -297,7 +302,10 @@ fn node_ticket_dispatch(p: Value) -> Value {
             "INVALID_HANDLE",
             format!("node closed or not found (handle {handle})"),
         ),
-        Some(ep) => ok(iroh_http_core::node_ticket(&ep)),
+        Some(ep) => match iroh_http_core::node_ticket(&ep) {
+            Ok(ticket) => ok(ticket),
+            Err(e) => err_core(e),
+        },
     }
 }
 

@@ -47,13 +47,14 @@ pub fn get(endpoint_handle: u32) -> Option<std::sync::Arc<ServeQueue>> {
     registry().lock().unwrap().get(&endpoint_handle).cloned()
 }
 
-/// Remove the queue for an endpoint.
+/// Remove the queue for an endpoint, explicitly closing the channel.
 ///
-/// Dropping the `Arc` from the registry while serve_start still holds a clone
-/// of the queue's `tx` is safe — the channel stays live until both are dropped.
-/// When `stopServe` is called, the serve accept loop ends, dropping the closure
-/// that holds `tx`.  Once that `Arc` is also released the sender count drops to
-/// zero, the channel closes, and `nextRequest`'s `recv()` returns `None`.
+/// ISS-012: dropping the sender from the queue explicitly ensures that
+/// any pending `nextRequest` `recv()` calls return `None` immediately
+/// rather than hanging until the serve closure drops its `tx` clone.
 pub fn remove(endpoint_handle: u32) {
-    registry().lock().unwrap().remove(&endpoint_handle);
+    if let Some(queue) = registry().lock().unwrap().remove(&endpoint_handle) {
+        // Close the receiver so any blocked recv() returns None.
+        queue.rx.blocking_lock().close();
+    }
 }

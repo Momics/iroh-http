@@ -240,16 +240,8 @@ async fn do_fetch(
         .map_err(|e| CoreError::connection_failed(format!("send_request: {e}")))?;
 
     let status = resp.status().as_u16();
-    let resp_headers: Vec<(String, String)> = resp
-        .headers()
-        .iter()
-        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
-        .collect();
-
-    // Enforce max_header_size: measure reconstructed header bytes and reject if exceeded.
-    // (hyper's max_buf_size is clamped to 8192 to avoid panics, so we enforce the limit here.)
-    // Use the raw byte length of each header value (not the UTF-8 decoded string) so
-    // non-UTF-8 values don't shrink the measurement.
+    // ISS-011: measure header bytes using raw values before string conversion;
+    // reject non-UTF8 response header values deterministically.
     let header_bytes: usize = resp
         .headers()
         .iter()
@@ -257,9 +249,22 @@ async fn do_fetch(
         .sum::<usize>()
         + 16; // approximate status line
     if header_bytes > max_header_size {
-        return Err(CoreError::internal(format!(
+        return Err(CoreError::header_too_large(format!(
             "response header size {header_bytes} exceeds limit {max_header_size}"
         )));
+    }
+
+    let mut resp_headers: Vec<(String, String)> = Vec::new();
+    for (k, v) in resp.headers().iter() {
+        match v.to_str() {
+            Ok(s) => resp_headers.push((k.as_str().to_string(), s.to_string())),
+            Err(_) => {
+                return Err(CoreError::invalid_input(format!(
+                    "non-UTF8 response header value for '{}'",
+                    k.as_str()
+                )));
+            }
+        }
     }
 
     // Allocate channels for streaming the response body to JS.
@@ -355,8 +360,8 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
                     let hdrs = frame.into_trailers().expect("is_trailers checked above");
                     trailers_vec = hdrs
                         .iter()
-                        .map(|(k, v)| {
-                            (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                        .filter_map(|(k, v)| {
+                            v.to_str().ok().map(|s| (k.as_str().to_string(), s.to_string()))
                         })
                         .collect();
                 }
@@ -388,18 +393,35 @@ pub(crate) fn body_from_reader(
                 None => {
                     // Body data complete — check for trailers.
                     if let Some(rx) = trailer_rx {
-                        if let Ok(trailers) = rx.await {
-                            let mut map = http::HeaderMap::new();
-                            for (k, v) in trailers {
-                                if let (Ok(name), Ok(val)) = (
-                                    HeaderName::from_bytes(k.as_bytes()),
-                                    HeaderValue::from_str(&v),
-                                ) {
-                                    map.append(name, val);
+                        // ISS-016: bound the wait so declared-but-unsent trailers
+                        // don't stall completion indefinitely.
+                        let timeout = drain_timeout();
+                        match tokio::time::timeout(timeout, rx).await {
+                            Ok(Ok(trailers)) => {
+                                let mut map = http::HeaderMap::new();
+                                for (k, v) in trailers {
+                                    if let (Ok(name), Ok(val)) = (
+                                        HeaderName::from_bytes(k.as_bytes()),
+                                        HeaderValue::from_str(&v),
+                                    ) {
+                                        map.append(name, val);
+                                    }
+                                }
+                                if !map.is_empty() {
+                                    return Some((
+                                        Ok(Frame::trailers(map)),
+                                        (reader, None, true),
+                                    ));
                                 }
                             }
-                            if !map.is_empty() {
-                                return Some((Ok(Frame::trailers(map)), (reader, None, true)));
+                            Ok(Err(_)) => {
+                                // Sender dropped without sending — treat as no trailers.
+                            }
+                            Err(_) => {
+                                tracing::warn!(
+                                    "iroh-http: trailer wait timed out after {timeout:?}; \
+                                     completing body without trailers"
+                                );
                             }
                         }
                     }
@@ -489,9 +511,11 @@ pub async fn raw_connect(
     tokio::spawn(conn_task);
 
     // Build CONNECT request with Upgrade: iroh-duplex.
+    // ISS-015: include Connection: upgrade for strict handshake compliance.
     let mut req_builder = hyper::Request::builder()
         .method(Method::from_bytes(b"CONNECT").unwrap())
         .uri(path)
+        .header(hyper::header::CONNECTION, "upgrade")
         .header(hyper::header::UPGRADE, "iroh-duplex");
 
     for (k, v) in headers {
@@ -509,7 +533,9 @@ pub async fn raw_connect(
 
     let status = resp.status();
     if status != StatusCode::SWITCHING_PROTOCOLS {
-        return Err(CoreError::connection_failed(format!(
+        // ISS-022: use PeerRejected so callers can distinguish policy rejection
+        // from transport failure for retry/telemetry purposes.
+        return Err(CoreError::peer_rejected(format!(
             "server rejected duplex: expected 101, got {status}"
         )));
     }
