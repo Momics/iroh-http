@@ -82,11 +82,11 @@ if [[ -f "$DENO_JSON" ]]; then
   echo "  ✓ packages/iroh-http-deno/deno.jsonc"
 fi
 
-# ── jsr.jsonc ─────────────────────────────────────────────────────────────────
-JSR_JSON="$ROOT/packages/iroh-http-shared/jsr.jsonc"
-if [[ -f "$JSR_JSON" ]]; then
-  sed -i '' "s/\"version\": \"$OLD\"/\"version\": \"$NEW\"/" "$JSR_JSON"
-  echo "  ✓ packages/iroh-http-shared/jsr.jsonc"
+# ── shared deno.json (for JSR publish) ────────────────────────────────────────
+SHARED_DENO="$ROOT/packages/iroh-http-shared/deno.json"
+if [[ -f "$SHARED_DENO" ]]; then
+  sed -i '' "s/\"version\": \"$OLD\"/\"version\": \"$NEW\"/" "$SHARED_DENO"
+  echo "  ✓ packages/iroh-http-shared/deno.json"
 fi
 
 # ── Deno adapter VERSION constant ────────────────────────────────────────────
