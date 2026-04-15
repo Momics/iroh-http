@@ -89,6 +89,13 @@ if [[ -f "$JSR_JSON" ]]; then
   echo "  ✓ packages/iroh-http-shared/jsr.jsonc"
 fi
 
+# ── Deno adapter VERSION constant ────────────────────────────────────────────
+ADAPTER_TS="$ROOT/packages/iroh-http-deno/src/adapter.ts"
+if [[ -f "$ADAPTER_TS" ]]; then
+  sed -i '' "s/^const VERSION = \"$OLD\";/const VERSION = \"$NEW\";/" "$ADAPTER_TS"
+  echo "  ✓ packages/iroh-http-deno/src/adapter.ts (VERSION)"
+fi
+
 echo ""
 echo "Done. Verify with:  git diff --stat"
 echo "Then commit:        git add -u && git commit -m 'chore: bump version to $NEW'"

@@ -76,23 +76,53 @@ git add -u && git commit -m "chore: bump version to 0.2.0"
 
 ## Releasing
 
-One command to build (all platforms), test, version-bump, and publish:
+### Composed (one command)
 
 ```sh
-# LLVM bin must be on PATH for the Node Windows (MSVC) cross-compile step:
-PATH="/opt/homebrew/opt/llvm/bin:$PATH" ./scripts/release.sh 0.2.0           # full release
-PATH="/opt/homebrew/opt/llvm/bin:$PATH" ./scripts/release.sh 0.2.0 --dry-run # everything except publish + push
+# Full release for one platform:
+npm run release:deno -- 0.2.0
+npm run release:node -- 0.2.0
+
+# Dry-run (no publish, no push, reverts version bump):
+npm run release:deno -- 0.2.0 --dry-run
+
+# Force rebuild even if binaries are up to date:
+npm run release:node -- 0.2.0 --rebuild
 ```
 
-The release script:
-1. **Preflight** — checks tools, clean working tree, registry auth
-2. **Build** — Rust workspace, TS shared, Node (4 platforms), Deno (5 platforms)
-3. **Test** — cargo test, clippy, fmt, tsc, Node e2e, Deno smoke
-4. **Version bump** — updates all 12 manifests via `version.sh`
-5. **Publish** — npm and JSR via `npm run publish:*` scripts (crates.io steps are present but commented out — uncomment `publish:tauri:cargo` when releasing Tauri)
-6. **Git** — commit, tag `v0.2.0`, print push commands
+LLVM must be on PATH for Node Windows (MSVC) cross-compile:
+```sh
+PATH="/opt/homebrew/opt/llvm/bin:$PATH" npm run release:node -- 0.2.0
+```
 
-All cross-compilation happens locally using `cargo-zigbuild` (Linux targets), plain `cargo` (macOS/Windows targets), and `zig` as a linker. No CI needed.
+### Individual steps
+
+Each step is idempotent — it skips if already done, so re-running after a
+failure picks up where it left off.
+
+```sh
+npm run release:preflight -- --scope=deno     # check tools + auth
+npm run release:fmt                           # cargo fmt --all, auto-commit
+npm run release:build -- --platform=deno      # build (skips if binaries fresh)
+npm run release:test -- --platform=deno       # Rust + clippy + fmt + Deno smoke
+npm run release:version -- 0.2.0              # bump all manifests (skips if current)
+npm run release:upload:deno -- 0.2.0          # upload binaries to GitHub releases
+npm run release:publish -- --platform=deno    # shared→npm/JSR, deno→JSR
+npm run release:tag -- 0.2.0                  # git commit + tag (skips if exists)
+```
+
+### How it works
+
+| Step | What it does | Guard |
+|------|-------------|-------|
+| `preflight` | check CLI tools, Rust targets, registry auth | none |
+| `fmt` | `cargo fmt --all`, auto-commit if dirty | no-op if already clean |
+| `build` | core → shared → platform binaries | skip if binaries newer than `*.rs` |
+| `test` | cargo test + clippy + fmt check + typecheck + platform tests | none |
+| `version` | bump all manifests via `version.sh` (incl. `adapter.ts` VERSION) | skip if already at target |
+| `upload:deno` | `gh release create` + upload 5 binaries to `iroh-http-releases` | skip if all assets present |
+| `publish` | shared→npm/JSR first, then platform package | skip if version already published |
+| `tag` | git commit, `git tag vX.Y.Z` | skip if tag exists |
 
 ### Prerequisites
 
@@ -103,25 +133,5 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin \
 cargo install cargo-zigbuild cargo-xwin
 brew install zig mingw-w64 llvm lld
 npm adduser               # npm auth
-# cargo login             # only needed when publishing tauri-plugin-iroh-http to crates.io
+gh auth login              # GitHub CLI (for Deno binary uploads)
 ```
-
-## Release checklist (manual, for now)
-
-When you're ready to tag a release:
-
-1. `./scripts/version.sh X.Y.Z`
-2. `./scripts/build.sh` — verify everything builds clean
-3. Commit and tag: `git tag vX.Y.Z`
-4. Publish (when ready) — individual commands are in `package.json`:
-   ```sh
-   npm run publish:shared        # @momics/iroh-http-shared → npm
-   npm run publish:shared:jsr    # @momics/iroh-http-shared → JSR
-   npm run publish:node          # @momics/iroh-http-node → npm
-   npm run publish:deno          # @momics/iroh-http-deno → JSR
-   # npm run publish:tauri       # @momics/iroh-http-tauri → npm (when ready)
-   # npm run publish:tauri:cargo # tauri-plugin-iroh-http → crates.io (when ready)
-   ```
-   Or run the full release script which calls these in order.
-
-Order matters: shared first, then platform packages that depend on it.
