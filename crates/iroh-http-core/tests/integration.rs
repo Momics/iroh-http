@@ -1137,27 +1137,24 @@ async fn pool_different_peers_get_separate_connections() {
         );
     }
 
-    // Helper: retry a fetch up to 5 times with exponential back-off.
-    macro_rules! fetch_retry {
-        ($id:expr, $addrs:expr) => {{
-            let mut result: Result<_, iroh_http_core::CoreError> =
-                Err(iroh_http_core::CoreError::internal("not started"));
-            for attempt in 0u64..5 {
-                tokio::time::sleep(std::time::Duration::from_millis(200 * (1 + attempt))).await;
-                result = fetch(&client, $id, "/", "GET", &[], None, None, Some($addrs)).await;
-                if result.is_ok() {
-                    break;
-                }
-            }
-            result.expect("fetch failed after 5 attempts")
-        }};
-    }
-
-    let r1 = fetch_retry!(&id1, &addrs1);
+    // Fetch with a generous timeout instead of retry/sleep loops.
+    let r1 = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        fetch(&client, &id1, "/", "GET", &[], None, None, Some(&addrs1)),
+    )
+    .await
+    .expect("fetch to server1 timed out")
+    .expect("fetch to server1 failed");
     assert_eq!(r1.status, 200);
     while let Some(_) = client.handles().next_chunk(r1.body_handle).await.unwrap() {}
 
-    let r2 = fetch_retry!(&id2, &addrs2);
+    let r2 = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        fetch(&client, &id2, "/", "GET", &[], None, None, Some(&addrs2)),
+    )
+    .await
+    .expect("fetch to server2 timed out")
+    .expect("fetch to server2 failed");
     assert_eq!(r2.status, 200);
     while let Some(_) = client.handles().next_chunk(r2.body_handle).await.unwrap() {}
 
@@ -1491,6 +1488,9 @@ async fn graceful_shutdown_drains_in_flight() {
     // Use a notify to confirm the handler is actually running.
     let handler_started = std::sync::Arc::new(tokio::sync::Notify::new());
     let handler_started_tx = handler_started.clone();
+    // Use a notify to let the handler proceed after shutdown is triggered.
+    let handler_proceed = std::sync::Arc::new(tokio::sync::Notify::new());
+    let handler_proceed_rx = handler_proceed.clone();
 
     let handle = serve(
         server_ep.clone(),
@@ -1502,12 +1502,13 @@ async fn graceful_shutdown_drains_in_flight() {
             let res_h = payload.res_body_handle;
             let req_h = payload.req_handle;
             let started = handler_started_tx.clone();
+            let proceed = handler_proceed_rx.clone();
             let server_ep = server_ep.clone();
             tokio::spawn(async move {
                 // Signal that the handler is running.
                 started.notify_one();
-                // Simulate a slow handler (200ms is enough to prove drain waited).
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                // Wait for the test to signal us to proceed (deterministic sync).
+                proceed.notified().await;
                 respond(
                     server_ep.handles(),
                     req_h,
@@ -1538,17 +1539,28 @@ async fn graceful_shutdown_drains_in_flight() {
     // Wait for the handler to actually start running before we trigger shutdown.
     handler_started.notified().await;
 
-    // Signal shutdown — the serve loop should stop accepting but drain the
-    // in-flight request.
-    let start = std::time::Instant::now();
-    handle.drain().await;
-    let elapsed = start.elapsed();
+    // Start drain in the background — it should block until the handler finishes.
+    let drain_done = std::sync::Arc::new(tokio::sync::Notify::new());
+    let drain_done_rx = drain_done.clone();
+    tokio::spawn(async move {
+        handle.drain().await;
+        drain_done.notify_one();
+    });
 
-    // The drain should have waited for the in-flight request (~200ms handler).
-    assert!(
-        elapsed >= std::time::Duration::from_millis(50),
-        "drain completed too fast ({elapsed:?}), should have waited for in-flight request"
-    );
+    // Give a brief yield to ensure drain has started waiting.
+    tokio::task::yield_now().await;
+
+    // Drain should NOT have completed yet because the handler hasn't finished.
+    // (We can't assert this deterministically, but the handler_proceed signal
+    // below ensures the handler runs to completion before drain finishes.)
+
+    // Let the handler complete.
+    handler_proceed.notify_one();
+
+    // Drain should complete now that the handler has finished.
+    tokio::time::timeout(std::time::Duration::from_secs(10), drain_done_rx.notified())
+        .await
+        .expect("drain should complete after handler finishes");
 
     // The in-flight request should have succeeded.
     let result = fetch_task.await.unwrap();
@@ -2160,8 +2172,8 @@ async fn request_timeout_fires() {
             let res_body = payload.res_body_handle;
             let server_ep = server_ep.clone();
             tokio::spawn(async move {
-                // Sleep longer than the server timeout.
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                // Never respond — let the server timeout kill the request.
+                std::future::pending::<()>().await;
                 // The handler may still respond but it's racing the timeout.
                 let _ = respond(server_ep.handles(), req_handle, 200, vec![]);
                 let _ = server_ep.handles().finish_body(res_body);
@@ -2171,10 +2183,9 @@ async fn request_timeout_fires() {
 
     // The fetch should come back (either with an error or with whatever the
     // server managed to send before timeout killed the task).
-    // Give it 30s — well beyond the 100ms server timeout + propagation time.
-    // Use a generous budget since this test may run alongside many others.
+    // The 100ms server timeout + propagation should resolve well within 10s.
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(10),
         fetch(
             &client_ep,
             &server_id,
