@@ -6,7 +6,6 @@
 
 use std::{
     collections::HashMap,
-    convert::Infallible,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -15,7 +14,6 @@ use std::{
 
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, StatusCode};
-use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
 use hyper_util::service::TowerToHyperService;
@@ -31,15 +29,8 @@ use crate::{
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
 
-type BoxBody = http_body_util::combinators::BoxBody<Bytes, Infallible>;
+type BoxBody = crate::BoxBody;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
-fn box_body<B>(body: B) -> BoxBody
-where
-    B: http_body::Body<Data = Bytes, Error = Infallible> + Send + Sync + 'static,
-{
-    body.map_err(|_| unreachable!()).boxed()
-}
 
 // ── ServerLimits ──────────────────────────────────────────────────────────────
 
@@ -229,7 +220,7 @@ impl RequestService {
             if header_bytes > limit {
                 let resp = hyper::Response::builder()
                     .status(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE)
-                    .body(box_body(http_body_util::Empty::new()))
+                    .body(crate::box_body(http_body_util::Empty::new()))
                     .unwrap();
                 return Ok(resp);
             }
@@ -246,7 +237,7 @@ impl RequestService {
                 Err(_) => {
                     let resp = hyper::Response::builder()
                         .status(StatusCode::BAD_REQUEST)
-                        .body(box_body(http_body_util::Full::new(Bytes::from_static(
+                        .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(
                             b"non-UTF8 header value",
                         ))))
                         .unwrap();
@@ -274,7 +265,7 @@ impl RequestService {
             if !has_connection_upgrade || !is_connect {
                 let resp = hyper::Response::builder()
                     .status(StatusCode::BAD_REQUEST)
-                    .body(box_body(http_body_util::Full::new(Bytes::from_static(
+                    .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(
                         b"duplex upgrade requires CONNECT method with Connection: upgrade header",
                     ))))
                     .unwrap();
@@ -395,7 +386,7 @@ impl RequestService {
                     // causing the JS respond() call to fail gracefully.
                     let resp = hyper::Response::builder()
                         .status(StatusCode::PAYLOAD_TOO_LARGE)
-                        .body(box_body(http_body_util::Full::new(Bytes::from_static(
+                        .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(
                             b"request body too large",
                         ))))
                         .expect("valid 413 response");
@@ -431,7 +422,7 @@ impl RequestService {
                     resp_builder = resp_builder.header(k.as_str(), v.as_str());
                 }
                 let resp = resp_builder
-                    .body(box_body(http_body_util::Empty::new()))
+                    .body(crate::box_body(http_body_util::Empty::new()))
                     .map_err(|e| -> BoxError { e.into() })?;
                 return Ok(resp);
             }
@@ -446,46 +437,7 @@ impl RequestService {
                     Err(e) => tracing::warn!("iroh-http: duplex upgrade error: {e}"),
                     Ok(upgraded) => {
                         let io = TokioIo::new(upgraded);
-                        let (mut recv_io, mut send_io) = tokio::io::split(io);
-
-                        tokio::join!(
-                            // upgraded recv → req_body channel (JS reads via req_body_handle)
-                            async {
-                                use tokio::io::AsyncReadExt;
-                                let mut buf = vec![0u8; crate::stream::PUMP_READ_BUF];
-                                loop {
-                                    match recv_io.read(&mut buf).await {
-                                        Ok(0) | Err(_) => break,
-                                        Ok(n) => {
-                                            if req_body_writer
-                                                .send_chunk(Bytes::copy_from_slice(&buf[..n]))
-                                                .await
-                                                .is_err()
-                                            {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                // Dropping writer signals EOF on req_body_handle.
-                                drop(req_body_writer);
-                            },
-                            // res_body channel → upgraded send (JS writes via res_body_handle)
-                            async {
-                                use tokio::io::AsyncWriteExt;
-                                loop {
-                                    match res_body_reader.next_chunk().await {
-                                        None => break,
-                                        Some(chunk) => {
-                                            if send_io.write_all(&chunk).await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                let _ = send_io.shutdown().await;
-                            },
-                        );
+                        crate::stream::pump_duplex(io, req_body_writer, res_body_reader).await;
                     }
                 }
             });
@@ -495,7 +447,7 @@ impl RequestService {
                 .status(StatusCode::SWITCHING_PROTOCOLS)
                 .header(hyper::header::CONNECTION, "Upgrade")
                 .header(hyper::header::UPGRADE, "iroh-duplex")
-                .body(box_body(http_body_util::Empty::new()))
+                .body(crate::box_body(http_body_util::Empty::new()))
                 .unwrap();
             return Ok(resp);
         }
@@ -524,7 +476,7 @@ impl RequestService {
         let resp_builder = resp_builder; // CompressionLayer in ServiceBuilder handles this
 
         let resp = resp_builder
-            .body(box_body(body_stream))
+            .body(crate::box_body(body_stream))
             .map_err(|e| -> BoxError { e.into() })?;
 
         Ok(resp)
@@ -854,7 +806,7 @@ where
                     // generic error string so adapters can relay the status code.
                     Ok(hyper::Response::builder()
                         .status(StatusCode::REQUEST_TIMEOUT)
-                        .body(box_body(http_body_util::Full::new(Bytes::from_static(
+                        .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(
                             b"request timed out",
                         ))))
                         .expect("valid 408 response"))
