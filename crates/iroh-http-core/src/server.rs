@@ -451,7 +451,7 @@ impl RequestService {
                             // upgraded recv → req_body channel (JS reads via req_body_handle)
                             async {
                                 use tokio::io::AsyncReadExt;
-                                let mut buf = vec![0u8; 16 * 1024];
+                                let mut buf = vec![0u8; crate::stream::PUMP_READ_BUF];
                                 loop {
                                     match recv_io.read(&mut buf).await {
                                         Ok(0) | Err(_) => break,
