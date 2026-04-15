@@ -13,9 +13,10 @@ For cross-compilation (all platforms from macOS):
 | Tool | Install |
 |------|---------|
 | `cargo-zigbuild` | `cargo install cargo-zigbuild` |
+| `cargo-xwin` | `cargo install cargo-xwin` (Node Windows target) |
 | `zig` | `brew install zig` |
 | `mingw-w64` | `brew install mingw-w64` (Deno Windows target) |
-| Rust targets | `rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu` |
+| Rust targets | `rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc x86_64-pc-windows-gnu` |
 
 ## Building locally
 
@@ -95,8 +96,9 @@ All cross-compilation happens locally using `cargo-zigbuild` (Linux targets), pl
 
 ```sh
 rustup target add aarch64-apple-darwin x86_64-apple-darwin \
-  x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
-cargo install cargo-zigbuild
+  x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+  x86_64-pc-windows-msvc x86_64-pc-windows-gnu
+cargo install cargo-zigbuild cargo-xwin
 brew install zig mingw-w64
 npm adduser               # npm auth
 cargo login               # crates.io auth

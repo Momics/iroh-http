@@ -16,8 +16,9 @@
 #
 # Prerequisites:
 #   rustup target add aarch64-apple-darwin x86_64-apple-darwin \
-#     x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
-#   cargo install cargo-zigbuild
+#     x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+#     x86_64-pc-windows-msvc x86_64-pc-windows-gnu
+#   cargo install cargo-zigbuild cargo-xwin
 #   brew install zig mingw-w64
 #   npm adduser                   # or set NPM_TOKEN
 #   cargo login                   # or set CARGO_REGISTRY_TOKEN
@@ -83,7 +84,7 @@ ok "all required tools found"
 REQUIRED_TARGETS=(
   aarch64-apple-darwin x86_64-apple-darwin
   x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
-  x86_64-pc-windows-gnu
+  x86_64-pc-windows-msvc x86_64-pc-windows-gnu
 )
 INSTALLED_TARGETS=$(rustup target list --installed)
 for t in "${REQUIRED_TARGETS[@]}"; do
@@ -91,9 +92,11 @@ for t in "${REQUIRED_TARGETS[@]}"; do
 done
 ok "all Rust cross-compile targets installed"
 
-# cargo-zigbuild
+# cargo-zigbuild + cargo-xwin
 command -v cargo-zigbuild &>/dev/null || die "cargo-zigbuild not found (run: cargo install cargo-zigbuild)"
+command -v cargo-xwin &>/dev/null || die "cargo-xwin not found (run: cargo install cargo-xwin)"
 ok "cargo-zigbuild available"
+ok "cargo-xwin available"
 
 # Clean working tree (allow untracked)
 if [[ -n "$(git diff --stat)" ]] || [[ -n "$(git diff --cached --stat)" ]]; then
