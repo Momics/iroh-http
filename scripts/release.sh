@@ -11,7 +11,7 @@
 #   2. Build      — Rust workspace, TS, Node (4 platforms), Deno (5 platforms)
 #   3. Test       — cargo test, Node e2e, Deno smoke
 #   4. Version    — bumps all 10 manifests via version.sh
-#   5. Publish    — crates.io, npm, JSR
+#   5. Publish    — npm, JSR
 #   6. Tag + push — git commit, tag, push
 #
 # Prerequisites:
@@ -111,10 +111,6 @@ if ! $DRY_RUN; then
   npm whoami &>/dev/null || die "not logged in to npm (run: npm adduser)"
   ok "npm authenticated"
 
-  # crates.io — check token exists
-  [[ -f "$HOME/.cargo/credentials.toml" ]] || [[ -n "${CARGO_REGISTRY_TOKEN:-}" ]] \
-    || die "no crates.io token (run: cargo login)"
-  ok "crates.io token found"
 fi
 
 echo ""
@@ -200,23 +196,10 @@ ok "version.sh updated all manifests"
 section "5. Publish"
 
 if $DRY_RUN; then
-  skip "crates.io (dry-run)"
   skip "npm (dry-run)"
   skip "JSR (dry-run)"
 else
-  # 5a. crates.io — publish in dependency order
-  step "crates.io: iroh-http-core"
-  (cd crates/iroh-http-core && cargo publish 2>&1 | tail -3)
-  ok "iroh-http-core → crates.io"
-
-  step "waiting for crates.io index…"
-  sleep 15
-
-  step "crates.io: iroh-http-discovery"
-  (cd crates/iroh-http-discovery && cargo publish 2>&1 | tail -3)
-  ok "iroh-http-discovery → crates.io"
-
-  # 5b. npm: shared (pure TS, no native code)
+  # 5a. npm: shared (pure TS, no native code)
   step "npm: @momics/iroh-http-shared"
   (cd packages/iroh-http-shared && npm publish --access public 2>&1 | tail -3)
   ok "@momics/iroh-http-shared → npm"
