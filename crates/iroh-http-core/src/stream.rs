@@ -770,14 +770,16 @@ where
 
     tokio::join!(
         async {
+            use bytes::BytesMut;
             use tokio::io::AsyncReadExt;
-            let mut buf = vec![0u8; PUMP_READ_BUF];
+            let mut buf = BytesMut::with_capacity(PUMP_READ_BUF);
             loop {
-                match recv.read(&mut buf).await {
+                buf.clear();
+                match recv.read_buf(&mut buf).await {
                     Ok(0) | Err(_) => break,
-                    Ok(n) => {
+                    Ok(_) => {
                         if writer
-                            .send_chunk(bytes::Bytes::copy_from_slice(&buf[..n]))
+                            .send_chunk(buf.split().freeze())
                             .await
                             .is_err()
                         {
