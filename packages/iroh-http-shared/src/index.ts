@@ -124,44 +124,49 @@ export interface DiscoveryFunctions {
   mdnsAdvertiseClose(advertiseHandle: number): void;
 }
 
+/** Configuration for `buildNode()`. Groups platform primitives into a single object. */
+export interface BuildNodeConfig {
+  bridge: Bridge;
+  info: EndpointInfo;
+  rawFetch: RawFetchFn;
+  rawServe: RawServeFn;
+  rawConnect: RawConnectFn;
+  allocBodyWriter: AllocBodyWriterFn;
+  closeEndpoint: (handle: number, force?: boolean) => Promise<void>;
+  stopServe: (handle: number) => void;
+  addrFns?: AddrFunctions;
+  discoveryFns?: DiscoveryFunctions;
+  sessionFns?: RawSessionFns;
+}
+
 /**
  * Factory that constructs an `IrohNode` from platform primitives.
  *
  * Each platform adapter calls this after binding an endpoint.
  *
- * @param bridge          Platform bridge implementation.
- * @param info            Endpoint info returned by the low-level bind.
- * @param rawFetch        Low-level fetch function (platform-specific).
- * @param rawServe        Low-level serve function (platform-specific).
- * @param rawConnect      Low-level duplex connect function (platform-specific).
- * @param allocBodyWriter Synchronously allocates a body writer handle.
- * @param closeEndpoint   Closes the bound endpoint.
- * @param stopServe       Stops the serve loop for graceful shutdown.
- * @param addrFns         Platform-specific address introspection functions.
- * @param discoveryFns    Platform-specific mDNS discovery functions.
- * @param sessionFns      Platform-specific session (connect/bidi stream) functions.
  * @returns A fully wired `IrohNode` ready for `fetch`, `serve`, and `close`.
  *
  * @example
  * ```ts
  * // Platform adapter wiring (typically internal):
- * const node = buildNode(bridge, info, rawFetch, rawServe, rawConnect, alloc, close, addrFns);
+ * const node = buildNode({ bridge, info, rawFetch, rawServe, rawConnect, allocBodyWriter, closeEndpoint, stopServe });
  * const res = await node.fetch(peerId, '/hello');
  * ```
  */
-export function buildNode(
-  bridge: Bridge,
-  info: EndpointInfo,
-  rawFetch: RawFetchFn,
-  rawServe: RawServeFn,
-  rawConnect: RawConnectFn,
-  allocBodyWriter: AllocBodyWriterFn,
-  closeEndpoint: (handle: number, force?: boolean) => Promise<void>,
-  stopServe: (handle: number) => void,
-  addrFns?: AddrFunctions,
-  discoveryFns?: DiscoveryFunctions,
-  sessionFns?: RawSessionFns,
-): IrohNode {
+export function buildNode(config: BuildNodeConfig): IrohNode {
+  const {
+    bridge,
+    info,
+    rawFetch,
+    rawServe,
+    rawConnect,
+    allocBodyWriter,
+    closeEndpoint,
+    stopServe,
+    addrFns,
+    discoveryFns,
+    sessionFns,
+  } = config;
   let resolveClosed!: (info: WebTransportCloseInfo) => void;
   const closedPromise = new Promise<WebTransportCloseInfo>((resolve) => {
     resolveClosed = resolve;

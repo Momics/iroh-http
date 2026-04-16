@@ -43,19 +43,19 @@ export { PublicKey, SecretKey } from "@momics/iroh-http-shared";
  */
 export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   const info = await createEndpointInfo(options);
-  return buildNode(
-    makeBridge(info.endpointHandle),
+  return buildNode({
+    bridge: makeBridge(info.endpointHandle),
     info,
     rawFetch,
     rawServe,
     rawConnect,
-    makeAllocBodyWriter(info.endpointHandle),
+    allocBodyWriter: makeAllocBodyWriter(info.endpointHandle),
     closeEndpoint,
     stopServe,
-    denoAddrFns,
-    denoDiscoveryFns,
-    denoSessionFns,
-  );
+    addrFns: denoAddrFns,
+    discoveryFns: denoDiscoveryFns,
+    sessionFns: denoSessionFns,
+  });
 }
 
 export type { IrohNode, IrohRequest, NodeOptions };
