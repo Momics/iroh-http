@@ -152,7 +152,7 @@ hole-punching still add something conventional HTTPS cannot.
 - [Capability tokens](capability-tokens.md) — single-hop signed access tokens;
   start here before building attenuation chains
 - [Middleware](middleware.md) — compose rate limiting, auth, and logging into
-  a serve handler using a two-line `compose()` helper
+  a serve handler using a simple `compose()` pattern
 
 ---
 

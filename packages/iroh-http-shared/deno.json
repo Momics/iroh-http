@@ -5,7 +5,6 @@
   "imports": {},
   "exports": {
     ".": "./src/index.ts",
-    "./middleware": "./src/middleware.ts",
     "./adapter": "./src/adapter.ts"
   },
   "publish": {

@@ -88,6 +88,7 @@ Add a token check in front of the proxy to restrict which peers can reach the
 local service:
 
 ```ts
+// compose() and requireToken() from your own middleware — see recipes/middleware.md
 import { compose } from './middleware.ts';
 import { requireToken } from './capability-tokens.ts';
 

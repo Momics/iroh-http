@@ -2,7 +2,8 @@
 
 Serve handlers are plain functions `(req: Request) => Response`. Middleware is
 a function that wraps a handler: `(handler) => handler`. They compose cleanly
-without any framework magic.
+without any framework magic. Define these utilities in your own application
+code.
 
 ## `compose()`
 
