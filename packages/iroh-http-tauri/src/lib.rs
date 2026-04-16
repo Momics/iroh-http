@@ -20,6 +20,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::home_relay,
             commands::peer_info,
             commands::peer_stats,
+            commands::endpoint_stats,
             commands::next_chunk,
             commands::send_chunk,
             commands::finish_body,

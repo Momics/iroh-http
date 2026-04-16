@@ -638,6 +638,13 @@ export interface IrohNode {
    */
   peerStats(peer: PublicKey | string): Promise<PeerStats | null>;
   /**
+   * Endpoint-level observability snapshot.
+   *
+   * Returns point-in-time counts of active handles, connections, requests,
+   * and pool entries.  Useful for monitoring and debugging.
+   */
+  stats(): Promise<EndpointStats>;
+  /**
    * Async iterable that yields a `PathInfo` each time the active network
    * path to `peer` changes (e.g. from relay to direct, or between addresses).
    *
@@ -686,6 +693,28 @@ export interface NodeAddrInfo {
 }
 
 // ── Observability types ──────────────────────────────────────────────────────
+
+/**
+ * Endpoint-level observability snapshot.
+ *
+ * All counts are point-in-time reads and may change between calls.
+ */
+export interface EndpointStats {
+  /** Number of currently open body reader handles. */
+  activeReaders: number;
+  /** Number of currently open body writer handles. */
+  activeWriters: number;
+  /** Number of live QUIC session handles. */
+  activeSessions: number;
+  /** Total allocated handle count (readers + writers + sessions + trailers + …). */
+  totalHandles: number;
+  /** Number of QUIC connections currently cached in the connection pool. */
+  poolSize: number;
+  /** Number of live QUIC connections accepted by the serve loop. */
+  activeConnections: number;
+  /** Number of HTTP requests currently being processed. */
+  activeRequests: number;
+}
 
 /**
  * Per-peer connection statistics.

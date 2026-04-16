@@ -352,6 +352,23 @@ impl HandleStore {
         self.config.max_chunk_size
     }
 
+    /// Snapshot of handle counts for observability.
+    ///
+    /// Returns `(active_readers, active_writers, active_sessions, total_handles)`.
+    pub fn count_handles(&self) -> (usize, usize, usize, usize) {
+        let readers = self.readers.lock().unwrap_or_else(|e| e.into_inner()).len();
+        let writers = self.writers.lock().unwrap_or_else(|e| e.into_inner()).len();
+        let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner()).len();
+        let total = readers
+            + writers
+            + sessions
+            + self.trailer_tx.lock().unwrap_or_else(|e| e.into_inner()).len()
+            + self.trailer_rx.lock().unwrap_or_else(|e| e.into_inner()).len()
+            + self.request_heads.lock().unwrap_or_else(|e| e.into_inner()).len()
+            + self.fetch_cancels.lock().unwrap_or_else(|e| e.into_inner()).len();
+        (readers, writers, sessions, total)
+    }
+
     // ── Body channels ────────────────────────────────────────────────────
 
     /// Create a matched (writer, reader) pair using this store's config.

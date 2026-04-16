@@ -8,6 +8,7 @@
 import { resolve, dirname, fromFileUrl } from "@std/path";
 import type {
   EndpointInfo,
+  EndpointStats,
   NodeOptions,
   NodeAddrInfo,
   PeerDiscoveryEvent,
@@ -155,6 +156,7 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
     "allocFetchToken",
     "cancelInFlight",
     "waitEndpointClosed",
+    "endpointStats",
     "nodeAddr",
     "homeRelay",
     "peerInfo",
@@ -536,6 +538,11 @@ export function waitEndpointClosed(handle: number): Promise<void> {
   }).then(() => {});
 }
 
+/** Snapshot of current endpoint statistics (point-in-time). */
+export function endpointStats(handle: number): Promise<EndpointStats> {
+  return call<EndpointStats>("endpointStats", { endpointHandle: handle });
+}
+
 // ── Address introspection ──────────────────────────────────────────────────────
 
 export const denoAddrFns: AddrFunctions = {
@@ -566,6 +573,9 @@ export const denoAddrFns: AddrFunctions = {
       endpointHandle: handle,
       nodeId,
     });
+  },
+  stats: async (handle) => {
+    return call<EndpointStats>("endpointStats", { endpointHandle: handle });
   },
 };
 
