@@ -68,6 +68,8 @@ Ed25519 keys and peer identity. Should describe:
 
 ### Pre-open-source checklist
 
+Tracked in [#43 — Automate release pipeline](https://github.com/Momics/iroh-http/issues/43):
+
 1. [ ] Fix Node.js napi-rs platform package split
 2. [ ] Add `CHANGELOG.md` (via `git-cliff` or equivalent)
 3. [ ] Add `SECURITY.md`
