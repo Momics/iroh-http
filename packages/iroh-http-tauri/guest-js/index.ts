@@ -94,6 +94,10 @@ const bridge: Bridge = {
       trailers,
     });
   },
+
+  allocTrailerSender(_endpointHandle: number): Promise<bigint> {
+    return invoke<number>(`${PLUGIN}|alloc_trailer_sender`).then(BigInt);
+  },
 };
 
 // ── Platform functions ────────────────────────────────────────────────────────
@@ -105,6 +109,7 @@ const rawFetch: RawFetchFn = async (
   method,
   headers,
   reqBodyHandle,
+  reqTrailersHandle,
   fetchToken,
   directAddrs,
 ) => {
@@ -122,6 +127,7 @@ const rawFetch: RawFetchFn = async (
       method,
       headers,
       reqBodyHandle: reqBodyHandle != null ? Number(reqBodyHandle) : null,
+      reqTrailersHandle: reqTrailersHandle != null ? Number(reqTrailersHandle) : null,
       fetchToken: fetchToken != null ? Number(fetchToken) : null,
       directAddrs: directAddrs ?? null,
     },

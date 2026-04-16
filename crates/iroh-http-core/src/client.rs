@@ -61,6 +61,7 @@ pub async fn fetch(
     method: &str,
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
+    req_trailer_sender_handle: Option<u64>,
     fetch_token: Option<u64>,
     direct_addrs: Option<&[std::net::SocketAddr]>,
 ) -> Result<FfiResponse, CoreError> {
@@ -90,6 +91,10 @@ pub async fn fetch(
 
     let cancel_notify = fetch_token.and_then(|t| endpoint.handles().get_fetch_cancel_notify(t));
     let handles = endpoint.handles();
+
+    // Claim request trailer receiver (paired with the sender handle JS holds).
+    let req_trailer_rx = req_trailer_sender_handle
+        .and_then(|h| if h == 0 { None } else { handles.claim_pending_trailer_rx(h) });
 
     let parsed = parse_node_addr(remote_node_id)?;
     let node_id = parsed.node_id;
@@ -129,6 +134,7 @@ pub async fn fetch(
         http_method,
         headers,
         req_body_reader,
+        req_trailer_rx,
         max_header_size,
     );
 
@@ -158,6 +164,7 @@ async fn do_fetch(
     method: Method,
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
+    req_trailer_rx: Option<crate::stream::TrailerRx>,
     max_header_size: usize,
 ) -> Result<FfiResponse, CoreError> {
     let (send, recv) = conn
@@ -211,8 +218,8 @@ async fn do_fetch(
     }
 
     let req_body: BoxBody = if let Some(reader) = req_body_reader {
-        // Adapt BodyReader → hyper body (no trailers on request side for now).
-        crate::box_body(body_from_reader(reader, None))
+        // Adapt BodyReader → hyper body, including optional request trailers.
+        crate::box_body(body_from_reader(reader, req_trailer_rx))
     } else {
         crate::box_body(http_body_util::Empty::new())
     };

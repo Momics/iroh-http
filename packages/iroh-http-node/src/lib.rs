@@ -606,6 +606,19 @@ pub fn js_alloc_body_writer(endpoint_handle: u32) -> napi::Result<u64> {
     Ok(handle)
 }
 
+/// Allocate a request trailer sender handle for use with `rawFetch`.
+///
+/// Call this before `rawFetch` when you want to send request trailers.
+/// Pass the returned handle as `reqTrailersHandle` to `rawFetch`, then
+/// call `sendTrailers(handle, trailers)` after the request body is finished.
+#[napi]
+pub fn js_alloc_trailer_sender(endpoint_handle: u32) -> napi::Result<u64> {
+    let ep = get_endpoint(endpoint_handle)?;
+    ep.handles()
+        .alloc_trailer_sender()
+        .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
+}
+
 /// Allocate a cancellation token for an upcoming `rawFetch` call.
 ///
 /// Wire `AbortSignal → cancelInFlight(token)` for request cancellation.
@@ -658,6 +671,7 @@ pub async fn raw_fetch(
     method: String,
     headers: Vec<Vec<String>>,
     req_body_handle: Option<BigInt>,
+    req_trailers_handle: Option<BigInt>,
     fetch_token: BigInt,
     direct_addrs: Option<Vec<String>>,
 ) -> napi::Result<JsFfiResponse> {
@@ -677,6 +691,8 @@ pub async fn raw_fetch(
     let req_body_reader =
         req_body_handle.and_then(|h| ep.handles().claim_pending_reader(h.get_u64().1));
 
+    let req_trailer_sender_handle = req_trailers_handle.map(|h| h.get_u64().1);
+
     let addrs =
         parse_direct_addrs(&direct_addrs).map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
     let res = iroh_http_core::fetch(
@@ -686,6 +702,7 @@ pub async fn raw_fetch(
         &method,
         &pairs,
         req_body_reader,
+        req_trailer_sender_handle,
         Some(fetch_token.get_u64().1),
         addrs.as_deref(),
     )
