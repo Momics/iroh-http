@@ -222,7 +222,7 @@ export function makeServe(
           try {
             res = await Promise.resolve(onError(err));
           } catch {
-            res = new Response(null, { status: 500 });
+            res = new Response("Internal Server Error", { status: 500 });
           }
         }
 
@@ -303,7 +303,7 @@ export function makeServe(
 
 function defaultOnError(error: unknown): Response {
   console.error("[iroh-http] unhandled handler error:", error);
-  return new Response(null, { status: 500 });
+  return new Response("Internal Server Error", { status: 500 });
 }
 
 function emptyStream(): ReadableStream<Uint8Array> {
