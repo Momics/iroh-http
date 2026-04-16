@@ -32,6 +32,7 @@ import {
   rawServe,
   secretKeySign,
   stopServe,
+  waitEndpointClosed,
 } from "./src/adapter.ts";
 export { generateSecretKey, publicKeyVerify, secretKeySign };
 export { PublicKey, SecretKey } from "@momics/iroh-http-shared";
@@ -52,6 +53,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     allocBodyWriter: makeAllocBodyWriter(info.endpointHandle),
     closeEndpoint,
     stopServe,
+    nativeClosed: waitEndpointClosed(info.endpointHandle),
     addrFns: denoAddrFns,
     discoveryFns: denoDiscoveryFns,
     sessionFns: denoSessionFns,

@@ -154,6 +154,7 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
     "closeEndpoint",
     "allocFetchToken",
     "cancelInFlight",
+    "waitEndpointClosed",
     "nodeAddr",
     "homeRelay",
     "peerInfo",
@@ -526,6 +527,13 @@ export function stopServe(handle: number): void {
   call<Record<never, never>>("stopServe", { endpointHandle: handle }).catch(
     () => {},
   );
+}
+
+/** Resolves when the endpoint has been fully closed (explicit or native). */
+export function waitEndpointClosed(handle: number): Promise<void> {
+  return call<Record<never, never>>("waitEndpointClosed", {
+    endpointHandle: handle,
+  }).then(() => {});
 }
 
 // ── Address introspection ──────────────────────────────────────────────────────

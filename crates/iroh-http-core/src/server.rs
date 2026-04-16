@@ -594,6 +594,7 @@ where
     let drain_dur = drain_timeout;
     let total_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let (done_tx, done_rx) = tokio::sync::watch::channel(false);
+    let endpoint_closed_tx = endpoint.inner.closed_tx.clone();
 
     let join = tokio::spawn(async move {
         let ep = endpoint.raw().clone();
@@ -608,7 +609,11 @@ where
                 }
                 inc = ep.accept() => match inc {
                     Some(i) => i,
-                    None => break,
+                    None => {
+                        tracing::info!("iroh-http: endpoint closed (accept returned None)");
+                        let _ = endpoint_closed_tx.send(true);
+                        break;
+                    }
                 }
             };
 
