@@ -186,10 +186,12 @@ export function makeFetch(
 
     // Wire AbortSignal to cancel the body reader (§3).
     // Keep a reference to the listener so we can remove it when the body closes (§1.2).
+    // Uses `once: true` so the listener auto-removes after firing — prevents leaks
+    // when the response body is never consumed by the caller.
     let cancelOnAbort: (() => void) | null = null;
     if (signal) {
       cancelOnAbort = () => bridge.cancelRequest(rawRes.bodyHandle);
-      signal.addEventListener("abort", cancelOnAbort);
+      signal.addEventListener("abort", cancelOnAbort, { once: true });
     }
 
     // Wrap response body in a ReadableStream.
