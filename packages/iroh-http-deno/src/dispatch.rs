@@ -24,7 +24,8 @@ use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
     parse_direct_addrs, registry,
     server::respond,
-    ConnectionEvent, RequestPayload,
+    ConnectionEvent, DiscoveryOptions, NetworkingOptions, PoolOptions, RequestPayload,
+    StreamingOptions,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -210,25 +211,32 @@ async fn create_endpoint(p: Value) -> Value {
 
     let opts = NodeOptions {
         key,
-        idle_timeout_ms: args.idle_timeout,
-        relay_mode: args.relay_mode,
-        relays: args.relays.unwrap_or_default(),
-        bind_addrs: args.bind_addrs.unwrap_or_default(),
-        dns_discovery: args.dns_discovery,
-        dns_discovery_enabled: args.dns_discovery_enabled.unwrap_or(true),
+        networking: NetworkingOptions {
+            relay_mode: args.relay_mode,
+            relays: args.relays.unwrap_or_default(),
+            bind_addrs: args.bind_addrs.unwrap_or_default(),
+            idle_timeout_ms: args.idle_timeout,
+            proxy_url: args.proxy_url,
+            proxy_from_env: args.proxy_from_env.unwrap_or(false),
+            disabled: args.disable_networking.unwrap_or(false),
+        },
+        discovery: DiscoveryOptions {
+            dns_server: args.dns_discovery,
+            enabled: args.dns_discovery_enabled.unwrap_or(true),
+        },
+        pool: PoolOptions {
+            max_connections: args.max_pooled_connections,
+            idle_timeout_ms: args.pool_idle_timeout_ms,
+        },
+        streaming: StreamingOptions {
+            channel_capacity: args.channel_capacity,
+            max_chunk_size_bytes: args.max_chunk_size_bytes,
+            drain_timeout_ms: args.drain_timeout,
+            handle_ttl_ms: args.handle_ttl,
+        },
         capabilities: Vec::new(),
-        channel_capacity: args.channel_capacity,
-        max_chunk_size_bytes: args.max_chunk_size_bytes,
-        max_consecutive_errors: args.max_consecutive_errors,
-        disable_networking: args.disable_networking.unwrap_or(false),
-        drain_timeout_ms: args.drain_timeout,
-        handle_ttl_ms: args.handle_ttl,
-        max_pooled_connections: args.max_pooled_connections,
-        pool_idle_timeout_ms: args.pool_idle_timeout_ms,
-        max_header_size: args.max_header_bytes,
-        proxy_url: args.proxy_url,
-        proxy_from_env: args.proxy_from_env.unwrap_or(false),
         keylog: args.keylog.unwrap_or(false),
+        max_header_size: args.max_header_bytes,
         server_limits: iroh_http_core::server::ServerLimits {
             max_concurrency: args.max_concurrency,
             max_connections_per_peer: args.max_connections_per_peer,

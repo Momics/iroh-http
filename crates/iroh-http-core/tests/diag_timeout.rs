@@ -1,6 +1,6 @@
 //! Diagnostic test — captures iroh trace output during a connect timeout.
 
-use iroh_http_core::{session_accept, session_connect, IrohEndpoint, NodeOptions};
+use iroh_http_core::{session_accept, session_connect, IrohEndpoint, NetworkingOptions, NodeOptions};
 
 /// Reproduce exactly what bidi_stream.rs does, in this binary — NO tracing.
 ///
@@ -11,7 +11,7 @@ use iroh_http_core::{session_accept, session_connect, IrohEndpoint, NodeOptions}
 #[ignore = "diagnostic only — run explicitly when investigating connect timeouts"]
 async fn diag_session_connect() {
     let opts = || NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let a = IrohEndpoint::bind(opts()).await.unwrap();

@@ -4,14 +4,17 @@ use bytes::Bytes;
 use iroh_http_core::{
     session_accept, session_close, session_closed, session_connect, session_create_uni_stream,
     session_max_datagram_size, session_next_uni_stream, session_recv_datagram,
-    session_send_datagram, IrohEndpoint, NodeOptions,
+    session_send_datagram, IrohEndpoint, NetworkingOptions, NodeOptions,
 };
 
 /// Create a pair of locally-connected endpoints (relay disabled).
 async fn make_pair() -> (IrohEndpoint, IrohEndpoint) {
     let opts = || NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
         ..Default::default()
     };
     let a = IrohEndpoint::bind(opts()).await.unwrap();

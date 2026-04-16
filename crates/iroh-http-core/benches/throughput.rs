@@ -13,15 +13,18 @@ use iroh_http_core::{
     serve,
     server::{respond, ServeOptions},
     stream::make_body_channel,
-    IrohEndpoint, NodeOptions, RequestPayload,
+    IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload,
 };
 
 // ── Fixture helpers ───────────────────────────────────────────────────────────
 
 fn local_opts() -> NodeOptions {
     NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
