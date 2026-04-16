@@ -36,11 +36,26 @@ function handle(req) {
   if (parts[0] === "echo-length") {
     return req.arrayBuffer().then((buf) => new Response(String(buf.byteLength), { status: 200 }));
   }
+  if (parts[0] === "echo-query") {
+    return new Response(url.search, { status: 200 });
+  }
+  if (parts[0] === "echo-header-count") {
+    const count = [...req.headers].length;
+    return new Response(String(count), { status: 200 });
+  }
   if (parts[0] === "header" && parts[1]) {
     return new Response(req.headers.get(parts[1]) ?? "", { status: 200 });
   }
   if (parts[0] === "set-header" && parts[1] && parts[2]) {
     return new Response(null, { status: 200, headers: { [parts[1]]: parts[2] } });
+  }
+  if (parts[0] === "set-headers" && parts[1]) {
+    const n = parseInt(parts[1], 10);
+    if (!isNaN(n) && n >= 0) {
+      const hdrs = {};
+      for (let i = 0; i < n; i++) hdrs[`x-h-${i}`] = `v${i}`;
+      return new Response(null, { status: 200, headers: hdrs });
+    }
   }
   if (parts[0] === "stream" && parts[1]) {
     const n = parseInt(parts[1], 10);

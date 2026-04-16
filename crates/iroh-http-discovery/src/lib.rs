@@ -138,3 +138,61 @@ pub fn start_advertise(
     ep.address_lookup().add(Arc::clone(&mdns));
     Ok(AdvertiseSession { _mdns: mdns })
 }
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn peer_discovery_event_active_construction() {
+        let ev = PeerDiscoveryEvent {
+            is_active: true,
+            node_id: "node123".to_string(),
+            addrs: vec!["127.0.0.1:4000".to_string(), "relay://r.example.com".to_string()],
+        };
+        assert!(ev.is_active);
+        assert_eq!(ev.node_id, "node123");
+        assert_eq!(ev.addrs.len(), 2);
+        assert!(ev.addrs.iter().any(|a| a.contains("127.0.0.1")));
+    }
+
+    #[test]
+    fn peer_discovery_event_expired_construction() {
+        let ev = PeerDiscoveryEvent {
+            is_active: false,
+            node_id: "expired_node".to_string(),
+            addrs: vec![],
+        };
+        assert!(!ev.is_active);
+        assert_eq!(ev.node_id, "expired_node");
+        assert!(ev.addrs.is_empty(), "expired events carry no addresses");
+    }
+
+    #[test]
+    fn peer_discovery_event_clone_preserves_all_fields() {
+        let original = PeerDiscoveryEvent {
+            is_active: true,
+            node_id: "abc".to_string(),
+            addrs: vec!["10.0.0.1:1234".to_string()],
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.is_active, original.is_active);
+        assert_eq!(cloned.node_id, original.node_id);
+        assert_eq!(cloned.addrs, original.addrs);
+    }
+
+    /// Verify mpsc channel semantics that `BrowseSession` relies on:
+    /// when the sender is dropped the receiver's `recv()` returns `None`.
+    /// This is the core invariant that `next_event()` depends on for clean shutdown.
+    #[tokio::test]
+    async fn channel_close_on_sender_drop() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(1);
+        drop(tx);
+        assert!(
+            rx.recv().await.is_none(),
+            "recv() must return None when all senders are dropped"
+        );
+    }
+}
