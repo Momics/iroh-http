@@ -15,6 +15,34 @@ use iroh::address_lookup::{DiscoveryEvent, MdnsAddressLookup};
 #[cfg(feature = "mdns")]
 use std::sync::Arc;
 
+// ── DiscoveryError ────────────────────────────────────────────────────────────
+
+/// Structured error returned by [`start_browse`] and [`start_advertise`].
+///
+/// Using an enum instead of `String` lets callers handle different failure
+/// modes programmatically (issue-45 fix).
+#[derive(Debug)]
+pub enum DiscoveryError {
+    /// The mDNS subsystem could not be initialised (e.g., network interface
+    /// unavailable, permission denied, unsupported OS).
+    Setup(String),
+    /// The provided service name is invalid (e.g., contains illegal characters).
+    InvalidServiceName(String),
+}
+
+impl std::fmt::Display for DiscoveryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DiscoveryError::Setup(msg) => write!(f, "mDNS setup failed: {msg}"),
+            DiscoveryError::InvalidServiceName(msg) => {
+                write!(f, "invalid mDNS service name: {msg}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DiscoveryError {}
+
 // ── Peer discovery event ─────────────────────────────────────────────────────
 
 /// A discovery event suitable for FFI transport.
@@ -83,13 +111,13 @@ impl BrowseSession {
 pub async fn start_browse(
     ep: &iroh::Endpoint,
     service_name: &str,
-) -> Result<BrowseSession, String> {
+) -> Result<BrowseSession, DiscoveryError> {
     let mdns = Arc::new(
         MdnsAddressLookup::builder()
             .advertise(false)
             .service_name(service_name)
             .build(ep.id())
-            .map_err(|e| e.to_string())?,
+            .map_err(|e| DiscoveryError::Setup(e.to_string()))?,
     );
     ep.address_lookup().add(Arc::clone(&mdns));
 
@@ -127,13 +155,13 @@ pub struct AdvertiseSession {
 pub fn start_advertise(
     ep: &iroh::Endpoint,
     service_name: &str,
-) -> Result<AdvertiseSession, String> {
+) -> Result<AdvertiseSession, DiscoveryError> {
     let mdns = Arc::new(
         MdnsAddressLookup::builder()
             .advertise(true)
             .service_name(service_name)
             .build(ep.id())
-            .map_err(|e| e.to_string())?,
+            .map_err(|e| DiscoveryError::Setup(e.to_string()))?,
     );
     ep.address_lookup().add(Arc::clone(&mdns));
     Ok(AdvertiseSession { _mdns: mdns })

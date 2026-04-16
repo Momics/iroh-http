@@ -391,9 +391,62 @@ export interface NodeOptions {
 export interface IrohRequest extends Request {
   /**
    * A promise that resolves to the request trailer headers once the request
-   * body has been fully consumed, or `null` if no trailers were sent.
+   * body has been fully consumed. Resolves to an empty `Headers` if no
+   * trailers were sent (the runtime never returns `null` — issue-48 fix).
    */
-  trailers: Promise<Headers | null>;
+  trailers: Promise<Headers>;
+}
+
+/**
+ * The `Response`-like object returned by `IrohNode.fetch()`.
+ *
+ * Extends the standard `Response` with a `trailers` promise so that callers
+ * can access response trailer headers without casting. The trailers are
+ * populated after the response body is fully consumed.
+ *
+ * ```ts
+ * import type { IrohResponse } from "@momics/iroh-http-shared";
+ *
+ * const res: IrohResponse = await node.fetch(peer, '/api/data');
+ * const body = await res.text();
+ * const checksum = (await res.trailers).get('x-checksum');
+ * ```
+ */
+export interface IrohResponse extends Response {
+  /**
+   * Resolves to the response trailer headers after the response body is
+   * fully consumed. Always resolves to a `Headers` object (never `null`).
+   */
+  trailers: Promise<Headers>;
+}
+
+/**
+ * A `Response`-like object that a serve handler may return to include
+ * response trailer headers.
+ *
+ * ```ts
+ * node.serve(async (req) => {
+ *   const res = new Response("body");
+ *   (res as IrohServeResponse).trailers = () => new Headers({ 'x-checksum': '...' });
+ *   return res;
+ * });
+ * ```
+ *
+ * The simpler way is to simply attach the `trailers` function to any `Response`:
+ *
+ * ```ts
+ * return Object.assign(new Response("body"), {
+ *   trailers: () => new Headers({ 'x-checksum': hash }),
+ * });
+ * ```
+ */
+export interface IrohServeResponse extends Response {
+  /**
+   * Called after the response body has been fully sent.
+   * Return the trailer headers to send to the client.
+   * Only invoked when the response includes a `Trailer:` header.
+   */
+  trailers?: () => Headers | Promise<Headers>;
 }
 
 /**
@@ -460,18 +513,18 @@ export interface IrohNode {
    *
    * @param input - `httpi://` URL string or URL object (web-standard form).
    * @param init - Standard `RequestInit` options plus iroh-specific `directAddrs`.
-   * @returns A standard `Response` with an additional `trailers` promise.
+   * @returns An `IrohResponse` — a standard `Response` with an additional `trailers` promise.
    * @throws {IrohConnectError} If the peer is unreachable.
    * @throws {IrohAbortError} If `init.signal` is aborted.
    */
-  fetch(input: string | URL, init?: IrohFetchInit): Promise<Response>;
+  fetch(input: string | URL, init?: IrohFetchInit): Promise<IrohResponse>;
   /**
    * Send an HTTP request to a remote node (legacy form).
    *
    * @param peer - Remote node's public key or base32 node ID string.
    * @param input - Request URL path, e.g. `"/api/data"` or full `"httpi://nodeId/path"`.
    * @param init - Standard `RequestInit` options plus iroh-specific `directAddrs`.
-   * @returns A standard `Response` with an additional `trailers` promise.
+   * @returns An `IrohResponse` — a standard `Response` with an additional `trailers` promise.
    * @throws {IrohConnectError} If the peer is unreachable.
    * @throws {IrohAbortError} If `init.signal` is aborted.
    */
@@ -479,7 +532,7 @@ export interface IrohNode {
     peer: PublicKey | string,
     input: string | URL,
     init?: IrohFetchInit,
-  ): Promise<Response>;
+  ): Promise<IrohResponse>;
   /**
    * Start listening for incoming HTTP requests.
    *
