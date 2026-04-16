@@ -95,7 +95,7 @@ pub async fn start_browse(
 
     // subscribe() returns impl Stream — we manually drive it into an mpsc channel
     // so BrowseSession has a concrete Receiver type.
-    use n0_future::StreamExt;
+    use futures::StreamExt;
     let mut stream = mdns.subscribe().await;
     let (tx, rx) = tokio::sync::mpsc::channel(64);
     tokio::spawn(async move {

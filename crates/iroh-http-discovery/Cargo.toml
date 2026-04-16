@@ -16,4 +16,4 @@ mdns = ["iroh/address-lookup-mdns"]
 [dependencies]
 iroh = { workspace = true }
 tokio = { workspace = true }
-n0-future = "0.3"
+futures = { workspace = true }
