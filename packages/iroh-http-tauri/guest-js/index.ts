@@ -190,9 +190,12 @@ const rawServe: RawServeFn = (
       console.error("[iroh-http-tauri] serve error:", err)
     );
 
-  // The serve loop is driven by the Tauri Channel (event-based, no JS polling).
-  // Return a resolved promise to satisfy the RawServeFn contract.
-  return Promise.resolve();
+  // Return a promise that resolves when the native serve loop has fully exited.
+  // The `wait_serve_stop` command blocks until stop_serve() is called and all
+  // in-flight requests have been drained on the Rust side.
+  return invoke<void>(`${PLUGIN}|wait_serve_stop`, {
+    endpointHandle: Number(endpointHandle),
+  });
 };
 
 const allocBodyWriter: AllocBodyWriterFn = (): Promise<bigint> => {

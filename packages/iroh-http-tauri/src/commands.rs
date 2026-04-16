@@ -428,6 +428,18 @@ pub fn stop_serve(endpoint_handle: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Wait until the serve loop has fully exited (all requests drained).
+///
+/// Resolves immediately if serve was never started. Use after `stop_serve` to
+/// confirm the loop has actually terminated before safe-to-free teardown.
+#[command]
+pub async fn wait_serve_stop(endpoint_handle: u64) -> Result<(), String> {
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    ep.wait_serve_stop().await;
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RespondArgs {

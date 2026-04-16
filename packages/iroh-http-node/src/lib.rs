@@ -801,6 +801,17 @@ pub fn stop_serve(endpoint_handle: u32) -> napi::Result<()> {
     Ok(())
 }
 
+/// Wait until the serve loop has fully exited (all in-flight requests drained).
+///
+/// Resolves immediately if `rawServe` was never called on this endpoint.
+/// Call this after `stopServe` to confirm the loop has actually terminated.
+#[napi]
+pub async fn wait_serve_stop(endpoint_handle: u32) -> napi::Result<()> {
+    let ep = get_endpoint(endpoint_handle)?;
+    ep.wait_serve_stop().await;
+    Ok(())
+}
+
 // ── rawConnect ────────────────────────────────────────────────────────────────
 
 /// Handles for a full-duplex QUIC stream.

@@ -66,6 +66,8 @@ pub struct ServeHandle {
     join: tokio::task::JoinHandle<()>,
     shutdown_notify: Arc<tokio::sync::Notify>,
     drain_timeout: std::time::Duration,
+    /// Resolves to `true` once the serve task has fully exited.
+    done_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 impl ServeHandle {
@@ -81,6 +83,13 @@ impl ServeHandle {
     }
     pub fn drain_timeout(&self) -> std::time::Duration {
         self.drain_timeout
+    }
+    /// Subscribe to the serve-loop-done signal.
+    ///
+    /// The returned receiver resolves (changes to `true`) once the serve task
+    /// has fully exited, including the drain phase.
+    pub fn subscribe_done(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.done_rx.clone()
     }
 }
 
@@ -584,6 +593,7 @@ where
     let drain_sem = drain_semaphore.clone();
     let drain_dur = drain_timeout;
     let total_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (done_tx, done_rx) = tokio::sync::watch::channel(false);
 
     let join = tokio::spawn(async move {
         let ep = endpoint.raw().clone();
@@ -772,12 +782,14 @@ where
             Ok(Err(_)) => tracing::warn!("iroh-http: semaphore closed during drain"),
             Err(_) => tracing::warn!("iroh-http: drain timed out after {}s", drain_dur.as_secs()),
         }
+        let _ = done_tx.send(true);
     });
 
     ServeHandle {
         join,
         shutdown_notify,
         drain_timeout: drain_dur,
+        done_rx,
     }
 }
 

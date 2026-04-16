@@ -153,6 +153,10 @@ pub(crate) struct EndpointInner {
     pub handles: HandleStore,
     /// Active serve handle, if `serve()` has been called.
     pub serve_handle: std::sync::Mutex<Option<ServeHandle>>,
+    /// Done-signal receiver from the active serve task.
+    /// Stored separately so `wait_serve_stop()` can await it without holding
+    /// the `serve_handle` lock for the duration of the wait.
+    pub serve_done_rx: std::sync::Mutex<Option<tokio::sync::watch::Receiver<bool>>>,
     /// Body compression options, if the feature is enabled.
     #[cfg(feature = "compression")]
     pub compression: Option<CompressionOptions>,
@@ -317,6 +321,7 @@ impl IrohEndpoint {
             },
             handles: HandleStore::new(store_config),
             serve_handle: std::sync::Mutex::new(None),
+            serve_done_rx: std::sync::Mutex::new(None),
             #[cfg(feature = "compression")]
             compression: opts.compression,
         });
@@ -405,6 +410,11 @@ impl IrohEndpoint {
     pub fn set_serve_handle(&self, handle: ServeHandle) {
         *self
             .inner
+            .serve_done_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(handle.subscribe_done());
+        *self
+            .inner
             .serve_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(handle);
@@ -423,6 +433,23 @@ impl IrohEndpoint {
             .as_ref()
         {
             h.shutdown();
+        }
+    }
+
+    /// Wait until the serve loop has fully exited (serve task drained and finished).
+    ///
+    /// Returns immediately if `serve()` was never called.
+    pub async fn wait_serve_stop(&self) {
+        let rx = self
+            .inner
+            .serve_done_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(mut rx) = rx {
+            // wait_for returns Err only if the sender is dropped; being dropped
+            // also means the task has exited, so treat both outcomes as "done".
+            let _ = rx.wait_for(|v| *v).await;
         }
     }
 

@@ -25,6 +25,7 @@ fn main() {
         // HTTP server
         "serve",
         "stop_serve",
+        "wait_serve_stop",
         "respond_to_request",
         // Raw / duplex connect
         "raw_connect",
