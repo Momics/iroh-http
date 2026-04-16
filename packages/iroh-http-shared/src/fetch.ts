@@ -126,6 +126,13 @@ export function makeFetch(
       bodyPipePromise = pipeToWriter(bridge, bodyStream, reqBodyHandle);
     }
 
+    // Allocate request trailer sender if the caller provided request trailers.
+    let reqTrailersHandle: bigint | null = null;
+    const reqTrailerPairs = init?.trailers ? normaliseHeaders(init.trailers) : null;
+    if (reqTrailerPairs && reqTrailerPairs.length > 0 && reqBodyHandle !== null) {
+      reqTrailersHandle = BigInt(await bridge.allocTrailerSender(endpointHandle));
+    }
+
     // Allocate a Rust-side cancellation token so that AbortSignal can cancel
     // the transport even before the response head arrives (§3 enhanced).
     const fetchToken = await bridge.allocFetchToken(endpointHandle);
@@ -164,6 +171,7 @@ export function makeFetch(
             method,
             headers,
             reqBodyHandle,
+            reqTrailersHandle,
             fetchToken,
             directAddrs,
           ),
@@ -176,6 +184,7 @@ export function makeFetch(
           method,
           headers,
           reqBodyHandle,
+          reqTrailersHandle,
           fetchToken,
           directAddrs,
         );
@@ -192,6 +201,14 @@ export function makeFetch(
     }
 
     if (bodyPipePromise) {
+      // If request trailers are provided, send them after the body pipe completes.
+      if (reqTrailersHandle !== null && reqTrailerPairs && reqTrailerPairs.length > 0) {
+        const trailerHandle = reqTrailersHandle;
+        const trailers = reqTrailerPairs;
+        bodyPipePromise.then(() => bridge.sendTrailers(trailerHandle, trailers)).catch((err) =>
+          console.error("[iroh-http] request trailer send error:", err)
+        );
+      }
       bodyPipePromise.catch((err) =>
         console.error("[iroh-http] request body pipe error:", err)
       );

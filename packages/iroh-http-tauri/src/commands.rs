@@ -292,6 +292,17 @@ pub fn alloc_body_writer(endpoint_handle: u64) -> Result<u64, String> {
     Ok(handle)
 }
 
+/// Allocate a request trailer sender handle for use with `rawFetch`.
+///
+/// Pass the returned handle as `reqTrailersHandle` to `rawFetch`, then call
+/// `sendTrailers(endpointHandle, handle, trailers)` after sending the request body.
+#[command]
+pub fn alloc_trailer_sender(endpoint_handle: u64) -> Result<u64, String> {
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    ep.handles().alloc_trailer_sender().map_err(|e| core_error_to_json(&e))
+}
+
 /// Allocate a cancellation token for an upcoming fetch call.
 #[command]
 pub fn alloc_fetch_token(endpoint_handle: u64) -> Result<u64, String> {
@@ -321,6 +332,7 @@ pub struct RawFetchArgs {
     pub method: String,
     pub headers: Vec<Vec<String>>,
     pub req_body_handle: Option<u64>,
+    pub req_trailers_handle: Option<u64>,
     pub fetch_token: Option<u64>,
     pub direct_addrs: Option<Vec<String>>,
 }
@@ -351,7 +363,7 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
     let req_body_reader = args.req_body_handle.and_then(|h| ep.handles().claim_pending_reader(h));
 
     let addrs = parse_direct_addrs(&args.direct_addrs)?;
-    let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.fetch_token, addrs.as_deref())
+    let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.req_trailers_handle, args.fetch_token, addrs.as_deref())
         .await.map_err(|e| core_error_to_json(&e))?;
 
     let resp_headers: Vec<Vec<String>> = res

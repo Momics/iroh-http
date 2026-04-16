@@ -153,6 +153,7 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
     "nextConnectionEvent",
     "respond",
     "allocBodyWriter",
+    "allocTrailerSender",
     "createEndpoint",
     "closeEndpoint",
     "allocFetchToken",
@@ -299,6 +300,10 @@ export function makeBridge(endpointHandle: number): Bridge {
   ): Promise<void> {
     await call<Record<never, never>>("sendTrailers", { endpointHandle, handle, trailers });
   },
+  async allocTrailerSender(_endpointHandle: number): Promise<bigint> {
+    const res = await call<{ handle: number }>("allocTrailerSender", { endpointHandle });
+    return BigInt(res.handle);
+  },
   };
 }
 
@@ -311,6 +316,7 @@ export const rawFetch: RawFetchFn = async (
   method: string,
   headers: [string, string][],
   reqBodyHandle: bigint | null,
+  reqTrailersHandle: bigint | null,
   fetchToken: bigint,
   directAddrs: string[] | null,
 ) => {
@@ -327,6 +333,7 @@ export const rawFetch: RawFetchFn = async (
     method,
     headers,
     reqBodyHandle: reqBodyHandle ?? null,
+    reqTrailersHandle: reqTrailersHandle ?? null,
     fetchToken,
     directAddrs: directAddrs ?? null,
   });

@@ -108,6 +108,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "peerStats" => peer_stats_dispatch(p).await,
         "endpointStats" => endpoint_stats_dispatch(p),
         "allocBodyWriter" => alloc_body_writer_dispatch(p),
+        "allocTrailerSender" => alloc_trailer_sender_dispatch(p),
         "allocFetchToken" => alloc_fetch_token_dispatch(p),
         "cancelInFlight" => cancel_in_flight_dispatch(p),
         "nextChunk" => next_chunk_dispatch(p).await,
@@ -420,6 +421,17 @@ fn alloc_fetch_token_dispatch(p: Value) -> Value {
     }
 }
 
+fn alloc_trailer_sender_dispatch(p: Value) -> Value {
+    let ep = match require_endpoint(&p) {
+        Ok(ep) => ep,
+        Err(e) => return e,
+    };
+    match ep.handles().alloc_trailer_sender() {
+        Ok(handle) => ok(json!({ "handle": handle })),
+        Err(e) => err_core(e),
+    }
+}
+
 fn cancel_in_flight_dispatch(p: Value) -> Value {
     let ep = match require_endpoint(&p) {
         Ok(ep) => ep,
@@ -558,6 +570,7 @@ struct RawFetchPayload {
     method: String,
     headers: Vec<Vec<String>>,
     req_body_handle: Option<u64>,
+    req_trailers_handle: Option<u64>,
     fetch_token: Option<u64>,
     direct_addrs: Option<Vec<String>>,
 }
@@ -590,6 +603,7 @@ async fn raw_fetch(p: Value) -> Value {
     let reader = args
         .req_body_handle
         .and_then(|h| ep.handles().claim_pending_reader(h));
+    let req_trailer_sender_handle = args.req_trailers_handle;
     let addrs = match parse_direct_addrs(&args.direct_addrs) {
         Ok(a) => a,
         Err(e) => return err(e),
@@ -601,6 +615,7 @@ async fn raw_fetch(p: Value) -> Value {
         &args.method,
         &pairs,
         reader,
+        req_trailer_sender_handle,
         args.fetch_token,
         addrs.as_deref(),
     )

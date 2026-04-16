@@ -316,6 +316,9 @@ pub struct HandleStore {
         Mutex<SlotMap<RequestHeadKey, Timed<tokio::sync::oneshot::Sender<ResponseHeadEntry>>>>,
     fetch_cancels: Mutex<SlotMap<FetchCancelKey, Timed<Arc<tokio::sync::Notify>>>>,
     pending_readers: Mutex<HashMap<u64, PendingReaderEntry>>,
+    /// Pending trailer receivers matched to allocated sender handles.
+    /// Keyed by the tx handle; claimed by `fetch()` before the request is sent.
+    pending_trailer_rxs: Mutex<HashMap<u64, TrailerRx>>,
     pub(crate) config: StoreConfig,
 }
 
@@ -331,6 +334,7 @@ impl HandleStore {
             request_heads: Mutex::new(SlotMap::with_key()),
             fetch_cancels: Mutex::new(SlotMap::with_key()),
             pending_readers: Mutex::new(HashMap::new()),
+            pending_trailer_rxs: Mutex::new(HashMap::new()),
             config,
         }
     }
@@ -546,6 +550,34 @@ impl HandleStore {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(handle_to_trailer_tx_key(handle));
+    }
+
+    /// Allocate a `(tx, rx)` trailer oneshot pair for sending request trailers
+    /// from JavaScript to the Rust body encoder.
+    ///
+    /// Returns the sender handle — JS holds this and calls `send_trailers` when
+    /// it is done writing the request body.  The matching `rx` is stored in
+    /// `pending_trailer_rxs` and claimed by `fetch()` via
+    /// [`claim_pending_trailer_rx`](Self::claim_pending_trailer_rx).
+    pub fn alloc_trailer_sender(&self) -> Result<u64, CoreError> {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
+        let handle = self.insert_trailer_sender(tx)?;
+        self.pending_trailer_rxs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(handle, rx);
+        Ok(handle)
+    }
+
+    /// Claim the trailer receiver that was paired with the given sender handle.
+    ///
+    /// Returns `None` if the handle was never allocated via
+    /// [`alloc_trailer_sender`](Self::alloc_trailer_sender) or has already been claimed.
+    pub fn claim_pending_trailer_rx(&self, sender_handle: u64) -> Option<TrailerRx> {
+        self.pending_trailer_rxs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&sender_handle)
     }
 
     /// Deliver trailers from the JS side to the waiting Rust pump task.

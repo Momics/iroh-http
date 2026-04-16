@@ -20,6 +20,7 @@ import {
   homeRelay as napiHomeRelay,
   jsAllocBodyWriter,
   jsAllocFetchToken,
+  jsAllocTrailerSender,
   jsCancelInFlight,
   jsCancelRequest,
   jsFinishBody,
@@ -93,16 +94,34 @@ const rawFetch: RawFetchFn = async (
   method,
   headers,
   reqBodyHandle,
+  reqTrailersHandle,
   fetchToken,
   directAddrs,
 ) => {
-  const res = await napiRawFetch(
+  const res = await (napiRawFetch as (
+    endpointHandle: number,
+    nodeId: string,
+    url: string,
+    method: string,
+    headers: string[][],
+    reqBodyHandle: bigint | null,
+    reqTrailersHandle: bigint | null,
+    fetchToken: bigint,
+    directAddrs: string[] | null,
+  ) => Promise<{
+    status: number;
+    headers: string[][];
+    bodyHandle: bigint;
+    url: string;
+    trailersHandle: bigint;
+  }>)(
     endpointHandle,
     nodeId,
     url,
     method,
     headers as string[][],
     reqBodyHandle ?? null,
+    reqTrailersHandle ?? null,
     fetchToken,
     directAddrs ?? null,
   );
@@ -356,6 +375,8 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
       jsSendTrailers(eh, handle, trailers as string[][]);
       return Promise.resolve();
     },
+    allocTrailerSender: (_endpointHandle: number) =>
+      BigInt(jsAllocTrailerSender(eh)),
   };
 
   const nodeAllocBodyWriter: AllocBodyWriterFn = () => jsAllocBodyWriter(eh);

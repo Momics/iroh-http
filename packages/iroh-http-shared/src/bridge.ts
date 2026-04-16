@@ -39,11 +39,19 @@ export interface Bridge {
    */
   nextTrailer(handle: bigint): Promise<[string, string][] | null>;
   /**
-   * Deliver response trailers from the JS handler to the Rust server task.
-   * Call after `finishBody`. This must be called exactly once per
-   * `resTrailersHandle`; calling it resolves the waiting pump task.
+   * Deliver trailers from the JS handler to the Rust server task (response),
+   * or from the JS caller to the Rust body encoder (request trailers).
+   * Call after `finishBody`. This must be called exactly once per handle;
+   * calling it resolves the waiting pump task.
    */
   sendTrailers(handle: bigint, trailers: [string, string][]): Promise<void>;
+  /**
+   * Allocate a request trailer sender handle.
+   * Call before `rawFetch` when the caller wants to send request trailers.
+   * Pass the returned handle as `reqTrailersHandle` to `rawFetch`, then call
+   * `sendTrailers(handle, trailers)` after `finishBody`.
+   */
+  allocTrailerSender(endpointHandle: number): bigint | Promise<bigint>;
 }
 
 // ── FFI data types ────────────────────────────────────────────────────────────
@@ -467,6 +475,24 @@ export interface IrohFetchInit extends RequestInit {
    * Each entry must be an `"ip:port"` string, e.g. `"127.0.0.1:12345"`.
    */
   directAddrs?: string[];
+  /**
+   * Request trailer headers to send after the request body is complete.
+   *
+   * Only valid when a request body is also provided. Trailers are transmitted
+   * as HTTP/1.1 chunked-encoding trailers — the server handler can read them
+   * via `await req.trailers` after consuming the request body.
+   *
+   * @example
+   * ```ts
+   * const hash = computeHash(data);
+   * const res = await node.fetch(peer, '/upload', {
+   *   method: 'POST',
+   *   body: data,
+   *   trailers: { 'content-md5': hash },
+   * });
+   * ```
+   */
+  trailers?: HeadersInit;
 }
 
 /**
@@ -813,6 +839,7 @@ export type RawFetchFn = (
   method: string,
   headers: [string, string][],
   reqBodyHandle: bigint | null,
+  reqTrailersHandle: bigint | null,
   fetchToken: bigint,
   directAddrs: string[] | null,
 ) => Promise<FfiResponse>;
