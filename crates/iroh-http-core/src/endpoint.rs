@@ -13,80 +13,102 @@ use crate::server::ServeHandle;
 use crate::stream::{HandleStore, StoreConfig};
 use crate::{ALPN, ALPN_DUPLEX};
 
-/// Configuration passed to [`IrohEndpoint::bind`].
-#[derive(Debug, Clone)]
-pub struct NodeOptions {
-    // ── Identity ────────────────────────────────────────────────────────────
-    /// 32-byte Ed25519 secret key.  Generate a fresh one when `None`.
-    pub key: Option<[u8; 32]>,
-
-    // ── Connectivity ────────────────────────────────────────────────────────
-    /// Relay server mode.  `"default"` uses n0's public relays, `"staging"` uses
-    /// the canary relay, `"disabled"` disables relay entirely, and `"custom"` uses
-    /// only the URLs in [`relays`](Self::relays).  Default: `"default"`.
+/// Networking / QUIC transport configuration.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkingOptions {
+    /// Relay server mode. `"default"`, `"staging"`, `"disabled"`, or `"custom"`. Default: `"default"`.
     pub relay_mode: Option<String>,
-    /// Custom relay server URLs.  Only used when `relay_mode` is `"custom"`.
+    /// Custom relay server URLs. Only used when `relay_mode` is `"custom"`.
     pub relays: Vec<String>,
-    /// UDP socket addresses to bind.  Empty means OS-assigned (`"0.0.0.0:0"`).
+    /// UDP socket addresses to bind. Empty means OS-assigned.
     pub bind_addrs: Vec<String>,
     /// Milliseconds before an idle QUIC connection is cleaned up.
     pub idle_timeout_ms: Option<u64>,
-
-    // ── Discovery ───────────────────────────────────────────────────────────
-    /// DNS discovery server URL override.  Uses n0 DNS defaults when `None`.
-    pub dns_discovery: Option<String>,
-    /// Whether to enable DNS discovery.  Default: true.
-    pub dns_discovery_enabled: bool,
-
-    // ── Capabilities ────────────────────────────────────────────────────────
-    /// ALPN capabilities to advertise.  When empty, the endpoint advertises
-    /// `iroh-http/2` (HTTP) and `iroh-http/2-duplex` (duplex/session) in
-    /// preference order.
-    pub capabilities: Vec<String>,
-
-    // ── Power-user options ──────────────────────────────────────────────────
-    /// HTTP proxy URL for relay traffic.  For corporate networks.
+    /// HTTP proxy URL for relay traffic.
     pub proxy_url: Option<String>,
     /// Read `HTTP_PROXY` / `HTTPS_PROXY` env vars for proxy config.
     pub proxy_from_env: bool,
-    /// Write TLS session keys to `$SSLKEYLOGFILE`.  Dev/debug only.
-    pub keylog: bool,
-    /// Capacity (in chunks) of each body channel.  Default: 32.
-    pub channel_capacity: Option<usize>,
-    /// Maximum byte length of a single chunk in `send_chunk`.  Default: 65536.
-    pub max_chunk_size_bytes: Option<usize>,
-    /// Number of consecutive accept errors before the serve loop gives up.  Default: 5.
-    /// Convenience alias — also accessible via `server_limits.max_consecutive_errors`.
-    pub max_consecutive_errors: Option<usize>,
-    /// Disable relay servers and DNS discovery entirely.
+    /// Disable relay servers and DNS discovery entirely. Overrides `relay_mode`.
     /// Useful for in-process tests where endpoints connect via direct addresses.
-    pub disable_networking: bool,
-    /// Milliseconds to wait for a slow body reader before dropping the connection.
-    /// Default: 30 000 (30 s).
-    pub drain_timeout_ms: Option<u64>,
-    /// TTL in milliseconds for slab handle entries.  Expired entries are swept
-    /// every 60 s.  `0` disables sweeping.  Default: 300 000 (5 min).
-    pub handle_ttl_ms: Option<u64>,
+    pub disabled: bool,
+}
+
+/// DNS-based peer discovery configuration.
+#[derive(Debug, Clone)]
+pub struct DiscoveryOptions {
+    /// DNS discovery server URL. Uses n0 DNS defaults when `None`.
+    pub dns_server: Option<String>,
+    /// Whether to enable DNS discovery. Default: `true`.
+    pub enabled: bool,
+}
+
+impl Default for DiscoveryOptions {
+    fn default() -> Self { Self { dns_server: None, enabled: true } }
+}
+
+/// Connection-pool tuning.
+#[derive(Debug, Clone, Default)]
+pub struct PoolOptions {
     /// Maximum number of idle connections to keep in the pool.
-    pub max_pooled_connections: Option<usize>,
+    pub max_connections: Option<usize>,
     /// Milliseconds a pooled connection may remain idle before being evicted.
-    /// `None` (default) keeps connections indefinitely (until closed or the pool
-    /// reaches `max_pooled_connections`).
-    pub pool_idle_timeout_ms: Option<u64>,
-    /// Maximum byte size of the HTTP/1.1 request or response head (status line + headers).
-    /// Default: 65536 (64 KB).  Set to 0 to use the default.
+    pub idle_timeout_ms: Option<u64>,
+}
+
+/// Body-streaming and handle-store configuration.
+#[derive(Debug, Clone, Default)]
+pub struct StreamingOptions {
+    /// Capacity (in chunks) of each body channel. Default: 32.
+    pub channel_capacity: Option<usize>,
+    /// Maximum byte length of a single chunk in `send_chunk`. Default: 65536.
+    pub max_chunk_size_bytes: Option<usize>,
+    /// Milliseconds to wait for a slow body reader. Default: 30000.
+    pub drain_timeout_ms: Option<u64>,
+    /// TTL in ms for slab handle entries. `0` disables sweeping. Default: 300000.
+    pub handle_ttl_ms: Option<u64>,
+}
+
+/// Configuration passed to [`IrohEndpoint::bind`].
+#[derive(Debug, Clone)]
+pub struct NodeOptions {
+    /// 32-byte Ed25519 secret key. Generate a fresh one when `None`.
+    pub key: Option<[u8; 32]>,
+    /// Networking / QUIC transport configuration.
+    pub networking: NetworkingOptions,
+    /// DNS-based peer discovery configuration.
+    pub discovery: DiscoveryOptions,
+    /// Connection-pool tuning.
+    pub pool: PoolOptions,
+    /// Body-streaming and handle-store configuration.
+    pub streaming: StreamingOptions,
+    /// ALPN capabilities to advertise. Empty = advertise iroh-http/2 and iroh-http/2-duplex.
+    pub capabilities: Vec<String>,
+    /// Write TLS session keys to $SSLKEYLOGFILE. Dev/debug only.
+    pub keylog: bool,
+    /// Maximum byte size of the HTTP/1.1 request or response head. `None` or `0` = 65536.
     pub max_header_size: Option<usize>,
-
-    // ── Server limits ───────────────────────────────────────────────────────
-    /// Server-side limits forwarded to the serve loop.  Adding a field here
-    /// forces a corresponding update in `EndpointInner` and `serve_options()`.
+    /// Server-side limits forwarded to the serve loop.
     pub server_limits: crate::server::ServerLimits,
-
-    // ── Compression ─────────────────────────────────────────────────────────
-    /// Body compression options.  `None` disables compression (default).
-    /// Only effective when the `compression` feature is enabled.
     #[cfg(feature = "compression")]
     pub compression: Option<CompressionOptions>,
+}
+
+impl Default for NodeOptions {
+    fn default() -> Self {
+        Self {
+            key: None,
+            networking: NetworkingOptions::default(),
+            discovery: DiscoveryOptions::default(),
+            pool: PoolOptions::default(),
+            streaming: StreamingOptions::default(),
+            capabilities: Vec::new(),
+            keylog: false,
+            max_header_size: None,
+            server_limits: crate::server::ServerLimits::default(),
+            #[cfg(feature = "compression")]
+            compression: None,
+        }
+    }
 }
 
 /// Compression options for response bodies.
@@ -100,35 +122,6 @@ pub struct CompressionOptions {
     pub level: Option<u32>,
 }
 
-impl Default for NodeOptions {
-    fn default() -> Self {
-        Self {
-            key: None,
-            relay_mode: None,
-            relays: Vec::new(),
-            bind_addrs: Vec::new(),
-            idle_timeout_ms: None,
-            dns_discovery: None,
-            dns_discovery_enabled: true,
-            capabilities: Vec::new(),
-            proxy_url: None,
-            proxy_from_env: false,
-            keylog: false,
-            channel_capacity: None,
-            max_chunk_size_bytes: None,
-            max_consecutive_errors: None,
-            disable_networking: false,
-            drain_timeout_ms: None,
-            handle_ttl_ms: None,
-            max_pooled_connections: None,
-            pool_idle_timeout_ms: None,
-            max_header_size: None,
-            server_limits: crate::server::ServerLimits::default(),
-            #[cfg(feature = "compression")]
-            compression: None,
-        }
-    }
-}
 
 /// A shared Iroh endpoint.
 ///
@@ -176,20 +169,33 @@ pub(crate) struct EndpointInner {
 impl IrohEndpoint {
     /// Bind an Iroh endpoint with the supplied options.
     pub async fn bind(opts: NodeOptions) -> Result<Self, crate::CoreError> {
-        let relay_mode = if opts.disable_networking {
+        // Validate: if networking is disabled, relay_mode should not be explicitly set to a
+        // network-requiring mode.
+        if opts.networking.disabled
+            && opts.networking.relay_mode.as_deref()
+                .map_or(false, |m| !matches!(m, "disabled"))
+        {
+            return Err(crate::CoreError::invalid_input(
+                "networking.disabled is true but relay_mode is set to a non-disabled value; \
+                 set relay_mode to \"disabled\" or omit it when networking.disabled is true",
+            ));
+        }
+
+        let relay_mode = if opts.networking.disabled {
             RelayMode::Disabled
         } else {
-            match opts.relay_mode.as_deref() {
+            match opts.networking.relay_mode.as_deref() {
                 None | Some("default") => RelayMode::Default,
                 Some("staging") => RelayMode::Staging,
                 Some("disabled") => RelayMode::Disabled,
                 Some("custom") => {
-                    if opts.relays.is_empty() {
+                    if opts.networking.relays.is_empty() {
                         return Err(crate::CoreError::invalid_input(
                             "relay_mode \"custom\" requires at least one URL in `relays`",
                         ));
                     }
                     let urls = opts
+                        .networking
                         .relays
                         .iter()
                         .map(|u| {
@@ -225,9 +231,9 @@ impl IrohEndpoint {
 
         let mut builder = Endpoint::empty_builder(relay_mode).alpns(alpns);
 
-        // DNS discovery (enabled by default unless disable_networking).
-        if !opts.disable_networking && opts.dns_discovery_enabled {
-            if let Some(ref url_str) = opts.dns_discovery {
+        // DNS discovery (enabled by default unless networking.disabled).
+        if !opts.networking.disabled && opts.discovery.enabled {
+            if let Some(ref url_str) = opts.discovery.dns_server {
                 let url: url::Url = url_str.parse().map_err(|e| {
                     crate::CoreError::invalid_input(format!("invalid dns_discovery URL: {e}"))
                 })?;
@@ -247,7 +253,7 @@ impl IrohEndpoint {
             builder = builder.secret_key(SecretKey::from_bytes(&key_bytes));
         }
 
-        if let Some(ms) = opts.idle_timeout_ms {
+        if let Some(ms) = opts.networking.idle_timeout_ms {
             let timeout = IdleTimeout::try_from(Duration::from_millis(ms)).map_err(|e| {
                 crate::CoreError::invalid_input(format!("idle_timeout_ms out of range: {e}"))
             })?;
@@ -258,7 +264,7 @@ impl IrohEndpoint {
         }
 
         // Bind address(es).
-        for addr_str in &opts.bind_addrs {
+        for addr_str in &opts.networking.bind_addrs {
             let sock: std::net::SocketAddr = addr_str.parse().map_err(|e| {
                 crate::CoreError::invalid_input(format!("invalid bind address \"{addr_str}\": {e}"))
             })?;
@@ -268,12 +274,12 @@ impl IrohEndpoint {
         }
 
         // Proxy configuration.
-        if let Some(ref proxy) = opts.proxy_url {
+        if let Some(ref proxy) = opts.networking.proxy_url {
             let url: url::Url = proxy
                 .parse()
                 .map_err(|e| crate::CoreError::invalid_input(format!("invalid proxy URL: {e}")))?;
             builder = builder.proxy_url(url);
-        } else if opts.proxy_from_env {
+        } else if opts.networking.proxy_from_env {
             builder = builder.proxy_from_env();
         }
 
@@ -288,20 +294,24 @@ impl IrohEndpoint {
 
         let store_config = StoreConfig {
             channel_capacity: opts
+                .streaming
                 .channel_capacity
                 .unwrap_or(crate::stream::DEFAULT_CHANNEL_CAPACITY)
                 .max(1),
             max_chunk_size: opts
+                .streaming
                 .max_chunk_size_bytes
                 .unwrap_or(crate::stream::DEFAULT_MAX_CHUNK_SIZE)
                 .max(1),
             drain_timeout: Duration::from_millis(
-                opts.drain_timeout_ms
+                opts.streaming
+                    .drain_timeout_ms
                     .unwrap_or(crate::stream::DEFAULT_DRAIN_TIMEOUT_MS),
             ),
             max_handles: crate::stream::DEFAULT_MAX_HANDLES,
             ttl: Duration::from_millis(
-                opts.handle_ttl_ms
+                opts.streaming
+                    .handle_ttl_ms
                     .unwrap_or(crate::stream::DEFAULT_SLAB_TTL_MS),
             ),
         };
@@ -312,8 +322,8 @@ impl IrohEndpoint {
             ep,
             node_id_str,
             pool: ConnectionPool::new(
-                opts.max_pooled_connections,
-                opts.pool_idle_timeout_ms
+                opts.pool.max_connections,
+                opts.pool.idle_timeout_ms
                     .map(std::time::Duration::from_millis),
             ),
             // ISS-020: treat 0 as "use default" — it would otherwise underflow
@@ -324,10 +334,8 @@ impl IrohEndpoint {
             },
             server_limits: {
                 let mut sl = opts.server_limits.clone();
-                // Merge standalone max_consecutive_errors into server_limits
-                // (backward compat — adapters may set the standalone field).
                 if sl.max_consecutive_errors.is_none() {
-                    sl.max_consecutive_errors = opts.max_consecutive_errors.or(Some(5));
+                    sl.max_consecutive_errors = Some(5);
                 }
                 sl
             },

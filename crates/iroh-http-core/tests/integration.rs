@@ -7,14 +7,17 @@
 use bytes::Bytes;
 use iroh_http_core::server::respond;
 use iroh_http_core::{
-    fetch, serve, server::ServeOptions, IrohEndpoint, NodeOptions, RequestPayload,
+    fetch, serve, server::ServeOptions, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload,
 };
 
 /// Create a pair of locally-connected endpoints (relay disabled, loopback only).
 async fn make_pair() -> (IrohEndpoint, IrohEndpoint) {
     let opts = || NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
         ..Default::default()
     };
     let server = IrohEndpoint::bind(opts()).await.unwrap();
@@ -728,7 +731,7 @@ async fn fetch_cancelled_via_token() {
 #[tokio::test]
 async fn endpoint_node_id_is_stable() {
     let opts = NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let ep = IrohEndpoint::bind(opts).await.unwrap();
@@ -743,12 +746,12 @@ async fn endpoint_deterministic_key() {
     let key = [42u8; 32];
     let opts1 = NodeOptions {
         key: Some(key),
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let opts2 = NodeOptions {
         key: Some(key),
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let ep1 = IrohEndpoint::bind(opts1).await.unwrap();
@@ -759,7 +762,7 @@ async fn endpoint_deterministic_key() {
 #[tokio::test]
 async fn endpoint_secret_key_round_trip() {
     let opts = NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let ep = IrohEndpoint::bind(opts).await.unwrap();
@@ -768,7 +771,7 @@ async fn endpoint_secret_key_round_trip() {
     // Rebinding with the same key should produce the same node ID
     let opts2 = NodeOptions {
         key: Some(key_bytes),
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let ep2 = IrohEndpoint::bind(opts2).await.unwrap();
@@ -778,7 +781,7 @@ async fn endpoint_secret_key_round_trip() {
 #[tokio::test]
 async fn endpoint_bound_sockets_non_empty() {
     let opts = NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let ep = IrohEndpoint::bind(opts).await.unwrap();
@@ -789,7 +792,7 @@ async fn endpoint_bound_sockets_non_empty() {
 #[tokio::test]
 async fn endpoint_close() {
     let opts = NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let ep = IrohEndpoint::bind(opts).await.unwrap();
@@ -800,7 +803,7 @@ async fn endpoint_close() {
 #[tokio::test]
 async fn endpoint_max_consecutive_errors_default() {
     let opts = NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let ep = IrohEndpoint::bind(opts).await.unwrap();
@@ -810,8 +813,11 @@ async fn endpoint_max_consecutive_errors_default() {
 #[tokio::test]
 async fn endpoint_max_consecutive_errors_custom() {
     let opts = NodeOptions {
-        disable_networking: true,
-        max_consecutive_errors: Some(10),
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
+        server_limits: iroh_http_core::server::ServerLimits {
+            max_consecutive_errors: Some(10),
+            ..Default::default()
+        },
         ..Default::default()
     };
     let ep = IrohEndpoint::bind(opts).await.unwrap();
@@ -881,7 +887,7 @@ async fn url_with_query_params() {
 #[tokio::test]
 async fn respond_invalid_handle() {
     let ep = IrohEndpoint::bind(NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     })
     .await
@@ -952,7 +958,7 @@ async fn response_without_trailer_header_still_works() {
 #[tokio::test]
 async fn fetch_bad_node_id_returns_error() {
     let opts = NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let client = IrohEndpoint::bind(opts).await.unwrap();
@@ -1122,7 +1128,7 @@ async fn pool_concurrent_requests_share_connection() {
 async fn pool_different_peers_get_separate_connections() {
     // Create two separate servers.
     let opts = || NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let server1 = IrohEndpoint::bind(opts()).await.unwrap();
@@ -1186,8 +1192,11 @@ async fn pool_different_peers_get_separate_connections() {
 async fn make_pair_custom_server(server_opts: NodeOptions) -> (IrohEndpoint, IrohEndpoint) {
     let server = IrohEndpoint::bind(server_opts).await.unwrap();
     let client = IrohEndpoint::bind(NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
         ..Default::default()
     })
     .await
@@ -1199,8 +1208,11 @@ async fn make_pair_custom_server(server_opts: NodeOptions) -> (IrohEndpoint, Iro
 #[tokio::test]
 async fn header_bomb_rejected() {
     let (server_ep, client_ep) = make_pair_custom_server(NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
         max_header_size: Some(256), // very small
         ..Default::default()
     })
@@ -1256,14 +1268,14 @@ async fn header_bomb_rejected() {
 #[tokio::test]
 async fn response_header_bomb_rejected() {
     let server_ep = IrohEndpoint::bind(NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     })
     .await
     .unwrap();
     // Client has a tiny max_header_size.
     let client_ep = IrohEndpoint::bind(NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         max_header_size: Some(128),
         ..Default::default()
     })
@@ -1477,7 +1489,7 @@ async fn per_peer_connection_limit_config() {
 #[tokio::test]
 async fn max_header_size_default_is_64kb() {
     let ep = IrohEndpoint::bind(NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     })
     .await
@@ -1489,7 +1501,7 @@ async fn max_header_size_default_is_64kb() {
 #[tokio::test]
 async fn max_header_size_custom() {
     let ep = IrohEndpoint::bind(NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         max_header_size: Some(1024),
         ..Default::default()
     })
@@ -1622,7 +1634,7 @@ async fn force_close_aborts_immediately() {
 #[tokio::test]
 async fn close_without_serve_is_immediate() {
     let ep = IrohEndpoint::bind(NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     })
     .await
@@ -2036,7 +2048,7 @@ async fn fetch_unknown_peer() {
     let fake_id = iroh_http_core::base32_encode(fake_pk.as_bytes());
 
     let opts = NodeOptions {
-        disable_networking: true,
+        networking: NetworkingOptions { disabled: true, ..Default::default() },
         ..Default::default()
     };
     let client_ep = IrohEndpoint::bind(opts).await.unwrap();
@@ -2287,8 +2299,11 @@ async fn fetch_rejects_http_scheme() {
 #[tokio::test]
 async fn registry_get_after_remove_returns_none() {
     let opts = NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
         ..Default::default()
     };
     let ep = IrohEndpoint::bind(opts).await.unwrap();
@@ -2321,13 +2336,19 @@ async fn registry_bogus_handle_returns_none() {
 #[tokio::test]
 async fn concurrent_requests_under_tight_concurrency() {
     let server_opts = NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
         ..Default::default()
     };
     let client_opts = NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
         ..Default::default()
     };
     let server_ep = IrohEndpoint::bind(server_opts).await.unwrap();
@@ -2461,15 +2482,21 @@ async fn cancel_mid_stream_no_panic() {
 #[tokio::test]
 async fn pool_eviction_single_slot() {
     let server_opts = NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
-        max_pooled_connections: Some(1),
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
+        pool: iroh_http_core::endpoint::PoolOptions { max_connections: Some(1), ..Default::default() },
         ..Default::default()
     };
     let client_opts = NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
-        max_pooled_connections: Some(1),
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
+        pool: iroh_http_core::endpoint::PoolOptions { max_connections: Some(1), ..Default::default() },
         ..Default::default()
     };
     let server_ep = IrohEndpoint::bind(server_opts).await.unwrap();

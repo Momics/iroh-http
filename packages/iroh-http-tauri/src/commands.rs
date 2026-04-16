@@ -8,6 +8,7 @@ use iroh_http_core::{
     RequestPayload,
     ConnectionEvent,
     parse_direct_addrs,
+    DiscoveryOptions, NetworkingOptions, PoolOptions, StreamingOptions,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{command, ipc::Channel};
@@ -81,26 +82,32 @@ pub async fn create_endpoint(
                 }
                 None => None,
             },
-            idle_timeout_ms: a.idle_timeout,
-            relay_mode: a.relay_mode,
-            relays: a.relays.unwrap_or_default(),
-            bind_addrs: a.bind_addrs.unwrap_or_default(),
-            dns_discovery: a.dns_discovery,
-            dns_discovery_enabled: a.dns_discovery_enabled.unwrap_or(true),
+            networking: NetworkingOptions {
+                relay_mode: a.relay_mode,
+                relays: a.relays.unwrap_or_default(),
+                bind_addrs: a.bind_addrs.unwrap_or_default(),
+                idle_timeout_ms: a.idle_timeout,
+                proxy_url: a.proxy_url,
+                proxy_from_env: a.proxy_from_env.unwrap_or(false),
+                disabled: a.disable_networking.unwrap_or(false),
+            },
+            discovery: DiscoveryOptions {
+                dns_server: a.dns_discovery,
+                enabled: a.dns_discovery_enabled.unwrap_or(true),
+            },
+            pool: PoolOptions {
+                max_connections: a.max_pooled_connections,
+                idle_timeout_ms: a.pool_idle_timeout_ms,
+            },
+            streaming: StreamingOptions {
+                channel_capacity: a.channel_capacity,
+                max_chunk_size_bytes: a.max_chunk_size_bytes,
+                drain_timeout_ms: a.drain_timeout,
+                handle_ttl_ms: a.handle_ttl,
+            },
             capabilities: Vec::new(),
-            channel_capacity: a.channel_capacity,
-            max_chunk_size_bytes: a.max_chunk_size_bytes,
-            max_consecutive_errors: a.max_consecutive_errors,
-            disable_networking: a.disable_networking.unwrap_or(false),
-            drain_timeout_ms: a.drain_timeout,
-            handle_ttl_ms: a.handle_ttl,
-            // TAURI-002: wire through pool-tuning options.
-            max_pooled_connections: a.max_pooled_connections,
-            pool_idle_timeout_ms: a.pool_idle_timeout_ms,
-            max_header_size: a.max_header_bytes,
-            proxy_url: a.proxy_url,
-            proxy_from_env: a.proxy_from_env.unwrap_or(false),
             keylog: a.keylog.unwrap_or(false),
+            max_header_size: a.max_header_bytes,
             server_limits: iroh_http_core::server::ServerLimits {
                 max_concurrency: a.max_concurrency,
                 max_connections_per_peer: a.max_connections_per_peer,
