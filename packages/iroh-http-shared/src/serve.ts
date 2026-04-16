@@ -12,6 +12,7 @@ import type {
   BidirectionalStream,
   Bridge,
   FfiResponseHead,
+  IrohServeResponse,
   RawServeFn,
   RequestPayload,
 } from "./bridge.js";
@@ -26,10 +27,10 @@ import { classifyError } from "./errors.js";
  * - `req.trailers` — a `Promise<Headers>` resolving to request trailer headers.
  * - `req.acceptWebTransport()` — (duplex only) returns `{ readable, writable }`.
  *
- * The `Response` may include a non-standard `trailers` callback:
- * `() => Headers | Promise<Headers>` that is called after the body completes.
+ * The `Response` may be an `IrohServeResponse` with an optional `trailers` callback:
+ * `trailers: () => Headers | Promise<Headers>` called after the body completes.
  */
-export type ServeHandler = (req: Request) => Response | Promise<Response>;
+export type ServeHandler = (req: Request) => Response | IrohServeResponse | Promise<Response | IrohServeResponse>;
 
 /**
  * Options for the `serve()` call.
@@ -196,20 +197,35 @@ export function makeServe(
         }
 
         if (payload.isBidi) {
-          const acceptWebTransportFn = (): BidirectionalStream => ({
-            readable: makeReadable(bridge, payload.reqBodyHandle),
-            writable: new WritableStream<Uint8Array>({
-              async write(chunk) {
-                await bridge.sendChunk(payload.resBodyHandle, chunk);
-              },
-              async close() {
-                await bridge.finishBody(payload.resBodyHandle);
-              },
-              async abort() {
-                await bridge.finishBody(payload.resBodyHandle);
-              },
-            }),
-          });
+          // Issue-61: acceptWebTransport() must be single-use per request.
+          // Each duplex request has exactly one pair of body handles; creating
+          // multiple stream wrappers over the same handles causes undefined
+          // behaviour. The flag is captured in the closure so it is scoped to
+          // this one request.
+          let accepted = false;
+          const acceptWebTransportFn = (): BidirectionalStream => {
+            if (accepted) {
+              throw new TypeError(
+                "acceptWebTransport() has already been called on this request. " +
+                  "Each duplex request can only be accepted once.",
+              );
+            }
+            accepted = true;
+            return {
+              readable: makeReadable(bridge, payload.reqBodyHandle),
+              writable: new WritableStream<Uint8Array>({
+                async write(chunk) {
+                  await bridge.sendChunk(payload.resBodyHandle, chunk);
+                },
+                async close() {
+                  await bridge.finishBody(payload.resBodyHandle);
+                },
+                async abort() {
+                  await bridge.finishBody(payload.resBodyHandle);
+                },
+              }),
+            };
+          };
           Object.defineProperty(req, "acceptWebTransport", {
             value: acceptWebTransportFn,
             configurable: true,
@@ -235,8 +251,7 @@ export function makeServe(
           };
         }
 
-        const trailersFn = (res as unknown as Record<string, unknown>)
-          .trailers as (() => Headers | Promise<Headers>) | undefined;
+        const trailersFn = (res as IrohServeResponse).trailers;
 
         const bodyStream = res.body ?? emptyStream();
         const doPipe = async () => {

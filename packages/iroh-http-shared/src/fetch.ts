@@ -15,6 +15,7 @@ import type {
   BidirectionalStream,
   Bridge,
   IrohFetchInit,
+  IrohResponse,
   RawConnectFn,
   RawFetchFn,
 } from "./bridge.js";
@@ -25,9 +26,9 @@ import { classifyError } from "./errors.js";
 
 export type FetchFn = {
   /** Web-standard form: peer identity is embedded in the `httpi://` URL hostname. */
-  (input: string | URL, init?: IrohFetchInit): Promise<Response>;
+  (input: string | URL, init?: IrohFetchInit): Promise<IrohResponse>;
   /** Legacy two-argument form: peer and path supplied separately. */
-  (peer: PublicKey | string, input: string | URL, init?: IrohFetchInit): Promise<Response>;
+  (peer: PublicKey | string, input: string | URL, init?: IrohFetchInit): Promise<IrohResponse>;
 };
 
 /**
@@ -59,7 +60,7 @@ export function makeFetch(
     peerOrInput: PublicKey | string | URL,
     inputOrInit?: string | URL | IrohFetchInit,
     maybeInit?: IrohFetchInit,
-  ): Promise<Response> {
+  ): Promise<IrohResponse> {
     let nodeId: string;
     let url: string;
     let init: IrohFetchInit | undefined;
@@ -244,7 +245,7 @@ export function makeFetch(
       configurable: true,
     });
 
-    return response;
+    return response as IrohResponse;
   };
 }
 

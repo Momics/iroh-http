@@ -13,6 +13,8 @@ export type {
   IrohFetchInit,
   IrohNode,
   IrohRequest,
+  IrohResponse,
+  IrohServeResponse,
   NodeAddrInfo,
   NodeOptions,
   PathInfo,
@@ -224,7 +226,36 @@ export function buildNode(config: BuildNodeConfig): IrohNode {
                 browseHandle = null;
                 return { done: true as const, value: undefined };
               }
-              const event = await fns.mdnsNextEvent(browseHandle);
+
+              // Issue-62: race mdnsNextEvent against AbortSignal so that
+              // aborting on a quiet network unblocks iteration immediately
+              // without waiting for the next discovery event to arrive.
+              let event: PeerDiscoveryEvent | null;
+              if (signal) {
+                const abortPromise = new Promise<null>((resolve) => {
+                  if (signal.aborted) {
+                    resolve(null);
+                    return;
+                  }
+                  signal.addEventListener("abort", () => resolve(null), {
+                    once: true,
+                  });
+                });
+                event = await Promise.race([
+                  fns.mdnsNextEvent(browseHandle),
+                  abortPromise,
+                ]);
+                // Close the native handle immediately on abort so the Rust
+                // side can clean up even while the other branch is pending.
+                if (signal.aborted && browseHandle !== null) {
+                  fns.mdnsBrowseClose(browseHandle);
+                  browseHandle = null;
+                  return { done: true as const, value: undefined };
+                }
+              } else {
+                event = await fns.mdnsNextEvent(browseHandle);
+              }
+
               if (event === null) {
                 return { done: true as const, value: undefined };
               }
