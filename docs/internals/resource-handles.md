@@ -41,22 +41,15 @@ This makes handle invalidation automatic and cheap. There is no additional bookk
 | `SessionKey` | `SessionEntry` (QUIC session state) | `insert_session` | `remove_session` |
 | `RequestHeadKey` | `oneshot::Sender<ResponseHeadEntry>` | `allocate_req_handle` | `take_req_sender` (called by `respond()`) |
 
-Each registry is a `OnceLock<Mutex<SlotMap<K, Entry<T>>>>` — a process-global, lazily initialised, mutex-protected slotmap.
+Each registry is a `Mutex<SlotMap<K, Timed<T>>>` owned by the per-endpoint `HandleStore`.
 
 ---
 
 ## Endpoint association
 
-Every entry stores the `ep_idx` of the endpoint that created it:
-
-```rust
-struct Entry<T> {
-    ep_idx: u32,
-    value: T,
-}
-```
-
-When an endpoint is closed (`unregister_endpoint(ep_idx)`), all seven registries sweep their entries via `.retain(|_, e| e.ep_idx != ep_idx)`. This prevents orphaned handles from accumulating when an endpoint is destroyed.
+Handles are per-endpoint, not process-global. Each `IrohEndpoint` owns its own
+`HandleStore`. When the `IrohEndpoint` is dropped / closed, the `HandleStore` is
+dropped with it and all handles become invalid immediately.
 
 ---
 
@@ -95,12 +88,49 @@ All slotmap operations lock the per-registry `Mutex`. This is a short critical s
 
 ---
 
+## TTL sweep
+
+Every `IrohEndpoint` spawns a background task at bind time that sweeps expired
+handles every **60 seconds**. The default TTL is **5 minutes**
+(`DEFAULT_SLAB_TTL_MS = 300_000`). Configure with
+`NodeOptions.advanced.handleTtl` (milliseconds).
+
+The sweep retains only entries whose `created_at.elapsed() < ttl`:
+
+```rust
+reg.retain(|_, entry| !entry.is_expired(ttl));
+```
+
+Swept handles are silently discarded. No error is reported during the sweep
+itself — the error surfaces on the next call from JS that references the
+expired handle, which returns `INVALID_HANDLE`.
+
+**When to raise TTL**: if your application streams very large bodies or keeps
+sessions open beyond 5 minutes, increase `handleTtl`. The default is generous
+for request-response workloads but may be tight for long-lived streaming.
+
+---
+
+## Endpoint close sweep
+
+When an `IrohEndpoint` is dropped / closed, the `HandleStore` is dropped with
+it. All slot-maps are freed. Any subsequent call from JS with a handle from
+that store returns `INVALID_HANDLE`. This is the expected signal that the
+endpoint has gone away — callers should treat it the same as a network error
+and stop referencing the closed node.
+
+---
+
 ## Debugging stale handles
 
-If a function returns `Err("invalid handle: N")` it means either:
+If a function returns `Err("invalid handle: N")` it means one of:
 
-1. The handle was already freed (generation mismatch) — likely a double-free or use-after-free bug in the adapter
-2. The handle was never valid (wrong type passed) — likely a misrouted call
-3. The endpoint was closed and all its handles were swept — legitimate if the node was closed while a request was in flight
+1. **Already freed** — the handle was consumed (EOF, `finish_body`, `respond`,
+   `next_trailer`) or cancelled. Check for double calls.
+2. **TTL-expired** — the handle lived past the TTL. Increase `handleTtl` if needed.
+3. **Wrong endpoint** — the handle was issued by a different `IrohEndpoint` instance.
+4. **Endpoint closed** — the node was closed while a request was in flight.
+5. **Never valid** — the handle value was never issued (programming error in the adapter).
 
-The generation in the handle key makes (1) reliable: the old handle can never silently alias a new resource.
+The generation in the handle key makes (1) reliable: the old handle can never
+silently alias a new resource.
