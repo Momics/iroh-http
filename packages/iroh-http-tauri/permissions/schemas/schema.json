@@ -367,6 +367,18 @@
           "markdownDescription": "Denies the create_endpoint command without any pre-configured scope."
         },
         {
+          "description": "Enables the endpoint_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-endpoint-stats",
+          "markdownDescription": "Enables the endpoint_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the endpoint_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-endpoint-stats",
+          "markdownDescription": "Denies the endpoint_stats command without any pre-configured scope."
+        },
+        {
           "description": "Enables the finish_body command without any pre-configured scope.",
           "type": "string",
           "const": "allow-finish-body",
@@ -773,6 +785,30 @@
           "type": "string",
           "const": "deny-stop-serve",
           "markdownDescription": "Denies the stop_serve command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the wait_endpoint_closed command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-wait-endpoint-closed",
+          "markdownDescription": "Enables the wait_endpoint_closed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the wait_endpoint_closed command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-wait-endpoint-closed",
+          "markdownDescription": "Denies the wait_endpoint_closed command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the wait_serve_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-wait-serve-stop",
+          "markdownDescription": "Enables the wait_serve_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the wait_serve_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-wait-serve-stop",
+          "markdownDescription": "Denies the wait_serve_stop command without any pre-configured scope."
         },
         {
           "description": "Default permissions for iroh-http plugin\n#### This default permission set includes:\n\n- `allow-create-endpoint`\n- `allow-close-endpoint`\n- `allow-ping`\n- `allow-node-addr`\n- `allow-node-ticket`\n- `allow-home-relay`\n- `allow-peer-info`\n- `allow-peer-stats`\n- `allow-next-chunk`\n- `allow-send-chunk`\n- `allow-finish-body`\n- `allow-alloc-body-writer`\n- `allow-next-trailer`\n- `allow-send-trailers`\n- `allow-cancel-request`\n- `allow-raw-fetch`\n- `allow-alloc-fetch-token`\n- `allow-cancel-in-flight`\n- `allow-serve`\n- `allow-stop-serve`\n- `allow-respond-to-request`\n- `allow-raw-connect`\n- `allow-session-connect`\n- `allow-session-close`\n- `allow-session-closed`\n- `allow-session-create-bidi-stream`\n- `allow-session-create-uni-stream`\n- `allow-session-next-bidi-stream`\n- `allow-session-next-uni-stream`\n- `allow-session-send-datagram`\n- `allow-session-recv-datagram`\n- `allow-session-max-datagram-size`\n- `allow-generate-secret-key`\n- `allow-secret-key-sign`\n- `allow-public-key-verify`\n- `allow-mdns-browse`\n- `allow-mdns-browse-close`\n- `allow-mdns-next-event`\n- `allow-mdns-advertise`\n- `allow-mdns-advertise-close`",

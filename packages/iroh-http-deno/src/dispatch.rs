@@ -24,7 +24,7 @@ use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
     parse_direct_addrs, registry,
     server::respond,
-    RequestPayload,
+    ConnectionEvent, RequestPayload,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -122,6 +122,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "stopServe" => stop_serve(p).await,
         "waitEndpointClosed" => wait_endpoint_closed(p).await,
         "nextRequest" => next_request(p).await,
+        "nextConnectionEvent" => next_connection_event(p).await,
         "respond" => respond_dispatch(p),
         "secretKeySign" => secret_key_sign_dispatch(p),
         "publicKeyVerify" => public_key_verify_dispatch(p),
@@ -682,7 +683,15 @@ async fn serve_start(p: Value) -> Value {
     let queue = serve_registry::register(handle);
 
     let ep_clone = ep.clone();
-    let serve_handle = iroh_http_core::serve(
+    let conn_tx = queue.conn_tx.clone();
+    let conn_event_fn: Option<std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync>> =
+        Some(std::sync::Arc::new(move |ev: ConnectionEvent| {
+            let _ = conn_tx.try_send(serde_json::json!({
+                "peerId": ev.peer_id,
+                "connected": ev.connected,
+            }));
+        }));
+    let serve_handle = iroh_http_core::serve_with_events(
         ep.clone(),
         ep.serve_options(),
         move |payload: RequestPayload| {
@@ -693,7 +702,7 @@ async fn serve_start(p: Value) -> Value {
                 .into_iter()
                 .map(|(k, v)| vec![k, v])
                 .collect();
-            let event = json!({
+            let event = serde_json::json!({
                 "reqHandle":         payload.req_handle,
                 "reqBodyHandle":     payload.req_body_handle,
                 "resBodyHandle":     payload.res_body_handle,
@@ -720,6 +729,7 @@ async fn serve_start(p: Value) -> Value {
                 }
             });
         },
+        conn_event_fn,
     );
     ep.set_serve_handle(serve_handle);
 
@@ -780,6 +790,28 @@ async fn next_request(p: Value) -> Value {
         biased;
         _ = shutdown_rx.wait_for(|v| *v) => None,
         item = async { queue.rx.lock().await.recv().await } => item,
+    };
+    ok(item)
+}
+
+/// Poll the next peer connection event (connect or disconnect) for an endpoint.
+///
+/// Returns `{"ok": {"peerId": "...", "connected": bool}}` on success,
+/// or `{"ok": null}` when the serve loop has stopped and no more events will arrive.
+async fn next_connection_event(p: Value) -> Value {
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    let queue = match serve_registry::get(handle) {
+        Some(q) => q,
+        None => return ok(Value::Null),
+    };
+    let mut shutdown_rx = queue.shutdown_rx.clone();
+    let item = tokio::select! {
+        biased;
+        _ = shutdown_rx.wait_for(|v| *v) => None,
+        item = async { queue.conn_rx.lock().await.recv().await } => item,
     };
     ok(item)
 }

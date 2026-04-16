@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-wait-serve-stop"
+description = "Enables the wait_serve_stop command without any pre-configured scope."
+commands.allow = ["wait_serve_stop"]
+
+[[permission]]
+identifier = "deny-wait-serve-stop"
+description = "Denies the wait_serve_stop command without any pre-configured scope."
+commands.deny = ["wait_serve_stop"]
