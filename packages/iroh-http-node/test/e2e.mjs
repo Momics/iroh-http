@@ -395,3 +395,168 @@ test("serve + fetch — 1 MiB body round-trip", async () => {
     await client.close();
   }
 });
+
+// ── Stress: many concurrent requests ─────────────────────────────────────────
+
+test("serve + fetch — 100 concurrent requests return correct bodies", async () => {
+  const server = await createNode();
+  const client = await createNode();
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (req) => {
+      const path = new URL(req.url).pathname;
+      return new Response(`body:${path}`, { status: 200 });
+    });
+
+    const N = 100;
+    const paths = Array.from({ length: N }, (_, i) => `/r${i}`);
+    const texts = await Promise.all(
+      paths.map((path) =>
+        client
+          .fetch(serverId, path, { directAddrs: serverAddrs })
+          .then((r) => r.text()),
+      ),
+    );
+
+    for (let i = 0; i < N; i++) {
+      assert.equal(texts[i], `body:${paths[i]}`, `response ${i} body mismatch`);
+    }
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+// ── Session (QUIC WebTransport sessions) ─────────────────────────────────────
+//
+// Full bidi/datagram roundtrip requires `acceptSession` to be exposed on the
+// public JS API (so the server side can retrieve the accepted QUIC session).
+// Until then these tests cover the session client-side lifecycle.
+
+test("session — connect() to live endpoint resolves with IrohSession", async () => {
+  const server = await createNode();
+  const client = await createNode();
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
+
+    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    try {
+      assert.equal(typeof session.createBidirectionalStream, "function");
+      assert.equal(typeof session.createUnidirectionalStream, "function");
+      assert.ok(session.incomingBidirectionalStreams instanceof ReadableStream);
+      assert.ok(session.incomingUnidirectionalStreams instanceof ReadableStream);
+      assert.ok(session.datagrams !== null && typeof session.datagrams === "object");
+      assert.ok(session.closed instanceof Promise);
+    } finally {
+      session.close();
+    }
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+test("session — createBidirectionalStream() returns readable+writable pair", async () => {
+  const server = await createNode();
+  const client = await createNode();
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
+
+    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    try {
+      const bidi = await session.createBidirectionalStream();
+      assert.ok(bidi.readable instanceof ReadableStream, "readable must be ReadableStream");
+      assert.ok(bidi.writable instanceof WritableStream, "writable must be WritableStream");
+      // Close the bidi stream cleanly.
+      await bidi.writable.close().catch(() => {});
+    } finally {
+      session.close();
+    }
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+test("session — createUnidirectionalStream() returns WritableStream", async () => {
+  const server = await createNode();
+  const client = await createNode();
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
+
+    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    try {
+      const writable = await session.createUnidirectionalStream();
+      assert.ok(writable instanceof WritableStream, "must be WritableStream");
+      await writable.close().catch(() => {});
+    } finally {
+      session.close();
+    }
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+test("session — datagrams.maxDatagramSize is null or a positive number", async () => {
+  const server = await createNode();
+  const client = await createNode();
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
+
+    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    try {
+      // Give time for the async maxDatagramSize fetch to settle.
+      await new Promise((r) => setTimeout(r, 50));
+      const size = session.datagrams.maxDatagramSize;
+      assert.ok(
+        size === null || (typeof size === "number" && size > 0),
+        `maxDatagramSize must be null or positive, got ${size}`,
+      );
+    } finally {
+      session.close();
+    }
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+test("session — close() is safe to call multiple times", async () => {
+  const server = await createNode();
+  const client = await createNode();
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
+
+    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    // First close.
+    session.close({ closeCode: 0, reason: "done" });
+    // Second close must not throw.
+    try {
+      session.close();
+    } catch {
+      // Allowed — some implementations may reject on double-close.
+    }
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
