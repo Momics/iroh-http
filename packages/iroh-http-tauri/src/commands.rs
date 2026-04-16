@@ -440,6 +440,16 @@ pub async fn wait_serve_stop(endpoint_handle: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Wait until this endpoint has been fully closed — either because `close_endpoint()`
+/// was called or because the QUIC stack shut down natively.
+#[command]
+pub async fn wait_endpoint_closed(endpoint_handle: u64) -> Result<(), String> {
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    ep.wait_closed().await;
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RespondArgs {

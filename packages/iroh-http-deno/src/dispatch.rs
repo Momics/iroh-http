@@ -119,6 +119,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "rawConnect" => raw_connect_dispatch(p).await,
         "serveStart" => serve_start(p).await,
         "stopServe" => stop_serve(p).await,
+        "waitEndpointClosed" => wait_endpoint_closed(p).await,
         "nextRequest" => next_request(p).await,
         "respond" => respond_dispatch(p),
         "secretKeySign" => secret_key_sign_dispatch(p),
@@ -729,6 +730,19 @@ async fn stop_serve(p: Value) -> Value {
     // Once the serve closure also drops its cloned tx, the channel closes and
     // nextRequest's recv() returns None, allowing the polling loop to exit.
     serve_registry::remove(handle);
+    ok(json!({}))
+}
+
+async fn wait_endpoint_closed(p: Value) -> Value {
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    let ep = match get_endpoint(handle) {
+        Some(e) => e,
+        None => return ok(json!({})), // already removed — treat as closed
+    };
+    ep.wait_closed().await;
     ok(json!({}))
 }
 

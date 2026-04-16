@@ -139,6 +139,13 @@ export interface BuildNodeConfig {
   addrFns?: AddrFunctions;
   discoveryFns?: DiscoveryFunctions;
   sessionFns?: RawSessionFns;
+  /**
+   * A promise that resolves when the native endpoint shuts down — either via
+   * explicit `closeEndpoint()` or because the QUIC stack closed on its own.
+   * When provided, `node.closed` is also resolved by this signal (in addition
+   * to the explicit `node.close()` call).
+   */
+  nativeClosed?: Promise<void>;
 }
 
 /**
@@ -168,11 +175,19 @@ export function buildNode(config: BuildNodeConfig): IrohNode {
     addrFns,
     discoveryFns,
     sessionFns,
+    nativeClosed,
   } = config;
   let resolveClosed!: (info: WebTransportCloseInfo) => void;
   const closedPromise = new Promise<WebTransportCloseInfo>((resolve) => {
     resolveClosed = resolve;
   });
+  // #60: also resolve node.closed when the native endpoint signals shutdown,
+  // so that callers awaiting node.closed are not left hanging on fatal exits.
+  if (nativeClosed) {
+    nativeClosed.then(() =>
+      resolveClosed({ closeCode: 0, reason: "native shutdown" })
+    );
+  }
 
   const publicKey = PublicKey.fromString(info.nodeId);
   const secretKey = SecretKey._fromBytesWithPublicKey(info.keypair, publicKey);

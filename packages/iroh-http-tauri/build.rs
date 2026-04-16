@@ -26,6 +26,7 @@ fn main() {
         "serve",
         "stop_serve",
         "wait_serve_stop",
+        "wait_endpoint_closed",
         "respond_to_request",
         // Raw / duplex connect
         "raw_connect",

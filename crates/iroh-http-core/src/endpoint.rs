@@ -157,6 +157,10 @@ pub(crate) struct EndpointInner {
     /// Stored separately so `wait_serve_stop()` can await it without holding
     /// the `serve_handle` lock for the duration of the wait.
     pub serve_done_rx: std::sync::Mutex<Option<tokio::sync::watch::Receiver<bool>>>,
+    /// Signals `true` when the endpoint has fully closed (either explicitly or
+    /// because the serve loop exited due to native shutdown).
+    pub closed_tx: tokio::sync::watch::Sender<bool>,
+    pub closed_rx: tokio::sync::watch::Receiver<bool>,
     /// Body compression options, if the feature is enabled.
     #[cfg(feature = "compression")]
     pub compression: Option<CompressionOptions>,
@@ -295,6 +299,7 @@ impl IrohEndpoint {
             ),
         };
         let sweep_ttl = store_config.ttl;
+        let (closed_tx, closed_rx) = tokio::sync::watch::channel(false);
 
         let inner = Arc::new(EndpointInner {
             ep,
@@ -322,6 +327,8 @@ impl IrohEndpoint {
             handles: HandleStore::new(store_config),
             serve_handle: std::sync::Mutex::new(None),
             serve_done_rx: std::sync::Mutex::new(None),
+            closed_tx,
+            closed_rx,
             #[cfg(feature = "compression")]
             compression: opts.compression,
         });
@@ -389,6 +396,7 @@ impl IrohEndpoint {
             h.drain().await;
         }
         self.inner.ep.close().await;
+        let _ = self.inner.closed_tx.send(true);
     }
 
     /// Immediate close: abort the serve loop and close the endpoint with
@@ -404,6 +412,16 @@ impl IrohEndpoint {
             h.abort();
         }
         self.inner.ep.close().await;
+        let _ = self.inner.closed_tx.send(true);
+    }
+
+    /// Wait until this endpoint has been closed (either explicitly via `close()` /
+    /// `close_force()`, or because the native QUIC stack shut down).
+    ///
+    /// Returns immediately if already closed.
+    pub async fn wait_closed(&self) {
+        let mut rx = self.inner.closed_rx.clone();
+        let _ = rx.wait_for(|v| *v).await;
     }
 
     /// Store a serve handle so that `close()` can drain it.

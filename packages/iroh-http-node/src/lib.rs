@@ -812,6 +812,17 @@ pub async fn wait_serve_stop(endpoint_handle: u32) -> napi::Result<()> {
     Ok(())
 }
 
+/// Wait until this endpoint has been fully closed — either because `closeEndpoint()`
+/// was called or because the QUIC stack shut down natively.
+///
+/// This is used to surface `node.closed` reliably even without an explicit `close()`.
+#[napi]
+pub async fn wait_endpoint_closed(endpoint_handle: u32) -> napi::Result<()> {
+    let ep = get_endpoint(endpoint_handle)?;
+    ep.wait_closed().await;
+    Ok(())
+}
+
 // ── rawConnect ────────────────────────────────────────────────────────────────
 
 /// Handles for a full-duplex QUIC stream.

@@ -33,6 +33,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::serve,
             commands::stop_serve,
             commands::wait_serve_stop,
+            commands::wait_endpoint_closed,
             commands::respond_to_request,
             commands::raw_connect,
             commands::secret_key_sign,
