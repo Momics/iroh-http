@@ -52,27 +52,21 @@ fn key_to_handle<K: slotmap::Key>(k: K) -> u64 {
     k.data().as_ffi()
 }
 
-fn handle_to_reader_key(h: u64) -> ReaderKey {
-    ReaderKey::from(KeyData::from_ffi(h))
+macro_rules! handle_to_key {
+    ($fn_name:ident, $key_type:ty) => {
+        fn $fn_name(h: u64) -> $key_type {
+            <$key_type>::from(KeyData::from_ffi(h))
+        }
+    };
 }
-fn handle_to_writer_key(h: u64) -> WriterKey {
-    WriterKey::from(KeyData::from_ffi(h))
-}
-fn handle_to_trailer_tx_key(h: u64) -> TrailerTxKey {
-    TrailerTxKey::from(KeyData::from_ffi(h))
-}
-fn handle_to_trailer_rx_key(h: u64) -> TrailerRxKey {
-    TrailerRxKey::from(KeyData::from_ffi(h))
-}
-fn handle_to_session_key(h: u64) -> SessionKey {
-    SessionKey::from(KeyData::from_ffi(h))
-}
-fn handle_to_request_head_key(h: u64) -> RequestHeadKey {
-    RequestHeadKey::from(KeyData::from_ffi(h))
-}
-fn handle_to_fetch_cancel_key(h: u64) -> FetchCancelKey {
-    FetchCancelKey::from(KeyData::from_ffi(h))
-}
+
+handle_to_key!(handle_to_reader_key, ReaderKey);
+handle_to_key!(handle_to_writer_key, WriterKey);
+handle_to_key!(handle_to_trailer_tx_key, TrailerTxKey);
+handle_to_key!(handle_to_trailer_rx_key, TrailerRxKey);
+handle_to_key!(handle_to_session_key, SessionKey);
+handle_to_key!(handle_to_request_head_key, RequestHeadKey);
+handle_to_key!(handle_to_fetch_cancel_key, FetchCancelKey);
 
 // ── Body channel primitives ───────────────────────────────────────────────────
 
@@ -214,48 +208,49 @@ struct PendingReaderEntry {
 /// has been called. This prevents orphaned handles when a later insert fails.
 pub(crate) struct InsertGuard<'a> {
     store: &'a HandleStore,
-    readers: Vec<u64>,
-    writers: Vec<u64>,
-    trailer_txs: Vec<u64>,
-    trailer_rxs: Vec<u64>,
-    req_heads: Vec<u64>,
+    tracked: Vec<TrackedHandle>,
     committed: bool,
+}
+
+/// A handle tracked by [`InsertGuard`] for rollback on drop.
+enum TrackedHandle {
+    Reader(u64),
+    Writer(u64),
+    TrailerTx(u64),
+    TrailerRx(u64),
+    ReqHead(u64),
 }
 
 impl<'a> InsertGuard<'a> {
     fn new(store: &'a HandleStore) -> Self {
         Self {
             store,
-            readers: Vec::new(),
-            writers: Vec::new(),
-            trailer_txs: Vec::new(),
-            trailer_rxs: Vec::new(),
-            req_heads: Vec::new(),
+            tracked: Vec::new(),
             committed: false,
         }
     }
 
     pub fn insert_reader(&mut self, reader: BodyReader) -> Result<u64, CoreError> {
         let h = self.store.insert_reader(reader)?;
-        self.readers.push(h);
+        self.tracked.push(TrackedHandle::Reader(h));
         Ok(h)
     }
 
     pub fn insert_writer(&mut self, writer: BodyWriter) -> Result<u64, CoreError> {
         let h = self.store.insert_writer(writer)?;
-        self.writers.push(h);
+        self.tracked.push(TrackedHandle::Writer(h));
         Ok(h)
     }
 
     pub fn insert_trailer_sender(&mut self, tx: TrailerTx) -> Result<u64, CoreError> {
         let h = self.store.insert_trailer_sender(tx)?;
-        self.trailer_txs.push(h);
+        self.tracked.push(TrackedHandle::TrailerTx(h));
         Ok(h)
     }
 
     pub fn insert_trailer_receiver(&mut self, rx: TrailerRx) -> Result<u64, CoreError> {
         let h = self.store.insert_trailer_receiver(rx)?;
-        self.trailer_rxs.push(h);
+        self.tracked.push(TrackedHandle::TrailerRx(h));
         Ok(h)
     }
 
@@ -264,7 +259,7 @@ impl<'a> InsertGuard<'a> {
         sender: tokio::sync::oneshot::Sender<ResponseHeadEntry>,
     ) -> Result<u64, CoreError> {
         let h = self.store.allocate_req_handle(sender)?;
-        self.req_heads.push(h);
+        self.tracked.push(TrackedHandle::ReqHead(h));
         Ok(h)
     }
 
@@ -279,28 +274,28 @@ impl Drop for InsertGuard<'_> {
         if self.committed {
             return;
         }
-        for h in &self.readers {
-            self.store.cancel_reader(*h);
-        }
-        for h in &self.writers {
-            let _ = self.store.finish_body(*h);
-        }
-        for h in &self.trailer_txs {
-            self.store.remove_trailer_sender(*h);
-        }
-        for h in &self.trailer_rxs {
-            self.store
-                .trailer_rx
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(handle_to_trailer_rx_key(*h));
-        }
-        for h in &self.req_heads {
-            self.store
-                .request_heads
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(handle_to_request_head_key(*h));
+        for handle in &self.tracked {
+            match handle {
+                TrackedHandle::Reader(h) => self.store.cancel_reader(*h),
+                TrackedHandle::Writer(h) => {
+                    let _ = self.store.finish_body(*h);
+                }
+                TrackedHandle::TrailerTx(h) => self.store.remove_trailer_sender(*h),
+                TrackedHandle::TrailerRx(h) => {
+                    self.store
+                        .trailer_rx
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(handle_to_trailer_rx_key(*h));
+                }
+                TrackedHandle::ReqHead(h) => {
+                    self.store
+                        .request_heads
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(handle_to_request_head_key(*h));
+                }
+            }
         }
     }
 }
