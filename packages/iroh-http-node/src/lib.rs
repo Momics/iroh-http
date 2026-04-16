@@ -471,6 +471,34 @@ pub async fn peer_stats(
     }))
 }
 
+/// Endpoint-level observability snapshot.
+#[napi(object)]
+pub struct JsEndpointStats {
+    pub active_readers: i64,
+    pub active_writers: i64,
+    pub active_sessions: i64,
+    pub total_handles: i64,
+    pub pool_size: i64,
+    pub active_connections: i64,
+    pub active_requests: i64,
+}
+
+/// Snapshot of current endpoint statistics (point-in-time).
+#[napi]
+pub fn endpoint_stats(endpoint_handle: u32) -> napi::Result<JsEndpointStats> {
+    let ep = get_endpoint(endpoint_handle)?;
+    let s = ep.endpoint_stats();
+    Ok(JsEndpointStats {
+        active_readers: s.active_readers as i64,
+        active_writers: s.active_writers as i64,
+        active_sessions: s.active_sessions as i64,
+        total_handles: s.total_handles as i64,
+        pool_size: s.pool_size as i64,
+        active_connections: s.active_connections as i64,
+        active_requests: s.active_requests as i64,
+    })
+}
+
 // ── Body streaming ────────────────────────────────────────────────────────────
 
 /// Read the next chunk from a body reader handle.

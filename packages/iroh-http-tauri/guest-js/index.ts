@@ -21,6 +21,7 @@ import {
   decodeBase64,
   type DiscoveryFunctions,
   encodeBase64,
+  type EndpointStats,
   type IrohNode,
   type NodeAddrInfo,
   type NodeOptions,
@@ -379,6 +380,11 @@ const tauriAddrFns: AddrFunctions = {
     return invoke<PeerStats | null>(`${PLUGIN}|peer_stats`, {
       endpointHandle: Number(handle),
       nodeId,
+    });
+  },
+  stats: async (handle) => {
+    return invoke<EndpointStats>(`${PLUGIN}|endpoint_stats`, {
+      endpointHandle: Number(handle),
     });
   },
 };

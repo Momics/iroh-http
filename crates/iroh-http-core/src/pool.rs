@@ -80,16 +80,17 @@ impl ConnectionPool {
         // Phase 1: check for a live cached connection (no lock held while awaiting).
         if let Some(pooled) = self.cache.get(&key).await {
             if pooled.conn.close_reason().is_none() {
-                tracing::debug!("iroh-http: pool hit for {:?}", key.alpn);
+                tracing::debug!(peer = %pooled.remote_id_str, "iroh-http: pool hit");
                 return Ok((*pooled).clone());
             }
             // Stale — invalidate and fall through to a fresh connect.
-            tracing::debug!("iroh-http: pool stale for {:?}, invalidating", key.alpn);
+            tracing::debug!(peer = %pooled.remote_id_str, "iroh-http: pool stale, reconnecting");
             self.cache.invalidate(&key).await;
         }
 
         // Phase 2: single-flight connect via try_get_with.
         // If multiple callers race, only one invokes connect_fn; the rest wait.
+        tracing::debug!(peer = %crate::base32_encode(key.node_id.as_bytes()), "iroh-http: pool miss, connecting");
         let result = self
             .cache
             .try_get_with(key.clone(), async move {
@@ -136,6 +137,13 @@ impl ConnectionPool {
     pub async fn len(&self) -> usize {
         self.cache.run_pending_tasks().await;
         self.cache.entry_count() as usize
+    }
+
+    /// Instantaneous entry count (for stats/observability).  Does not flush
+    /// pending evictions — the value may be slightly higher than the true
+    /// number of live connections.
+    pub(crate) fn entry_count_approx(&self) -> u64 {
+        self.cache.entry_count()
     }
 }
 

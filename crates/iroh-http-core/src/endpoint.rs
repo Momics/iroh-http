@@ -4,6 +4,7 @@ use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
 use iroh::endpoint::{IdleTimeout, QuicTransportConfig, TransportAddrUsage};
 use iroh::{Endpoint, RelayMode, SecretKey};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -161,6 +162,12 @@ pub(crate) struct EndpointInner {
     /// because the serve loop exited due to native shutdown).
     pub closed_tx: tokio::sync::watch::Sender<bool>,
     pub closed_rx: tokio::sync::watch::Receiver<bool>,
+    /// Number of currently active QUIC connections (incremented by serve loop,
+    /// decremented via RAII guard when each connection task exits).
+    pub active_connections: Arc<AtomicUsize>,
+    /// Number of currently in-flight HTTP requests (incremented when a
+    /// bi-stream is accepted, decremented when the request task exits).
+    pub active_requests: Arc<AtomicUsize>,
     /// Body compression options, if the feature is enabled.
     #[cfg(feature = "compression")]
     pub compression: Option<CompressionOptions>,
@@ -329,6 +336,8 @@ impl IrohEndpoint {
             serve_done_rx: std::sync::Mutex::new(None),
             closed_tx,
             closed_rx,
+            active_connections: Arc::new(AtomicUsize::new(0)),
+            active_requests: Arc::new(AtomicUsize::new(0)),
             #[cfg(feature = "compression")]
             compression: opts.compression,
         });
@@ -490,6 +499,26 @@ impl IrohEndpoint {
         &self.inner.pool
     }
 
+    /// Snapshot of current endpoint statistics.
+    ///
+    /// All fields are point-in-time reads and may change between calls.
+    pub fn endpoint_stats(&self) -> EndpointStats {
+        let (active_readers, active_writers, active_sessions, total_handles) =
+            self.inner.handles.count_handles();
+        let pool_size = self.inner.pool.entry_count_approx();
+        let active_connections = self.inner.active_connections.load(Ordering::Relaxed);
+        let active_requests = self.inner.active_requests.load(Ordering::Relaxed);
+        EndpointStats {
+            active_readers,
+            active_writers,
+            active_sessions,
+            total_handles,
+            pool_size,
+            active_connections,
+            active_requests,
+        }
+    }
+
     /// Compression options, if the `compression` feature is enabled.
     #[cfg(feature = "compression")]
     pub fn compression(&self) -> Option<&CompressionOptions> {
@@ -633,6 +662,29 @@ pub struct NodeAddrInfo {
 }
 
 // ── Observability types ──────────────────────────────────────────────────────
+
+/// Endpoint-level observability snapshot.
+///
+/// Returned by [`IrohEndpoint::endpoint_stats`].  All counts are point-in-time reads
+/// and may change between calls.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EndpointStats {
+    /// Number of currently open body reader handles.
+    pub active_readers: usize,
+    /// Number of currently open body writer handles.
+    pub active_writers: usize,
+    /// Number of live QUIC sessions (WebTransport connections).
+    pub active_sessions: usize,
+    /// Total number of allocated (reader + writer + trailer + session + other) handles.
+    pub total_handles: usize,
+    /// Number of QUIC connections currently cached in the connection pool.
+    pub pool_size: u64,
+    /// Number of live QUIC connections accepted by the serve loop.
+    pub active_connections: usize,
+    /// Number of HTTP requests currently being processed.
+    pub active_requests: usize,
+}
 
 /// Per-peer connection statistics.
 #[derive(Debug, Clone, Serialize, Deserialize)]

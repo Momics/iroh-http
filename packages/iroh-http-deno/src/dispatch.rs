@@ -106,6 +106,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         "homeRelay" => home_relay_dispatch(p),
         "peerInfo" => peer_info_dispatch(p).await,
         "peerStats" => peer_stats_dispatch(p).await,
+        "endpointStats" => endpoint_stats_dispatch(p),
         "allocBodyWriter" => alloc_body_writer_dispatch(p),
         "allocFetchToken" => alloc_fetch_token_dispatch(p),
         "cancelInFlight" => cancel_in_flight_dispatch(p),
@@ -375,6 +376,20 @@ async fn peer_stats_dispatch(p: Value) -> Value {
             format!("node closed or not found (handle {handle})"),
         ),
         Some(ep) => ok(ep.peer_stats(node_id).await),
+    }
+}
+
+fn endpoint_stats_dispatch(p: Value) -> Value {
+    let handle = match p["endpointHandle"].as_u64() {
+        Some(h) => h as u32,
+        None => return err("missing endpointHandle"),
+    };
+    match get_endpoint(handle) {
+        None => err_code(
+            "INVALID_HANDLE",
+            format!("node closed or not found (handle {handle})"),
+        ),
+        Some(ep) => ok(ep.endpoint_stats()),
     }
 }
 

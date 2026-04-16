@@ -10,6 +10,7 @@ export type {
   BidirectionalStream,
   CloseOptions,
   EndpointInfo,
+  EndpointStats,
   IrohFetchInit,
   IrohNode,
   IrohRequest,
@@ -78,6 +79,7 @@ import type {
   Bridge,
   CloseOptions,
   EndpointInfo,
+  EndpointStats,
   IrohNode,
   MdnsOptions,
   NodeAddrInfo,
@@ -110,6 +112,8 @@ export interface AddrFunctions {
   ): Promise<NodeAddrInfo | null>;
   /** Per-peer connection statistics with path information. */
   peerStats(endpointHandle: number, nodeId: string): Promise<PeerStats | null>;
+  /** Endpoint-level observability snapshot. */
+  stats?(endpointHandle: number): Promise<EndpointStats>;
 }
 
 /** Platform-specific mDNS discovery functions. */
@@ -338,6 +342,12 @@ export function buildNode(config: BuildNodeConfig): IrohNode {
       if (!addrFns) return null;
       const nodeId = resolveNodeId(peer);
       return addrFns.peerStats(info.endpointHandle, nodeId);
+    },
+    stats: async () => {
+      if (!addrFns?.stats) {
+        throw new Error("stats() not supported by this platform adapter");
+      }
+      return addrFns.stats(info.endpointHandle);
     },
     pathChanges(
       peer: PublicKey | string,

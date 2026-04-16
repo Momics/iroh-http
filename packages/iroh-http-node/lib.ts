@@ -36,6 +36,7 @@ import {
   nodeTicket as napiNodeTicket,
   peerInfo as napiPeerInfo,
   peerStats as napiPeerStats,
+  endpointStats as napiEndpointStats,
   rawConnect as napiRawConnect,
   rawFetch as napiRawFetch,
   rawRespond as napiRawRespond,
@@ -212,6 +213,18 @@ const addrFns: AddrFunctions = {
       lostPackets: stats.lostPackets ?? null,
       sentPackets: stats.sentPackets ?? null,
       congestionWindow: stats.congestionWindow ?? null,
+    };
+  },
+  stats: async (handle) => {
+    const s = napiEndpointStats(handle);
+    return {
+      activeReaders: Number(s.activeReaders),
+      activeWriters: Number(s.activeWriters),
+      activeSessions: Number(s.activeSessions),
+      totalHandles: Number(s.totalHandles),
+      poolSize: Number(s.poolSize),
+      activeConnections: Number(s.activeConnections),
+      activeRequests: Number(s.activeRequests),
     };
   },
 };

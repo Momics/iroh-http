@@ -205,6 +205,13 @@ impl RequestService {
             .map(|p| p.as_str())
             .unwrap_or("/")
             .to_string();
+
+        tracing::debug!(
+            method = %method,
+            path = %path_and_query,
+            peer = %remote_node_id,
+            "iroh-http: incoming request",
+        );
         // Strip any client-supplied peer-id to prevent spoofing,
         // then inject the authenticated identity from the QUIC connection.
         //
@@ -592,7 +599,10 @@ where
     let shutdown_listen = shutdown_notify.clone();
     let drain_sem = drain_semaphore.clone();
     let drain_dur = drain_timeout;
-    let total_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    // Re-use the endpoint's shared counters so that endpoint_stats() reflects
+    // the live connection and request counts at all times.
+    let total_connections = endpoint.inner.active_connections.clone();
+    let total_requests = endpoint.inner.active_requests.clone();
     let (done_tx, done_rx) = tokio::sync::watch::channel(false);
     let endpoint_closed_tx = endpoint.inner.closed_tx.clone();
 
@@ -674,6 +684,7 @@ where
 
             let conn_drain = drain_semaphore.clone();
             let conn_total = total_connections.clone();
+            let conn_requests = total_requests.clone();
             conn_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             tokio::spawn(async move {
                 let _guard = guard;
@@ -701,9 +712,19 @@ where
 
                     let io = TokioIo::new(IrohStream::new(send, recv));
                     let svc = peer_svc.clone();
+                    let req_counter = conn_requests.clone();
+                    req_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                     tokio::spawn(async move {
                         let _permit = permit;
+                        // Decrement request count when this task exits.
+                        struct ReqGuard(Arc<std::sync::atomic::AtomicUsize>);
+                        impl Drop for ReqGuard {
+                            fn drop(&mut self) {
+                                self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                        let _req_guard = ReqGuard(req_counter);
                         // Build the hyper-facing service, optionally wrapping with
                         // CompressionLayer (zstd-only, for responses ≥ min_body_bytes).
                         #[cfg(feature = "compression")]

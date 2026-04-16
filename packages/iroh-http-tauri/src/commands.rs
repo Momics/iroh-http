@@ -215,6 +215,14 @@ pub async fn peer_stats(endpoint_handle: u64, node_id: String) -> Result<Option<
     Ok(ep.peer_stats(&node_id).await)
 }
 
+/// Endpoint-level observability snapshot (point-in-time).
+#[command]
+pub fn endpoint_stats(endpoint_handle: u64) -> Result<iroh_http_core::EndpointStats, String> {
+    let ep = state::get_endpoint(endpoint_handle)
+        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
+    Ok(ep.endpoint_stats())
+}
+
 // ── Bridge methods ────────────────────────────────────────────────────────────
 
 /// Read the next chunk from a body reader handle (base64-encoded).

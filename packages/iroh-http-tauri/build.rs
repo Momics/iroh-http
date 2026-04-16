@@ -10,6 +10,7 @@ fn main() {
         "home_relay",
         "peer_info",
         "peer_stats",
+        "endpoint_stats",
         // Streaming primitives
         "next_chunk",
         "send_chunk",
