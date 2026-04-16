@@ -223,6 +223,10 @@ interface ServeOptions {
   maxRequestBodyBytes?: number;
   drainTimeout?: number;
   maxConsecutiveErrors?: number;
+  /** Called when a peer's QUIC connection count goes from 0 → 1. */
+  onPeerConnect?: (peerId: string) => void;
+  /** Called when a peer's QUIC connection count goes from 1 → 0. */
+  onPeerDisconnect?: (peerId: string) => void;
 }
 ```
 
@@ -318,6 +322,103 @@ class IrohArgumentError extends IrohError { name = "TypeError"; }
 class IrohBindError extends IrohError { name = "NetworkError"; }
 class IrohStreamError extends IrohError { name = "IrohStreamError"; }
 ```
+
+---
+
+## Handle Lifecycle
+
+Iroh-http-core represents every in-flight resource — body streams, trailer
+channels, fetch-cancel tokens, sessions, pending request heads — as an opaque
+`u64` handle at the FFI boundary. This section defines the user-facing
+contract: when handles are valid, what happens when they expire, and how to
+reason about errors.
+
+> JavaScript receives these as `bigint` values because `number` can only
+> represent 53 bits of integer precisely, and handles are 64-bit slotmap keys.
+
+### Handle types
+
+| Handle | Created by | Invalidated by |
+|--------|-----------|----------------|
+| Body reader | serve loop allocates per request; `allocBodyWriter()` for fetch | `nextChunk()` → EOF (auto-removed), `cancelRequest()`, TTL sweep |
+| Body writer | `allocBodyWriter()` | `finishBody()` (drops the sender), TTL sweep |
+| Trailer sender | serve loop allocates per request | `sendTrailers()` (fires once, then removed), TTL sweep |
+| Trailer receiver | serve loop allocates per request; `fetch()` for responses | `nextTrailer()` (awaits once, then removed), TTL sweep |
+| Fetch cancel token | `allocFetchToken()` | `cancelFetch()`, or auto-removed when `fetch()` completes |
+| Session | `connect()` | `session.close()`, TTL sweep |
+| Request head | serve loop allocates per request | `respond()` (fires once, then removed) |
+
+### Lifetime rules
+
+1. **Allocated before the callback fires.** On the serve path all handles for a
+   request are inserted into the store before the JS handler is called. The
+   handler always receives a valid, fully-initialised handle set.
+
+2. **EOF / completion auto-removes.** `nextChunk()` at EOF removes the reader
+   handle automatically. `nextTrailer()` removes the receiver on success.
+   `respond()` removes the request-head sender. You do not need to call any
+   cleanup function at EOF — but calling the corresponding close/cancel/finish
+   on the *other* side is still required.
+
+3. **Explicit close.** `finishBody(writerHandle)` drops the writer, signalling
+   EOF to the reader. `cancelRequest(bodyReaderHandle)` cancels any in-flight
+   `nextChunk` and removes the handle. `cancelFetch(token)` cancels an
+   in-progress fetch.
+
+4. **TTL sweep.** Any handle that is neither consumed nor explicitly freed
+   within the TTL window (default **5 minutes**) is removed by a background
+   sweep that runs every 60 seconds. This prevents handle leaks when JS code
+   abandons a request mid-stream. Configure with `NodeOptions.advanced.handleTtl`
+   (milliseconds).
+
+5. **Per-endpoint scoping.** Each node has its own isolated HandleStore. A
+   handle issued by node A is meaningless on node B. When a node is closed
+   (`node.close()`), all of its handles are swept immediately — any subsequent
+   call with those handles returns `INVALID_HANDLE`.
+
+### State diagram
+
+```
+allocate ──► in-use ──► EOF / explicit close ──► removed
+                  │
+                  └──► TTL expiry ──────────────► swept (silent)
+```
+
+After a handle transitions to "removed" or "swept", any call that references
+it returns an `IrohHandleError` (name `"IrohHandleError"`).
+
+### `INVALID_HANDLE` causes
+
+An `IrohHandleError` means one of:
+
+1. **Already freed** — the handle was consumed (EOF, `finishBody`, `respond`,
+   `nextTrailer`) or cancelled. Common adapter bug: calling `nextChunk()` after
+   receiving `null` (EOF), or calling `finishBody()` twice.
+
+2. **TTL-expired** — the handle lived past the TTL window without being
+   consumed. Increase `handleTtl` if your use case requires long-lived handles.
+
+3. **Wrong endpoint** — the handle was issued by a different node instance.
+
+4. **Never valid** — the handle value was never issued (programming error in
+   the adapter).
+
+### Calling `nextChunk()` after EOF
+
+`nextChunk()` returns `null` at EOF. After that, the reader handle is
+automatically removed. Calling `nextChunk()` again with the same handle will
+return an `IrohHandleError`. Design loops as:
+
+```ts
+while (true) {
+  const chunk = await req.body.getReader().read();
+  if (chunk.done) break;
+  // process chunk.value
+}
+```
+
+The `Request` body exposed by `node.serve()` wraps the native handle in a
+`ReadableStream`, so you never need to call `nextChunk()` directly.
 
 ---
 

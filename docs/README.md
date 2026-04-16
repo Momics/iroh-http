@@ -8,7 +8,7 @@
 
 ## Specification
 
-- [Adapter specification](specification.md) — normative interface contract for all adapters (core types, error hierarchy, feature interfaces, conformance)
+- [Adapter specification](specification.md) — normative interface contract for all adapters (core types, error hierarchy, handle lifecycle, feature interfaces, conformance)
 
 ## Coding Guidelines
 
@@ -41,5 +41,8 @@ Group messaging · Offline-first · and more.
 ## Reference
 
 - [Build & test](build-and-test.md) — commands, CI gates, E2E test setup
+- [Troubleshooting](troubleshooting.md) — common errors, handle lifecycle diagnostics, mDNS issues, error code reference
+- [Performance tuning](tuning.md) — per-scenario `NodeOptions` guidance, memory sizing, compression settings
 - [Design decisions](internals/design-decisions.md) — rationale for hyper, slotmap, moka, compression, wire format
 - [Roadmap](roadmap.md) — v1.0 release checklist, open source path, embedded and HTTP/3 horizons
+

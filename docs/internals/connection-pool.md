@@ -52,7 +52,79 @@ if conn.close_reason().is_some() {
 
 ---
 
-## ALPN segregation
+## Stale connections after network path migration
+
+### What happens
+
+QUIC supports transparent connection migration — when a device changes
+networks (e.g., WiFi → cellular), the QUIC connection object stays "open" and
+migrates its underlying UDP path. The connection is **never explicitly closed**
+during migration; `close_reason()` returns `None` even if the old path has
+died and the new path has not yet been confirmed.
+
+This means the pool's stale-detection check (`close_reason().is_some()`) cannot
+distinguish a healthy migrating connection from one stuck on a dead path. The
+first `fetch()` attempt after the network change may time out before QUIC's own
+keepalive detects the dead path and fails the connection.
+
+### Observed behaviour
+
+| Phase | What you see |
+|-------|-------------|
+| Migration completes before the request | No impact — the new path is active by the time `fetch()` runs |
+| Migration in progress during `fetch()` | Higher latency while QUIC retries on the new path; typically resolves in < 1 s |
+| Old path dies, new path not yet established | Request times out; pool evicts the connection and retries on the next call |
+
+The timeout duration is bounded by `NodeOptions.requestTimeout` (default 60 s),
+not `idleTimeout`. In practice, QUIC's keepalive probes fail the connection
+long before the request timeout fires.
+
+### Current mitigation
+
+No proactive path health check is implemented. The pool relies on QUIC's own
+keepalive and path validation to detect dead paths. This is acceptable for
+most workloads because:
+
+- QUIC path migration is fast on modern networks (< 500 ms typical)
+- The pool evicts connections once QUIC reports them as closed
+- Retry on the next `fetch()` call re-establishes the connection from scratch
+
+### Recommendations for mobile or high-churn scenarios
+
+If your application runs on mobile devices that frequently switch networks,
+consider:
+
+1. **Lower `poolIdleTimeoutMs`** (e.g., 10–30 s instead of 60 s). This
+   increases the chance that a post-migration connection is fresh rather than
+   cached. Trade-off: more reconnects.
+
+2. **Catch timeout errors and retry once.** A single retry after a timeout
+   will pick up the newly established path. Use `requestTimeout` to bound
+   the wait:
+
+   ```ts
+   async function fetchWithRetry(node, peer, url) {
+     try {
+       return await node.fetch(peer, url);
+     } catch (e) {
+       if (e.name === 'NetworkError') return node.fetch(peer, url);
+       throw e;
+     }
+   }
+   ```
+
+3. **Use `node.peerStats()` to monitor RTT.** A sudden spike in `rttMs`
+   after a fetch is a signal that migration is in progress. You can poll
+   `peerStats` to detect the transition and preemptively close the old session.
+
+### Connection-pool.md reference
+
+The `ALPN` and `(node_id, alpn)` key mean that each distinct protocol type
+gets its own pool slot. Network migration affects the QUIC connection object
+regardless of ALPN — all pool slots for the same peer may be affected
+simultaneously if the path changes.
+
+---
 
 The pool keys on `(node_id, alpn)` — not just `node_id`. This means:
 
