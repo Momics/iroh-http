@@ -535,3 +535,179 @@ Deno.test({ name: "fetch — httpi:// URL form (peer in hostname)", sanitizeOps:
     await client.close();
   }
 }));
+
+// ── Stress: 100 concurrent requests ──────────────────────────────────────────
+
+Deno.test({ name: "serve + fetch — 100 concurrent requests return correct bodies", sanitizeOps: false }, () => withTimeout(60_000, async () => {
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
+  const ac = new AbortController();
+  let handle: { finished: Promise<void> } | undefined;
+
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    handle = server.serve({ signal: ac.signal }, (req: Request) => {
+      const path = new URL(req.url).pathname;
+      return new Response(`body:${path}`, { status: 200 });
+    });
+
+    const N = 100;
+    const paths = Array.from({ length: N }, (_, i) => `/r${i}`);
+    const texts = await Promise.all(
+      paths.map((path) =>
+        client.fetch(serverId, path, { directAddrs: serverAddrs }).then((r) => r.text())
+      ),
+    );
+
+    for (let i = 0; i < N; i++) {
+      assertEquals(texts[i], `body:${paths[i]}`, `response ${i} body mismatch`);
+    }
+  } finally {
+    ac.abort();
+    await server.close();
+    await handle?.finished.catch(() => {});
+    await client.close();
+  }
+}));
+
+// ── Session (QUIC WebTransport sessions) ─────────────────────────────────────
+//
+// Full bidi/datagram roundtrip requires `acceptSession` to be exposed on the
+// public JS API.  Until then these tests cover the client-side session lifecycle.
+
+Deno.test({ name: "session — connect() to live endpoint resolves with IrohSession", sanitizeOps: false }, () => withTimeout(20_000, async () => {
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
+  const ac = new AbortController();
+  let handle: { finished: Promise<void> } | undefined;
+
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    handle = server.serve({ signal: ac.signal }, (_req: Request) => new Response("ok"));
+
+    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    try {
+      assert(typeof session.createBidirectionalStream === "function");
+      assert(typeof session.createUnidirectionalStream === "function");
+      assert(session.incomingBidirectionalStreams instanceof ReadableStream);
+      assert(session.incomingUnidirectionalStreams instanceof ReadableStream);
+      assert(session.datagrams !== null && typeof session.datagrams === "object");
+      assert(session.closed instanceof Promise);
+    } finally {
+      session.close();
+    }
+  } finally {
+    ac.abort();
+    await server.close();
+    await handle?.finished.catch(() => {});
+    await client.close();
+  }
+}));
+
+Deno.test({ name: "session — createBidirectionalStream() returns readable+writable pair", sanitizeOps: false }, () => withTimeout(20_000, async () => {
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
+  const ac = new AbortController();
+  let handle: { finished: Promise<void> } | undefined;
+
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    handle = server.serve({ signal: ac.signal }, (_req: Request) => new Response("ok"));
+
+    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    try {
+      const bidi = await session.createBidirectionalStream();
+      assert(bidi.readable instanceof ReadableStream, "readable must be ReadableStream");
+      assert(bidi.writable instanceof WritableStream, "writable must be WritableStream");
+      await bidi.writable.close().catch(() => {});
+    } finally {
+      session.close();
+    }
+  } finally {
+    ac.abort();
+    await server.close();
+    await handle?.finished.catch(() => {});
+    await client.close();
+  }
+}));
+
+Deno.test({ name: "session — createUnidirectionalStream() returns WritableStream", sanitizeOps: false }, () => withTimeout(20_000, async () => {
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
+  const ac = new AbortController();
+  let handle: { finished: Promise<void> } | undefined;
+
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    handle = server.serve({ signal: ac.signal }, (_req: Request) => new Response("ok"));
+
+    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    try {
+      const writable = await session.createUnidirectionalStream();
+      assert(writable instanceof WritableStream, "must be WritableStream");
+      await writable.close().catch(() => {});
+    } finally {
+      session.close();
+    }
+  } finally {
+    ac.abort();
+    await server.close();
+    await handle?.finished.catch(() => {});
+    await client.close();
+  }
+}));
+
+Deno.test({ name: "session — datagrams.maxDatagramSize is null or positive number", sanitizeOps: false }, () => withTimeout(20_000, async () => {
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
+  const ac = new AbortController();
+  let handle: { finished: Promise<void> } | undefined;
+
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    handle = server.serve({ signal: ac.signal }, (_req: Request) => new Response("ok"));
+
+    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    try {
+      await new Promise((r) => setTimeout(r, 50));
+      const size = session.datagrams.maxDatagramSize;
+      assert(
+        size === null || (typeof size === "number" && size > 0),
+        `maxDatagramSize must be null or positive, got ${size}`,
+      );
+    } finally {
+      session.close();
+    }
+  } finally {
+    ac.abort();
+    await server.close();
+    await handle?.finished.catch(() => {});
+    await client.close();
+  }
+}));
+
+Deno.test({ name: "session — close() is safe to call multiple times", sanitizeOps: false }, () => withTimeout(20_000, async () => {
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ bindAddr: "127.0.0.1:0" });
+  const ac = new AbortController();
+  let handle: { finished: Promise<void> } | undefined;
+
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    handle = server.serve({ signal: ac.signal }, (_req: Request) => new Response("ok"));
+
+    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    session.close({ closeCode: 0, reason: "done" });
+    try {
+      session.close();
+    } catch {
+      // Allowed — implementations may reject on double-close.
+    }
+  } finally {
+    ac.abort();
+    await server.close();
+    await handle?.finished.catch(() => {});
+    await client.close();
+  }
+}));
+

@@ -215,5 +215,62 @@
     "description": "Deeply-nested path segments are preserved",
     "request": { "method": "GET", "path": "/echo-path/a/b/c/d/e", "headers": {}, "body": null },
     "response": { "status": 200, "bodyExact": "/echo-path/a/b/c/d/e" }
+  },
+  {
+    "id": "head-status-200",
+    "description": "HEAD /status/200 returns 200 with no body",
+    "request": { "method": "HEAD", "path": "/status/200", "headers": {}, "body": null },
+    "response": { "status": 200 }
+  },
+  {
+    "id": "status-302",
+    "description": "Status 302 Found is forwarded correctly",
+    "request": { "method": "GET", "path": "/status/302", "headers": {}, "body": null },
+    "response": { "status": 302 }
+  },
+  {
+    "id": "status-503",
+    "description": "Status 503 Service Unavailable is forwarded correctly",
+    "request": { "method": "GET", "path": "/status/503", "headers": {}, "body": null },
+    "response": { "status": 503 }
+  },
+  {
+    "id": "query-string-multiple-params",
+    "description": "Query string with multiple parameters is forwarded verbatim",
+    "request": {
+      "method": "GET",
+      "path": "/echo-query?a=1&b=2&c=hello",
+      "headers": {},
+      "body": null
+    },
+    "response": { "status": 200, "bodyExact": "?a=1&b=2&c=hello" }
+  },
+  {
+    "id": "echo-body-utf8",
+    "description": "UTF-8 multibyte body round-trips correctly",
+    "request": {
+      "method": "POST",
+      "path": "/echo",
+      "headers": { "content-type": "text/plain; charset=utf-8" },
+      "body": "こんにちは世界"
+    },
+    "response": { "status": 200, "bodyExact": "こんにちは世界" }
+  },
+  {
+    "id": "stream-64kb",
+    "description": "Server streams a 64 KiB response body",
+    "request": { "method": "GET", "path": "/stream/65536", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyLengthExact": 65536 }
+  },
+  {
+    "id": "multiple-custom-request-headers",
+    "description": "Multiple custom request headers all arrive at the handler",
+    "request": {
+      "method": "GET",
+      "path": "/header/x-first",
+      "headers": { "x-first": "alpha", "x-second": "beta" },
+      "body": null
+    },
+    "response": { "status": 200, "bodyExact": "alpha" }
   }
 ]
