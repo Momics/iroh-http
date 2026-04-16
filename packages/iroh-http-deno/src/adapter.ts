@@ -123,6 +123,11 @@ const lib = Deno.dlopen(LIB_PATH, {
     result: "i32",
     nonblocking: true,
   },
+  iroh_http_send_chunk: {
+    parameters: ["u32", "u64", "buffer", "usize"],
+    result: "i32",
+    nonblocking: true,
+  },
 } as const);
 
 // ── JSON dispatch helper ──────────────────────────────────────────────────────
@@ -133,15 +138,15 @@ const dec = new TextDecoder();
 /**
  * Capacity hint for per-call output buffers.  Each call allocates its own
  * buffer of this size so concurrent `nonblocking` FFI calls never alias the
- * same memory.  Grows when any call needs more space; never shrinks.
+ * same memory.  Grows when any call needs more space; capped at 4 MB to
+ * prevent unbounded memory growth from a single large response.
  */
+const MAX_OUT_BUF = 4 * 1024 * 1024; // 4 MB
 let outBufHint = 128 * 1024;
 
 /** Pre-encoded method name buffers (UTF-8). */
 const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
   [
-    "nextChunk",
-    "sendChunk",
     "finishBody",
     "cancelRequest",
     "nextTrailer",
@@ -219,8 +224,8 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
       buf,
       BigInt(buf.byteLength),
     )) as number;
-    // Raise the hint so future calls start with a large enough buffer.
-    if (buf.byteLength > outBufHint) outBufHint = buf.byteLength;
+    // Raise the hint so future calls start with a large enough buffer (capped).
+    if (buf.byteLength > outBufHint) outBufHint = Math.min(buf.byteLength, MAX_OUT_BUF);
   }
 
   const result = JSON.parse(dec.decode(buf.subarray(0, n))) as
@@ -233,8 +238,9 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
   return result.ok;
 }
 
-/** Module-global hint: set to the size of the last successfully-read chunk
- * so subsequent calls begin with a right-sized allocation. */
+/** Module-global hint for `nextChunk` receive buffers.  Grows up to
+ * `MAX_CHUNK_BUF` (4 MB) to match the largest chunk seen; never shrinks. */
+const MAX_CHUNK_BUF = 4 * 1024 * 1024; // 4 MB
 let chunkBufHint = 65536;
 
 // ── Bridge implementation ─────────────────────────────────────────────────────
@@ -262,16 +268,22 @@ export function makeBridge(endpointHandle: number): Bridge {
       )) as number;
     }
     if (n <= 0) return null;
-    // Update hint so future calls start with a better-sized buffer.
-    chunkBufHint = Math.max(chunkBufHint, n);
+    // Update hint so future calls start with a better-sized buffer (capped).
+    chunkBufHint = Math.min(Math.max(chunkBufHint, n), MAX_CHUNK_BUF);
     return buf.slice(0, n);
   },
   async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
-    await call<Record<never, never>>("sendChunk", {
+    // Direct binary FFI — avoids base64 encode / decode round-trip on hot path.
+    const buf = chunk as Uint8Array<ArrayBuffer>;
+    const result = await lib.symbols.iroh_http_send_chunk(
       endpointHandle,
       handle,
-      chunk: encodeBase64(chunk),
-    });
+      buf,
+      BigInt(buf.byteLength),
+    ) as number;
+    if (result < 0) {
+      throw new Error(`sendChunk failed: handle ${handle}`);
+    }
   },
   async finishBody(handle: bigint): Promise<void> {
     await call<Record<never, never>>("finishBody", { endpointHandle, handle });
