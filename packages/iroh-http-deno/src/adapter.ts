@@ -11,6 +11,7 @@ import type {
   EndpointStats,
   NodeOptions,
   NodeAddrInfo,
+  PeerConnectionEvent,
   PeerDiscoveryEvent,
   PeerStats,
 } from "@momics/iroh-http-shared";
@@ -149,6 +150,7 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
     "rawConnect",
     "serveStart",
     "nextRequest",
+    "nextConnectionEvent",
     "respond",
     "allocBodyWriter",
     "createEndpoint",
@@ -361,14 +363,36 @@ export const rawConnect: RawConnectFn = async (
  * 2. `nextRequest` blocks (nonblocking: true → Promise) until the next item
  *    is queued.  Returns `null` when the endpoint closes.
  * 3. Each request is dispatched to the user callback in the background.
+ *
+ * If `options.onConnectionEvent` is provided, a parallel polling loop reads
+ * peer connect/disconnect events via `nextConnectionEvent`.
  */
 export const rawServe: RawServeFn = (
   endpointHandle: number,
-  _options: Record<string, unknown>,
+  options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ): Promise<void> => {
   return call<Record<never, never>>("serveStart", { endpointHandle })
     .then(() => {
+      // Start connection event polling loop if a callback was supplied.
+      if (options.onConnectionEvent) {
+        const onEv = options.onConnectionEvent;
+        (async () => {
+          while (true) {
+            const ev = await call<PeerConnectionEvent | null>(
+              "nextConnectionEvent",
+              { endpointHandle },
+            );
+            if (ev === null) break;
+            try {
+              onEv(ev);
+            } catch (err) {
+              console.error("[iroh-http-deno] onConnectionEvent error:", err);
+            }
+          }
+        })();
+      }
+
       return (async () => {
         while (true) {
           const raw = await call<{

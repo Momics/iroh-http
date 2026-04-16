@@ -213,6 +213,32 @@ Denies the create_endpoint command without any pre-configured scope.
 <tr>
 <td>
 
+`iroh-http:allow-endpoint-stats`
+
+</td>
+<td>
+
+Enables the endpoint_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-endpoint-stats`
+
+</td>
+<td>
+
+Denies the endpoint_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `iroh-http:allow-finish-body`
 
 </td>
@@ -1090,6 +1116,58 @@ Enables the stop_serve command without any pre-configured scope.
 <td>
 
 Denies the stop_serve command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:allow-wait-endpoint-closed`
+
+</td>
+<td>
+
+Enables the wait_endpoint_closed command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-wait-endpoint-closed`
+
+</td>
+<td>
+
+Denies the wait_endpoint_closed command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:allow-wait-serve-stop`
+
+</td>
+<td>
+
+Enables the wait_serve_stop command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-wait-serve-stop`
+
+</td>
+<td>
+
+Denies the wait_serve_stop command without any pre-configured scope.
 
 </td>
 </tr>

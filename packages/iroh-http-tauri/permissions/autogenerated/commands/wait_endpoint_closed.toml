@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-wait-endpoint-closed"
+description = "Enables the wait_endpoint_closed command without any pre-configured scope."
+commands.allow = ["wait_endpoint_closed"]
+
+[[permission]]
+identifier = "deny-wait-endpoint-closed"
+description = "Denies the wait_endpoint_closed command without any pre-configured scope."
+commands.deny = ["wait_endpoint_closed"]

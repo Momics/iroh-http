@@ -26,6 +26,7 @@ import {
   type NodeAddrInfo,
   type NodeOptions,
   normaliseRelayMode,
+  type PeerConnectionEvent,
   type PeerDiscoveryEvent,
   type PeerStats,
   type RelayMode,
@@ -150,10 +151,18 @@ interface TauriRequestPayload {
 
 const rawServe: RawServeFn = (
   endpointHandle,
-  _options,
+  options,
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ): Promise<void> => {
   const channel = new Channel<TauriRequestPayload>();
+
+  // Wire optional connection event channel.
+  let connChannel: Channel<PeerConnectionEvent> | undefined;
+  if (options.onConnectionEvent) {
+    const cb = options.onConnectionEvent;
+    connChannel = new Channel<PeerConnectionEvent>();
+    connChannel.onmessage = (ev: PeerConnectionEvent) => cb(ev);
+  }
 
   channel.onmessage = async (raw: TauriRequestPayload) => {
     const payload: RequestPayload = {
@@ -186,7 +195,11 @@ const rawServe: RawServeFn = (
     }
   };
 
-  invoke(`${PLUGIN}|serve`, { endpointHandle: Number(endpointHandle), channel })
+  invoke(`${PLUGIN}|serve`, {
+    endpointHandle: Number(endpointHandle),
+    channel,
+    connChannel: connChannel ?? null,
+  })
     .catch((err: unknown) =>
       console.error("[iroh-http-tauri] serve error:", err)
     );

@@ -15,7 +15,7 @@ use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
     parse_direct_addrs, registry,
     server::respond,
-    RequestPayload,
+    ConnectionEvent, RequestPayload,
 };
 use napi::{
     bindgen_prelude::{BigInt, *},
@@ -739,7 +739,11 @@ pub fn raw_respond(
 }
 
 #[napi]
-pub fn raw_serve(endpoint_handle: u32, handler: JsFunction) -> napi::Result<()> {
+pub fn raw_serve(
+    endpoint_handle: u32,
+    handler: JsFunction,
+    on_connection_event: Option<JsFunction>,
+) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
 
     type CallArgs = RequestPayload;
@@ -787,8 +791,30 @@ pub fn raw_serve(endpoint_handle: u32, handler: JsFunction) -> napi::Result<()> 
 
     let tsfn = Arc::new(tsfn);
 
+    // Build an optional TSFN for connection events (peer connect/disconnect).
+    let conn_event_fn: Option<Arc<dyn Fn(ConnectionEvent) + Send + Sync>> =
+        if let Some(cb) = on_connection_event {
+            let conn_tsfn: ThreadsafeFunction<ConnectionEvent, ErrorStrategy::Fatal> = cb
+                .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<ConnectionEvent>| {
+                    let env = ctx.env;
+                    let ev = ctx.value;
+                    let mut obj = env.create_object()?;
+                    obj.set("peerId", env.create_string(&ev.peer_id)?)?;
+                    obj.set("connected", env.get_boolean(ev.connected)?)?;
+                    Ok(vec![obj.into_unknown()])
+                })?;
+            Some(Arc::new(move |ev: ConnectionEvent| {
+                conn_tsfn.call(
+                    ev,
+                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                );
+            }))
+        } else {
+            None
+        };
+
     let ep_clone = ep.clone();
-    let handle = iroh_http_core::serve(
+    let handle = iroh_http_core::serve_with_events(
         ep.clone(),
         ep.serve_options(),
         move |payload: RequestPayload| {
@@ -811,6 +837,7 @@ pub fn raw_serve(endpoint_handle: u32, handler: JsFunction) -> napi::Result<()> 
                 });
             }
         },
+        conn_event_fn,
     );
     ep.set_serve_handle(handle);
 

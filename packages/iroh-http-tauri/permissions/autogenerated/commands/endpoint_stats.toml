@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-endpoint-stats"
+description = "Enables the endpoint_stats command without any pre-configured scope."
+commands.allow = ["endpoint_stats"]
+
+[[permission]]
+identifier = "deny-endpoint-stats"
+description = "Denies the endpoint_stats command without any pre-configured scope."
+commands.deny = ["endpoint_stats"]

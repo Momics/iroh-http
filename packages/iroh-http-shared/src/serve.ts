@@ -13,6 +13,7 @@ import type {
   Bridge,
   FfiResponseHead,
   IrohServeResponse,
+  PeerConnectionEvent,
   RawServeFn,
   RequestPayload,
 } from "./bridge.js";
@@ -64,6 +65,22 @@ export interface ServeOptions {
    * This only stops the serve loop — the node itself stays alive.
    */
   signal?: AbortSignal;
+
+  /**
+   * Called when a peer establishes its first QUIC connection to this node
+   * (0 → 1 connection count transition).
+   *
+   * @param peerId Base32-encoded public key of the peer.
+   */
+  onPeerConnect?: (peerId: string) => void;
+
+  /**
+   * Called when a peer's last QUIC connection to this node closes
+   * (1 → 0 connection count transition).
+   *
+   * @param peerId Base32-encoded public key of the peer.
+   */
+  onPeerDisconnect?: (peerId: string) => void;
 
   /**
    * Inline handler — allows the single-argument `serve({ handler })` form.
@@ -159,11 +176,23 @@ export function makeServe(
 
     const onError = options.onError ?? defaultOnError;
 
+    // Build a unified connection event callback from onPeerConnect / onPeerDisconnect.
+    const onConnectionEvent: ((event: PeerConnectionEvent) => void) | undefined =
+      (options.onPeerConnect || options.onPeerDisconnect)
+        ? (ev: PeerConnectionEvent) => {
+          if (ev.connected) {
+            options.onPeerConnect?.(ev.peerId);
+          } else {
+            options.onPeerDisconnect?.(ev.peerId);
+          }
+        }
+        : undefined;
+
     // rawServe returns a Promise<void> that resolves when its internal polling
     // loop exits (i.e. after stopServe() causes nextRequest to drain to null).
     const loopDone = rawServe(
       endpointHandle,
-      {},
+      { onConnectionEvent },
       async (payload: RequestPayload): Promise<FfiResponseHead> => {
         // Build a web-standard Request.
         const hasBody = !METHODS_WITHOUT_BODY.has(payload.method.toUpperCase());

@@ -6,6 +6,7 @@ use iroh_http_core::{
     endpoint::NodeOptions,
     server::respond,
     RequestPayload,
+    ConnectionEvent,
     parse_direct_addrs,
 };
 use serde::{Deserialize, Serialize};
@@ -391,11 +392,23 @@ pub struct ServeEventPayload {
 pub async fn serve(
     endpoint_handle: u64,
     channel: Channel<ServeEventPayload>,
+    conn_channel: Option<Channel<ConnectionEvent>>,
 ) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
 
-    let handle = iroh_http_core::serve(
+    let conn_event_fn: Option<std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync>> =
+        conn_channel.map(|ch| {
+            let arc: std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync> =
+                std::sync::Arc::new(move |ev: ConnectionEvent| {
+                    if let Err(e) = ch.send(ev) {
+                        tracing::warn!("iroh-http-tauri: conn_channel send error: {e}");
+                    }
+                });
+            arc
+        });
+
+    let handle = iroh_http_core::serve_with_events(
         ep.clone(),
         ep.serve_options(),
         move |payload: RequestPayload| {
@@ -421,6 +434,7 @@ pub async fn serve(
                 tracing::warn!("iroh-http-tauri: channel send error: {e}");
             }
         },
+        conn_event_fn,
     );
     ep.set_serve_handle(handle);
 

@@ -117,35 +117,45 @@ const rawFetch: RawFetchFn = async (
 
 const rawServe: RawServeFn = (
   endpointHandle,
-  _options,
+  options,
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ): Promise<void> => {
-  napiRawServe(endpointHandle, (payload: Record<string, unknown>) => {
-    const typed = payload as unknown as RequestPayload;
-    // napi-rs's ThreadsafeFunction does not await Promise return values,
-    // so we handle the async work here and call rawRespond explicitly.
-    callback(typed)
-      .then((head) => {
-        try {
-          napiRawRespond(
-            endpointHandle,
-            typed.reqHandle,
-            head.status,
-            head.headers as string[][],
-          );
-        } catch (respondErr) {
-          console.error("[iroh-http-node] rawRespond failed:", respondErr);
-        }
-      })
-      .catch((err: unknown) => {
-        console.error("[iroh-http-node] serve handler error:", err);
-        try {
-          napiRawRespond(endpointHandle, typed.reqHandle, 500, []);
-        } catch (respondErr) {
-          console.error("[iroh-http-node] rawRespond (fallback 500) failed:", respondErr);
-        }
-      });
-  });
+  // Cast napiRawServe to include the optional third argument that will exist
+  // in the napi-generated types after the next build.
+  (napiRawServe as (
+    handle: number,
+    cb: ((payload: Record<string, unknown>) => void),
+    onConnEv: ((ev: { peerId: string; connected: boolean }) => void) | null,
+  ) => void)(
+    endpointHandle,
+    (payload: Record<string, unknown>) => {
+      const typed = payload as unknown as RequestPayload;
+      // napi-rs's ThreadsafeFunction does not await Promise return values,
+      // so we handle the async work here and call rawRespond explicitly.
+      callback(typed)
+        .then((head) => {
+          try {
+            napiRawRespond(
+              endpointHandle,
+              typed.reqHandle,
+              head.status,
+              head.headers as string[][],
+            );
+          } catch (respondErr) {
+            console.error("[iroh-http-node] rawRespond failed:", respondErr);
+          }
+        })
+        .catch((err: unknown) => {
+          console.error("[iroh-http-node] serve handler error:", err);
+          try {
+            napiRawRespond(endpointHandle, typed.reqHandle, 500, []);
+          } catch (respondErr) {
+            console.error("[iroh-http-node] rawRespond (fallback 500) failed:", respondErr);
+          }
+        });
+    },
+    options.onConnectionEvent ?? null,
+  );
   // Return a promise that resolves when the native serve loop has fully
   // exited (stopServe() was called and all in-flight requests drained).
   return napiWaitServeStop(endpointHandle);

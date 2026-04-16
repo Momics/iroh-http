@@ -686,6 +686,16 @@ pub struct EndpointStats {
     pub active_requests: usize,
 }
 
+/// A connection lifecycle event fired when a QUIC peer connection opens or closes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionEvent {
+    /// Base32-encoded public key of the peer.
+    pub peer_id: String,
+    /// `true` when this is the first connection from the peer (0→1), `false` when the last one closes (1→0).
+    pub connected: bool,
+}
+
 /// Per-peer connection statistics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerStats {

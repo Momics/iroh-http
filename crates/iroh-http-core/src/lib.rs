@@ -16,11 +16,13 @@ pub use client::{fetch, raw_connect};
 #[cfg(feature = "compression")]
 pub use endpoint::CompressionOptions;
 pub use endpoint::{
-    parse_direct_addrs, EndpointStats, IrohEndpoint, NodeAddrInfo, NodeOptions, PathInfo, PeerStats,
+    parse_direct_addrs, ConnectionEvent, EndpointStats, IrohEndpoint, NodeAddrInfo, NodeOptions,
+    PathInfo, PeerStats,
 };
 pub use registry::{get_endpoint, insert_endpoint, remove_endpoint};
 pub use server::respond;
 pub use server::serve;
+pub use server::serve_with_events;
 pub use server::ServeHandle;
 pub use server::ServerLimits;
 pub use session::{

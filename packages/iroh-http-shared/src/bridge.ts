@@ -771,6 +771,19 @@ export interface PathInfo {
 }
 
 /**
+ * Connection lifecycle event fired when a QUIC peer connects or disconnects.
+ *
+ * - `connected: true` — fired on the 0→1 transition (first connection from this peer).
+ * - `connected: false` — fired on the 1→0 transition (last connection from this peer closed).
+ */
+export interface PeerConnectionEvent {
+  /** Base32-encoded public key of the peer. */
+  peerId: string;
+  /** `true` when connecting, `false` when disconnecting. */
+  connected: boolean;
+}
+
+/**
  * Peer discovery event from mDNS local network discovery.
  */
 export interface PeerDiscoveryEvent {
@@ -785,7 +798,10 @@ export interface PeerDiscoveryEvent {
 /** Raw serve function provided by each platform bridge. */
 export type RawServeFn = (
   endpointHandle: number,
-  options: Record<string, unknown>,
+  options: {
+    /** Called on each QUIC peer connect (0→1) and disconnect (1→0) transition. */
+    onConnectionEvent?: (event: PeerConnectionEvent) => void;
+  },
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ) => Promise<void>;
 

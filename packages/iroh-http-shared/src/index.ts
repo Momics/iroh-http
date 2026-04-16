@@ -19,6 +19,7 @@ export type {
   NodeAddrInfo,
   NodeOptions,
   PathInfo,
+  PeerConnectionEvent,
   PeerDiscoveryEvent,
   PeerStats,
   RelayMode,

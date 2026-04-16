@@ -24,7 +24,7 @@ use crate::{
     client::{body_from_reader, pump_hyper_body_to_channel_limited},
     io::IrohStream,
     stream::{HandleStore, ResponseHeadEntry},
-    CoreError, IrohEndpoint, RequestPayload,
+    ConnectionEvent, CoreError, IrohEndpoint, RequestPayload,
 };
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
@@ -122,27 +122,46 @@ pub fn respond(
 
 // ── PeerConnectionGuard ───────────────────────────────────────────────────────
 
+type ConnectionEventFn = Arc<dyn Fn(ConnectionEvent) + Send + Sync>;
+
 struct PeerConnectionGuard {
     counts: Arc<Mutex<HashMap<iroh::PublicKey, usize>>>,
     peer: iroh::PublicKey,
+    peer_id_str: String,
+    on_event: Option<ConnectionEventFn>,
 }
 
 impl PeerConnectionGuard {
     fn acquire(
         counts: &Arc<Mutex<HashMap<iroh::PublicKey, usize>>>,
         peer: iroh::PublicKey,
+        peer_id_str: String,
         max: usize,
+        on_event: Option<ConnectionEventFn>,
     ) -> Option<Self> {
         let mut map = counts.lock().unwrap_or_else(|e| e.into_inner());
         let count = map.entry(peer).or_insert(0);
         if *count >= max {
             return None;
         }
+        let was_zero = *count == 0;
         *count += 1;
-        Some(PeerConnectionGuard {
+        let guard = PeerConnectionGuard {
             counts: counts.clone(),
             peer,
-        })
+            peer_id_str: peer_id_str.clone(),
+            on_event: on_event.clone(),
+        };
+        // Fire connected event on 0 → 1 transition (first connection from this peer).
+        if was_zero {
+            if let Some(cb) = &on_event {
+                cb(ConnectionEvent {
+                    peer_id: peer_id_str,
+                    connected: true,
+                });
+            }
+        }
+        Some(guard)
     }
 }
 
@@ -153,6 +172,13 @@ impl Drop for PeerConnectionGuard {
             *c = c.saturating_sub(1);
             if *c == 0 {
                 map.remove(&self.peer);
+                // Fire disconnected event on 1 → 0 transition (last connection from this peer closed).
+                if let Some(cb) = &self.on_event {
+                    cb(ConnectionEvent {
+                        peer_id: self.peer_id_str.clone(),
+                        connected: false,
+                    });
+                }
             }
         }
     }
@@ -547,7 +573,27 @@ fn on_request_fire(
 
 // ── serve() ───────────────────────────────────────────────────────────────────
 
+/// Start the serve accept loop.
+///
+/// This is the 3-argument form for backward compatibility.
+/// Use `serve_with_events` to also receive peer connect/disconnect callbacks.
 pub fn serve<F>(endpoint: IrohEndpoint, options: ServeOptions, on_request: F) -> ServeHandle
+where
+    F: Fn(RequestPayload) + Send + Sync + 'static,
+{
+    serve_with_events(endpoint, options, on_request, None)
+}
+
+/// Start the serve accept loop with an optional peer connection event callback.
+///
+/// `on_connection_event` is called on 0→1 (first connection from a peer) and
+/// 1→0 (last connection from a peer closed) count transitions.
+pub fn serve_with_events<F>(
+    endpoint: IrohEndpoint,
+    options: ServeOptions,
+    on_request: F,
+    on_connection_event: Option<ConnectionEventFn>,
+) -> ServeHandle
 where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
@@ -575,6 +621,7 @@ where
 
     let peer_counts: Arc<Mutex<HashMap<iroh::PublicKey, usize>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    let conn_event_fn: Option<ConnectionEventFn> = on_connection_event;
 
     // Drain semaphore: one permit per in-flight REQUEST (bi-stream), not per connection.
     // Drain waits for acquire_many(max) which returns only when all requests finish.
@@ -662,7 +709,7 @@ where
             let remote_id = base32_encode(remote_pk.as_bytes());
 
             let guard =
-                match PeerConnectionGuard::acquire(&peer_counts, remote_pk, max_conns_per_peer) {
+                match PeerConnectionGuard::acquire(&peer_counts, remote_pk, remote_id.clone(), max_conns_per_peer, conn_event_fn.clone()) {
                     Some(g) => g,
                     None => {
                         tracing::warn!(
