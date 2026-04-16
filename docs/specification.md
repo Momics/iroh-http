@@ -404,22 +404,6 @@ Enabled via `NodeOptions.compression`. No additional runtime interfaces —
 compression is transparent. See [compression.md](features/compression.md)
 for configuration.
 
-### Rate Limiting
-
-```ts
-interface RateLimitOptions {
-  requestsPerSecond: number;
-  burst?: number;
-  forPeer?: (
-    nodeId: string,
-  ) => RateConfig | "unlimited" | "block" | null | undefined;
-}
-
-type RateConfig = { requestsPerSecond: number; burst?: number };
-```
-
-See [rate-limiting.md](features/rate-limiting.md) for middleware composition.
-
 ### Server Limits
 
 Configured via `NodeOptions` or `ServeOptions`. See [server-limits.md](features/server-limits.md) for behaviour.
