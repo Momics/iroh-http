@@ -9,7 +9,8 @@
     "build:all":   "deno run --allow-run --allow-env --allow-read --allow-write --allow-sys scripts/build-all.mts",
     "test":        "deno test --allow-read --allow-ffi --allow-env --allow-net test/smoke.test.ts && deno run --allow-read --allow-ffi test/compliance.ts",
     "test:smoke":  "deno test --allow-read --allow-ffi --allow-env --allow-net test/smoke.test.ts",
-    "test:compliance": "deno run --allow-read --allow-ffi test/compliance.ts"
+    "test:compliance": "deno run --allow-read --allow-ffi test/compliance.ts",
+    "bench":           "deno bench --allow-read --allow-ffi --allow-env --allow-net bench/throughput.ts"
   },
   "publish": {
     "include": ["mod.ts", "src/", "README.md"]

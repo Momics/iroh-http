@@ -65,6 +65,7 @@ async fn basic_get_200() {
         &[],
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -127,6 +128,7 @@ async fn get_with_body() {
         "/echo/test",
         "GET",
         &[],
+        None,
         None,
         None,
         Some(&addrs),
@@ -211,6 +213,7 @@ async fn post_with_request_body() {
         &[("content-type".to_string(), "text/plain".to_string())],
         Some(body_reader),
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -270,6 +273,7 @@ async fn custom_response_headers() {
         &[],
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -316,6 +320,7 @@ async fn request_headers_and_method() {
         &[("authorization".to_string(), "Bearer token123".to_string())],
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -353,6 +358,7 @@ async fn url_uses_httpi_scheme() {
         "/test/path",
         "GET",
         &[],
+        None,
         None,
         None,
         Some(&addrs),
@@ -409,6 +415,7 @@ async fn remote_node_id_is_populated() {
         &[],
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -456,6 +463,7 @@ async fn multiple_sequential_requests() {
             &format!("/req/{i}"),
             "GET",
             &[],
+            None,
             None,
             None,
             Some(&addrs),
@@ -521,6 +529,7 @@ async fn response_trailers() {
         "/with-trailers",
         "GET",
         &[],
+        None,
         None,
         None,
         Some(&addrs),
@@ -596,6 +605,7 @@ async fn post_empty_body() {
         &[("content-length".to_string(), "0".to_string())],
         Some(body_reader),
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -642,6 +652,7 @@ async fn concurrent_requests() {
                 &format!("/concurrent/{i}"),
                 "GET",
                 &[],
+                None,
                 None,
                 None,
                 Some(&a),
@@ -699,6 +710,7 @@ async fn fetch_cancelled_via_token() {
         "/slow",
         "GET",
         &[],
+        None,
         None,
         Some(token),
         Some(&addrs),
@@ -844,6 +856,7 @@ async fn url_with_query_params() {
         &[],
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -915,6 +928,7 @@ async fn response_without_trailer_header_still_works() {
         &[],
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -942,7 +956,7 @@ async fn fetch_bad_node_id_returns_error() {
         ..Default::default()
     };
     let client = IrohEndpoint::bind(opts).await.unwrap();
-    let result = fetch(&client, "!!!invalid!!!", "/", "GET", &[], None, None, None).await;
+    let result = fetch(&client, "!!!invalid!!!", "/", "GET", &[], None, None, None, None).await;
     assert!(result.is_err());
 }
 
@@ -985,6 +999,7 @@ async fn pool_reuses_connection_for_sequential_requests() {
         &[],
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -1007,6 +1022,7 @@ async fn pool_reuses_connection_for_sequential_requests() {
         &[],
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -1026,6 +1042,7 @@ async fn pool_reuses_connection_for_sequential_requests() {
         "/c",
         "GET",
         &[],
+        None,
         None,
         None,
         Some(&addrs),
@@ -1081,6 +1098,7 @@ async fn pool_concurrent_requests_share_connection() {
                 &format!("/storm/{i}"),
                 "GET",
                 &[],
+                None,
                 None,
                 None,
                 Some(&a),
@@ -1140,7 +1158,7 @@ async fn pool_different_peers_get_separate_connections() {
     // Fetch with a generous timeout instead of retry/sleep loops.
     let r1 = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        fetch(&client, &id1, "/", "GET", &[], None, None, Some(&addrs1)),
+        fetch(&client, &id1, "/", "GET", &[], None, None, None, Some(&addrs1)),
     )
     .await
     .expect("fetch to server1 timed out")
@@ -1150,7 +1168,7 @@ async fn pool_different_peers_get_separate_connections() {
 
     let r2 = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        fetch(&client, &id2, "/", "GET", &[], None, None, Some(&addrs2)),
+        fetch(&client, &id2, "/", "GET", &[], None, None, None, Some(&addrs2)),
     )
     .await
     .expect("fetch to server2 timed out")
@@ -1220,6 +1238,7 @@ async fn header_bomb_rejected() {
         &headers,
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await;
@@ -1281,6 +1300,7 @@ async fn response_header_bomb_rejected() {
         &[],
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await;
@@ -1331,6 +1351,7 @@ async fn default_limits_allow_normal_traffic() {
         "/normal",
         "GET",
         &[],
+        None,
         None,
         None,
         Some(&addrs),
@@ -1412,6 +1433,7 @@ async fn body_limit_exceeded_resets_stream() {
         "POST",
         &[],
         Some(reader),
+        None,
         None,
         Some(&addrs),
     )
@@ -1532,7 +1554,7 @@ async fn graceful_shutdown_drains_in_flight() {
         let sid = server_id.clone();
         let a = addrs.clone();
         tokio::spawn(async move {
-            fetch(&client, &sid, "/slow", "GET", &[], None, None, Some(&a)).await
+            fetch(&client, &sid, "/slow", "GET", &[], None, None, None, Some(&a)).await
         })
     };
 
@@ -1651,6 +1673,7 @@ async fn shutdown_rejects_new_requests() {
         &[],
         None,
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -1671,6 +1694,7 @@ async fn shutdown_rejects_new_requests() {
         "/after",
         "GET",
         &[],
+        None,
         None,
         None,
         Some(&addrs),
@@ -1767,6 +1791,7 @@ async fn large_body_round_trip() {
         &[],
         Some(body_reader),
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -1814,8 +1839,8 @@ async fn mutual_fetch() {
 
     // A fetches from B, B fetches from A — concurrently.
     let (res_ab, res_ba) = tokio::join!(
-        fetch(&ep_a, &id_b, "/who", "GET", &[], None, None, Some(&addrs_b)),
-        fetch(&ep_b, &id_a, "/who", "GET", &[], None, None, Some(&addrs_a)),
+        fetch(&ep_a, &id_b, "/who", "GET", &[], None, None, None, Some(&addrs_b)),
+        fetch(&ep_b, &id_a, "/who", "GET", &[], None, None, None, Some(&addrs_a)),
     );
 
     let res_ab = res_ab.unwrap();
@@ -1909,6 +1934,7 @@ async fn fetch_json_post() {
         &headers,
         Some(body_reader),
         None,
+        None,
         Some(&addrs),
     )
     .await
@@ -1969,6 +1995,7 @@ async fn serve_concurrency_limit() {
             &[],
             None,
             None,
+            None,
             Some(&addrs)
         ),
         fetch(
@@ -1979,6 +2006,7 @@ async fn serve_concurrency_limit() {
             &[],
             None,
             None,
+            None,
             Some(&addrs)
         ),
         fetch(
@@ -1987,6 +2015,7 @@ async fn serve_concurrency_limit() {
             "/r3",
             "GET",
             &[],
+            None,
             None,
             None,
             Some(&addrs)
@@ -2014,7 +2043,7 @@ async fn fetch_unknown_peer() {
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        fetch(&client_ep, &fake_id, "/", "GET", &[], None, None, None),
+        fetch(&client_ep, &fake_id, "/", "GET", &[], None, None, None, None),
     )
     .await;
 
@@ -2075,6 +2104,7 @@ async fn node_close_drains_in_flight() {
                 "/drain-test",
                 "GET",
                 &[],
+                None,
                 None,
                 None,
                 Some(&addrs),
@@ -2143,6 +2173,7 @@ async fn body_exceeds_limit_resets_stream() {
         &[],
         Some(body_reader),
         None,
+        None,
         Some(&addrs),
     )
     .await;
@@ -2194,6 +2225,7 @@ async fn request_timeout_fires() {
             &[],
             None,
             None,
+            None,
             Some(&addrs),
         ),
     )
@@ -2217,6 +2249,7 @@ async fn fetch_rejects_https_scheme() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap_err();
@@ -2235,6 +2268,7 @@ async fn fetch_rejects_http_scheme() {
         "http://example.com/path",
         "GET",
         &[],
+        None,
         None,
         None,
         None,
@@ -2328,7 +2362,7 @@ async fn concurrent_requests_under_tight_concurrency() {
         let a = addrs.clone();
         handles.push(tokio::spawn(async move {
             let path = format!("/stress/{i}");
-            fetch(&client, &id, &path, "GET", &[], None, None, Some(&a)).await
+            fetch(&client, &id, &path, "GET", &[], None, None, None, Some(&a)).await
         }));
     }
 
@@ -2411,6 +2445,7 @@ async fn cancel_mid_stream_no_panic() {
         "GET",
         &[],
         None,
+        None,
         Some(token),
         Some(&addrs),
     )
@@ -2463,6 +2498,7 @@ async fn pool_eviction_single_slot() {
             &path,
             "GET",
             &[],
+            None,
             None,
             None,
             Some(&addrs),

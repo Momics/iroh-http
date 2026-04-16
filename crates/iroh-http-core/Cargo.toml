@@ -44,3 +44,8 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "te
 bytes = { workspace = true }
 proptest = "1"
 serde_json = "1"
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "throughput"
+harness = false
