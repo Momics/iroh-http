@@ -91,6 +91,28 @@ fn require_endpoint(p: &Value) -> Result<IrohEndpoint, Value> {
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
+/// Expands one arm of the dispatch table.
+///
+/// - `async` — calls `handler(p).await`
+/// - `sync`  — calls `handler(p)`
+/// - `sync0` — calls `handler()` (no payload argument; e.g. `generateSecretKey`)
+macro_rules! dispatch_arm {
+    (async, $handler:path, $p:expr)  => { $handler($p).await };
+    (sync,  $handler:path, $p:expr)  => { $handler($p) };
+    (sync0, $handler:path, $_p:expr) => { $handler() };
+}
+
+/// Generates the dispatch `match` from a compact method registry.  Adding a
+/// new method is one line: `async "methodName" => handler_fn`.
+macro_rules! dispatch_table {
+    ($method:expr, $p:expr; $( $kind:ident $name:literal => $handler:path ),+ $(,)?) => {
+        match $method {
+            $( $name => dispatch_arm!($kind, $handler, $p), )+
+            other => err(format!("unknown method: {other}")),
+        }
+    };
+}
+
 /// Entry point called from `lib.rs`.  Parses the JSON payload and routes to the
 /// appropriate handler.
 pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
@@ -99,53 +121,60 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         Err(e) => return err(format!("invalid JSON payload: {e}")),
     };
 
-    match method {
-        "createEndpoint" => create_endpoint(p).await,
-        "closeEndpoint" => close_endpoint(p).await,
-        "nodeAddr" => node_addr_dispatch(p),
-        "nodeTicket" => node_ticket_dispatch(p),
-        "homeRelay" => home_relay_dispatch(p),
-        "peerInfo" => peer_info_dispatch(p).await,
-        "peerStats" => peer_stats_dispatch(p).await,
-        "endpointStats" => endpoint_stats_dispatch(p),
-        "allocBodyWriter" => alloc_body_writer_dispatch(p),
-        "allocTrailerSender" => alloc_trailer_sender_dispatch(p),
-        "allocFetchToken" => alloc_fetch_token_dispatch(p),
-        "cancelInFlight" => cancel_in_flight_dispatch(p),
-        "nextChunk" => next_chunk_dispatch(p).await,
-        "sendChunk" => send_chunk_dispatch(p).await,
-        "finishBody" => finish_body_dispatch(p),
-        "cancelRequest" => cancel_request_dispatch(p),
-        "nextTrailer" => next_trailer_dispatch(p).await,
-        "sendTrailers" => send_trailers_dispatch(p),
-        "rawFetch" => raw_fetch(p).await,
-        "rawConnect" => raw_connect_dispatch(p).await,
-        "serveStart" => serve_start(p).await,
-        "stopServe" => stop_serve(p).await,
-        "waitEndpointClosed" => wait_endpoint_closed(p).await,
-        "nextRequest" => next_request(p).await,
-        "nextConnectionEvent" => next_connection_event(p).await,
-        "respond" => respond_dispatch(p),
-        "secretKeySign" => secret_key_sign_dispatch(p),
-        "publicKeyVerify" => public_key_verify_dispatch(p),
-        "generateSecretKey" => generate_secret_key_dispatch(),
-        "mdnsBrowse" => mdns_browse_dispatch(p).await,
-        "mdnsNextEvent" => mdns_next_event_dispatch(p).await,
-        "mdnsBrowseClose" => mdns_browse_close_dispatch(p),
-        "mdnsAdvertise" => mdns_advertise_dispatch(p),
-        "mdnsAdvertiseClose" => mdns_advertise_close_dispatch(p),
-        "sessionConnect" => session_connect_dispatch(p).await,
-        "sessionCreateBidiStream" => session_create_bidi_stream_dispatch(p).await,
-        "sessionNextBidiStream" => session_next_bidi_stream_dispatch(p).await,
-        "sessionClose" => session_close_dispatch(p),
-        "sessionClosed" => session_closed_dispatch(p).await,
-        "sessionCreateUniStream" => session_create_uni_stream_dispatch(p).await,
-        "sessionNextUniStream" => session_next_uni_stream_dispatch(p).await,
-        "sessionSendDatagram" => session_send_datagram_dispatch(p),
-        "sessionRecvDatagram" => session_recv_datagram_dispatch(p).await,
-        "sessionMaxDatagramSize" => session_max_datagram_size_dispatch(p),
-        _ => err(format!("unknown method: {method}")),
-    }
+    dispatch_table!(method, p;
+        // ── Endpoint lifecycle ───────────────────────────────────────────────
+        async "createEndpoint"          => create_endpoint,
+        async "closeEndpoint"           => close_endpoint,
+        sync  "nodeAddr"                => node_addr_dispatch,
+        sync  "nodeTicket"              => node_ticket_dispatch,
+        sync  "homeRelay"               => home_relay_dispatch,
+        async "peerInfo"                => peer_info_dispatch,
+        async "peerStats"               => peer_stats_dispatch,
+        sync  "endpointStats"           => endpoint_stats_dispatch,
+        // ── Handle allocation ────────────────────────────────────────────────
+        sync  "allocBodyWriter"         => alloc_body_writer_dispatch,
+        sync  "allocTrailerSender"      => alloc_trailer_sender_dispatch,
+        sync  "allocFetchToken"         => alloc_fetch_token_dispatch,
+        sync  "cancelInFlight"          => cancel_in_flight_dispatch,
+        // ── Streaming (JSON fallbacks — hot path uses raw FFI symbols) ───────
+        async "nextChunk"               => next_chunk_dispatch,
+        async "sendChunk"               => send_chunk_dispatch,
+        sync  "finishBody"              => finish_body_dispatch,
+        sync  "cancelRequest"           => cancel_request_dispatch,
+        async "nextTrailer"             => next_trailer_dispatch,
+        sync  "sendTrailers"            => send_trailers_dispatch,
+        // ── HTTP ─────────────────────────────────────────────────────────────
+        async "rawFetch"                => raw_fetch,
+        async "rawConnect"              => raw_connect_dispatch,
+        // ── Serve loop ───────────────────────────────────────────────────────
+        async "serveStart"              => serve_start,
+        async "stopServe"               => stop_serve,
+        async "waitEndpointClosed"      => wait_endpoint_closed,
+        async "nextRequest"             => next_request,
+        async "nextConnectionEvent"     => next_connection_event,
+        sync  "respond"                 => respond_dispatch,
+        // ── Crypto ───────────────────────────────────────────────────────────
+        sync  "secretKeySign"           => secret_key_sign_dispatch,
+        sync  "publicKeyVerify"         => public_key_verify_dispatch,
+        sync0 "generateSecretKey"       => generate_secret_key_dispatch,
+        // ── mDNS ─────────────────────────────────────────────────────────────
+        async "mdnsBrowse"              => mdns_browse_dispatch,
+        async "mdnsNextEvent"           => mdns_next_event_dispatch,
+        sync  "mdnsBrowseClose"         => mdns_browse_close_dispatch,
+        sync  "mdnsAdvertise"           => mdns_advertise_dispatch,
+        sync  "mdnsAdvertiseClose"      => mdns_advertise_close_dispatch,
+        // ── Sessions ─────────────────────────────────────────────────────────
+        async "sessionConnect"          => session_connect_dispatch,
+        async "sessionCreateBidiStream" => session_create_bidi_stream_dispatch,
+        async "sessionNextBidiStream"   => session_next_bidi_stream_dispatch,
+        sync  "sessionClose"            => session_close_dispatch,
+        async "sessionClosed"           => session_closed_dispatch,
+        async "sessionCreateUniStream"  => session_create_uni_stream_dispatch,
+        async "sessionNextUniStream"    => session_next_uni_stream_dispatch,
+        sync  "sessionSendDatagram"     => session_send_datagram_dispatch,
+        async "sessionRecvDatagram"     => session_recv_datagram_dispatch,
+        sync  "sessionMaxDatagramSize"  => session_max_datagram_size_dispatch,
+    )
 }
 
 // ── Endpoint ──────────────────────────────────────────────────────────────────

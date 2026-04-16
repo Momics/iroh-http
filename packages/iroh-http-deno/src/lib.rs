@@ -1,9 +1,11 @@
 //! C-ABI entry point for the Deno FFI adapter.
 //!
-//! All dispatch goes through a single `iroh_http_call` symbol.
-//! The function signature is intentionally identical to the one used in the
-//! legacy `iroh-deno` reference so the TypeScript adapter pattern is fully
-//! portable.
+//! Most dispatch goes through the JSON `iroh_http_call` symbol.  Hot-path
+//! streaming operations use dedicated binary symbols to avoid base64 overhead:
+//! - `iroh_http_next_chunk` — read a body chunk directly into a caller buffer
+//! - `iroh_http_send_chunk` — write a body chunk directly from a caller buffer
+//!
+//! All three symbols are `nonblocking: true` in the Deno `dlopen` call.
 
 mod dispatch;
 mod serve_registry;
@@ -232,5 +234,44 @@ pub unsafe extern "C" fn iroh_http_next_chunk(
             }
             len as i32
         }
+    }
+}
+
+/// Raw-buffer `sendChunk` — bypasses JSON dispatch for streaming throughput.
+///
+/// Copies `len` bytes from `ptr` into a new chunk and sends it to the body
+/// writer at `handle`.
+///
+/// Return value:
+/// - `0`  — success.
+/// - `-1` — error (endpoint gone, handle invalid, or channel closed).
+///
+/// This symbol is declared `nonblocking: true` in the Deno `dlopen` call.
+///
+/// # Safety
+/// `ptr` must be valid for `len` bytes for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iroh_http_send_chunk(
+    endpoint_handle: u32,
+    handle: u64,
+    ptr: *const u8,
+    len: usize,
+) -> i32 {
+    if len > 0 && ptr.is_null() {
+        return -1;
+    }
+
+    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+        Some(ep) => ep,
+        None => return -1,
+    };
+
+    // SAFETY: caller guarantees ptr is valid for len bytes.
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let bytes = bytes::Bytes::copy_from_slice(slice);
+
+    match runtime().block_on(ep.handles().send_chunk(handle, bytes)) {
+        Ok(()) => 0,
+        Err(_) => -1,
     }
 }
