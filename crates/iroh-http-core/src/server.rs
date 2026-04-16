@@ -326,6 +326,23 @@ impl RequestService {
 
         guard.commit();
 
+        // RAII guard: remove the req_handle slab entry on all exit paths
+        // (413 early-return, timeout drop, "JS handler dropped", normal completion).
+        // If respond() already consumed the entry, take_req_sender returns None — safe no-op.
+        struct ReqHeadCleanup {
+            endpoint: IrohEndpoint,
+            req_handle: u64,
+        }
+        impl Drop for ReqHeadCleanup {
+            fn drop(&mut self) {
+                self.endpoint.handles().take_req_sender(self.req_handle);
+            }
+        }
+        let _req_head_cleanup = ReqHeadCleanup {
+            endpoint: self.endpoint.clone(),
+            req_handle,
+        };
+
         // ── Pump request body ────────────────────────────────────────────────
 
         // For duplex: keep req_body_writer to move into the upgrade spawn below.
@@ -382,8 +399,8 @@ impl RequestService {
             tokio::select! {
                 biased;
                 _ = overflow_rx => {
-                    // Body too large: head_rx is dropped automatically on return,
-                    // causing the JS respond() call to fail gracefully.
+                    // Body too large: ReqHeadCleanup RAII guard will remove the slab
+                    // entry when this function exits (issue-7 fix).
                     let resp = hyper::Response::builder()
                         .status(StatusCode::PAYLOAD_TOO_LARGE)
                         .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(

@@ -97,6 +97,18 @@ export function makeFetch(
     const signal = init?.signal ?? null;
     const directAddrs = init?.directAddrs ?? null;
 
+    // Reject GET and HEAD request bodies — matches web-platform fetch semantics
+    // (https://fetch.spec.whatwg.org/#concept-method-normalize, issue-58).
+    if (
+      (method.toUpperCase() === "GET" || method.toUpperCase() === "HEAD") &&
+      init?.body != null
+    ) {
+      throw new TypeError(
+        `Request body is not allowed for ${method} requests. ` +
+          `The web-platform fetch specification forbids bodies on GET and HEAD.`,
+      );
+    }
+
     // Reject immediately if already aborted.
     if (signal?.aborted) {
       throw new DOMException("The operation was aborted", "AbortError");

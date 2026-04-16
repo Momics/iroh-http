@@ -77,12 +77,13 @@ export async function pipeToWriter(
 /**
  * Coerce a `BodyInit` to a `ReadableStream<Uint8Array>`, or `null` for empty bodies.
  *
- * Supports `ReadableStream`, `Uint8Array`, `ArrayBuffer`, `string`, `Blob`,
- * and `URLSearchParams`.  Throws for `FormData` (not supported in iroh-http v1).
+ * Supports `ReadableStream`, `Uint8Array`, any `ArrayBufferView` (e.g. `Int16Array`,
+ * `DataView`), `ArrayBuffer`, `string`, `Blob`, and `URLSearchParams`.
+ * Throws for `FormData` (not supported in iroh-http v1) and for any other type.
  *
  * @param body  The body value to coerce.
  * @returns A `ReadableStream<Uint8Array>`, or `null` if the body is empty.
- * @throws {TypeError} If `body` is a `FormData` instance.
+ * @throws {TypeError} If `body` is a `FormData` instance or an unsupported type.
  */
 export function bodyInitToStream(
   body: BodyInit | null | undefined,
@@ -110,7 +111,17 @@ export function bodyInitToStream(
   if (body instanceof URLSearchParams) {
     return singleChunkStream(new TextEncoder().encode(body.toString()));
   }
-  return null;
+  // Catch-all for other ArrayBufferView subtypes (Int16Array, Float64Array, DataView, etc.)
+  // Must come after the Uint8Array check so the common case stays on the fast path.
+  if (ArrayBuffer.isView(body)) {
+    return singleChunkStream(
+      new Uint8Array((body as ArrayBufferView).buffer, (body as ArrayBufferView).byteOffset, (body as ArrayBufferView).byteLength),
+    );
+  }
+  throw new TypeError(
+    `Unsupported BodyInit type: ${Object.prototype.toString.call(body)}. ` +
+      `Supported types: ReadableStream, Uint8Array, ArrayBufferView, ArrayBuffer, string, Blob, URLSearchParams.`,
+  );
 }
 
 function singleChunkStream(data: Uint8Array): ReadableStream<Uint8Array> {

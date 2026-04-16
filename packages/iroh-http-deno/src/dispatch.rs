@@ -739,9 +739,19 @@ async fn next_request(p: Value) -> Value {
     };
     let queue = match serve_registry::get(handle) {
         Some(q) => q,
-        None => return err(format!("no serve queue for handle: {handle}")),
+        // Queue was already removed (stopServe completed) — signal end-of-stream.
+        None => return ok(Value::Null),
     };
-    let item = queue.rx.lock().await.recv().await;
+    // Clone the receiver so we can watch for shutdown without moving it.
+    // `wait_for(|v| *v)` completes immediately if shutdown was already triggered
+    // (watch persists its last value), or waits until it becomes true — both paths
+    // unblock any pending recv() call (issue-12 fix).
+    let mut shutdown_rx = queue.shutdown_rx.clone();
+    let item = tokio::select! {
+        biased;
+        _ = shutdown_rx.wait_for(|v| *v) => None,
+        item = async { queue.rx.lock().await.recv().await } => item,
+    };
     ok(item)
 }
 

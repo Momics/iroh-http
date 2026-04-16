@@ -20,6 +20,12 @@ pub type QueuedRequest = serde_json::Value;
 pub struct ServeQueue {
     pub tx: mpsc::Sender<QueuedRequest>,
     pub rx: tokio::sync::Mutex<mpsc::Receiver<QueuedRequest>>,
+    /// Persistent shutdown signal: `watch::Sender` is cloned into the registry;
+    /// `nextRequest` holds a receiver and races `recv()` against this changing to `true`.
+    /// Unlike a `Notify`, `watch` persists its last value, so callers that arrive
+    /// after `shutdown()` is triggered still see the closed state immediately.
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+    pub shutdown_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 fn registry() -> &'static Mutex<HashMap<u32, std::sync::Arc<ServeQueue>>> {
@@ -31,9 +37,12 @@ fn registry() -> &'static Mutex<HashMap<u32, std::sync::Arc<ServeQueue>>> {
 /// Returns a clone of the `Arc` so the serve loop can hold its own `tx` reference.
 pub fn register(endpoint_handle: u32) -> std::sync::Arc<ServeQueue> {
     let (tx, rx) = mpsc::channel(QUEUE_CAPACITY);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let queue = std::sync::Arc::new(ServeQueue {
         tx,
         rx: tokio::sync::Mutex::new(rx),
+        shutdown_tx,
+        shutdown_rx,
     });
     registry()
         .lock()
@@ -47,18 +56,15 @@ pub fn get(endpoint_handle: u32) -> Option<std::sync::Arc<ServeQueue>> {
     registry().lock().unwrap().get(&endpoint_handle).cloned()
 }
 
-/// Remove the queue for an endpoint, explicitly closing the channel.
+/// Signal shutdown to all pending `nextRequest` callers, then remove the queue.
 ///
-/// ISS-012: dropping the sender from the queue explicitly ensures that
-/// any pending `nextRequest` `recv()` calls return `None` immediately
-/// rather than hanging until the serve closure drops its `tx` clone.
+/// ISS-012 / issue-12: sending `true` on the watch channel wakes any currently
+/// blocked `recv()` in `nextRequest`, and any future callers will also observe
+/// the shutdown state immediately (watch persists its last value).
 pub fn remove(endpoint_handle: u32) {
     if let Some(queue) = registry().lock().unwrap().remove(&endpoint_handle) {
-        // Close the channel by dropping the receiver.  We can't call
-        // `blocking_lock()` here because this may run inside an async context
-        // (e.g. called from `stopServe` or `closeEndpoint` dispatched by
-        // Tokio).  Dropping the Arc<ServeQueue> closes the tx; once all tx
-        // clones are dropped the rx will return None on the next recv().
-        drop(queue);
+        // Trigger shutdown — this unblocks all pending nextRequest recv() calls.
+        let _ = queue.shutdown_tx.send(true);
     }
 }
+

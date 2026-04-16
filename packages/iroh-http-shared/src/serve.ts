@@ -96,9 +96,11 @@ export type ServeFn = {
 };
 
 /**
- * HTTP methods that carry a request body.
+ * HTTP methods that categorically cannot carry a request body per RFC 9110.
+ * All other methods — including OPTIONS, custom verbs, etc. — may carry a body
+ * and should have the body stream forwarded to the handler (issue-58 fix).
  */
-const METHODS_WITH_BODY = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const METHODS_WITHOUT_BODY = new Set(["GET", "HEAD", "CONNECT", "TRACE"]);
 
 /**
  * Construct a Deno-compatible `serve` function bound to a specific endpoint.
@@ -163,7 +165,7 @@ export function makeServe(
       {},
       async (payload: RequestPayload): Promise<FfiResponseHead> => {
         // Build a web-standard Request.
-        const hasBody = METHODS_WITH_BODY.has(payload.method.toUpperCase());
+        const hasBody = !METHODS_WITHOUT_BODY.has(payload.method.toUpperCase());
         const reqBody = (hasBody && !payload.isBidi)
           ? makeReadable(bridge, payload.reqBodyHandle)
           : null;

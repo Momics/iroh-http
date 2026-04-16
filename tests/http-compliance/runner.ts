@@ -56,13 +56,16 @@ export interface RunResult {
  * Build the server `Request` handler used by every compliance test.
  *
  * Routes:
- *   GET  /status/:code           → that status, empty body
- *   POST /echo                   → 200, echoes request body
+ *   ANY  /status/:code           → that status, empty body
+ *   ANY  /echo                   → 200, echoes request body
  *        /echo-path              → 200, body = request path
  *        /echo-method            → 200, body = request method
  *        /echo-length            → 200, body = request body byte length as string
+ *        /echo-query             → 200, body = query string (including leading "?")
+ *        /echo-header-count      → 200, body = number of request headers as string
  *   GET  /header/:name           → 200, body = value of that request header (or "")
  *   GET  /set-header/:name/:val  → 200, response header name=val
+ *   GET  /set-headers/:n         → 200, n response headers x-h-0 … x-h-(n-1)
  *   GET  /stream/:n              → 200, streams n zero bytes
  */
 function handleComplianceRequest(req: Request): Response | Promise<Response> {
@@ -98,6 +101,17 @@ function handleComplianceRequest(req: Request): Response | Promise<Response> {
     })();
   }
 
+  // /echo-query — return query string (empty string if none)
+  if (parts[0] === "echo-query") {
+    return new Response(url.search, { status: 200 });
+  }
+
+  // /echo-header-count — return number of request headers
+  if (parts[0] === "echo-header-count") {
+    const count = [...req.headers].length;
+    return new Response(String(count), { status: 200 });
+  }
+
   // /header/:name — return value of named request header
   if (parts[0] === "header" && parts[1]) {
     const val = req.headers.get(parts[1]) ?? "";
@@ -110,6 +124,16 @@ function handleComplianceRequest(req: Request): Response | Promise<Response> {
       status: 200,
       headers: { [parts[1]]: parts[2] },
     });
+  }
+
+  // /set-headers/:n — respond with n custom headers x-h-0 … x-h-(n-1)
+  if (parts[0] === "set-headers" && parts[1]) {
+    const n = parseInt(parts[1], 10);
+    if (!isNaN(n) && n >= 0) {
+      const hdrs: Record<string, string> = {};
+      for (let i = 0; i < n; i++) hdrs[`x-h-${i}`] = `v${i}`;
+      return new Response(null, { status: 200, headers: hdrs });
+    }
   }
 
   // /stream/:n — stream n zero bytes
