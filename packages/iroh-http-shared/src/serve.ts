@@ -286,21 +286,18 @@ export function makeServe(
     // serve loop is immediately live after rawServe returns.
     options.onListen?.({ nodeId });
 
-    // ISS-029: create a finished promise scoped to THIS serve loop's lifetime.
-    // It resolves when stopServe() is explicitly called (signal abort or stopServe)
-    // OR when the node closes — whichever comes first.
-    // Note: rawServe returns a loopDone Promise<void> that resolves when the
-    // polling loop exits — useful if callers need to await full loop teardown.
-    let resolveFinished!: () => void;
-    const finished = new Promise<void>((r) => {
-      resolveFinished = r;
-    });
-    // Belt-and-suspenders: also resolve when the node itself closes.
-    onNodeClose.then(resolveFinished);
+    // ISS-029 / #59: finished resolves when the serve loop actually terminates.
+    // `loopDone` is the real loop-lifetime promise returned by rawServe():
+    //  - Deno: resolves when the nextRequest polling loop exits (null sentinel).
+    //  - Node / Tauri: resolves when waitServeStop() confirms the Rust task drained.
+    // We also race against onNodeClose so that closing the node unblocks callers
+    // even when stopServe() was never called explicitly.
+    const finished = Promise.race([loopDone, onNodeClose]);
 
     const doStop = (): void => {
       stopServe();
-      resolveFinished();
+      // Rust will drain the loop and then loopDone resolves; we do NOT resolve
+      // finished ourselves here.
     };
 
     // Wire signal → doStop for graceful shutdown.
