@@ -374,9 +374,9 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
       napiSessionClose(eh, sessionHandle, closeCode, reason),
   };
 
-  return buildNode(
-    nodeBridge,
-    {
+  return buildNode({
+    bridge: nodeBridge,
+    info: {
       endpointHandle: info.endpointHandle,
       nodeId: info.nodeId,
       keypair: info.keypair as Uint8Array,
@@ -384,11 +384,11 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawFetch,
     rawServe,
     rawConnect,
-    nodeAllocBodyWriter,
-    (handle: number, force?: boolean) => closeEndpoint(handle, force ?? null),
-    (handle: number) => napiStopServe(handle),
+    allocBodyWriter: nodeAllocBodyWriter,
+    closeEndpoint: (handle: number, force?: boolean) => closeEndpoint(handle, force ?? null),
+    stopServe: (handle: number) => napiStopServe(handle),
     addrFns,
     discoveryFns,
-    nodeSessionFns,
-  );
+    sessionFns: nodeSessionFns,
+  });
 }

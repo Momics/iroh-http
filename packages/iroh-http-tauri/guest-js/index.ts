@@ -475,9 +475,9 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     throw classifyBindError(e);
   });
 
-  const node = buildNode(
+  const node = buildNode({
     bridge,
-    {
+    info: {
       endpointHandle: Number(info.endpointHandle),
       nodeId: info.nodeId,
       keypair: new Uint8Array(info.keypair),
@@ -486,20 +486,20 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawServe,
     rawConnect,
     allocBodyWriter,
-    (handle, force?) =>
+    closeEndpoint: (handle, force?) =>
       invoke(`${PLUGIN}|close_endpoint`, {
         endpointHandle: Number(handle),
         force: force ?? null,
       }),
-    (handle) => {
+    stopServe: (handle) => {
       invoke(`${PLUGIN}|stop_serve`, { endpointHandle: Number(handle) }).catch(
         () => {},
       );
     },
-    tauriAddrFns,
-    tauriDiscoveryFns,
-    tauriSessionFns,
-  );
+    addrFns: tauriAddrFns,
+    discoveryFns: tauriDiscoveryFns,
+    sessionFns: tauriSessionFns,
+  });
 
   // TAURI-005: install lifecycle listener and store the unsubscribe function
   // so it can be called when the node closes, preventing stale callbacks.
