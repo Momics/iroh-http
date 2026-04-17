@@ -50,7 +50,7 @@ mod tests {
     }
 
     #[test]
-    fn core_error_to_json_internal_is_distinct_from_unknown() {
+    fn internal_error_maps_to_internal_code() {
         let e = CoreError::internal("something broke");
         let json = core_error_to_json(&e);
         // Internal errors must surface as "INTERNAL", not "UNKNOWN", so that

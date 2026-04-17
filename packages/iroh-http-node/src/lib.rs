@@ -1036,11 +1036,11 @@ pub async fn session_close_handle(
     reason: Option<String>,
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
-    let close_code_val = close_code.map(get_handle).transpose()?.unwrap_or(0);
+    let code = close_code.map(get_handle).transpose()?.unwrap_or(0);
     iroh_http_core::session_close(
         &ep,
         get_handle(session_handle)?,
-        close_code_val,
+        code,
         reason.as_deref().unwrap_or(""),
     )
     .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
