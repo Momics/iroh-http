@@ -22,7 +22,7 @@ pub fn core_error_to_json(e: &CoreError) -> String {
         ErrorCode::HeaderTooLarge => "HEADER_TOO_LARGE",
         ErrorCode::PeerRejected => "PEER_REJECTED",
         ErrorCode::Cancelled => "CANCELLED",
-        ErrorCode::Internal => "UNKNOWN",
+        ErrorCode::Internal => "INTERNAL",
         _ => "UNKNOWN",
     };
     let json_msg = serde_json::Value::String(e.message.clone());
@@ -47,6 +47,17 @@ mod tests {
         let json = core_error_to_json(&e);
         assert!(json.contains("\"code\":\"TIMEOUT\""));
         assert!(json.contains("timed out"));
+    }
+
+    #[test]
+    fn core_error_to_json_internal_is_distinct_from_unknown() {
+        let e = CoreError::internal("something broke");
+        let json = core_error_to_json(&e);
+        // Internal errors must surface as "INTERNAL", not "UNKNOWN", so that
+        // callers can distinguish deliberate internal errors from unrecognised
+        // future error codes.
+        assert!(json.contains("\"code\":\"INTERNAL\""));
+        assert!(json.contains("something broke"));
     }
 
     #[test]
