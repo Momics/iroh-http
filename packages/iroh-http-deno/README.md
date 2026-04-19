@@ -13,7 +13,7 @@ iroh-http replaces DNS and TLS with public keys. Each node has a cryptographic i
 ```ts
 import { createNode } from "jsr:@momics/iroh-http-deno";
 
-const node = await createNode();
+const node = await createNode({ verifyNodeId: true });
 console.log("Node ID:", node.publicKey.toString());
 
 node.serve({}, (req) => new Response("Hello from Deno iroh-http!"));
@@ -37,6 +37,7 @@ The native library is placed in `lib/`.
 ```ts
 const node = await createNode({
   key: savedKey,
+  verifyNodeId: true,
   discovery: { mdns: true, serviceName: "my-app.iroh-http" },
   advanced: { drainTimeout: 30_000 },
 });

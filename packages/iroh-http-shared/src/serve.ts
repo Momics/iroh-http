@@ -13,6 +13,7 @@ import type {
   Bridge,
   FfiResponseHead,
   IrohServeResponse,
+  NodeOptions,
   PeerConnectionEvent,
   RawServeFn,
   RequestPayload,
@@ -147,7 +148,21 @@ export function makeServe(
   nodeId: string,
   onNodeClose: Promise<void>,
   stopServe: () => void,
+  verifyNodeId?: NodeOptions["verifyNodeId"],
 ): ServeFn {
+  // Emit at most one warning per node, not per serve() call.
+  const trustAllPeers = verifyNodeId === true;
+  const verifyPeerNodeId = typeof verifyNodeId === "function" ? verifyNodeId : null;
+  if (!trustAllPeers && !verifyPeerNodeId) {
+    console.warn(
+      "[iroh-http] serve() rejects all peers by default; set createNode({ verifyNodeId: true | fn }) to accept requests",
+    );
+  } else if (trustAllPeers) {
+    console.warn(
+      "[iroh-http] createNode({ verifyNodeId: true }) trusts all incoming peers",
+    );
+  }
+
   return ((...args: unknown[]): ServeHandle => {
     // Parse overloaded arguments.
     let handler: ServeHandler;
@@ -194,6 +209,20 @@ export function makeServe(
       endpointHandle,
       { onConnectionEvent },
       async (payload: RequestPayload): Promise<FfiResponseHead> => {
+        const peerId = headerValue(payload.headers, "peer-id");
+        if (!trustAllPeers) {
+          if (!peerId || !verifyPeerNodeId) {
+            return forbiddenResponseHead();
+          }
+          try {
+            const accepted = await verifyPeerNodeId(peerId);
+            if (!accepted) return forbiddenResponseHead();
+          } catch (error) {
+            console.error("[iroh-http] verifyNodeId callback failed:", error);
+            return forbiddenResponseHead();
+          }
+        }
+
         // Build a web-standard Request.
         const hasBody = !METHODS_WITHOUT_BODY.has(payload.method.toUpperCase());
         const reqBody = (hasBody && !payload.isBidi)
@@ -355,4 +384,22 @@ function emptyStream(): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+function headerValue(
+  headers: [string, string][],
+  name: string,
+): string | null {
+  const needle = name.toLowerCase();
+  for (const [k, v] of headers) {
+    if (k.toLowerCase() === needle) return v;
+  }
+  return null;
+}
+
+function forbiddenResponseHead(): FfiResponseHead {
+  return {
+    status: 403,
+    headers: [],
+  };
 }
