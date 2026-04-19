@@ -55,20 +55,26 @@ const MAX_TOTAL_CONNECTIONS: usize = 100_000;
 
 #[derive(Debug)]
 enum FfiError {
+    /// Node/public-key input failed coarse boundary validation.
     InvalidNodeId,
+    /// URL input failed coarse boundary validation.
     InvalidUrl,
+    /// Caller-provided input exceeds a hard boundary limit.
     InputTooLarge {
         field: &'static str,
         max: usize,
         got: usize,
     },
+    /// Caller-provided bytes contain invalid encoding for the field.
     InvalidEncoding {
         field: &'static str,
     },
+    /// Generic argument validation failure for a named field.
     InvalidArgument {
         field: &'static str,
         reason: String,
     },
+    /// Internal lock poisoning encountered while handling a boundary call.
     InternalLock {
         resource: &'static str,
     },
@@ -1407,7 +1413,7 @@ mod tests {
 
     #[test]
     fn validate_url_rejects_null_byte() {
-        let result = validate_url_input("httpi://peer/\0x");
+        let result = validate_url_input("httpi://peer/\x00x");
         assert!(matches!(
             result,
             Err(FfiError::InvalidEncoding { field: "url" })
@@ -1421,13 +1427,17 @@ mod tests {
     }
 
     #[test]
-    fn timeout_conversion_rejects_too_large_and_fractional() {
+    fn timeout_conversion_rejects_too_large() {
         let too_large = safe_f64_to_u64(
             (MAX_TIMEOUT_MS + 1) as f64,
             "requestTimeout",
             MAX_TIMEOUT_MS,
         );
         assert!(too_large.is_err());
+    }
+
+    #[test]
+    fn timeout_conversion_rejects_fractional() {
         let fractional = safe_f64_to_u64(1.5, "requestTimeout", MAX_TIMEOUT_MS);
         assert!(fractional.is_err());
     }
