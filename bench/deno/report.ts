@@ -112,7 +112,11 @@ try {
     );
   });
 
-  latency.push({ name: `deno/multiplex/${CONCURRENCY}`, unit: "us", value: toUs(mux / CONCURRENCY) });
+  latency.push({
+    name: `deno/multiplex_avg_per_stream/${CONCURRENCY}`,
+    unit: "us",
+    value: toUs(mux / CONCURRENCY),
+  });
 
   if (mode === "throughput") {
     console.log(JSON.stringify(throughput, null, 2));

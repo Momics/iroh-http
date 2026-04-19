@@ -10,8 +10,9 @@ if (!criterionRoot || !throughputOut || !latencyOut) {
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, entry.name);
+    const segments = p.split(path.sep);
     if (entry.isDirectory()) walk(p, out);
-    if (entry.isFile() && entry.name === "estimates.json" && p.includes(`${path.sep}new${path.sep}`)) out.push(p);
+    if (entry.isFile() && entry.name === "estimates.json" && segments.includes("new")) out.push(p);
   }
   return out;
 }

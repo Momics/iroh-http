@@ -79,7 +79,17 @@ jobs:
         run: |
           cargo build --release -p iroh-http-deno
           mkdir -p packages/iroh-http-deno/lib
-          cp target/release/libiroh_http_deno.so packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
+          case "${{ runner.os }}" in
+            Linux)
+              cp target/release/libiroh_http_deno.so packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
+              ;;
+            macOS)
+              cp target/release/libiroh_http_deno.dylib packages/iroh-http-deno/lib/libiroh_http_deno.darwin-x86_64.dylib
+              ;;
+            Windows)
+              cp target/release/iroh_http_deno.dll packages/iroh-http-deno/lib/libiroh_http_deno.windows-x86_64.dll
+              ;;
+          esac
       - name: Run Deno bench suites
         run: deno bench --allow-net --allow-ffi --allow-env --allow-read --allow-write bench/deno/
       - name: Emit normalized Deno benchmark JSON
