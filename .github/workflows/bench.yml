@@ -1,0 +1,157 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: bench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench-node:
+    name: Node benchmarks
+    runs-on: ${{ vars.BENCHMARK_RUNNER != '' && vars.BENCHMARK_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Build shared + node adapter
+        run: |
+          npm run build --workspace=packages/iroh-http-shared
+          cargo build --release -p iroh-http-node
+          cd packages/iroh-http-node
+          npx napi build --platform --release
+          npx tsc
+      - name: Run mitata suites
+        run: |
+          node bench/node/throughput.mjs
+          node bench/node/latency.mjs
+      - name: Emit normalized Node benchmark JSON
+        run: |
+          node bench/node/report.mjs throughput > bench/results/node-throughput.json
+          node bench/node/report.mjs latency > bench/results/node-latency.json
+      - uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customBiggerIsBetter
+          output-file-path: bench/results/node-throughput.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          alert-threshold: '120%'
+          comment-on-alert: true
+          fail-on-alert: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench/node-throughput
+      - uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customSmallerIsBetter
+          output-file-path: bench/results/node-latency.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          alert-threshold: '120%'
+          comment-on-alert: true
+          fail-on-alert: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench/node-latency
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-bench-results
+          path: |
+            bench/results/node-throughput.json
+            bench/results/node-latency.json
+
+  bench-deno:
+    name: Deno benchmarks
+    runs-on: ${{ vars.BENCHMARK_RUNNER != '' && vars.BENCHMARK_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Build deno native adapter
+        run: |
+          cargo build --release -p iroh-http-deno
+          mkdir -p packages/iroh-http-deno/lib
+          cp target/release/libiroh_http_deno.so packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
+      - name: Run Deno bench suites
+        run: deno bench --allow-net --allow-ffi --allow-env --allow-read --allow-write bench/deno/
+      - name: Emit normalized Deno benchmark JSON
+        run: |
+          deno run --allow-net --allow-ffi --allow-env --allow-read --allow-write bench/deno/report.ts throughput > bench/results/deno-throughput.json
+          deno run --allow-net --allow-ffi --allow-env --allow-read --allow-write bench/deno/report.ts latency > bench/results/deno-latency.json
+      - uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customBiggerIsBetter
+          output-file-path: bench/results/deno-throughput.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          alert-threshold: '120%'
+          comment-on-alert: true
+          fail-on-alert: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench/deno-throughput
+      - uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customSmallerIsBetter
+          output-file-path: bench/results/deno-latency.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          alert-threshold: '120%'
+          comment-on-alert: true
+          fail-on-alert: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench/deno-latency
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deno-bench-results
+          path: |
+            bench/results/deno-throughput.json
+            bench/results/deno-latency.json
+
+  bench-rust:
+    name: Rust Criterion benchmarks
+    runs-on: ${{ vars.BENCHMARK_RUNNER != '' && vars.BENCHMARK_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run Criterion benches
+        run: |
+          cargo bench -p iroh-http-core --bench throughput
+          cargo bench -p iroh-http-core --bench latency
+      - name: Normalize Criterion output
+        run: node bench/scripts/normalize-criterion-json.mjs target/criterion bench/results/rust-throughput.json bench/results/rust-latency.json
+      - uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customBiggerIsBetter
+          output-file-path: bench/results/rust-throughput.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          alert-threshold: '120%'
+          comment-on-alert: true
+          fail-on-alert: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench/rust-throughput
+      - uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customSmallerIsBetter
+          output-file-path: bench/results/rust-latency.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          alert-threshold: '120%'
+          comment-on-alert: true
+          fail-on-alert: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench/rust-latency
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-bench-results
+          path: |
+            bench/results/rust-throughput.json
+            bench/results/rust-latency.json

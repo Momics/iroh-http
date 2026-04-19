@@ -40,3 +40,7 @@ Thumbs.db
 workspace/old_references
 .obsidian
 temp/
+
+# Benchmark outputs (uploaded as CI artifacts)
+bench/results/*
+!bench/results/.gitkeep

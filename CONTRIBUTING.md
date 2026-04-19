@@ -30,6 +30,28 @@ npm run typecheck
 - Rust: `cargo fmt` + `cargo clippy`
 - TypeScript: standard formatting
 
+## Benchmarks
+
+Run benchmarks in release mode and on a dedicated machine when possible.
+
+```sh
+# Node.js (mitata)
+npm run bench:node
+
+# Deno (Deno.bench)
+npm run bench:deno
+
+# Rust core / Tauri baseline (Criterion)
+npm run bench:rust
+```
+
+For normalized benchmark reports used by CI regression checks:
+
+```sh
+npm run bench:node:report
+npm run bench:deno:report
+```
+
 ## Submitting changes
 
 1. Fork the repository
