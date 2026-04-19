@@ -2,6 +2,7 @@
 //!
 //! This crate owns the Iroh endpoint and wires HTTP/1.1 framing to QUIC
 //! streams via hyper.  Nothing in here knows about JavaScript.
+#![deny(unsafe_code)]
 
 pub mod client;
 pub mod endpoint;

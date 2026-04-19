@@ -158,15 +158,18 @@ must pass:
 2. `cargo test --workspace`
 3. `cargo fmt --all -- --check`
 4. `cargo clippy --workspace -- -D warnings`
-5. No-default-features check (Node + Deno)
-6. TypeScript typecheck (`npm run typecheck`)
-7. Node.js E2E tests + compliance tests (12 cases)
-8. Deno E2E tests
-9. Cross-runtime compliance (node↔deno via `tests/http-compliance/run.sh`)
+5. Security-focused clippy lints (`unwrap_used`, `panic`, `arithmetic_side_effects`)
+6. No-default-features check (Node + Deno)
+7. TypeScript typecheck (`npm run typecheck`)
+8. Dependency auditing (`cargo audit`, `cargo deny`, `npm audit --audit-level=high`)
+9. Node.js E2E tests + compliance tests (12 cases)
+10. Deno E2E tests
+11. Cross-runtime compliance (node↔deno via `tests/http-compliance/run.sh`)
+12. PR dependency review (`actions/dependency-review-action`)
 
 See [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) for the full
-pipeline. Fuzz testing runs on a separate nightly schedule — see
-[`.github/workflows/fuzz.yml`](../.github/workflows/fuzz.yml).
+pipeline. Fuzz + sanitizer/miri hardening runs on a separate nightly schedule
+— see [`.github/workflows/fuzz.yml`](../.github/workflows/fuzz.yml).
 
 ### Running compliance tests locally
 
@@ -177,4 +180,3 @@ node packages/iroh-http-node/test/compliance.mjs
 # Cross-runtime — requires both Node and Deno native libs built:
 bash tests/http-compliance/run.sh
 ```
-

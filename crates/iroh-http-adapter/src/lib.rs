@@ -6,6 +6,7 @@
 //!
 //! This is intentionally **not** part of `iroh-http-core` — the JSON shape is
 //! an adapter-layer concern, not HTTP transport semantics.
+#![deny(unsafe_code)]
 
 use iroh_http_core::{CoreError, ErrorCode};
 
