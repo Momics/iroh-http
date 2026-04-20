@@ -1,6 +1,6 @@
 [package]
 name = "iroh-http-core"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "Iroh QUIC endpoint, HTTP/1.1 over hyper, fetch/serve with FFI-friendly types"
 license = "MIT OR Apache-2.0"
