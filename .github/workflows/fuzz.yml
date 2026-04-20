@@ -55,3 +55,41 @@ jobs:
         with:
           path: crates/iroh-http-core/fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.sha }}
+
+  asan:
+    name: ASan tests (iroh-http-core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Run AddressSanitizer tests
+        run: |
+          RUSTFLAGS="-Z sanitizer=address" \
+          ASAN_OPTIONS=detect_leaks=0 \
+          cargo +nightly test -p iroh-http-core --target x86_64-unknown-linux-gnu
+
+  miri:
+    name: Miri tests (adapter boundary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Setup Miri
+        run: cargo +nightly miri setup
+
+      - name: Run Miri
+        run: cargo +nightly miri test -p iroh-http-adapter

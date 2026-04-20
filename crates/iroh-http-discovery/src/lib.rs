@@ -8,7 +8,8 @@
 //! # Platform notes
 //!
 //! - Desktop (macOS, Linux, Windows): enabled with the `mdns` feature (default).
-//! - iOS / Android (Tauri mobile): use the platform's native service discovery;
+//! - iOS / Android (Tauri mobile): use the platform's native service discovery.
+#![deny(unsafe_code)]
 
 #[cfg(feature = "mdns")]
 use iroh::address_lookup::{DiscoveryEvent, MdnsAddressLookup};
