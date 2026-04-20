@@ -261,6 +261,11 @@ pub fn parse_node_addr(s: &str) -> Result<ParsedNodeAddr, CoreError> {
 // ── FFI types ─────────────────────────────────────────────────────────────────
 
 /// Flat response-head struct that crosses the FFI boundary.
+///
+/// `body_handle` and `trailers_handle` are `0` (the slotmap null sentinel)
+/// for null-body status codes (RFC 9110 §6.3: 204, 205, 304).  Adapters
+/// should treat `0` as "no body / no trailers" rather than inspecting the
+/// status code themselves.
 #[derive(Debug, Clone)]
 pub struct FfiResponse {
     pub status: u16,

@@ -214,26 +214,31 @@ export function makeFetch(
       );
     }
 
-    // Wire AbortSignal to cancel the body reader (§3).
-    // Keep a reference to the listener so we can remove it when the body closes (§1.2).
-    // Uses `once: true` so the listener auto-removes after firing — prevents leaks
-    // when the response body is never consumed by the caller.
-    let cancelOnAbort: (() => void) | null = null;
-    if (signal) {
-      cancelOnAbort = () => bridge.cancelRequest(rawRes.bodyHandle);
-      signal.addEventListener("abort", cancelOnAbort, { once: true });
+    // Core returns body_handle = 0 (the slotmap null sentinel) for null-body
+    // status codes (RFC 9110 §6.3: 204, 205, 304).  No channel was allocated
+    // on the Rust side, so there is nothing to wire up here.
+    let responseBody: ReadableStream<Uint8Array> | null = null;
+    if (rawRes.bodyHandle !== 0n) {
+      // Wire AbortSignal to cancel the body reader (§3).
+      // Uses `once: true` so the listener auto-removes after firing — prevents
+      // leaks when the response body is never consumed by the caller.
+      let cancelOnAbort: (() => void) | null = null;
+      if (signal) {
+        cancelOnAbort = () => bridge.cancelRequest(rawRes.bodyHandle);
+        signal.addEventListener("abort", cancelOnAbort, { once: true });
+      }
+
+      // Wrap response body in a ReadableStream.
+      // When the stream closes (EOF or cancel), remove the abort listener to avoid a leak.
+      responseBody = makeReadable(bridge, rawRes.bodyHandle, () => {
+        if (signal && cancelOnAbort) {
+          signal.removeEventListener("abort", cancelOnAbort!);
+          cancelOnAbort = null;
+        }
+      });
     }
 
-    // Wrap response body in a ReadableStream.
-    // When the stream closes (EOF or cancel), remove the abort listener to avoid a leak.
-    const resBody = makeReadable(bridge, rawRes.bodyHandle, () => {
-      if (signal && cancelOnAbort) {
-        signal.removeEventListener("abort", cancelOnAbort!);
-        cancelOnAbort = null;
-      }
-    });
-
-    const response = new Response(resBody, {
+    const response = new Response(responseBody, {
       status: rawRes.status,
       headers: rawRes.headers,
     });
@@ -248,8 +253,11 @@ export function makeFetch(
 
     // Populate res.trailers as a cached lazy Promise<Headers> (§4).
     // Caching is required because the Rust slab entry is consumed on first access.
+    // For null-body responses (trailers_handle = 0) no slab entry was allocated;
+    // pre-resolve to empty Headers so callers can always await res.trailers safely.
     const trailersHandle = rawRes.trailersHandle;
-    let cachedTrailers: Promise<Headers> | null = null;
+    let cachedTrailers: Promise<Headers> | null =
+      trailersHandle === 0n ? Promise.resolve(new Headers()) : null;
     Object.defineProperty(response, "trailers", {
       get: () => {
         if (!cachedTrailers) {

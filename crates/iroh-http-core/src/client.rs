@@ -286,6 +286,27 @@ async fn do_fetch(
         }
     }
 
+    let response_url = format!("httpi://{remote_str}{path}");
+
+    // RFC 9110 §6.3: responses with status 204, 205, or 304 MUST NOT carry a
+    // message body.  Skip channel allocation entirely and return the slotmap
+    // null sentinel (0) for both body_handle and trailers_handle so the JS
+    // layer can use `bodyHandle === 0n` as a clean structural check without
+    // re-encoding HTTP semantics in every adapter.
+    if is_null_body_status(status) {
+        // Dropping the body signals to hyper that we are done reading.
+        // For a spec-compliant server the body is already empty; this is a
+        // defensive drain for misbehaving peers.
+        drop(resp.into_body());
+        return Ok(FfiResponse {
+            status,
+            headers: resp_headers,
+            body_handle: 0,
+            url: response_url,
+            trailers_handle: 0,
+        });
+    }
+
     // Allocate channels for streaming the response body to JS.
     let mut guard = handles.insert_guard();
     let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
@@ -296,7 +317,6 @@ async fn do_fetch(
     tokio::spawn(pump_hyper_body_to_channel(body, res_writer, trailer_tx));
 
     let body_handle = guard.insert_reader(res_reader)?;
-    let response_url = format!("httpi://{remote_str}{path}");
 
     guard.commit();
     Ok(FfiResponse {
@@ -306,6 +326,14 @@ async fn do_fetch(
         url: response_url,
         trailers_handle: trailer_handle,
     })
+}
+
+/// RFC 9110 §6.3 — responses with these status codes MUST NOT contain a
+/// message body.  Skipping body-channel allocation for them avoids wasting
+/// resources and keeps HTTP semantics in core instead of every adapter.
+#[inline]
+fn is_null_body_status(status: u16) -> bool {
+    status == 204 || status == 205 || status == 304
 }
 
 // ── Body bridge utilities ─────────────────────────────────────────────────────

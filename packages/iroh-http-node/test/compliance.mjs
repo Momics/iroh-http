@@ -53,6 +53,21 @@ function handleComplianceRequest(req) {
       headers: { [parts[1]]: parts[2] },
     });
   }
+  if (parts[0] === "set-headers" && parts[1]) {
+    const n = parseInt(parts[1], 10);
+    if (!isNaN(n) && n >= 0) {
+      const hdrs = {};
+      for (let i = 0; i < n; i++) hdrs[`x-h-${i}`] = `v${i}`;
+      return new Response(null, { status: 200, headers: hdrs });
+    }
+  }
+  if (parts[0] === "echo-query") {
+    return new Response(url.search, { status: 200 });
+  }
+  if (parts[0] === "echo-header-count") {
+    const count = [...req.headers].length;
+    return new Response(String(count), { status: 200 });
+  }
   if (parts[0] === "stream" && parts[1]) {
     const n = parseInt(parts[1], 10);
     if (!isNaN(n) && n >= 0) return new Response(new Uint8Array(n), { status: 200 });

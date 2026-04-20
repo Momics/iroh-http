@@ -93,11 +93,6 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
-      - name: cargo bench --test (smoke)
-        # Criterion's single-iteration mode: validates bench code compiles and
-        # doesn't panic at startup — catches runtime/API regressions early.
-        run: cargo bench -p iroh-http-core -- --test
-
       - name: cargo check (no-default-features)
         run: |
           cargo check -p iroh-http-node --no-default-features --features compression
@@ -121,6 +116,21 @@ jobs:
 
       - name: npm audit
         run: npm audit --audit-level=high
+
+  # ── Bench smoke: parallel with e2e so it doesn't extend the critical path ───
+  bench-smoke:
+    name: Bench smoke test
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo bench --test (smoke)
+        # Criterion's single-iteration mode: validates bench code compiles and
+        # doesn't panic at startup — catches runtime/API regressions early.
+        # Runs in parallel with the e2e job so it doesn't add to the critical path.
+        run: cargo bench -p iroh-http-core -- --test
 
   # ── Integration: build native + run e2e (only after verify passes) ───────────
   e2e:
