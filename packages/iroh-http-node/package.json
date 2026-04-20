@@ -28,7 +28,7 @@
   "devDependencies": {
     "@napi-rs/cli": "^2",
     "@types/node": "^25.6.0",
-    "typescript": "^5"
+    "typescript": "^6"
   },
   "dependencies": {
     "@momics/iroh-http-shared": "^0.1.0"

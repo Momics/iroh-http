@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@tauri-apps/api": "^2",
-    "typescript": "^5"
+    "typescript": "^6"
   },
   "dependencies": {
     "@momics/iroh-http-shared": "^0.1.0"

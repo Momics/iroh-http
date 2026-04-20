@@ -22,7 +22,7 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^6.0.3"
   },
   "files": ["dist", "src"],
   "publishConfig": { "access": "public" },
