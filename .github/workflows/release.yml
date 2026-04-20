@@ -62,7 +62,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - run: npm install
 
@@ -133,11 +133,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install zig + cargo-zigbuild
+      - name: Install zig
         if: matrix.zigbuild
-        run: |
-          pip3 install ziglang
-          cargo install cargo-zigbuild --locked
+        uses: mlugg/setup-zig@v2
+
+      - name: Install cargo-zigbuild
+        if: matrix.zigbuild
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
 
       - name: Build (cargo-zigbuild)
         if: matrix.zigbuild
@@ -163,7 +167,8 @@ jobs:
           if-no-files-found: error
 
   # ── 4. Publish Rust crates ─────────────────────────────────────────────────────
-  # Uses crates.io trusted publishing (OIDC) — no token needed.
+  # Uses CARGO_REGISTRY_TOKEN secret. crates.io OIDC trusted publishing is still
+  # in limited beta — the token approach is the correct fallback for now.
 
   publish-crates:
     name: Publish Rust crates
@@ -178,6 +183,9 @@ jobs:
         run: cargo publish -p iroh-http-core --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for iroh-http-core to be indexed on crates.io
+        run: sleep 30
 
       - name: Publish iroh-http-discovery
         run: cargo publish -p iroh-http-discovery --no-verify
@@ -200,7 +208,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       - run: npm install
@@ -209,23 +217,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: node-native-*
-          path: packages/iroh-http-node/
+          path: packages/iroh-http-node/artifacts/
           merge-multiple: true
 
-      - name: Copy binaries into platform package dirs and publish
+      - name: Move artifacts into platform package dirs
+        working-directory: packages/iroh-http-node
+        run: npx napi artifacts --dir artifacts/ --dist npm/
+
+      - name: Publish platform packages
         run: |
-          declare -A PLATFORMS=(
-            ["index.darwin-arm64.node"]="darwin-arm64"
-            ["index.darwin-x64.node"]="darwin-x64"
-            ["index.linux-x64-gnu.node"]="linux-x64-gnu"
-            ["index.linux-arm64-gnu.node"]="linux-arm64-gnu"
-            ["index.win32-x64-msvc.node"]="win32-x64-msvc"
-          )
-          for src in "${!PLATFORMS[@]}"; do
-            plat="${PLATFORMS[$src]}"
-            pkg_dir="packages/iroh-http-node/npm/$plat"
-            dest="$pkg_dir/iroh-http-node.$plat.node"
-            cp "packages/iroh-http-node/$src" "$dest"
+          for pkg_dir in packages/iroh-http-node/npm/*/; do
             npm publish "$pkg_dir" --access public --provenance
           done
 
