@@ -170,7 +170,7 @@ function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T> {
 // resolves it with null, but that resolution may race Deno's end-of-test check.
 // The teardown is real; this flag just acknowledges the inherent FFI timing gap.
 Deno.test({ name: "serve + fetch — basic round-trip", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const server = await createNode({ bindAddr: "127.0.0.1:0", verifyNodeId: true });
   const client = await createNode({ bindAddr: "127.0.0.1:0" });
   const ac = new AbortController();
   let handle: { finished: Promise<void> } | undefined;
@@ -201,7 +201,7 @@ Deno.test({ name: "serve + fetch — basic round-trip", sanitizeOps: false }, ()
 }));
 
 Deno.test({ name: "serve + fetch — POST with body", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const server = await createNode({ bindAddr: "127.0.0.1:0", verifyNodeId: true });
   const client = await createNode({ bindAddr: "127.0.0.1:0" });
   const ac = new AbortController();
   let handle: { finished: Promise<void> } | undefined;
@@ -236,7 +236,7 @@ Deno.test({ name: "serve + fetch — POST with body", sanitizeOps: false }, () =
 // producing corrupted JSON ("Unexpected non-whitespace character after JSON").
 
 Deno.test({ name: "serve + fetch — concurrent requests return correct bodies (no buffer race)", sanitizeOps: false }, () => withTimeout(30_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const server = await createNode({ bindAddr: "127.0.0.1:0", verifyNodeId: true });
   const client = await createNode({ bindAddr: "127.0.0.1:0" });
   const ac = new AbortController();
   let handle: { finished: Promise<void> } | undefined;
@@ -279,7 +279,7 @@ Deno.test({ name: "serve + fetch — concurrent requests return correct bodies (
 //   [iroh-http] response body pipe error: IrohHandleError: invalid trailer sender handle
 
 Deno.test({ name: "serve + fetch — plain response produces no internal pipe errors", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const server = await createNode({ bindAddr: "127.0.0.1:0", verifyNodeId: true });
   const client = await createNode({ bindAddr: "127.0.0.1:0" });
 
   // Intercept console.error to catch any [iroh-http] internal errors.
@@ -329,7 +329,7 @@ Deno.test({ name: "serve + fetch — plain response produces no internal pipe er
 // ── Error classification ──────────────────────────────────────────────────────
 
 Deno.test({ name: "serve — handler throws synchronously → client gets 500", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const server = await createNode({ bindAddr: "127.0.0.1:0", verifyNodeId: true });
   const client = await createNode({ bindAddr: "127.0.0.1:0" });
   const ac = new AbortController();
   let handle: { finished: Promise<void> } | undefined;
@@ -364,7 +364,7 @@ Deno.test({ name: "serve — handler throws synchronously → client gets 500", 
 }));
 
 Deno.test({ name: "serve — handler rejects async → client gets 500", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const server = await createNode({ bindAddr: "127.0.0.1:0", verifyNodeId: true });
   const client = await createNode({ bindAddr: "127.0.0.1:0" });
   const ac = new AbortController();
   let handle: { finished: Promise<void> } | undefined;
@@ -449,7 +449,7 @@ Deno.test("SecretKey — re-exported from mod.ts, toBytes round-trip", async () 
 // ── peer-id header ───────────────────────────────────────────────────────────
 
 Deno.test({ name: "peer-id header — present and consistent", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const server = await createNode({ bindAddr: "127.0.0.1:0", verifyNodeId: true });
   const client = await createNode({ bindAddr: "127.0.0.1:0" });
   const ac = new AbortController();
   let handle: { finished: Promise<void> } | undefined;
@@ -480,7 +480,7 @@ Deno.test({ name: "peer-id header — present and consistent", sanitizeOps: fals
 // ── Large body streaming ──────────────────────────────────────────────────────
 
 Deno.test({ name: "serve + fetch — 1 MiB body round-trip", sanitizeOps: false }, () => withTimeout(30_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const server = await createNode({ bindAddr: "127.0.0.1:0", verifyNodeId: true });
   const client = await createNode({ bindAddr: "127.0.0.1:0" });
   const ac = new AbortController();
   let handle: { finished: Promise<void> } | undefined;
@@ -512,7 +512,7 @@ Deno.test({ name: "serve + fetch — 1 MiB body round-trip", sanitizeOps: false 
 // ── httpi:// URL form (web-standard, ISS-001) ─────────────────────────────────
 
 Deno.test({ name: "fetch — httpi:// URL form (peer in hostname)", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const server = await createNode({ bindAddr: "127.0.0.1:0", verifyNodeId: true });
   const client = await createNode({ bindAddr: "127.0.0.1:0" });
   const ac = new AbortController();
   let handle: { finished: Promise<void> } | undefined;

@@ -19,7 +19,7 @@ npm install @momics/iroh-http-node
 ```ts
 import { createNode } from "@momics/iroh-http-node";
 
-const node = await createNode();
+const node = await createNode({ verifyNodeId: true });
 console.log("Node ID:", node.publicKey.toString());
 
 // Serve requests
@@ -41,6 +41,7 @@ await node.close();
 ```ts
 const node = await createNode({
   key: savedKey,                              // SecretKey or Uint8Array — restore identity
+  verifyNodeId: true,                         // trust all incoming peers (or pass a verifier fn)
   relayMode: "https://my-relay.example.com",  // custom relay URL (or "default", "staging", "disabled")
   advanced: { drainTimeout: 30_000 },         // ms to wait for slow body readers
 });

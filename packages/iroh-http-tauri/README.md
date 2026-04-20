@@ -39,6 +39,7 @@ import { createNode } from "@momics/iroh-http-tauri";
 
 const node = await createNode({
   reconnect: { auto: true, maxRetries: 3 },
+  verifyNodeId: true,
 });
 
 node.serve({}, (req) => new Response("hello from Tauri!"));
