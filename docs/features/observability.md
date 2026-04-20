@@ -45,3 +45,6 @@ node.pathChanges(nodeId: string): AsyncIterable<PathInfo>
 - `pathChanges` is cancelled by breaking the `for await` loop.
 - A top-level `stats()` method (node-wide aggregate metrics) is planned but
   not yet implemented. Use `peerStats` for per-peer information.
+- The `iroh-path-type` response header (indicating direct vs relay path) is
+  planned but not yet injected by the current server. It will be added once
+  iroh exposes stable per-connection path metadata in its public API.

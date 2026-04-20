@@ -19,11 +19,9 @@
     "build:debug": "napi build --platform && tsc",
     "build:all": "node scripts/build-all.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node test/smoke.mjs && node test/e2e.mjs && node test/compliance.mjs",
-    "test:smoke": "node test/smoke.mjs",
+    "test": "node test/e2e.mjs && node test/compliance.mjs",
     "test:e2e": "node test/e2e.mjs",
-    "test:compliance": "node test/compliance.mjs",
-    "bench": "node bench/throughput.mjs"
+    "test:compliance": "node test/compliance.mjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2",
@@ -43,5 +41,10 @@
   },
   "os": ["darwin", "linux", "win32"],
   "cpu": ["x64", "arm64"],
-  "license": "MIT OR Apache-2.0"
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Momics/iroh-http"
+  },
+  "homepage": "https://github.com/Momics/iroh-http"
 }

@@ -1,70 +1,81 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use iroh_http_core::{
-    fetch, serve, server::ServeOptions, IrohEndpoint, NodeOptions, RequestPayload,
+    fetch, serve,
+    server::{respond, ServeOptions},
+    IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload,
 };
 
-async fn make_pair() -> (IrohEndpoint, IrohEndpoint) {
-    let opts = || NodeOptions {
-        disable_networking: true,
-        bind_addrs: vec!["127.0.0.1:0".into()],
+fn local_opts() -> NodeOptions {
+    NodeOptions {
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
         ..Default::default()
-    };
-    let server = IrohEndpoint::bind(opts()).await.unwrap();
-    let client = IrohEndpoint::bind(opts()).await.unwrap();
-    (server, client)
+    }
+}
+
+fn direct_addrs(ep: &IrohEndpoint) -> Vec<std::net::SocketAddr> {
+    ep.raw().addr().ip_addrs().cloned().collect()
 }
 
 fn bench_latency(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
+    // Create the node pair once; all iterations measure warm-path latency only.
+    let (server_ep, client_ep, server_id, server_addrs) = rt.block_on(async {
+        let server_ep = IrohEndpoint::bind(local_opts()).await.unwrap();
+        let client_ep = IrohEndpoint::bind(local_opts()).await.unwrap();
+        let id = server_ep.node_id().to_string();
+        let addrs = direct_addrs(&server_ep);
+        (server_ep, client_ep, id, addrs)
+    });
+
+    let body = bytes::Bytes::from(vec![0x61; 1024]);
+    let sep = server_ep.clone();
+    serve(
+        server_ep,
+        ServeOptions::default(),
+        move |payload: RequestPayload| {
+            let sep2 = sep.clone();
+            let body = body.clone();
+            respond(
+                sep2.handles(),
+                payload.req_handle,
+                200,
+                vec![("content-length".into(), "1024".into())],
+            )
+            .unwrap();
+            tokio::spawn(async move {
+                sep2.handles()
+                    .send_chunk(payload.res_body_handle, body)
+                    .await
+                    .unwrap();
+                sep2.handles()
+                    .finish_body(payload.res_body_handle)
+                    .unwrap();
+            });
+        },
+    );
+
     c.bench_function("latency/iroh/1kb", |b| {
         b.to_async(&rt).iter(|| async {
-            let (server, client) = make_pair().await;
-            let server_id = server.node_id().to_string();
-            let addrs = server.raw().addr().ip_addrs().cloned().collect::<Vec<_>>();
-            let body = bytes::Bytes::from(vec![0x61; 1024]);
-
-            serve(
-                server.clone(),
-                ServeOptions::default(),
-                move |payload: RequestPayload| {
-                    iroh_http_core::server::respond(
-                        server.handles(),
-                        payload.req_handle,
-                        200,
-                        vec![("content-length".into(), "1024".into())],
-                    )
-                    .unwrap();
-                    let server = server.clone();
-                    let body = body.clone();
-                    tokio::spawn(async move {
-                        server
-                            .handles()
-                            .send_chunk(payload.res_body_handle, body)
-                            .await
-                            .unwrap();
-                        server
-                            .handles()
-                            .finish_body(payload.res_body_handle)
-                            .unwrap();
-                    });
-                },
-            );
-
             let res = fetch(
-                &client,
+                &client_ep,
                 &server_id,
                 "/latency",
                 "GET",
                 &[],
                 None,
                 None,
-                Some(&addrs),
+                None,
+                Some(&server_addrs),
             )
             .await
             .unwrap();
 
-            while client
+            while client_ep
                 .handles()
                 .next_chunk(res.body_handle)
                 .await

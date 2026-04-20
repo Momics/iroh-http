@@ -42,10 +42,7 @@ jobs:
       - name: cargo audit
         run: |
           cargo install cargo-audit --locked
-          cargo audit \
-            --ignore RUSTSEC-2026-0097 \
-            --ignore RUSTSEC-2026-0098 \
-            --ignore RUSTSEC-2026-0099
+          cargo audit
       - name: cargo deny (advisories + licenses)
         run: |
           cargo install cargo-deny --locked
@@ -176,6 +173,9 @@ jobs:
 
       - name: Run Deno tests
         run: deno test --allow-read --allow-ffi --allow-env --allow-net packages/iroh-http-deno/test/smoke.test.ts
+
+      - name: Deno compliance tests
+        run: deno test --allow-read --allow-ffi --allow-env --allow-net packages/iroh-http-deno/test/compliance.ts
 
       # ── Cross-runtime compliance ──────────────────────────────────────────────
 

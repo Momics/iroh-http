@@ -111,6 +111,11 @@ npm run release:publish -- --platform=deno    # shared→npm/JSR, deno→JSR
 npm run release:tag -- 0.2.0                  # git commit + tag (skips if exists)
 ```
 
+> **Forks:** `scripts/release/upload-deno.sh` hard-codes `Momics/iroh-http-releases`
+> as the target repository for Deno native binary uploads. If you fork this
+> repo, update that value to match your own releases repository before running
+> `release:upload:deno`.
+
 ### How it works
 
 | Step | What it does | Guard |

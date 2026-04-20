@@ -161,5 +161,3 @@ connection path migrates (relay ↔ direct changes MTU).
 
 - [WebTransport API — MDN](https://developer.mozilla.org/en-US/docs/Web/API/WebTransport)
 - [WebTransport spec — W3C](https://w3c.github.io/webtransport/)
-
-→ [Patch 27](../patches/27_patch.md)
