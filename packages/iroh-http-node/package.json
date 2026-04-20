@@ -41,7 +41,7 @@
   },
   "os": ["darwin", "linux", "win32"],
   "cpu": ["x64", "arm64"],
-  "license": "MIT OR Apache-2.0",
+  "license": "(MIT OR Apache-2.0)",
   "repository": {
     "type": "git",
     "url": "https://github.com/Momics/iroh-http"

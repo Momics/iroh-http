@@ -4,6 +4,33 @@
 
 Deno native library for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer HTTP over [Iroh](https://iroh.computer) QUIC transport.
 
+## Install
+
+```sh
+deno add jsr:@momics/iroh-http-deno
+```
+
+Or import directly:
+
+```ts
+import { createNode } from "jsr:@momics/iroh-http-deno";
+```
+
+## Supported Platforms
+
+| Platform | Architecture | Status |
+|----------|:----------:|:------:|
+| macOS | x86_64 | ✅ |
+| macOS | aarch64 (Apple Silicon) | ✅ |
+| Linux | x86_64 | ✅ |
+| Linux | aarch64 | ✅ |
+| Windows | x86_64 | ✅ |
+
+## Other runtimes
+
+- **Node.js** → [`@momics/iroh-http-node`](https://www.npmjs.com/package/@momics/iroh-http-node) on npm
+- **Tauri** → [`@momics/iroh-http-tauri`](https://www.npmjs.com/package/@momics/iroh-http-tauri) on npm
+
 ## How is this different from regular HTTP?
 
 iroh-http replaces DNS and TLS with public keys. Each node has a cryptographic identity — you `fetch()` and `serve()` using standard `Request`/`Response` objects, but connections go directly between devices over QUIC, with no server in between. You create a node because each one has its own identity and UDP socket. See the [root README](https://github.com/momics/iroh-http#how-is-this-different-from-regular-http) for a full comparison.

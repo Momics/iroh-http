@@ -58,17 +58,20 @@ Pre-built native binaries are published for:
 | macOS | aarch64 (Apple Silicon) | ✅ |
 | Linux (glibc) | x86_64 | ✅ |
 | Linux (glibc) | aarch64 | ✅ |
+| Windows | x86_64 | ✅ |
 
-Other platforms (Windows, Linux musl, FreeBSD, Android) are **not** currently
-supported. The auto-generated loader may attempt to load bindings for these
-platforms but will fail with a `MODULE_NOT_FOUND` error.
-
-To build from source for an unlisted platform, clone the repository and run:
+Other platforms (Linux musl, FreeBSD, Android) are **not** currently
+supported. To build from source for an unlisted platform:
 
 ```sh
 cd packages/iroh-http-node
 npx napi build --platform --release
 ```
+
+## Other runtimes
+
+- **Deno** → [`@momics/iroh-http-deno`](https://jsr.io/@momics/iroh-http-deno) on JSR
+- **Tauri** → [`@momics/iroh-http-tauri`](https://www.npmjs.com/package/@momics/iroh-http-tauri) on npm
 
 ## License
 

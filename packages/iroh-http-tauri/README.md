@@ -56,6 +56,11 @@ Add to your app's `capabilities/default.json`:
 }
 ```
 
+## Other runtimes
+
+- **Node.js** → [`@momics/iroh-http-node`](https://www.npmjs.com/package/@momics/iroh-http-node) on npm
+- **Deno** → [`@momics/iroh-http-deno`](https://jsr.io/@momics/iroh-http-deno) on JSR
+
 ## License
 
 MIT OR Apache-2.0
