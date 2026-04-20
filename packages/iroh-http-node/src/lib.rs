@@ -67,23 +67,41 @@ fn advertise_slab() -> &'static Mutex<Slab<iroh_http_discovery::AdvertiseSession
 
 /// Validate and convert an f64 option to a non-negative integer type.
 fn safe_f64_to_u64(value: f64, field: &str) -> napi::Result<u64> {
-    if value.is_nan() || value.is_infinite() || value < 0.0 {
+    if value.is_nan() || value.is_infinite() || value < 0.0 || value > u64::MAX as f64 {
         return Err(napi::Error::new(
             Status::InvalidArg,
-            format!("{field}: expected a non-negative finite number, got {value}"),
+            format!("{field}: expected a non-negative finite number within u64 range, got {value}"),
         ));
     }
     Ok(value as u64)
 }
 
 fn safe_f64_to_usize(value: f64, field: &str) -> napi::Result<usize> {
-    if value.is_nan() || value.is_infinite() || value < 0.0 {
+    if value.is_nan() || value.is_infinite() || value < 0.0 || value > usize::MAX as f64 {
         return Err(napi::Error::new(
             Status::InvalidArg,
-            format!("{field}: expected a non-negative finite number, got {value}"),
+            format!("{field}: expected a non-negative finite number within usize range, got {value}"),
         ));
     }
     Ok(value as usize)
+}
+
+/// Extract a `u64` handle from a [`BigInt`].
+///
+/// Returns `InvalidArg` when the BigInt value was out of `u64` range (i.e.
+/// negative or larger than `u64::MAX`).  Every function that accepts a handle
+/// from JavaScript must go through this so that a caller passing `BigInt(-1n)`
+/// or `BigInt(2n**64n)` receives a structured error rather than silently
+/// operating on a truncated handle value.
+fn get_handle(big: BigInt) -> napi::Result<u64> {
+    let (lossless, val) = big.get_u64();
+    if !lossless {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            format_error_json("INVALID_INPUT", "handle value is out of u64 range"),
+        ));
+    }
+    Ok(val)
 }
 
 #[napi(object)]
@@ -402,11 +420,15 @@ pub struct JsPeerStats {
     pub relay_url: Option<String>,
     pub paths: Vec<JsPathInfo>,
     pub rtt_ms: Option<f64>,
-    pub bytes_sent: Option<i64>,
-    pub bytes_received: Option<i64>,
-    pub lost_packets: Option<i64>,
-    pub sent_packets: Option<i64>,
-    pub congestion_window: Option<i64>,
+    /// Network byte/packet counters are exposed as `f64` (not `i64`) so that
+    /// values exceeding i64::MAX remain positive in JavaScript rather than
+    /// wrapping to negative.  Values above 2^53 lose integer precision, but
+    /// that represents >9 petabytes and is acceptable for telemetry purposes.
+    pub bytes_sent: Option<f64>,
+    pub bytes_received: Option<f64>,
+    pub lost_packets: Option<f64>,
+    pub sent_packets: Option<f64>,
+    pub congestion_window: Option<f64>,
 }
 
 /// Full node address: node ID + relay URL(s) + direct socket addresses.
@@ -471,11 +493,11 @@ pub async fn peer_stats(
             })
             .collect(),
         rtt_ms: s.rtt_ms,
-        bytes_sent: s.bytes_sent.map(|v| v as i64),
-        bytes_received: s.bytes_received.map(|v| v as i64),
-        lost_packets: s.lost_packets.map(|v| v as i64),
-        sent_packets: s.sent_packets.map(|v| v as i64),
-        congestion_window: s.congestion_window.map(|v| v as i64),
+        bytes_sent: s.bytes_sent.map(|v| v as f64),
+        bytes_received: s.bytes_received.map(|v| v as f64),
+        lost_packets: s.lost_packets.map(|v| v as f64),
+        sent_packets: s.sent_packets.map(|v| v as f64),
+        congestion_window: s.congestion_window.map(|v| v as f64),
     }))
 }
 
@@ -517,7 +539,7 @@ pub async fn js_next_chunk(endpoint_handle: u32, handle: BigInt) -> napi::Result
     let ep = get_endpoint(endpoint_handle)?;
     let chunk = ep
         .handles()
-        .next_chunk(handle.get_u64().1)
+        .next_chunk(get_handle(handle)?)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(chunk.map(|b| Buffer::from(b.to_vec())))
@@ -535,7 +557,7 @@ pub async fn js_send_chunk(
     let ep = get_endpoint(endpoint_handle)?;
     let bytes = Bytes::from(chunk.to_vec());
     ep.handles()
-        .send_chunk(handle.get_u64().1, bytes)
+        .send_chunk(get_handle(handle)?, bytes)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
@@ -547,7 +569,7 @@ pub async fn js_send_chunk(
 pub fn js_finish_body(endpoint_handle: u32, handle: BigInt) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
     ep.handles()
-        .finish_body(handle.get_u64().1)
+        .finish_body(get_handle(handle)?)
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
 
@@ -555,7 +577,7 @@ pub fn js_finish_body(endpoint_handle: u32, handle: BigInt) -> napi::Result<()> 
 #[napi]
 pub fn js_cancel_request(endpoint_handle: u32, handle: BigInt) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
-    ep.handles().cancel_reader(handle.get_u64().1);
+    ep.handles().cancel_reader(get_handle(handle)?);
     Ok(())
 }
 
@@ -570,7 +592,7 @@ pub async fn js_next_trailer(
     let ep = get_endpoint(endpoint_handle)?;
     let trailers = ep
         .handles()
-        .next_trailer(handle.get_u64().1)
+        .next_trailer(get_handle(handle)?)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
@@ -595,7 +617,7 @@ pub fn js_send_trailers(
         })
         .collect();
     ep.handles()
-        .send_trailers(handle.get_u64().1, pairs)
+        .send_trailers(get_handle(handle)?, pairs)
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
 
@@ -644,7 +666,7 @@ pub fn js_alloc_fetch_token(endpoint_handle: u32) -> napi::Result<u64> {
 #[napi]
 pub fn js_cancel_in_flight(endpoint_handle: u32, token: BigInt) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
-    ep.handles().cancel_in_flight(token.get_u64().1);
+    ep.handles().cancel_in_flight(get_handle(token)?);
     Ok(())
 }
 
@@ -696,8 +718,10 @@ pub async fn raw_fetch(
         })
         .collect();
 
-    let req_body_reader =
-        req_body_handle.and_then(|h| ep.handles().claim_pending_reader(h.get_u64().1));
+    let req_body_reader = req_body_handle
+        .map(get_handle)
+        .transpose()?
+        .and_then(|h| ep.handles().claim_pending_reader(h));
 
     let req_trailer_sender_handle = req_trailers_handle.map(|h| h.get_u64().1);
 
@@ -711,7 +735,7 @@ pub async fn raw_fetch(
         &pairs,
         req_body_reader,
         req_trailer_sender_handle,
-        Some(fetch_token.get_u64().1),
+        Some(get_handle(fetch_token)?),
         addrs.as_deref(),
     )
     .await
@@ -756,7 +780,7 @@ pub fn raw_respond(
         .collect();
     respond(
         ep.handles(),
-        req_handle.get_u64().1,
+        get_handle(req_handle)?,
         status as u16,
         header_pairs,
     )
@@ -977,7 +1001,7 @@ pub async fn session_create_bidi_stream(
     session_handle: BigInt,
 ) -> napi::Result<JsSessionBidiStream> {
     let ep = get_endpoint(endpoint_handle)?;
-    let duplex = iroh_http_core::session_create_bidi_stream(&ep, session_handle.get_u64().1)
+    let duplex = iroh_http_core::session_create_bidi_stream(&ep, get_handle(session_handle)?)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(JsSessionBidiStream {
@@ -994,7 +1018,7 @@ pub async fn session_next_bidi_stream(
     session_handle: BigInt,
 ) -> napi::Result<Option<JsSessionBidiStream>> {
     let ep = get_endpoint(endpoint_handle)?;
-    let result = iroh_http_core::session_next_bidi_stream(&ep, session_handle.get_u64().1)
+    let result = iroh_http_core::session_next_bidi_stream(&ep, get_handle(session_handle)?)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(result.map(|d| JsSessionBidiStream {
@@ -1012,10 +1036,11 @@ pub async fn session_close_handle(
     reason: Option<String>,
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
+    let code = close_code.map(get_handle).transpose()?.unwrap_or(0);
     iroh_http_core::session_close(
         &ep,
-        session_handle.get_u64().1,
-        close_code.map(|c| c.get_u64().1).unwrap_or(0),
+        get_handle(session_handle)?,
+        code,
         reason.as_deref().unwrap_or(""),
     )
     .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
@@ -1034,7 +1059,7 @@ pub async fn session_closed(
     session_handle: BigInt,
 ) -> napi::Result<JsCloseInfo> {
     let ep = get_endpoint(endpoint_handle)?;
-    let info = iroh_http_core::session_closed(&ep, session_handle.get_u64().1)
+    let info = iroh_http_core::session_closed(&ep, get_handle(session_handle)?)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(JsCloseInfo {
@@ -1051,7 +1076,7 @@ pub async fn session_create_uni_stream(
     session_handle: BigInt,
 ) -> napi::Result<u64> {
     let ep = get_endpoint(endpoint_handle)?;
-    iroh_http_core::session_create_uni_stream(&ep, session_handle.get_u64().1)
+    iroh_http_core::session_create_uni_stream(&ep, get_handle(session_handle)?)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
@@ -1064,7 +1089,7 @@ pub async fn session_next_uni_stream(
     session_handle: BigInt,
 ) -> napi::Result<Option<u64>> {
     let ep = get_endpoint(endpoint_handle)?;
-    iroh_http_core::session_next_uni_stream(&ep, session_handle.get_u64().1)
+    iroh_http_core::session_next_uni_stream(&ep, get_handle(session_handle)?)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
@@ -1077,7 +1102,7 @@ pub async fn session_send_datagram(
     data: Uint8Array,
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
-    iroh_http_core::session_send_datagram(&ep, session_handle.get_u64().1, data.as_ref())
+    iroh_http_core::session_send_datagram(&ep, get_handle(session_handle)?, data.as_ref())
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
 
@@ -1088,7 +1113,7 @@ pub async fn session_recv_datagram(
     session_handle: BigInt,
 ) -> napi::Result<Option<Buffer>> {
     let ep = get_endpoint(endpoint_handle)?;
-    let result = iroh_http_core::session_recv_datagram(&ep, session_handle.get_u64().1)
+    let result = iroh_http_core::session_recv_datagram(&ep, get_handle(session_handle)?)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(result.map(Buffer::from))
@@ -1102,7 +1127,7 @@ pub fn session_max_datagram_size(
     session_handle: BigInt,
 ) -> napi::Result<Option<u32>> {
     let ep = get_endpoint(endpoint_handle)?;
-    let result = iroh_http_core::session_max_datagram_size(&ep, session_handle.get_u64().1)
+    let result = iroh_http_core::session_max_datagram_size(&ep, get_handle(session_handle)?)
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(result.map(|s| s as u32))
 }

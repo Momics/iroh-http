@@ -814,7 +814,12 @@ where
                                         })
                                         .unwrap_or(true)
                                 };
-                            let predicate = SizeAbove::new(min_bytes as u16)
+                            // Cap min_bytes to u16::MAX before passing to SizeAbove.
+                            // SizeAbove accepts u16; values above 65535 would silently
+                            // wrap (e.g. 65536 → 0 = compress everything). Saturating
+                            // at u16::MAX is the safe fallback: "compress only responses
+                            // larger than 65535 bytes".
+                            let predicate = SizeAbove::new(min_bytes.min(u16::MAX as usize) as u16)
                                 .and(not_pre_compressed)
                                 .and(not_no_transform);
                             TowerToHyperService::new(
