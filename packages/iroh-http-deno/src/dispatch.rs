@@ -1006,17 +1006,17 @@ fn advertise_slab() -> &'static Mutex<Slab<iroh_http_discovery::AdvertiseSession
     S.get_or_init(|| Mutex::new(Slab::new()))
 }
 
-async fn mdns_browse_dispatch(p: Value) -> Value {
-    let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
-        None => return err("missing endpointHandle"),
-    };
-    let service_name = match p["serviceName"].as_str() {
-        Some(s) => s,
-        None => return err("missing serviceName"),
-    };
+async fn mdns_browse_dispatch(_p: Value) -> Value {
     #[cfg(feature = "discovery")]
     {
+        let handle = match _p["endpointHandle"].as_u64() {
+            Some(h) => h as u32,
+            None => return err("missing endpointHandle"),
+        };
+        let service_name = match _p["serviceName"].as_str() {
+            Some(s) => s,
+            None => return err("missing serviceName"),
+        };
         let ep = match get_endpoint(handle) {
             Some(ep) => ep,
             None => {
@@ -1041,13 +1041,13 @@ async fn mdns_browse_dispatch(p: Value) -> Value {
     err("discovery feature not enabled in this build")
 }
 
-async fn mdns_next_event_dispatch(p: Value) -> Value {
-    let handle = match p["browseHandle"].as_u64() {
-        Some(h) => h as u32,
-        None => return err("missing browseHandle"),
-    };
+async fn mdns_next_event_dispatch(_p: Value) -> Value {
     #[cfg(feature = "discovery")]
     {
+        let handle = match _p["browseHandle"].as_u64() {
+            Some(h) => h as u32,
+            None => return err("missing browseHandle"),
+        };
         let session = match browse_slab()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -1071,13 +1071,13 @@ async fn mdns_next_event_dispatch(p: Value) -> Value {
     err("discovery feature not enabled in this build")
 }
 
-fn mdns_browse_close_dispatch(p: Value) -> Value {
-    let handle = match p["browseHandle"].as_u64() {
-        Some(h) => h as u32,
-        None => return err("missing browseHandle"),
-    };
+fn mdns_browse_close_dispatch(_p: Value) -> Value {
     #[cfg(feature = "discovery")]
     {
+        let handle = match _p["browseHandle"].as_u64() {
+            Some(h) => h as u32,
+            None => return err("missing browseHandle"),
+        };
         let mut slab = browse_slab().lock().unwrap_or_else(|e| e.into_inner());
         if slab.contains(handle as usize) {
             slab.remove(handle as usize);
@@ -1086,17 +1086,17 @@ fn mdns_browse_close_dispatch(p: Value) -> Value {
     ok(json!({}))
 }
 
-fn mdns_advertise_dispatch(p: Value) -> Value {
-    let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
-        None => return err("missing endpointHandle"),
-    };
-    let service_name = match p["serviceName"].as_str() {
-        Some(s) => s,
-        None => return err("missing serviceName"),
-    };
+fn mdns_advertise_dispatch(_p: Value) -> Value {
     #[cfg(feature = "discovery")]
     {
+        let handle = match _p["endpointHandle"].as_u64() {
+            Some(h) => h as u32,
+            None => return err("missing endpointHandle"),
+        };
+        let service_name = match _p["serviceName"].as_str() {
+            Some(s) => s,
+            None => return err("missing serviceName"),
+        };
         let ep = match get_endpoint(handle) {
             Some(ep) => ep,
             None => {
@@ -1121,13 +1121,13 @@ fn mdns_advertise_dispatch(p: Value) -> Value {
     err("discovery feature not enabled in this build")
 }
 
-fn mdns_advertise_close_dispatch(p: Value) -> Value {
-    let handle = match p["advertiseHandle"].as_u64() {
-        Some(h) => h as u32,
-        None => return err("missing advertiseHandle"),
-    };
+fn mdns_advertise_close_dispatch(_p: Value) -> Value {
     #[cfg(feature = "discovery")]
     {
+        let handle = match _p["advertiseHandle"].as_u64() {
+            Some(h) => h as u32,
+            None => return err("missing advertiseHandle"),
+        };
         let mut slab = advertise_slab().lock().unwrap_or_else(|e| e.into_inner());
         if slab.contains(handle as usize) {
             slab.remove(handle as usize);

@@ -47,6 +47,7 @@ const MAX_HEADER_NAME_LEN: usize = 256;
 const MAX_HEADER_VALUE_LEN: usize = 8_192;
 const MAX_DIRECT_ADDRS: usize = 32;
 const MAX_DIRECT_ADDR_LEN: usize = 256;
+#[cfg(feature = "discovery")]
 const MAX_MDNS_SERVICE_NAME_LEN: usize = 128;
 const MAX_TIMEOUT_MS: u64 = 300_000;
 const MAX_HEADER_BYTES: usize = 1_048_576;
@@ -70,6 +71,7 @@ enum FfiError {
     /// Generic argument validation failure for a named field.
     InvalidArgument { field: &'static str, reason: String },
     /// Internal lock poisoning encountered while handling a boundary call.
+    #[cfg(feature = "discovery")]
     InternalLock { resource: &'static str },
 }
 
@@ -81,6 +83,7 @@ impl FfiError {
             FfiError::InputTooLarge { .. } => "INPUT_TOO_LARGE",
             FfiError::InvalidEncoding { .. } => "INVALID_ENCODING",
             FfiError::InvalidArgument { .. } => "INVALID_ARGUMENT",
+            #[cfg(feature = "discovery")]
             FfiError::InternalLock { .. } => "INTERNAL_LOCK",
         }
     }
@@ -94,6 +97,7 @@ impl FfiError {
             }
             FfiError::InvalidEncoding { field } => format!("{field} contains invalid encoding"),
             FfiError::InvalidArgument { field, reason } => format!("{field}: {reason}"),
+            #[cfg(feature = "discovery")]
             FfiError::InternalLock { resource } => {
                 format!("internal lock for {resource} is poisoned")
             }
@@ -108,6 +112,7 @@ fn ffi_invalid_arg(err: FfiError) -> napi::Error {
     )
 }
 
+#[cfg(feature = "discovery")]
 fn ffi_generic(err: FfiError) -> napi::Error {
     napi::Error::new(
         Status::GenericFailure,
