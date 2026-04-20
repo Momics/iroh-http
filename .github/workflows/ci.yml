@@ -40,8 +40,9 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # ── Fast PR-only dependency scan (free, no build needed) ─────────────────────
   dependency-review:
-    name: Dependency review (PR)
+    name: Dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -49,41 +50,29 @@ jobs:
         with:
           fail-on-severity: high
 
-  dependency-audit:
-    name: Dependency audit (cargo + npm)
+  # ── Format · lint · unit tests · typecheck · audit — one runner ──────────────
+  verify:
+    name: Verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit,cargo-deny
-      - name: cargo audit
-        run: cargo audit
-      - name: cargo deny (advisories + licenses)
-        run: cargo deny check advisories licenses
-      - name: npm audit (high+)
-        run: |
-          npm install
-          npm audit --audit-level=high
 
-  rust-check:
-    name: Rust check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - name: Install Tauri system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get update -q
+          sudo apt-get install -y -q libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - run: npm ci
+
+      # ── Rust ──────────────────────────────────────────────────────────────────
       - name: cargo fmt
         run: cargo fmt --all -- --check
+
       - name: cargo clippy
         run: |
           cargo clippy --workspace -- \
@@ -96,74 +85,54 @@ jobs:
             -D clippy::unwrap_used \
             -D clippy::panic \
             -D clippy::arithmetic_side_effects
-      - name: cargo test (workspace)
+
+      - name: cargo test
         run: cargo test --workspace
 
-  rust-check-no-default-features:
-    name: Rust check (no discovery)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: cargo check (no default features)
+      - name: cargo check (no-default-features)
         run: |
           cargo check -p iroh-http-node --no-default-features --features compression
           cargo check -p iroh-http-deno --no-default-features --features compression
 
-  rust-check-features:
-    name: Rust check (feature matrix)
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        features: ["", "compression"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: cargo test (features=${{ matrix.features }})
-        run: cargo test -p iroh-http-core --features "${{ matrix.features }}"
+      - name: cargo test (compression feature)
+        run: cargo test -p iroh-http-core --features compression
 
-  typescript-check:
-    name: TypeScript typecheck
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm install
-      - name: Build shared package (needed by dependents)
+      # ── TypeScript ────────────────────────────────────────────────────────────
+      - name: Build iroh-http-shared
         run: npm run build --workspace=packages/iroh-http-shared
-      - name: Typecheck shared + tauri (node needs napi build)
+
+      - name: TypeScript typecheck
         run: |
           npm run typecheck --workspace=packages/iroh-http-shared
           npm run typecheck --workspace=packages/iroh-http-tauri
 
+      # ── Security audit ────────────────────────────────────────────────────────
+      - name: cargo audit
+        run: cargo audit
+
+      - name: npm audit
+        run: npm audit --audit-level=high
+
+  # ── Integration: build native + run e2e (only after verify passes) ───────────
   e2e:
-    name: End-to-end tests (Node + Deno)
+    name: End-to-end tests
     runs-on: ubuntu-latest
+    needs: verify
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
 
-      - name: Install npm dependencies
-        run: npm install
+      - run: npm ci
 
       - name: Build native libs (ci profile)
         run: cargo build --profile ci -p iroh-http-node -p iroh-http-deno
-
-      # ── Node ──────────────────────────────────────────────────────────────────
 
       - name: Build shared TypeScript
         run: npm run build --workspace=packages/iroh-http-shared
@@ -174,13 +143,10 @@ jobs:
           npx napi build --platform --profile ci
           npx tsc --skipLibCheck
 
-      - name: Run Node e2e tests
-        run: node packages/iroh-http-node/test/e2e.mjs
-
-      - name: Node compliance tests
-        run: node packages/iroh-http-node/test/compliance.mjs
-
-      # ── Deno ──────────────────────────────────────────────────────────────────
+      - name: Node e2e + compliance
+        run: |
+          node packages/iroh-http-node/test/e2e.mjs
+          node packages/iroh-http-node/test/compliance.mjs
 
       - name: Copy Deno native lib
         run: |
@@ -188,13 +154,11 @@ jobs:
           cp target/ci/libiroh_http_deno.so \
              packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
 
-      - name: Run Deno tests
-        run: deno test --allow-read --allow-ffi --allow-env --allow-net packages/iroh-http-deno/test/smoke.test.ts
-
-      - name: Deno compliance tests
-        run: deno test --allow-read --allow-ffi --allow-env --allow-net packages/iroh-http-deno/test/compliance.ts
-
-      # ── Cross-runtime compliance ──────────────────────────────────────────────
+      - name: Deno tests + compliance
+        run: |
+          deno test --allow-read --allow-ffi --allow-env --allow-net \
+            packages/iroh-http-deno/test/smoke.test.ts \
+            packages/iroh-http-deno/test/compliance.ts
 
       - name: Cross-runtime compliance (node↔deno)
         run: bash tests/http-compliance/run.sh

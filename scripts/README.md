@@ -1,3 +1,28 @@
+# Building, Checking & Releasing
+
+## Daily development
+
+Before pushing to `main`, run the pre-push check script. It mirrors exactly what the CI `verify` job does, so there are no surprises:
+
+```sh
+scripts/check.sh
+```
+
+This runs: `cargo fmt --check` → `cargo clippy` → `cargo test` → feature checks → TypeScript typecheck.
+
+## Releasing
+
+Tag-based releases are handled by `scripts/release/run.sh`. Run it locally before tagging:
+
+```sh
+scripts/release/run.sh 0.2.0 --platform=node --dry-run   # validate
+scripts/release/run.sh 0.2.0 --platform=node             # execute
+```
+
+Pushing the resulting tag triggers the GitHub Actions release workflow (multi-platform build → publish to crates.io, npm, JSR).
+
+---
+
 # Building & Versioning
 
 ## Prerequisites

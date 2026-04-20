@@ -21,10 +21,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
       - name: Generate release notes
-        run: |
-          cargo install git-cliff --locked
-          git cliff --latest -o RELEASE_NOTES.md
+        run: git cliff --latest -o RELEASE_NOTES.md
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -185,7 +187,12 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Wait for iroh-http-core to be indexed on crates.io
-        run: sleep 30
+        run: |
+          for i in $(seq 1 12); do
+            cargo search iroh-http-core 2>/dev/null | grep -q '^iroh-http-core' && break
+            echo "Waiting for crates.io indexing... ($i/12)"
+            sleep 15
+          done
 
       - name: Publish iroh-http-discovery
         run: cargo publish -p iroh-http-discovery --no-verify
