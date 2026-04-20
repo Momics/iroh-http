@@ -59,13 +59,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::session_recv_datagram,
             commands::session_max_datagram_size,
         ])
-        .setup(|app, _api| {
+        .setup(|_app, _api| {
             #[cfg(mobile)]
             {
                 // ISS-009: return recoverable error instead of panicking on init failure.
-                let mdns = mobile_mdns::init(app, _api)
+                let mdns = mobile_mdns::init(_app, _api)
                     .map_err(|e| e.into())?;
-                app.manage(mdns);
+                _app.manage(mdns);
             }
             Ok(())
         })

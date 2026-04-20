@@ -14,7 +14,7 @@ links = "tauri-plugin-iroh-http"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = ["discovery"]
+default = ["discovery", "compression"]
 discovery = ["iroh-http-discovery/mdns"]
 compression = ["iroh-http-core/compression"]
 

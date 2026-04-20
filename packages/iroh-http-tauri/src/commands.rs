@@ -412,21 +412,20 @@ pub struct ServeEventPayload {
 pub async fn serve(
     endpoint_handle: u64,
     channel: Channel<ServeEventPayload>,
-    conn_channel: Option<Channel<ConnectionEvent>>,
+    conn_channel: Channel<ConnectionEvent>,
 ) -> Result<(), String> {
     let ep = state::get_endpoint(endpoint_handle)
         .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
 
-    let conn_event_fn: Option<std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync>> =
-        conn_channel.map(|ch| {
-            let arc: std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync> =
-                std::sync::Arc::new(move |ev: ConnectionEvent| {
-                    if let Err(e) = ch.send(ev) {
-                        tracing::warn!("iroh-http-tauri: conn_channel send error: {e}");
-                    }
-                });
-            arc
-        });
+    let conn_event_fn: Option<std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync>> = {
+        let arc: std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync> =
+            std::sync::Arc::new(move |ev: ConnectionEvent| {
+                if let Err(e) = conn_channel.send(ev) {
+                    tracing::warn!("iroh-http-tauri: conn_channel send error: {e}");
+                }
+            });
+        Some(arc)
+    };
 
     let handle = iroh_http_core::serve_with_events(
         ep.clone(),
@@ -815,7 +814,7 @@ pub async fn mdns_browse(endpoint_handle: u64, service_name: String) -> Result<u
     let session = iroh_http_discovery::start_browse(ep.raw(), &service_name)
         .await
         .map_err(|e| format_error_json("REFUSED", e))?;
-    let handle = browse_slab().lock().unwrap().insert(Arc::new(TokioMutex::new(session))) as u64;
+    let handle = browse_slab().lock().unwrap_or_else(|e| e.into_inner()).insert(Arc::new(TokioMutex::new(session))) as u64;
     Ok(handle)
 }
 
@@ -842,7 +841,7 @@ pub async fn mdns_browse<R: tauri::Runtime>(
 #[cfg(all(feature = "discovery", not(mobile)))]
 pub async fn mdns_next_event(browse_handle: u64) -> Result<Option<PeerDiscoveryEventPayload>, String> {
     let session = {
-        browse_slab().lock().unwrap().get(browse_handle as usize).cloned()
+        browse_slab().lock().unwrap_or_else(|e| e.into_inner()).get(browse_handle as usize).cloned()
     }.ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid browse handle: {browse_handle}")))?;
     let event = session.lock().await.next_event().await;
     Ok(event.map(|ev| PeerDiscoveryEventPayload {
@@ -913,7 +912,7 @@ pub async fn mdns_next_event<R: tauri::Runtime>(
 pub fn mdns_browse_close(browse_handle: u64) {
     #[cfg(feature = "discovery")]
     {
-        let mut slab = browse_slab().lock().unwrap();
+        let mut slab = browse_slab().lock().unwrap_or_else(|e| e.into_inner());
         if slab.contains(browse_handle as usize) {
             slab.remove(browse_handle as usize);
         }
@@ -930,7 +929,7 @@ pub fn mdns_browse_close<R: tauri::Runtime>(
     // ISS-017: clear stale buffered events for the closed browse session.
     mobile_mdns_buffer()
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .remove(&browse_handle);
 }
 
@@ -942,7 +941,7 @@ pub fn mdns_advertise(endpoint_handle: u64, service_name: String) -> Result<u64,
         .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
     let session = iroh_http_discovery::start_advertise(ep.raw(), &service_name)
         .map_err(|e| format_error_json("REFUSED", e))?;
-    let handle = advertise_slab().lock().unwrap().insert(session) as u64;
+    let handle = advertise_slab().lock().unwrap_or_else(|e| e.into_inner()).insert(session) as u64;
     Ok(handle)
 }
 
@@ -976,7 +975,7 @@ pub fn mdns_advertise<R: tauri::Runtime>(
 pub fn mdns_advertise_close(advertise_handle: u64) {
     #[cfg(feature = "discovery")]
     {
-        let mut slab = advertise_slab().lock().unwrap();
+        let mut slab = advertise_slab().lock().unwrap_or_else(|e| e.into_inner());
         if slab.contains(advertise_handle as usize) {
             slab.remove(advertise_handle as usize);
         }
