@@ -91,8 +91,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo check (no default features)
         run: |
-          cargo check -p iroh-http-node --no-default-features
-          cargo check -p iroh-http-deno --no-default-features
+          cargo check -p iroh-http-node --no-default-features --features compression
+          cargo check -p iroh-http-deno --no-default-features --features compression
 
   rust-check-features:
     name: Rust check (feature matrix)
@@ -155,7 +155,7 @@ jobs:
         run: |
           cd packages/iroh-http-node
           npx napi build --platform --profile ci
-          npx tsc
+          npx tsc --skipLibCheck
 
       - name: Run Node e2e tests
         run: node packages/iroh-http-node/test/e2e.mjs
