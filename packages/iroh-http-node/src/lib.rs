@@ -6,10 +6,13 @@
 
 #![deny(clippy::all)]
 #![deny(unsafe_code)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
+#![deny(clippy::panic)]
 
 use std::sync::Arc;
 #[cfg(feature = "discovery")]
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use bytes::Bytes;
 use iroh_http_core::{
@@ -34,6 +37,192 @@ use tokio::sync::Mutex as TokioMutex;
 use iroh_http_adapter::{core_error_to_json, format_error_json};
 
 // ── Endpoint helpers ──────────────────────────────────────────────────────────
+
+const MAX_NODE_ID_LEN: usize = 128;
+const MAX_URL_LEN: usize = 8_192;
+const MAX_METHOD_LEN: usize = 32;
+const MAX_PATH_LEN: usize = 2_048;
+const MAX_HEADER_COUNT: usize = 100;
+const MAX_HEADER_NAME_LEN: usize = 256;
+const MAX_HEADER_VALUE_LEN: usize = 8_192;
+const MAX_DIRECT_ADDRS: usize = 32;
+const MAX_DIRECT_ADDR_LEN: usize = 256;
+const MAX_MDNS_SERVICE_NAME_LEN: usize = 128;
+const MAX_TIMEOUT_MS: u64 = 300_000;
+const MAX_HEADER_BYTES: usize = 1_048_576;
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_TOTAL_CONNECTIONS: usize = 100_000;
+
+#[derive(Debug)]
+enum FfiError {
+    /// Node/public-key input failed coarse boundary validation.
+    InvalidNodeId,
+    /// URL input failed coarse boundary validation.
+    InvalidUrl,
+    /// Caller-provided input exceeds a hard boundary limit.
+    InputTooLarge {
+        field: &'static str,
+        max: usize,
+        got: usize,
+    },
+    /// Caller-provided bytes contain invalid encoding for the field.
+    InvalidEncoding {
+        field: &'static str,
+    },
+    /// Generic argument validation failure for a named field.
+    InvalidArgument {
+        field: &'static str,
+        reason: String,
+    },
+    /// Internal lock poisoning encountered while handling a boundary call.
+    InternalLock {
+        resource: &'static str,
+    },
+}
+
+impl FfiError {
+    fn code(&self) -> &'static str {
+        match self {
+            FfiError::InvalidNodeId => "INVALID_NODE_ID",
+            FfiError::InvalidUrl => "INVALID_URL",
+            FfiError::InputTooLarge { .. } => "INPUT_TOO_LARGE",
+            FfiError::InvalidEncoding { .. } => "INVALID_ENCODING",
+            FfiError::InvalidArgument { .. } => "INVALID_ARGUMENT",
+            FfiError::InternalLock { .. } => "INTERNAL_LOCK",
+        }
+    }
+
+    fn message(&self) -> String {
+        match self {
+            FfiError::InvalidNodeId => "invalid node id".to_string(),
+            FfiError::InvalidUrl => "invalid url".to_string(),
+            FfiError::InputTooLarge { field, max, got } => {
+                format!("{field} exceeds max size {max} (got {got})")
+            }
+            FfiError::InvalidEncoding { field } => format!("{field} contains invalid encoding"),
+            FfiError::InvalidArgument { field, reason } => format!("{field}: {reason}"),
+            FfiError::InternalLock { resource } => {
+                format!("internal lock for {resource} is poisoned")
+            }
+        }
+    }
+}
+
+fn ffi_invalid_arg(err: FfiError) -> napi::Error {
+    napi::Error::new(
+        Status::InvalidArg,
+        format_error_json(err.code(), err.message()),
+    )
+}
+
+fn ffi_generic(err: FfiError) -> napi::Error {
+    napi::Error::new(
+        Status::GenericFailure,
+        format_error_json(err.code(), err.message()),
+    )
+}
+
+fn validate_bounded_string(
+    field: &'static str,
+    value: &str,
+    max_len: usize,
+) -> std::result::Result<(), FfiError> {
+    if value.is_empty() {
+        return Err(FfiError::InvalidArgument {
+            field,
+            reason: "must not be empty".to_string(),
+        });
+    }
+    if value.len() > max_len {
+        return Err(FfiError::InputTooLarge {
+            field,
+            max: max_len,
+            got: value.len(),
+        });
+    }
+    if value.as_bytes().contains(&0) {
+        return Err(FfiError::InvalidEncoding { field });
+    }
+    Ok(())
+}
+
+fn validate_node_id_input(node_id: &str) -> std::result::Result<(), FfiError> {
+    validate_bounded_string("nodeId", node_id, MAX_NODE_ID_LEN)?;
+    if node_id.trim_start().starts_with('{') {
+        // JSON ticket / NodeAddrInfo payload is parsed by core; we only enforce
+        // boundary-level size and encoding constraints here.
+        return Ok(());
+    }
+    let valid = node_id
+        .bytes()
+        .all(|b| matches!(b, b'a'..=b'z' | b'2'..=b'7'));
+    if !valid {
+        return Err(FfiError::InvalidNodeId);
+    }
+    Ok(())
+}
+
+fn validate_url_input(url: &str) -> std::result::Result<(), FfiError> {
+    validate_bounded_string("url", url, MAX_URL_LEN).map_err(|e| match e {
+        FfiError::InvalidArgument { .. }
+        | FfiError::InputTooLarge { .. }
+        | FfiError::InvalidEncoding { .. } => e,
+        _ => FfiError::InvalidUrl,
+    })
+}
+
+fn validate_method_input(method: &str) -> std::result::Result<(), FfiError> {
+    validate_bounded_string("method", method, MAX_METHOD_LEN)
+}
+
+fn validate_path_input(path: &str) -> std::result::Result<(), FfiError> {
+    validate_bounded_string("path", path, MAX_PATH_LEN)
+}
+
+fn validate_direct_addrs_input(
+    direct_addrs: &Option<Vec<String>>,
+) -> std::result::Result<(), FfiError> {
+    if let Some(addrs) = direct_addrs {
+        if addrs.len() > MAX_DIRECT_ADDRS {
+            return Err(FfiError::InputTooLarge {
+                field: "directAddrs",
+                max: MAX_DIRECT_ADDRS,
+                got: addrs.len(),
+            });
+        }
+        for addr in addrs {
+            validate_bounded_string("directAddr", addr, MAX_DIRECT_ADDR_LEN)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_header_rows(headers: Vec<Vec<String>>) -> napi::Result<Vec<(String, String)>> {
+    if headers.len() > MAX_HEADER_COUNT {
+        return Err(ffi_invalid_arg(FfiError::InputTooLarge {
+            field: "headers",
+            max: MAX_HEADER_COUNT,
+            got: headers.len(),
+        }));
+    }
+    let mut pairs = Vec::with_capacity(headers.len());
+    for pair in headers {
+        if pair.len() != 2 {
+            return Err(ffi_invalid_arg(FfiError::InvalidArgument {
+                field: "headers",
+                reason: "each header must be [name, value]".to_string(),
+            }));
+        }
+        let name = &pair[0];
+        let value = &pair[1];
+        validate_bounded_string("headerName", name, MAX_HEADER_NAME_LEN)
+            .map_err(ffi_invalid_arg)?;
+        validate_bounded_string("headerValue", value, MAX_HEADER_VALUE_LEN)
+            .map_err(ffi_invalid_arg)?;
+        pairs.push((name.clone(), value.clone()));
+    }
+    Ok(pairs)
+}
 
 fn get_endpoint(handle: u32) -> napi::Result<IrohEndpoint> {
     registry::get_endpoint(handle as u64).ok_or_else(|| {
@@ -67,22 +256,46 @@ fn advertise_slab() -> &'static Mutex<Slab<iroh_http_discovery::AdvertiseSession
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 
 /// Validate and convert an f64 option to a non-negative integer type.
-fn safe_f64_to_u64(value: f64, field: &str) -> napi::Result<u64> {
-    if value.is_nan() || value.is_infinite() || value < 0.0 || value > u64::MAX as f64 {
-        return Err(napi::Error::new(
-            Status::InvalidArg,
-            format!("{field}: expected a non-negative finite number within u64 range, got {value}"),
-        ));
+fn safe_f64_to_u64(value: f64, field: &'static str, max: u64) -> napi::Result<u64> {
+    if value.is_nan() || value.is_infinite() || value < 0.0 {
+        return Err(ffi_invalid_arg(FfiError::InvalidArgument {
+            field,
+            reason: format!("expected a non-negative finite number, got {value}"),
+        }));
+    }
+    if value.fract() != 0.0 {
+        return Err(ffi_invalid_arg(FfiError::InvalidArgument {
+            field,
+            reason: "must be an integer".to_string(),
+        }));
+    }
+    if value > max as f64 {
+        return Err(ffi_invalid_arg(FfiError::InvalidArgument {
+            field,
+            reason: format!("must be <= {max}"),
+        }));
     }
     Ok(value as u64)
 }
 
-fn safe_f64_to_usize(value: f64, field: &str) -> napi::Result<usize> {
-    if value.is_nan() || value.is_infinite() || value < 0.0 || value > usize::MAX as f64 {
-        return Err(napi::Error::new(
-            Status::InvalidArg,
-            format!("{field}: expected a non-negative finite number within usize range, got {value}"),
-        ));
+fn safe_f64_to_usize(value: f64, field: &'static str, max: usize) -> napi::Result<usize> {
+    if value.is_nan() || value.is_infinite() || value < 0.0 {
+        return Err(ffi_invalid_arg(FfiError::InvalidArgument {
+            field,
+            reason: format!("expected a non-negative finite number, got {value}"),
+        }));
+    }
+    if value.fract() != 0.0 {
+        return Err(ffi_invalid_arg(FfiError::InvalidArgument {
+            field,
+            reason: "must be an integer".to_string(),
+        }));
+    }
+    if value > max as f64 {
+        return Err(ffi_invalid_arg(FfiError::InvalidArgument {
+            field,
+            reason: format!("must be <= {max}"),
+        }));
     }
     Ok(value as usize)
 }
@@ -178,7 +391,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                     relay_mode: o.relay_mode,
                     relays: o.relays.unwrap_or_default(),
                     bind_addrs: o.bind_addrs.unwrap_or_default(),
-                    idle_timeout_ms: o.idle_timeout.map(|t| safe_f64_to_u64(t, "idleTimeout")).transpose()?,
+                    idle_timeout_ms: o.idle_timeout.map(|t| safe_f64_to_u64(t, "idleTimeout", MAX_TIMEOUT_MS)).transpose()?,
                     proxy_url: o.proxy_url,
                     proxy_from_env: o.proxy_from_env.unwrap_or(false),
                     disabled: o.disable_networking.unwrap_or(false),
@@ -189,25 +402,34 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                 },
                 pool: PoolOptions {
                     max_connections: o.max_pooled_connections.map(|v| v as usize),
-                    idle_timeout_ms: o.pool_idle_timeout_ms.map(|v| safe_f64_to_u64(v, "poolIdleTimeoutMs")).transpose()?,
+                    idle_timeout_ms: o.pool_idle_timeout_ms.map(|v| safe_f64_to_u64(v, "poolIdleTimeoutMs", MAX_TIMEOUT_MS)).transpose()?,
                 },
                 streaming: StreamingOptions {
                     channel_capacity: o.channel_capacity.map(|v| v as usize),
                     max_chunk_size_bytes: o.max_chunk_size_bytes.map(|v| v as usize),
-                    drain_timeout_ms: o.drain_timeout.map(|v| safe_f64_to_u64(v, "drainTimeout")).transpose()?,
-                    handle_ttl_ms: o.handle_ttl.map(|v| safe_f64_to_u64(v, "handleTtl")).transpose()?,
+                    drain_timeout_ms: o.drain_timeout.map(|v| safe_f64_to_u64(v, "drainTimeout", MAX_TIMEOUT_MS)).transpose()?,
+                    handle_ttl_ms: o.handle_ttl.map(|v| safe_f64_to_u64(v, "handleTtl", MAX_TIMEOUT_MS)).transpose()?,
                 },
                 capabilities: Vec::new(),
                 keylog: o.keylog.unwrap_or(false),
-                max_header_size: o.max_header_bytes.map(|v| safe_f64_to_usize(v, "maxHeaderBytes")).transpose()?,
+                max_header_size: o.max_header_bytes.map(|v| safe_f64_to_usize(v, "maxHeaderBytes", MAX_HEADER_BYTES)).transpose()?,
                 server_limits: iroh_http_core::server::ServerLimits {
                     max_concurrency: o.max_concurrency.map(|v| v as usize),
                     max_connections_per_peer: o.max_connections_per_peer.map(|v| v as usize),
-                    request_timeout_ms: o.request_timeout.map(|v| safe_f64_to_u64(v, "requestTimeout")).transpose()?,
-                    max_request_body_bytes: o.max_request_body_bytes.map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes")).transpose()?,
+                    request_timeout_ms: o
+                        .request_timeout
+                        .map(|v| safe_f64_to_u64(v, "requestTimeout", MAX_TIMEOUT_MS))
+                        .transpose()?,
+                    max_request_body_bytes: o
+                        .max_request_body_bytes
+                        .map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes", MAX_BODY_BYTES))
+                        .transpose()?,
                     max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
                     drain_timeout_secs: None,
-                    max_total_connections: o.max_total_connections.map(|v| safe_f64_to_usize(v, "maxTotalConnections")).transpose()?,
+                    max_total_connections: o
+                        .max_total_connections
+                        .map(|v| safe_f64_to_usize(v, "maxTotalConnections", MAX_TOTAL_CONNECTIONS))
+                        .transpose()?,
                 },
                 #[cfg(feature = "compression")]
                 // NODE-003: enable compression when level or minBodyBytes is provided.
@@ -292,13 +514,12 @@ pub struct JsPeerDiscoveryEvent {
 #[cfg(feature = "discovery")]
 pub async fn mdns_browse(endpoint_handle: u32, service_name: String) -> napi::Result<u32> {
     let ep = get_endpoint(endpoint_handle)?;
+    validate_bounded_string("serviceName", &service_name, MAX_MDNS_SERVICE_NAME_LEN)
+        .map_err(ffi_invalid_arg)?;
     let session = iroh_http_discovery::start_browse(ep.raw(), &service_name)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, format_error_json("REFUSED", e)))?;
-    let handle = browse_slab()
-        .lock()
-        .unwrap()
-        .insert(Arc::new(TokioMutex::new(session))) as u32;
+    let handle = lock_browse_slab()?.insert(Arc::new(TokioMutex::new(session))) as u32;
     Ok(handle)
 }
 
@@ -316,22 +537,16 @@ pub async fn mdns_browse(_endpoint_handle: u32, _service_name: String) -> napi::
 #[napi]
 #[cfg(feature = "discovery")]
 pub async fn mdns_next_event(browse_handle: u32) -> napi::Result<Option<JsPeerDiscoveryEvent>> {
-    let session = {
-        browse_slab()
-            .lock()
-            .unwrap()
-            .get(browse_handle as usize)
-            .cloned()
-    }
-    .ok_or_else(|| {
-        napi::Error::new(
-            Status::InvalidArg,
-            format_error_json(
-                "INVALID_HANDLE",
-                format!("invalid browse handle: {browse_handle}"),
-            ),
-        )
-    })?;
+    let session =
+        { lock_browse_slab()?.get(browse_handle as usize).cloned() }.ok_or_else(|| {
+            napi::Error::new(
+                Status::InvalidArg,
+                format_error_json(
+                    "INVALID_HANDLE",
+                    format!("invalid browse handle: {browse_handle}"),
+                ),
+            )
+        })?;
     let event = session.lock().await.next_event().await;
     Ok(event.map(|ev| JsPeerDiscoveryEvent {
         is_active: ev.is_active,
@@ -353,9 +568,12 @@ pub async fn mdns_next_event(_browse_handle: u32) -> napi::Result<Option<JsPeerD
 #[napi]
 #[cfg(feature = "discovery")]
 pub fn mdns_browse_close(browse_handle: u32) {
-    let mut slab = browse_slab().lock().unwrap();
-    if slab.contains(browse_handle as usize) {
-        slab.remove(browse_handle as usize);
+    if let Ok(mut slab) = browse_slab().lock() {
+        if slab.contains(browse_handle as usize) {
+            slab.remove(browse_handle as usize);
+        }
+    } else {
+        tracing::error!("iroh-http-node: browse slab lock poisoned during close");
     }
 }
 
@@ -369,9 +587,11 @@ pub fn mdns_browse_close(_browse_handle: u32) {}
 #[cfg(feature = "discovery")]
 pub fn mdns_advertise(endpoint_handle: u32, service_name: String) -> napi::Result<u32> {
     let ep = get_endpoint(endpoint_handle)?;
+    validate_bounded_string("serviceName", &service_name, MAX_MDNS_SERVICE_NAME_LEN)
+        .map_err(ffi_invalid_arg)?;
     let session = iroh_http_discovery::start_advertise(ep.raw(), &service_name)
         .map_err(|e| napi::Error::new(Status::GenericFailure, format_error_json("REFUSED", e)))?;
-    let handle = advertise_slab().lock().unwrap().insert(session) as u32;
+    let handle = lock_advertise_slab()?.insert(session) as u32;
     Ok(handle)
 }
 
@@ -388,9 +608,12 @@ pub fn mdns_advertise(_endpoint_handle: u32, _service_name: String) -> napi::Res
 #[napi]
 #[cfg(feature = "discovery")]
 pub fn mdns_advertise_close(advertise_handle: u32) {
-    let mut slab = advertise_slab().lock().unwrap();
-    if slab.contains(advertise_handle as usize) {
-        slab.remove(advertise_handle as usize);
+    if let Ok(mut slab) = advertise_slab().lock() {
+        if slab.contains(advertise_handle as usize) {
+            slab.remove(advertise_handle as usize);
+        }
+    } else {
+        tracing::error!("iroh-http-node: advertise slab lock poisoned during close");
     }
 }
 
@@ -707,24 +930,19 @@ pub async fn raw_fetch(
     direct_addrs: Option<Vec<String>>,
 ) -> napi::Result<JsFfiResponse> {
     let ep = get_endpoint(endpoint_handle)?;
+    validate_node_id_input(&node_id).map_err(ffi_invalid_arg)?;
+    validate_url_input(&url).map_err(ffi_invalid_arg)?;
+    validate_method_input(&method).map_err(ffi_invalid_arg)?;
+    validate_direct_addrs_input(&direct_addrs).map_err(ffi_invalid_arg)?;
 
-    let pairs: Vec<(String, String)> = headers
-        .into_iter()
-        .filter_map(|pair| {
-            if pair.len() == 2 {
-                Some((pair[0].clone(), pair[1].clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let pairs = validate_header_rows(headers)?;
 
     let req_body_reader = req_body_handle
         .map(get_handle)
         .transpose()?
         .and_then(|h| ep.handles().claim_pending_reader(h));
 
-    let req_trailer_sender_handle = req_trailers_handle.map(|h| h.get_u64().1);
+    let req_trailer_sender_handle = req_trailers_handle.map(get_handle).transpose()?;
 
     let addrs =
         parse_direct_addrs(&direct_addrs).map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
@@ -769,16 +987,7 @@ pub fn raw_respond(
     headers: Vec<Vec<String>>,
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
-    let header_pairs: Vec<(String, String)> = headers
-        .into_iter()
-        .filter_map(|p| {
-            if p.len() == 2 {
-                Some((p[0].clone(), p[1].clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let header_pairs = validate_header_rows(headers)?;
     respond(
         ep.handles(),
         get_handle(req_handle)?,
@@ -948,17 +1157,10 @@ pub async fn raw_connect(
     headers: Vec<Vec<String>>,
 ) -> napi::Result<JsFfiDuplexStream> {
     let ep = get_endpoint(endpoint_handle)?;
+    validate_node_id_input(&node_id).map_err(ffi_invalid_arg)?;
+    validate_path_input(&path).map_err(ffi_invalid_arg)?;
 
-    let pairs: Vec<(String, String)> = headers
-        .into_iter()
-        .filter_map(|p| {
-            if p.len() == 2 {
-                Some((p[0].clone(), p[1].clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let pairs = validate_header_rows(headers)?;
 
     let duplex = iroh_http_core::raw_connect(&ep, &node_id, &path, &pairs)
         .await
@@ -981,6 +1183,8 @@ pub async fn session_connect(
     direct_addrs: Option<Vec<String>>,
 ) -> napi::Result<u64> {
     let ep = get_endpoint(endpoint_handle)?;
+    validate_node_id_input(&node_id).map_err(ffi_invalid_arg)?;
+    validate_direct_addrs_input(&direct_addrs).map_err(ffi_invalid_arg)?;
     let addrs =
         parse_direct_addrs(&direct_addrs).map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
     let handle = iroh_http_core::session_connect(&ep, &node_id, addrs.as_deref())
@@ -1038,6 +1242,9 @@ pub async fn session_close_handle(
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
     let code = close_code.map(get_handle).transpose()?.unwrap_or(0);
+    if let Some(ref reason) = reason {
+        validate_bounded_string("reason", reason, MAX_URL_LEN).map_err(ffi_invalid_arg)?;
+    }
     iroh_http_core::session_close(
         &ep,
         get_handle(session_handle)?,
@@ -1045,6 +1252,25 @@ pub async fn session_close_handle(
         reason.as_deref().unwrap_or(""),
     )
     .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
+}
+
+#[cfg(feature = "discovery")]
+fn lock_browse_slab() -> napi::Result<MutexGuard<'static, Slab<BrowseHandle>>> {
+    browse_slab().lock().map_err(|_| {
+        ffi_generic(FfiError::InternalLock {
+            resource: "browse_slab",
+        })
+    })
+}
+
+#[cfg(feature = "discovery")]
+fn lock_advertise_slab(
+) -> napi::Result<MutexGuard<'static, Slab<iroh_http_discovery::AdvertiseSession>>> {
+    advertise_slab().lock().map_err(|_| {
+        ffi_generic(FfiError::InternalLock {
+            resource: "advertise_slab",
+        })
+    })
 }
 
 /// Wait for a session to close. Returns close info { closeCode, reason }.
@@ -1167,4 +1393,52 @@ pub fn generate_secret_key() -> napi::Result<Buffer> {
     let key = iroh_http_core::generate_secret_key()
         .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
     Ok(Buffer::from(key.to_vec()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_node_id_accepts_base32ish_input() {
+        let result = validate_node_id_input("abcdefghijklmnopqrstuvwxyz234567");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_node_id_rejects_invalid_chars() {
+        let result = validate_node_id_input("bad-node-id!");
+        assert!(matches!(result, Err(FfiError::InvalidNodeId)));
+    }
+
+    #[test]
+    fn validate_url_rejects_null_byte() {
+        let result = validate_url_input("httpi://peer/\x00x");
+        assert!(matches!(
+            result,
+            Err(FfiError::InvalidEncoding { field: "url" })
+        ));
+    }
+
+    #[test]
+    fn validate_headers_rejects_malformed_pair() {
+        let result = validate_header_rows(vec![vec!["x".to_string()]]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn timeout_conversion_rejects_too_large() {
+        let too_large = safe_f64_to_u64(
+            (MAX_TIMEOUT_MS + 1) as f64,
+            "requestTimeout",
+            MAX_TIMEOUT_MS,
+        );
+        assert!(too_large.is_err());
+    }
+
+    #[test]
+    fn timeout_conversion_rejects_fractional() {
+        let fractional = safe_f64_to_u64(1.5, "requestTimeout", MAX_TIMEOUT_MS);
+        assert!(fractional.is_err());
+    }
 }
