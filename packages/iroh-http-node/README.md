@@ -1,5 +1,7 @@
 # @momics/iroh-http-node
 
+[![npm](https://img.shields.io/npm/v/@momics/iroh-http-node)](https://www.npmjs.com/package/@momics/iroh-http-node)
+
 > **Experimental** — This package is in an early, unstable state. APIs may change or break without notice between any releases. Do not depend on it for production use.
 
 Node.js native addon for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer HTTP over [Iroh](https://iroh.computer) QUIC transport.
@@ -29,8 +31,9 @@ node.serve({}, (req) => {
   return new Response("Not found", { status: 404 });
 });
 
-// Fetch from a remote peer
-const res = await node.fetch(remotePeerId, "/hello");
+// Node ID is the peer address — share it out-of-band with the remote node
+const remoteNodeId = "<paste the other node's publicKey.toString() here>";
+const res = await node.fetch(remoteNodeId, "/hello");
 console.log(await res.text());
 
 await node.close();

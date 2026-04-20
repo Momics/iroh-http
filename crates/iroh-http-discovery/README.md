@@ -4,6 +4,11 @@ Optional mDNS local network discovery for [iroh-http](https://github.com/momics/
 
 Implements [Iroh's](https://iroh.computer) `Discovery` trait using mDNS, allowing nodes to find each other on the same local network without relay servers.
 
+> **Note:** This crate is included automatically when you use the platform adapters with default features. You only need to depend on it directly if you are building a custom Rust integration on top of `iroh-http-core`.
+> - **Node.js** → [`@momics/iroh-http-node`](https://www.npmjs.com/package/@momics/iroh-http-node)
+> - **Deno** → [`@momics/iroh-http-deno`](https://jsr.io/@momics/iroh-http-deno)
+> - **Tauri** → [`@momics/iroh-http-tauri`](https://www.npmjs.com/package/@momics/iroh-http-tauri)
+
 ## When to use
 
 - **Desktop apps** (macOS, Linux, Windows) that need local peer discovery
@@ -26,4 +31,4 @@ const node = await createNode({
 
 ## License
 
-MIT OR Apache-2.0
+`MIT OR Apache-2.0`

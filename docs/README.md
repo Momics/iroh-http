@@ -44,5 +44,5 @@ Group messaging · Offline-first · and more.
 - [Troubleshooting](troubleshooting.md) — common errors, handle lifecycle diagnostics, mDNS issues, error code reference
 - [Performance tuning](tuning.md) — per-scenario `NodeOptions` guidance, memory sizing, compression settings
 - [Design decisions](internals/design-decisions.md) — rationale for hyper, slotmap, moka, compression, wire format
-- [Roadmap](roadmap.md) — v1.0 release checklist, open source path, embedded and HTTP/3 horizons
+- [Roadmap](roadmap.md) — v1.0 release checklist, embedded and HTTP/3 horizons
 

@@ -1,5 +1,10 @@
 # iroh-http
 
+[![CI](https://github.com/Momics/iroh-http/actions/workflows/ci.yml/badge.svg)](https://github.com/Momics/iroh-http/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@momics/iroh-http-node)](https://www.npmjs.com/package/@momics/iroh-http-node)
+[![JSR](https://jsr.io/badges/@momics/iroh-http-deno)](https://jsr.io/@momics/iroh-http-deno)
+[![crates.io](https://img.shields.io/crates/v/iroh-http-core)](https://crates.io/crates/iroh-http-core)
+
 > **⚠ Experimental — pre-v1.0.** APIs will change between releases. Not recommended for production use yet. Feedback and bug reports welcome.
 
 Peer-to-peer HTTP — fetch and serve between devices using [Iroh](https://iroh.computer) QUIC transport. No servers, no DNS, no TLS certificates. Nodes are addressed by public key.
@@ -60,34 +65,50 @@ Nodes find each other via [Iroh's](https://iroh.computer) relay network or local
 
 ### Node.js
 
+```sh
+npm install @momics/iroh-http-node
+```
+
 ```ts
 import { createNode } from "@momics/iroh-http-node";
 
-const node = await createNode();
-console.log("My node ID:", node.publicKey.toString());
+// Node A — share its public key with Node B out-of-band (e.g. console, QR code, config file)
+const nodeA = await createNode();
+console.log("Node A ID:", nodeA.publicKey.toString());
+nodeA.serve({}, (req) => new Response("hello from iroh-http!"));
 
-// Serve
-node.serve({}, (req) => new Response("hello from iroh-http!"));
+// Node B — connect using Node A's public key
+const nodeB = await createNode();
+const res = await nodeB.fetch(nodeA.publicKey.toString(), "/hello");
+console.log(await res.text()); // "hello from iroh-http!"
 
-// Fetch from a remote peer
-const res = await node.fetch(remotePeerId, "/hello");
-console.log(await res.text());
-
-await node.close();
+await nodeA.close();
+await nodeB.close();
 ```
 
 ### Deno
 
+```sh
+deno add jsr:@momics/iroh-http-deno
+```
+
 ```ts
 import { createNode } from "jsr:@momics/iroh-http-deno";
 
-const node = await createNode();
-node.serve({}, (req) => new Response("hello"));
-const res = await node.fetch(remotePeerId, "/hello");
+const nodeA = await createNode();
+console.log("Node A ID:", nodeA.publicKey.toString());
+nodeA.serve({}, (req) => new Response("hello"));
+
+const nodeB = await createNode();
+const res = await nodeB.fetch(nodeA.publicKey.toString(), "/hello");
 console.log(await res.text());
 ```
 
 ### Tauri
+
+```sh
+npm install @momics/iroh-http-tauri
+```
 
 ```ts
 import { createNode } from "@momics/iroh-http-tauri";
@@ -150,16 +171,14 @@ npm run test:interop       # cross-runtime compliance (node ↔ deno)
 
 ### Release
 
+Create a git tag — CI builds all binaries and publishes to npm, JSR, and crates.io automatically:
+
 ```sh
-npm run release:dry -- 0.2.0   # dry run: build → test → version bump (no publish)
-npm run release -- 0.2.0       # full release: build → test → bump → publish → tag → push
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-The release script runs build and test automatically before publishing. See
-[scripts/release.sh](scripts/release.sh) for details and prerequisites.
-
-For more details on testing infrastructure (property tests, fuzz targets,
-CI configuration), see [docs/build-and-test.md](docs/build-and-test.md).
+Watch the progress under [Actions → Release](https://github.com/Momics/iroh-http/actions/workflows/release.yml). For manual/local release steps, see [scripts/README.md](scripts/README.md).
 
 ## Acknowledgements
 

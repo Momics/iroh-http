@@ -164,7 +164,7 @@ npm run bench:deno
 npm run bench:rust
 ```
 
-CI runs `.github/workflows/bench.yml` on pull requests and pushes to `main`.
+CI runs `.github/workflows/bench.yml` on pushes to `main` and on release tags.
 It stores benchmark history via `benchmark-action` and fails when regressions
 exceed the 20% slowdown threshold (`alert-threshold: 120%`).
 

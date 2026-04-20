@@ -1,5 +1,7 @@
 # @momics/iroh-http-deno
 
+[![JSR](https://jsr.io/badges/@momics/iroh-http-deno)](https://jsr.io/@momics/iroh-http-deno)
+
 > **Experimental** — This package is in an early, unstable state. APIs may change or break without notice between any releases. Do not depend on it for production use.
 
 Deno native library for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer HTTP over [Iroh](https://iroh.computer) QUIC transport.
@@ -45,7 +47,9 @@ console.log("Node ID:", node.publicKey.toString());
 
 node.serve({}, (req) => new Response("Hello from Deno iroh-http!"));
 
-const res = await node.fetch(remotePeerId, "/hello");
+// Node ID is the peer address — share it out-of-band with the remote node
+const remoteNodeId = "<paste the other node's publicKey.toString() here>";
+const res = await node.fetch(remoteNodeId, "/hello");
 console.log(await res.text());
 await node.close();
 ```

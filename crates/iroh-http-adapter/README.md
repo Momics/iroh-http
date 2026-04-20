@@ -2,6 +2,11 @@
 
 Shared utilities for the iroh-http adapter crates (Deno, Node.js, Tauri).
 
+> **This is an internal implementation detail.** Application developers should use the platform adapters directly:
+> - **Node.js** → [`@momics/iroh-http-node`](https://www.npmjs.com/package/@momics/iroh-http-node)
+> - **Deno** → [`@momics/iroh-http-deno`](https://jsr.io/@momics/iroh-http-deno)
+> - **Tauri** → [`@momics/iroh-http-tauri`](https://www.npmjs.com/package/@momics/iroh-http-tauri)
+
 ## What this crate is
 
 The adapters share a common JSON error envelope at the FFI boundary:
@@ -50,3 +55,7 @@ let json = format_error_json("INVALID_HANDLE", "endpoint not found");
 | `Cancelled` | `CANCELLED` |
 | `Internal` | `UNKNOWN` |
 | _(future variants)_ | `UNKNOWN` |
+
+## License
+
+`MIT OR Apache-2.0`

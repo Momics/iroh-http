@@ -4,24 +4,42 @@ Rust core for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer 
 
 This crate provides the transport layer: an Iroh endpoint, `fetch()` for outgoing requests, and `serve()` for incoming requests. It speaks HTTP/1.1 framing over QUIC bidirectional streams. Nodes are addressed by Ed25519 public key — no DNS, no TLS certificates.
 
-Platform adapters (Node.js, Tauri, Deno, Python) build on top of this crate via FFI or native bindings.
+> **Note:** This is a low-level FFI-bridge crate. If you are building an application, you probably want one of the higher-level adapters instead:
+> - **Node.js** → [`@momics/iroh-http-node`](https://www.npmjs.com/package/@momics/iroh-http-node)
+> - **Deno** → [`@momics/iroh-http-deno`](https://jsr.io/@momics/iroh-http-deno)
+> - **Tauri** → [`@momics/iroh-http-tauri`](https://www.npmjs.com/package/@momics/iroh-http-tauri)
 
 ## Usage
 
 ```rust
-use iroh_http_core::{IrohEndpoint, NodeOptions, fetch, serve};
+use iroh_http_core::{
+    IrohEndpoint, NodeOptions, ServeOptions,
+    fetch, serve, respond,
+};
 
-// Create an endpoint
-let endpoint = IrohEndpoint::bind(NodeOptions::default()).await?;
-println!("Node ID: {}", endpoint.node_id());
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Bind a local endpoint
+    let endpoint = IrohEndpoint::bind(NodeOptions::default()).await?;
+    println!("Node ID: {}", endpoint.node_id());
 
-// Fetch from a remote peer
-let response = fetch(&endpoint, remote_node_id, "/api", "GET", &[], None, None).await?;
+    // Serve incoming requests
+    let _handle = serve(endpoint.clone(), ServeOptions::default(), |req| {
+        respond(req.req_handle, 200, vec![], None);
+    });
 
-// Serve incoming requests
-serve(endpoint, ServeOptions::default(), |req| {
-    respond(req.req_handle, 200, vec![]);
-});
+    // Fetch from a remote peer (raw FFI-level API)
+    let resp = fetch(
+        &endpoint,
+        remote_node_id,
+        "httpi://peer.local/api",
+        "GET",
+        &[],
+        None, None, None, None,
+    ).await?;
+
+    Ok(())
+}
 ```
 
 ## Features
@@ -32,7 +50,8 @@ serve(endpoint, ServeOptions::default(), |req| {
 - **Bidirectional streams** — full-duplex streaming via QUIC bidi streams
 - **Trailer support** — HTTP/1.1 chunked trailers for streaming metadata
 - **Configurable** — idle timeout, concurrency limits, channel capacity, chunk sizes
+- **Optional compression** — zstd request/response compression via the `compression` feature (enabled by default)
 
 ## License
 
-MIT OR Apache-2.0
+`MIT OR Apache-2.0`

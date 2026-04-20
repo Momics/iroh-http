@@ -1,5 +1,7 @@
 # @momics/iroh-http-tauri
 
+[![npm](https://img.shields.io/npm/v/@momics/iroh-http-tauri)](https://www.npmjs.com/package/@momics/iroh-http-tauri)
+
 > **Experimental** — This package is in an early, unstable state. APIs may change or break without notice between any releases. Do not depend on it for production use.
 
 Tauri v2 plugin for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer HTTP over [Iroh](https://iroh.computer) QUIC transport.
@@ -43,7 +45,9 @@ const node = await createNode({
 });
 
 node.serve({}, (req) => new Response("hello from Tauri!"));
-const res = await node.fetch(remotePeerId, "/hello");
+// Node ID is the peer address — share it out-of-band with the remote node
+const remoteNodeId = "<paste the other node's publicKey.toString() here>";
+const res = await node.fetch(remoteNodeId, "/hello");
 ```
 
 ## Permissions

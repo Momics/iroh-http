@@ -8,13 +8,16 @@ releasable and trustworthy for public consumption.
 ### Done
 
 - [x] crates.io publish metadata (`repository`, `documentation`, `keywords`, `categories`)
-- [x] Release CI workflow (`release.yml` with cross-platform matrix build)
+- [x] Release CI workflow (`release.yml` with cross-platform matrix build, OIDC publishing)
 - [x] CI workflow (`ci.yml` — Rust check, TypeScript typecheck, E2E tests)
 - [x] Clean repository state (`.gitignore` for workspace/, .obsidian/, generated files)
 - [x] Issue templates (`bug.yml`, `feature.yml`)
 - [x] Cross-platform builds: Node (5 targets), Deno (5 targets)
 - [x] Build logic lives in each package (not root shell scripts)
-- [x] All GitHub issues (#1–#6) resolved
+- [x] `CHANGELOG.md` — generated via `git-cliff` and updated each release in CI
+- [x] `SECURITY.md` — GitHub Security Advisories disclosure policy
+- [x] Repository public on GitHub
+- [x] All GitHub issues resolved through v0.1.3
 
 ### Remaining before v1.0
 
@@ -26,30 +29,6 @@ napi-rs multi-platform distribution requires one small package per platform
 on a different platform gets no `.node` binary. napi-rs has a
 [`@napi-rs/cli artifacts`](https://napi.rs/docs/cross-build/summary)
 command that generates these packages.
-
-**`CHANGELOG.md`**
-
-Standard expectation for published packages. Options:
-- **`git-cliff`** — generates a changelog from conventional commit messages.
-  Run `git cliff -o CHANGELOG.md` before each release. Zero config if
-  commits follow `feat:`, `fix:`, `refactor:` prefixes.
-- **GitHub release notes** — auto-generated from PR titles when creating a
-  release. Good for GitHub-native consumers, but doesn't produce a file in
-  the repo.
-- **`release-please`** — Google's bot that watches commits, opens a PR with
-  version bump + changelog, and publishes on merge. Heavier but fully
-  automated.
-
-Recommendation: use `git-cliff` in `release.sh` so the changelog is always
-in the repo and reproducible from git history.
-
-**`SECURITY.md`**
-
-Required for responsible open source, especially for a library handling
-Ed25519 keys and peer identity. Should describe:
-- How to report vulnerabilities privately (use GitHub Security Advisories)
-- Supported versions
-- Disclosure timeline
 
 ### Distribution channels
 
@@ -64,26 +43,7 @@ Ed25519 keys and peer identity. Should describe:
 
 ---
 
-## Horizon 2 — Open Source
-
-### Pre-open-source checklist
-
-Tracked in [#43 — Automate release pipeline](https://github.com/Momics/iroh-http/issues/43):
-
-1. [ ] Fix Node.js napi-rs platform package split
-2. [ ] Add `CHANGELOG.md` (via `git-cliff` or equivalent)
-3. [x] Add `SECURITY.md`
-4. [ ] Re-enable CI workflows (`push: [main]`, `pull_request: [main]`)
-5. [ ] Move release flow from `scripts/release.sh` to GitHub Actions
-       (`release.yml` triggered by `v*` tags)
-6. [ ] Run `release.sh --dry-run` end-to-end to validate publish flow
-7. [ ] Decide on npm scope: keep `@momics/` or use `iroh-http`
-8. [ ] Final sweep: no internal references, credentials, or private URLs
-9. [ ] Make repository public on GitHub
-
----
-
-## Horizon 3 — Embedded and HTTP/3
+## Horizon 2 — Embedded and HTTP/3
 
 These are long-term goals that influence architectural decisions today but are
 not on the near-term roadmap.
