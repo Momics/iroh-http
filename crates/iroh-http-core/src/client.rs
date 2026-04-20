@@ -370,10 +370,15 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
                     let hdrs = frame.into_trailers().expect("is_trailers checked above");
                     trailers_vec = hdrs
                         .iter()
-                        .filter_map(|(k, v)| {
-                            v.to_str()
-                                .ok()
-                                .map(|s| (k.as_str().to_string(), s.to_string()))
+                        .filter_map(|(k, v)| match v.to_str() {
+                            Ok(s) => Some((k.as_str().to_string(), s.to_string())),
+                            Err(_) => {
+                                tracing::warn!(
+                                    "iroh-http: dropping non-UTF8 trailer value for '{}'",
+                                    k.as_str()
+                                );
+                                None
+                            }
                         })
                         .collect();
                 }
