@@ -1,6 +1,6 @@
 {
   "name": "@momics/iroh-http-shared",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "license": "MIT",
   "imports": {},
   "exports": {
