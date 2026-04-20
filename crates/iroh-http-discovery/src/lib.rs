@@ -179,7 +179,10 @@ mod tests {
         let ev = PeerDiscoveryEvent {
             is_active: true,
             node_id: "node123".to_string(),
-            addrs: vec!["127.0.0.1:4000".to_string(), "relay://r.example.com".to_string()],
+            addrs: vec![
+                "127.0.0.1:4000".to_string(),
+                "relay://r.example.com".to_string(),
+            ],
         };
         assert!(ev.is_active);
         assert_eq!(ev.node_id, "node123");

@@ -9,9 +9,9 @@ dist/
 *.tsbuildinfo
 
 # napi-rs generated files (iroh-http-node)
+# index.js and index.d.ts are committed so CI can always find them even when
+# the Rust build is fully cached (proc-macros don't re-run on cache hits).
 *.node
-packages/iroh-http-node/index.js
-packages/iroh-http-node/index.d.ts
 packages/iroh-http-node/lib.js
 packages/iroh-http-node/lib.d.ts
 packages/iroh-http-node/*.map

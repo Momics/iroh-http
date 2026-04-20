@@ -25,7 +25,10 @@ pub(crate) struct PooledConnection {
 impl PooledConnection {
     pub fn new(conn: Connection) -> Self {
         let remote_id_str = crate::base32_encode(conn.remote_id().as_bytes());
-        Self { conn, remote_id_str }
+        Self {
+            conn,
+            remote_id_str,
+        }
     }
 }
 
@@ -72,10 +75,7 @@ impl ConnectionPool {
         F: FnOnce() -> Fut + Send,
         Fut: std::future::Future<Output = Result<Connection, String>> + Send,
     {
-        let key = PoolKey {
-            node_id,
-            alpn,
-        };
+        let key = PoolKey { node_id, alpn };
 
         // Phase 1: check for a live cached connection (no lock held while awaiting).
         if let Some(pooled) = self.cache.get(&key).await {
@@ -119,11 +119,12 @@ impl ConnectionPool {
     /// Return an existing live connection for `(node_id, alpn)` without
     /// establishing a new one.  Returns `None` if the connection is not
     /// cached or has been closed.
-    pub async fn get_existing(&self, node_id: PublicKey, alpn: &'static [u8]) -> Option<PooledConnection> {
-        let key = PoolKey {
-            node_id,
-            alpn,
-        };
+    pub async fn get_existing(
+        &self,
+        node_id: PublicKey,
+        alpn: &'static [u8],
+    ) -> Option<PooledConnection> {
+        let key = PoolKey { node_id, alpn };
         let pooled = self.cache.get(&key).await?;
         if pooled.conn.close_reason().is_none() {
             Some((*pooled).clone())

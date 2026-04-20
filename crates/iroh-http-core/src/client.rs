@@ -93,8 +93,13 @@ pub async fn fetch(
     let handles = endpoint.handles();
 
     // Claim request trailer receiver (paired with the sender handle JS holds).
-    let req_trailer_rx = req_trailer_sender_handle
-        .and_then(|h| if h == 0 { None } else { handles.claim_pending_trailer_rx(h) });
+    let req_trailer_rx = req_trailer_sender_handle.and_then(|h| {
+        if h == 0 {
+            None
+        } else {
+            handles.claim_pending_trailer_rx(h)
+        }
+    });
 
     let parsed = parse_node_addr(remote_node_id)?;
     let node_id = parsed.node_id;

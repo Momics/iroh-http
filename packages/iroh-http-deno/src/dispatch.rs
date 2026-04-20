@@ -97,9 +97,15 @@ fn require_endpoint(p: &Value) -> Result<IrohEndpoint, Value> {
 /// - `sync`  — calls `handler(p)`
 /// - `sync0` — calls `handler()` (no payload argument; e.g. `generateSecretKey`)
 macro_rules! dispatch_arm {
-    (async, $handler:path, $p:expr)  => { $handler($p).await };
-    (sync,  $handler:path, $p:expr)  => { $handler($p) };
-    (sync0, $handler:path, $_p:expr) => { $handler() };
+    (async, $handler:path, $p:expr) => {
+        $handler($p).await
+    };
+    (sync,  $handler:path, $p:expr) => {
+        $handler($p)
+    };
+    (sync0, $handler:path, $_p:expr) => {
+        $handler()
+    };
 }
 
 /// Generates the dispatch `match` from a compact method registry.  Adding a

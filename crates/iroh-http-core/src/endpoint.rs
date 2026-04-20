@@ -43,7 +43,12 @@ pub struct DiscoveryOptions {
 }
 
 impl Default for DiscoveryOptions {
-    fn default() -> Self { Self { dns_server: None, enabled: true } }
+    fn default() -> Self {
+        Self {
+            dns_server: None,
+            enabled: true,
+        }
+    }
 }
 
 /// Connection-pool tuning.
@@ -122,7 +127,6 @@ pub struct CompressionOptions {
     pub level: Option<u32>,
 }
 
-
 /// A shared Iroh endpoint.
 ///
 /// Clone-able (cheap Arc clone).  All fetch and serve calls on the same node
@@ -172,7 +176,10 @@ impl IrohEndpoint {
         // Validate: if networking is disabled, relay_mode should not be explicitly set to a
         // network-requiring mode.
         if opts.networking.disabled
-            && opts.networking.relay_mode.as_deref()
+            && opts
+                .networking
+                .relay_mode
+                .as_deref()
                 .map_or(false, |m| !matches!(m, "disabled"))
         {
             return Err(crate::CoreError::invalid_input(
@@ -323,7 +330,8 @@ impl IrohEndpoint {
             node_id_str,
             pool: ConnectionPool::new(
                 opts.pool.max_connections,
-                opts.pool.idle_timeout_ms
+                opts.pool
+                    .idle_timeout_ms
                     .map(std::time::Duration::from_millis),
             ),
             // ISS-020: treat 0 as "use default" — it would otherwise underflow

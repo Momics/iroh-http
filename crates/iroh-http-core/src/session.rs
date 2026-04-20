@@ -250,9 +250,9 @@ pub fn session_send_datagram(
     let conn = get_conn(endpoint, session_handle)?;
     conn.send_datagram(bytes::Bytes::copy_from_slice(data))
         .map_err(|e| match e {
-            iroh::endpoint::SendDatagramError::TooLarge => {
-                CoreError::body_too_large("datagram exceeds path MTU; check session_max_datagram_size()")
-            }
+            iroh::endpoint::SendDatagramError::TooLarge => CoreError::body_too_large(
+                "datagram exceeds path MTU; check session_max_datagram_size()",
+            ),
             _ => CoreError::internal(format!("send_datagram: {e}")),
         })
 }

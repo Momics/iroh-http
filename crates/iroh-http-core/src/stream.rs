@@ -395,14 +395,34 @@ impl HandleStore {
     pub fn count_handles(&self) -> (usize, usize, usize, usize) {
         let readers = self.readers.lock().unwrap_or_else(|e| e.into_inner()).len();
         let writers = self.writers.lock().unwrap_or_else(|e| e.into_inner()).len();
-        let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner()).len();
+        let sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len();
         let total = readers
             + writers
             + sessions
-            + self.trailer_tx.lock().unwrap_or_else(|e| e.into_inner()).len()
-            + self.trailer_rx.lock().unwrap_or_else(|e| e.into_inner()).len()
-            + self.request_heads.lock().unwrap_or_else(|e| e.into_inner()).len()
-            + self.fetch_cancels.lock().unwrap_or_else(|e| e.into_inner()).len();
+            + self
+                .trailer_tx
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len()
+            + self
+                .trailer_rx
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len()
+            + self
+                .request_heads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len()
+            + self
+                .fetch_cancels
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len();
         (readers, writers, sessions, total)
     }
 
@@ -594,7 +614,13 @@ impl HandleStore {
         self.pending_trailer_rxs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(handle, PendingTrailerRxEntry { rx, created: Instant::now() });
+            .insert(
+                handle,
+                PendingTrailerRxEntry {
+                    rx,
+                    created: Instant::now(),
+                },
+            );
         Ok(handle)
     }
 
@@ -864,11 +890,7 @@ where
                 match recv.read_buf(&mut buf).await {
                     Ok(0) | Err(_) => break,
                     Ok(_) => {
-                        if writer
-                            .send_chunk(buf.split().freeze())
-                            .await
-                            .is_err()
-                        {
+                        if writer.send_chunk(buf.split().freeze()).await.is_err() {
                             break;
                         }
                     }
@@ -1007,10 +1029,7 @@ mod tests {
         // Allocate a sender (which stores the rx in pending_trailer_rxs).
         let _handle = store.alloc_trailer_sender().unwrap();
         // Confirm an entry is present.
-        assert_eq!(
-            store.pending_trailer_rxs.lock().unwrap().len(),
-            1
-        );
+        assert_eq!(store.pending_trailer_rxs.lock().unwrap().len(), 1);
         // Sweep with zero TTL — every entry is immediately expired.
         store.sweep(Duration::ZERO);
         assert_eq!(

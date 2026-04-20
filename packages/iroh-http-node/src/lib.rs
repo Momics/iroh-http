@@ -66,18 +66,11 @@ enum FfiError {
         got: usize,
     },
     /// Caller-provided bytes contain invalid encoding for the field.
-    InvalidEncoding {
-        field: &'static str,
-    },
+    InvalidEncoding { field: &'static str },
     /// Generic argument validation failure for a named field.
-    InvalidArgument {
-        field: &'static str,
-        reason: String,
-    },
+    InvalidArgument { field: &'static str, reason: String },
     /// Internal lock poisoning encountered while handling a boundary call.
-    InternalLock {
-        resource: &'static str,
-    },
+    InternalLock { resource: &'static str },
 }
 
 impl FfiError {

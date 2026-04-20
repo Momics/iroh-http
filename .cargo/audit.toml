@@ -1,0 +1,12 @@
+[advisories]
+# Transitive dependencies pulled in via iroh — no patched versions exist upstream.
+# These are unmaintained/informational advisories; we track them here and will
+# remove the ignore once the upstream iroh dependency tree resolves them.
+ignore = [
+    # paste: unmaintained, no patched version (dtolnay archived the repo)
+    # https://rustsec.org/advisories/RUSTSEC-2024-0436
+    "RUSTSEC-2024-0436",
+    # atomic-polyfill: unmaintained, no patched version (embassy-rs deprecated it)
+    # https://rustsec.org/advisories/RUSTSEC-2023-0089
+    "RUSTSEC-2023-0089",
+]

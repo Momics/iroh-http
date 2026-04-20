@@ -52,9 +52,7 @@ fn bench_latency(c: &mut Criterion) {
                     .send_chunk(payload.res_body_handle, body)
                     .await
                     .unwrap();
-                sep2.handles()
-                    .finish_body(payload.res_body_handle)
-                    .unwrap();
+                sep2.handles().finish_body(payload.res_body_handle).unwrap();
             });
         },
     );

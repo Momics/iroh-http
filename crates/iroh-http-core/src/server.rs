@@ -287,9 +287,9 @@ impl RequestService {
                 Err(_) => {
                     let resp = hyper::Response::builder()
                         .status(StatusCode::BAD_REQUEST)
-                        .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(
-                            b"non-UTF8 header value",
-                        ))))
+                        .body(crate::box_body(http_body_util::Full::new(
+                            Bytes::from_static(b"non-UTF8 header value"),
+                        )))
                         .unwrap();
                     return Ok(resp);
                 }
@@ -721,17 +721,20 @@ where
 
             let remote_id = base32_encode(remote_pk.as_bytes());
 
-            let guard =
-                match PeerConnectionGuard::acquire(&peer_counts, remote_pk, remote_id.clone(), max_conns_per_peer, conn_event_fn.clone()) {
-                    Some(g) => g,
-                    None => {
-                        tracing::warn!(
-                            "iroh-http: peer {remote_id} exceeded connection limit"
-                        );
-                        conn.close(0u32.into(), b"too many connections");
-                        continue;
-                    }
-                };
+            let guard = match PeerConnectionGuard::acquire(
+                &peer_counts,
+                remote_pk,
+                remote_id.clone(),
+                max_conns_per_peer,
+                conn_event_fn.clone(),
+            ) {
+                Some(g) => g,
+                None => {
+                    tracing::warn!("iroh-http: peer {remote_id} exceeded connection limit");
+                    conn.close(0u32.into(), b"too many connections");
+                    continue;
+                }
+            };
 
             let mut peer_svc = base_svc.clone();
             peer_svc.remote_node_id = Some(remote_id);
@@ -816,12 +819,17 @@ where
                         // both branches `.await` to `Result<(), hyper::Error>` so the
                         // `if` expression is well-typed without boxing.
 
-                        use tower::{ServiceBuilder, limit::ConcurrencyLimitLayer, timeout::TimeoutLayer};
+                        use tower::{
+                            limit::ConcurrencyLimitLayer, timeout::TimeoutLayer, ServiceBuilder,
+                        };
 
                         #[cfg(feature = "compression")]
                         let result = {
                             use http::{Extensions, HeaderMap, Version};
-                            use tower_http::compression::{predicate::{Predicate, SizeAbove}, CompressionLayer};
+                            use tower_http::compression::{
+                                predicate::{Predicate, SizeAbove},
+                                CompressionLayer,
+                            };
 
                             let compression_config = svc.compression.clone();
                             if let Some(comp) = &compression_config {
@@ -852,44 +860,56 @@ where
                                         .and(not_no_transform);
                                 if load_shed_enabled {
                                     use tower::load_shed::LoadShedLayer;
-                                    let stk = TowerErrorHandler(ServiceBuilder::new()
-                                        .layer(LoadShedLayer::new())
-                                        .layer(ConcurrencyLimitLayer::new(max))
-                                        .layer(TimeoutLayer::new(timeout_dur))
-                                        .service(svc));
+                                    let stk = TowerErrorHandler(
+                                        ServiceBuilder::new()
+                                            .layer(LoadShedLayer::new())
+                                            .layer(ConcurrencyLimitLayer::new(max))
+                                            .layer(TimeoutLayer::new(timeout_dur))
+                                            .service(svc),
+                                    );
                                     hyper::server::conn::http1::Builder::new()
                                         .max_buf_size(effective_header_limit)
                                         .max_headers(128)
-                                        .serve_connection(io, TowerToHyperService::new(
-                                            ServiceBuilder::new()
-                                                .layer(layer.compress_when(predicate))
-                                                .service(stk),
-                                        ))
+                                        .serve_connection(
+                                            io,
+                                            TowerToHyperService::new(
+                                                ServiceBuilder::new()
+                                                    .layer(layer.compress_when(predicate))
+                                                    .service(stk),
+                                            ),
+                                        )
                                         .with_upgrades()
                                         .await
                                 } else {
-                                    let stk = TowerErrorHandler(ServiceBuilder::new()
-                                        .layer(ConcurrencyLimitLayer::new(max))
-                                        .layer(TimeoutLayer::new(timeout_dur))
-                                        .service(svc));
+                                    let stk = TowerErrorHandler(
+                                        ServiceBuilder::new()
+                                            .layer(ConcurrencyLimitLayer::new(max))
+                                            .layer(TimeoutLayer::new(timeout_dur))
+                                            .service(svc),
+                                    );
                                     hyper::server::conn::http1::Builder::new()
                                         .max_buf_size(effective_header_limit)
                                         .max_headers(128)
-                                        .serve_connection(io, TowerToHyperService::new(
-                                            ServiceBuilder::new()
-                                                .layer(layer.compress_when(predicate))
-                                                .service(stk),
-                                        ))
+                                        .serve_connection(
+                                            io,
+                                            TowerToHyperService::new(
+                                                ServiceBuilder::new()
+                                                    .layer(layer.compress_when(predicate))
+                                                    .service(stk),
+                                            ),
+                                        )
                                         .with_upgrades()
                                         .await
                                 }
                             } else if load_shed_enabled {
                                 use tower::load_shed::LoadShedLayer;
-                                let stk = TowerErrorHandler(ServiceBuilder::new()
-                                    .layer(LoadShedLayer::new())
-                                    .layer(ConcurrencyLimitLayer::new(max))
-                                    .layer(TimeoutLayer::new(timeout_dur))
-                                    .service(svc));
+                                let stk = TowerErrorHandler(
+                                    ServiceBuilder::new()
+                                        .layer(LoadShedLayer::new())
+                                        .layer(ConcurrencyLimitLayer::new(max))
+                                        .layer(TimeoutLayer::new(timeout_dur))
+                                        .service(svc),
+                                );
                                 hyper::server::conn::http1::Builder::new()
                                     .max_buf_size(effective_header_limit)
                                     .max_headers(128)
@@ -897,10 +917,12 @@ where
                                     .with_upgrades()
                                     .await
                             } else {
-                                let stk = TowerErrorHandler(ServiceBuilder::new()
-                                    .layer(ConcurrencyLimitLayer::new(max))
-                                    .layer(TimeoutLayer::new(timeout_dur))
-                                    .service(svc));
+                                let stk = TowerErrorHandler(
+                                    ServiceBuilder::new()
+                                        .layer(ConcurrencyLimitLayer::new(max))
+                                        .layer(TimeoutLayer::new(timeout_dur))
+                                        .service(svc),
+                                );
                                 hyper::server::conn::http1::Builder::new()
                                     .max_buf_size(effective_header_limit)
                                     .max_headers(128)
@@ -912,11 +934,13 @@ where
                         #[cfg(not(feature = "compression"))]
                         let result = if load_shed_enabled {
                             use tower::load_shed::LoadShedLayer;
-                            let stk = TowerErrorHandler(ServiceBuilder::new()
-                                .layer(LoadShedLayer::new())
-                                .layer(ConcurrencyLimitLayer::new(max))
-                                .layer(TimeoutLayer::new(timeout_dur))
-                                .service(svc));
+                            let stk = TowerErrorHandler(
+                                ServiceBuilder::new()
+                                    .layer(LoadShedLayer::new())
+                                    .layer(ConcurrencyLimitLayer::new(max))
+                                    .layer(TimeoutLayer::new(timeout_dur))
+                                    .service(svc),
+                            );
                             hyper::server::conn::http1::Builder::new()
                                 .max_buf_size(effective_header_limit)
                                 .max_headers(128)
@@ -924,10 +948,12 @@ where
                                 .with_upgrades()
                                 .await
                         } else {
-                            let stk = TowerErrorHandler(ServiceBuilder::new()
-                                .layer(ConcurrencyLimitLayer::new(max))
-                                .layer(TimeoutLayer::new(timeout_dur))
-                                .service(svc));
+                            let stk = TowerErrorHandler(
+                                ServiceBuilder::new()
+                                    .layer(ConcurrencyLimitLayer::new(max))
+                                    .layer(TimeoutLayer::new(timeout_dur))
+                                    .service(svc),
+                            );
                             hyper::server::conn::http1::Builder::new()
                                 .max_buf_size(effective_header_limit)
                                 .max_headers(128)
@@ -1034,9 +1060,9 @@ where
                     };
                     Ok(hyper::Response::builder()
                         .status(status)
-                        .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(
-                            body_bytes,
-                        ))))
+                        .body(crate::box_body(http_body_util::Full::new(
+                            Bytes::from_static(body_bytes),
+                        )))
                         .expect("valid error response"))
                 }
             }

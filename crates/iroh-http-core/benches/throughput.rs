@@ -9,8 +9,7 @@
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use iroh_http_core::{
-    fetch,
-    serve,
+    fetch, serve,
     server::{respond, ServeOptions},
     stream::make_body_channel,
     IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload,
@@ -68,9 +67,8 @@ fn start_echo_server(server_ep: IrohEndpoint) {
 fn bench_connection_establishment(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     c.bench_function("connection_establishment", |b| {
-        b.to_async(&rt).iter_with_large_drop(|| async {
-            make_pair().await
-        });
+        b.to_async(&rt)
+            .iter_with_large_drop(|| async { make_pair().await });
     });
 }
 
@@ -130,53 +128,49 @@ fn bench_post_body_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("post_body_throughput_bytes");
     for size in [1_024usize, 64 * 1_024, 1_024 * 1_024] {
         group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(size),
-            &size,
-            |b, &sz| {
-                let chunk = Bytes::from(vec![0x42u8; sz]);
-                let client = client_ep.clone();
-                let id = server_id.clone();
-                let addrs = server_addrs.clone();
-                b.to_async(&rt).iter(|| {
-                    let chunk = chunk.clone();
-                    let client = client.clone();
-                    let id = id.clone();
-                    let addrs = addrs.clone();
-                    async move {
-                        // Build a one-shot body channel and write our chunk.
-                        let (writer, reader) = client.handles().make_body_channel();
-                        let write_handle = client.handles().insert_writer(writer).unwrap();
-                        // Write+finish in a background task so fetch can proceed.
-                        let client2 = client.clone();
-                        tokio::spawn(async move {
-                            client2
-                                .handles()
-                                .send_chunk(write_handle, chunk)
-                                .await
-                                .unwrap();
-                            client2.handles().finish_body(write_handle).unwrap();
-                        });
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &sz| {
+            let chunk = Bytes::from(vec![0x42u8; sz]);
+            let client = client_ep.clone();
+            let id = server_id.clone();
+            let addrs = server_addrs.clone();
+            b.to_async(&rt).iter(|| {
+                let chunk = chunk.clone();
+                let client = client.clone();
+                let id = id.clone();
+                let addrs = addrs.clone();
+                async move {
+                    // Build a one-shot body channel and write our chunk.
+                    let (writer, reader) = client.handles().make_body_channel();
+                    let write_handle = client.handles().insert_writer(writer).unwrap();
+                    // Write+finish in a background task so fetch can proceed.
+                    let client2 = client.clone();
+                    tokio::spawn(async move {
+                        client2
+                            .handles()
+                            .send_chunk(write_handle, chunk)
+                            .await
+                            .unwrap();
+                        client2.handles().finish_body(write_handle).unwrap();
+                    });
 
-                        let res = fetch(
-                            &client,
-                            &id,
-                            "/upload",
-                            "POST",
-                            &[],
-                            Some(reader),
-                            None, // no trailer sender
-                            None, // no fetch token
-                            Some(&addrs),
-                        )
-                        .await
-                        .unwrap();
-                        // Drain the empty response body.
-                        client.handles().next_chunk(res.body_handle).await.unwrap();
-                    }
-                });
-            },
-        );
+                    let res = fetch(
+                        &client,
+                        &id,
+                        "/upload",
+                        "POST",
+                        &[],
+                        Some(reader),
+                        None, // no trailer sender
+                        None, // no fetch token
+                        Some(&addrs),
+                    )
+                    .await
+                    .unwrap();
+                    // Drain the empty response body.
+                    client.handles().next_chunk(res.body_handle).await.unwrap();
+                }
+            });
+        });
     }
     group.finish();
 }
@@ -231,44 +225,40 @@ fn bench_response_body_streaming(c: &mut Criterion) {
     let mut group = c.benchmark_group("response_body_streaming_bytes");
     for size in [1_024usize, 64 * 1_024, 1_024 * 1_024] {
         group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(size),
-            &size,
-            |b, &sz| {
-                let client = client_ep.clone();
-                let id = server_id.clone();
-                let addrs = server_addrs.clone();
-                b.to_async(&rt).iter(|| {
-                    let client = client.clone();
-                    let id = id.clone();
-                    let addrs = addrs.clone();
-                    async move {
-                        let url = format!("/bench/{sz}");
-                        let res = fetch(
-                            &client,
-                            &id,
-                            &url,
-                            "GET",
-                            &[],
-                            None,
-                            None,
-                            None,
-                            Some(&addrs),
-                        )
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &sz| {
+            let client = client_ep.clone();
+            let id = server_id.clone();
+            let addrs = server_addrs.clone();
+            b.to_async(&rt).iter(|| {
+                let client = client.clone();
+                let id = id.clone();
+                let addrs = addrs.clone();
+                async move {
+                    let url = format!("/bench/{sz}");
+                    let res = fetch(
+                        &client,
+                        &id,
+                        &url,
+                        "GET",
+                        &[],
+                        None,
+                        None,
+                        None,
+                        Some(&addrs),
+                    )
+                    .await
+                    .unwrap();
+                    // Drain the full response body.
+                    while client
+                        .handles()
+                        .next_chunk(res.body_handle)
                         .await
-                        .unwrap();
-                        // Drain the full response body.
-                        while client
-                            .handles()
-                            .next_chunk(res.body_handle)
-                            .await
-                            .unwrap()
-                            .is_some()
-                        {}
-                    }
-                });
-            },
-        );
+                        .unwrap()
+                        .is_some()
+                    {}
+                }
+            });
+        });
     }
     group.finish();
 }

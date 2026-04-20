@@ -34,9 +34,7 @@ pub fn get_endpoint(handle: u64) -> Option<IrohEndpoint> {
 
 /// Remove an endpoint from the registry, returning it if it existed.
 pub fn remove_endpoint(handle: u64) -> Option<IrohEndpoint> {
-    let mut slab = endpoint_slab()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut slab = endpoint_slab().lock().unwrap_or_else(|e| e.into_inner());
     if slab.contains(handle as usize) {
         Some(slab.remove(handle as usize))
     } else {
@@ -54,9 +52,7 @@ pub fn remove_endpoint(handle: u64) -> Option<IrohEndpoint> {
 /// context, including synchronous window-event handlers outside a tokio task).
 pub fn close_all_endpoints() {
     let endpoints: Vec<IrohEndpoint> = {
-        let mut slab = endpoint_slab()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut slab = endpoint_slab().lock().unwrap_or_else(|e| e.into_inner());
         let keys: Vec<usize> = slab.iter().map(|(k, _)| k).collect();
         keys.into_iter()
             .filter_map(|k| {
