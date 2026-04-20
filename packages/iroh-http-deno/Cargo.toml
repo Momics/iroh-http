@@ -10,7 +10,7 @@ name = "iroh_http_deno"
 crate-type = ["cdylib"]
 
 [features]
-default = ["discovery"]
+default = ["discovery", "compression"]
 discovery = ["iroh-http-discovery/mdns"]
 compression = ["iroh-http-core/compression"]
 

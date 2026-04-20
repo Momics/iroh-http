@@ -10,7 +10,7 @@ keywords = ["iroh", "p2p", "quic", "http", "peer-to-peer"]
 categories = ["network-programming", "web-programming::http-client", "web-programming::http-server"]
 
 [features]
-default = []
+default = ["compression"]
 compression = [
     "tower-http/compression-zstd",
     "tower-http/decompression-zstd",

@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 crate-type = ["cdylib"]
 
 [features]
-default = ["discovery"]
+default = ["discovery", "compression"]
 discovery = ["iroh-http-discovery/mdns", "iroh"]
 compression = ["iroh-http-core/compression"]
 

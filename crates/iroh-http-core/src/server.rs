@@ -772,66 +772,6 @@ where
                             }
                         }
                         let _req_guard = ReqGuard(req_counter);
-                        // Build the hyper-facing service, optionally wrapping with
-                        // CompressionLayer (zstd-only, for responses ≥ min_body_bytes).
-                        #[cfg(feature = "compression")]
-                        let hyper_svc = {
-                            use http::{Extensions, HeaderMap, StatusCode, Version};
-                            use tower_http::compression::{predicate::SizeAbove, CompressionLayer};
-
-                            let min_bytes = svc
-                                .compression
-                                .as_ref()
-                                .map(|c| c.min_body_bytes)
-                                .unwrap_or(512);
-                            let mut layer = CompressionLayer::new().zstd(true);
-                            if let Some(level) = svc.compression.as_ref().and_then(|c| c.level) {
-                                use tower_http::compression::CompressionLevel;
-                                layer = layer.quality(CompressionLevel::Precise(level as i32));
-                            }
-                            // Compound predicate — protocol correctness only, no app-layer policy.
-                            //   1. Body is at least min_body_bytes (avoid CPU cost on tiny frames).
-                            //   2. Response does not already carry Content-Encoding — re-encoding
-                            //      a pre-encoded payload would corrupt it (RFC 9110 §8.4).
-                            //   3. Cache-Control: no-transform — caller has opted out of any
-                            //      content transformation (RFC 9111 §5.2.2.7).
-                            //
-                            // Content-Type exclusions are intentionally absent: deciding which
-                            // media types are worth compressing is application policy, not transport
-                            // semantics.  Callers opt out via Content-Encoding or no-transform.
-                            let not_pre_compressed =
-                                |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
-                                    !h.contains_key(http::header::CONTENT_ENCODING)
-                                };
-                            let not_no_transform =
-                                |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
-                                    h.get(http::header::CACHE_CONTROL)
-                                        .and_then(|v| v.to_str().ok())
-                                        .map(|v| {
-                                            !v.split(',').any(|d| {
-                                                d.trim().eq_ignore_ascii_case("no-transform")
-                                            })
-                                        })
-                                        .unwrap_or(true)
-                                };
-                            // Cap min_bytes to u16::MAX before passing to SizeAbove.
-                            // SizeAbove accepts u16; values above 65535 would silently
-                            // wrap (e.g. 65536 → 0 = compress everything). Saturating
-                            // at u16::MAX is the safe fallback: "compress only responses
-                            // larger than 65535 bytes".
-                            let predicate = SizeAbove::new(min_bytes.min(u16::MAX as usize) as u16)
-                                .and(not_pre_compressed)
-                                .and(not_no_transform);
-                            TowerToHyperService::new(
-                                tower::ServiceBuilder::new()
-                                    .layer(layer.compress_when(predicate))
-                                    .service(TimeoutService::new(svc, timeout_dur)),
-                            )
-                        };
-                        #[cfg(not(feature = "compression"))]
-                        let hyper_svc =
-                            TowerToHyperService::new(TimeoutService::new(svc, timeout_dur));
-
                         // ISS-001: clamp to hyper's minimum safe buffer size of 8192.
                         // ISS-020: a stored value of 0 means "use the default" (64 KB).
                         let effective_header_limit = if max_header_size == 0 {
@@ -839,12 +779,84 @@ where
                         } else {
                             max_header_size.max(8192)
                         };
-                        let result = hyper::server::conn::http1::Builder::new()
-                            .max_buf_size(effective_header_limit)
-                            .max_headers(128)
-                            .serve_connection(io, hyper_svc)
-                            .with_upgrades()
-                            .await;
+
+                        // Build the hyper-facing service, optionally wrapping with
+                        // CompressionLayer (zstd-only, for responses ≥ min_body_bytes).
+                        //
+                        // The feature flag makes zstd compression *available*; it is
+                        // only activated at runtime when NodeOptions.compression is Some.
+                        // We branch into separate serve_connection calls so each code path
+                        // carries its own concrete service type — avoiding the body-type
+                        // mismatch between CompressionBody<BoxBody> and BoxBody that
+                        // makes tower::util::Either unusable here.
+                        #[cfg(feature = "compression")]
+                        let result = {
+                            use http::{Extensions, HeaderMap, StatusCode, Version};
+                            use tower_http::compression::{predicate::{Predicate, SizeAbove}, CompressionLayer};
+
+                            // Clone the compression config so we can move `svc` below.
+                            let compression_config = svc.compression.clone();
+                            if let Some(comp) = &compression_config {
+                                let min_bytes = comp.min_body_bytes;
+                                let mut layer = CompressionLayer::new().zstd(true);
+                                if let Some(level) = comp.level {
+                                    use tower_http::compression::CompressionLevel;
+                                    layer = layer.quality(CompressionLevel::Precise(level as i32));
+                                }
+                                let not_pre_compressed =
+                                    |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
+                                        !h.contains_key(http::header::CONTENT_ENCODING)
+                                    };
+                                let not_no_transform =
+                                    |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
+                                        h.get(http::header::CACHE_CONTROL)
+                                            .and_then(|v| v.to_str().ok())
+                                            .map(|v| {
+                                                !v.split(',').any(|d| {
+                                                    d.trim().eq_ignore_ascii_case("no-transform")
+                                                })
+                                            })
+                                            .unwrap_or(true)
+                                    };
+                                let predicate =
+                                    SizeAbove::new(min_bytes.min(u16::MAX as usize) as u16)
+                                        .and(not_pre_compressed)
+                                        .and(not_no_transform);
+                                let hyper_svc = TowerToHyperService::new(
+                                    tower::ServiceBuilder::new()
+                                        .layer(layer.compress_when(predicate))
+                                        .service(TimeoutService::new(svc, timeout_dur)),
+                                );
+                                hyper::server::conn::http1::Builder::new()
+                                    .max_buf_size(effective_header_limit)
+                                    .max_headers(128)
+                                    .serve_connection(io, hyper_svc)
+                                    .with_upgrades()
+                                    .await
+                            } else {
+                                // compression feature compiled in but not configured
+                                // for this endpoint — use plain service path.
+                                let hyper_svc =
+                                    TowerToHyperService::new(TimeoutService::new(svc, timeout_dur));
+                                hyper::server::conn::http1::Builder::new()
+                                    .max_buf_size(effective_header_limit)
+                                    .max_headers(128)
+                                    .serve_connection(io, hyper_svc)
+                                    .with_upgrades()
+                                    .await
+                            }
+                        };
+                        #[cfg(not(feature = "compression"))]
+                        let result = {
+                            let hyper_svc =
+                                TowerToHyperService::new(TimeoutService::new(svc, timeout_dur));
+                            hyper::server::conn::http1::Builder::new()
+                                .max_buf_size(effective_header_limit)
+                                .max_headers(128)
+                                .serve_connection(io, hyper_svc)
+                                .with_upgrades()
+                                .await
+                        };
                         if let Err(e) = result {
                             tracing::debug!("iroh-http: http1 connection error: {e}");
                         }
