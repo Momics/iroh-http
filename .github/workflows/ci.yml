@@ -59,14 +59,13 @@ jobs:
         with:
           node-version: 22
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
       - name: cargo audit
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
+        run: cargo audit
       - name: cargo deny (advisories + licenses)
-        run: |
-          cargo install cargo-deny --locked
-          cargo deny check advisories licenses
+        run: cargo deny check advisories licenses
       - name: npm audit (high+)
         run: |
           npm install
@@ -85,17 +84,15 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
       - name: cargo fmt
         run: cargo fmt --all -- --check
-      - name: cargo clippy (workspace + tauri)
-        run: |
-          cargo clippy --workspace -- -D warnings
-          cd packages/iroh-http-tauri && cargo clippy -- -D warnings
-      - name: cargo clippy (security lints)
+      - name: cargo clippy
         run: |
           cargo clippy --workspace -- \
+            -D warnings \
             -D clippy::unwrap_used \
             -D clippy::panic \
             -D clippy::arithmetic_side_effects
           cd packages/iroh-http-tauri && cargo clippy -- \
+            -D warnings \
             -D clippy::unwrap_used \
             -D clippy::panic \
             -D clippy::arithmetic_side_effects
@@ -204,6 +201,7 @@ jobs:
 
   rust-check-macos:
     name: Rust check (macOS)
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/')
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -216,6 +214,7 @@ jobs:
 
   rust-check-windows:
     name: Rust check (Windows)
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

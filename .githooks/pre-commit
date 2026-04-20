@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Check Rust formatting before every commit.
+# If this fails, run: cargo fmt --all
+if ! cargo fmt --all -- --check 2>/dev/null; then
+  printf '\n  cargo fmt: formatting issues found.\n  Run: cargo fmt --all\n\n'
+  exit 1
+fi

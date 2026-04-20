@@ -11,6 +11,14 @@ Thank you for your interest in contributing!
 - Deno 2+ (for Deno adapter)
 - Tauri CLI v2 (for Tauri plugin)
 
+### Git hooks
+
+Run once after cloning to enable the pre-commit hook (checks `cargo fmt`):
+
+```sh
+git config core.hooksPath .githooks
+```
+
 ### Build
 
 ```sh
