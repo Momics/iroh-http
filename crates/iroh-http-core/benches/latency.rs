@@ -32,6 +32,7 @@ fn bench_latency(c: &mut Criterion) {
         (server_ep, client_ep, id, addrs)
     });
 
+    let _guard = rt.enter();
     let body = bytes::Bytes::from(vec![0x61; 1024]);
     let sep = server_ep.clone();
     serve(

@@ -44,6 +44,12 @@ echo "  → cargo test"
 cargo test --workspace --quiet
 ok "tests"
 
+echo "  → cargo bench --test (smoke)"
+# Criterion --test mode: one iteration per bench function, no measurement.
+# Fast (~10s) and catches bench code that won't compile or panics at startup.
+cargo bench -p iroh-http-core -- --test --quiet
+ok "bench smoke"
+
 echo "  → cargo check (no-default-features)"
 cargo check -p iroh-http-node --no-default-features --features compression --quiet
 cargo check -p iroh-http-deno --no-default-features --features compression --quiet
