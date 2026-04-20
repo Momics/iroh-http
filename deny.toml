@@ -1,0 +1,23 @@
+[advisories]
+unmaintained = "warn"
+yanked = "deny"
+ignore = [
+  "RUSTSEC-2026-0097",
+  "RUSTSEC-2026-0098",
+  "RUSTSEC-2026-0099",
+]
+
+[licenses]
+allow = [
+  "Apache-2.0",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MPL-2.0",
+  "Unlicense",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.8

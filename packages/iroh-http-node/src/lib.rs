@@ -5,6 +5,7 @@
 //! `allocBodyWriter`, `rawFetch`, `rawServe`, `closeEndpoint`.
 
 #![deny(clippy::all)]
+#![deny(unsafe_code)]
 
 use std::sync::Arc;
 #[cfg(feature = "discovery")]

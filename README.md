@@ -175,3 +175,7 @@ at your option.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security
+
+For private vulnerability disclosure instructions, see [SECURITY.md](SECURITY.md).

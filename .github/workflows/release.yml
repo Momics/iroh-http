@@ -126,7 +126,7 @@ jobs:
         run: ls -la packages/iroh-http-node/*.node packages/iroh-http-node/*.js packages/iroh-http-node/*.d.ts
 
       - name: Publish iroh-http-node
-        run: npm publish --workspace packages/iroh-http-node --access public
+        run: npm publish --workspace packages/iroh-http-node --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

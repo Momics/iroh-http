@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -16,6 +20,41 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  dependency-review:
+    name: Dependency review (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+  dependency-audit:
+    name: Dependency audit (cargo + npm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit \
+            --ignore RUSTSEC-2026-0097 \
+            --ignore RUSTSEC-2026-0098 \
+            --ignore RUSTSEC-2026-0099
+      - name: cargo deny (advisories + licenses)
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny check advisories licenses
+      - name: npm audit (high+)
+        run: |
+          npm install
+          npm audit --audit-level=high
+
   rust-check:
     name: Rust check
     runs-on: ubuntu-latest
@@ -33,6 +72,16 @@ jobs:
         run: |
           cargo clippy --workspace -- -D warnings
           cd packages/iroh-http-tauri && cargo clippy -- -D warnings
+      - name: cargo clippy (security lints)
+        run: |
+          cargo clippy --workspace -- \
+            -D clippy::unwrap_used \
+            -D clippy::panic \
+            -D clippy::arithmetic_side_effects
+          cd packages/iroh-http-tauri && cargo clippy -- \
+            -D clippy::unwrap_used \
+            -D clippy::panic \
+            -D clippy::arithmetic_side_effects
       - name: cargo test (workspace)
         run: cargo test --workspace
 
