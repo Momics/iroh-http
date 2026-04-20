@@ -430,6 +430,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                         .max_total_connections
                         .map(|v| safe_f64_to_usize(v, "maxTotalConnections", MAX_TOTAL_CONNECTIONS))
                         .transpose()?,
+                    load_shed: None,
                 },
                 #[cfg(feature = "compression")]
                 // NODE-003: enable compression when level or minBodyBytes is provided.

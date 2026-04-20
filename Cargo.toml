@@ -18,7 +18,7 @@ hyper-util = { version = "0.1", features = ["tokio", "service"] }
 http = "1"
 http-body = "1"
 http-body-util = "0.1"
-tower = { version = "0.5", features = ["limit", "timeout", "util"] }
+tower = { version = "0.5", features = ["limit", "timeout", "load-shed", "util"] }
 tower-http = { version = "0.6" }
 moka = { version = "0.12", features = ["future"] }
 slotmap = "1"

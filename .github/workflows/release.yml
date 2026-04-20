@@ -86,6 +86,10 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
 
+      - name: Smoke test native binary
+        working-directory: packages/iroh-http-node
+        run: node -e "const n = require('./index.js'); console.log('loaded ok')"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

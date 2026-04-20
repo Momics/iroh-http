@@ -116,6 +116,7 @@ pub async fn create_endpoint(
                 max_consecutive_errors: a.max_consecutive_errors,
                 drain_timeout_secs: None,
                 max_total_connections: a.max_total_connections,
+                load_shed: None,
             },
             #[cfg(feature = "compression")]
             compression: if a.compression_min_body_bytes.is_some() || a.compression_level.is_some() {
