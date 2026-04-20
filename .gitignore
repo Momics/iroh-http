@@ -41,6 +41,29 @@ workspace/old_references
 .obsidian
 temp/
 
+# Environment & secrets (defense-in-depth — none should exist, but block accidental commits)
+.env
+.env.*
+*.env
+.npmrc
+.netrc
+credentials
+credentials.json
+*_credentials*
+service-account*.json
+serviceaccount*.json
+*oauth*token*
+token.json
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+id_ecdsa
+id_ecdsa.pub
+
 # Benchmark outputs (uploaded as CI artifacts)
 bench/results/*
 !bench/results/.gitkeep
