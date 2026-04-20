@@ -174,9 +174,13 @@ jobs:
 
       - name: Publish iroh-http-core
         run: cargo publish -p iroh-http-core --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Publish iroh-http-discovery
         run: cargo publish -p iroh-http-discovery --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   # ── 5. Publish Node.js packages ───────────────────────────────────────────────
   # Uses npm Trusted Publishers (OIDC) — no NPM_TOKEN needed.
