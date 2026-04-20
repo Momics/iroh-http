@@ -161,6 +161,7 @@ jobs:
           if-no-files-found: error
 
   # ── 4. Publish Rust crates ─────────────────────────────────────────────────────
+  # Uses crates.io trusted publishing (OIDC) — no token needed.
 
   publish-crates:
     name: Publish Rust crates
@@ -173,15 +174,14 @@ jobs:
 
       - name: Publish iroh-http-core
         run: cargo publish -p iroh-http-core --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Publish iroh-http-discovery
         run: cargo publish -p iroh-http-discovery --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   # ── 5. Publish Node.js packages ───────────────────────────────────────────────
+  # Uses npm Trusted Publishers (OIDC) — no NPM_TOKEN needed.
+  # One-time setup: npmjs.com → each package → Settings → Trusted Publishers
+  # → add this workflow (Momics/iroh-http, release.yml).
 
   publish-node:
     name: Publish npm (shared + node + tauri)
@@ -212,22 +212,16 @@ jobs:
 
       - name: Publish iroh-http-shared
         run: npm publish --workspace packages/iroh-http-shared --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish iroh-http-node
         run: npm publish --workspace packages/iroh-http-node --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish iroh-http-tauri
         run: npm publish --workspace packages/iroh-http-tauri --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # ── 6. Publish Deno package ────────────────────────────────────────────────────
-  # Binaries are attached to the GitHub release and downloaded at runtime.
-  # The JSR package itself contains only TypeScript source.
+  # Uses JSR OIDC — no DENO_AUTH_TOKENS needed.
+  # One-time setup: jsr.io → each package → Settings → GitHub Actions publishing.
 
   publish-deno:
     name: Publish Deno package (JSR)
@@ -243,5 +237,3 @@ jobs:
       - name: Publish to JSR
         working-directory: packages/iroh-http-deno
         run: deno publish
-        env:
-          DENO_AUTH_TOKENS: ${{ secrets.DENO_AUTH_TOKEN }}
