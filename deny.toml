@@ -1,5 +1,5 @@
 [advisories]
-unmaintained = "none"
+unmaintained = "warn"
 yanked = "deny"
 ignore = [
   "RUSTSEC-2026-0097",

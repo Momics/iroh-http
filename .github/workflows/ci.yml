@@ -75,13 +75,13 @@ jobs:
       - name: cargo clippy (security lints)
         run: |
           cargo clippy --workspace -- \
-            -W clippy::unwrap_used \
-            -W clippy::panic \
-            -W clippy::arithmetic_side_effects
+            -D clippy::unwrap_used \
+            -D clippy::panic \
+            -D clippy::arithmetic_side_effects
           cd packages/iroh-http-tauri && cargo clippy -- \
-            -W clippy::unwrap_used \
-            -W clippy::panic \
-            -W clippy::arithmetic_side_effects
+            -D clippy::unwrap_used \
+            -D clippy::panic \
+            -D clippy::arithmetic_side_effects
       - name: cargo test (workspace)
         run: cargo test --workspace
 
