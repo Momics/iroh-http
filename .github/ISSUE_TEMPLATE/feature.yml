@@ -28,9 +28,7 @@ body:
     id: acceptance
     attributes:
       label: Acceptance criteria
-      description: How do we know it's done?
-    validations:
-      required: true
+      description: How do we know it's done? (Maintainers will add this during triage if left blank.)
   - type: dropdown
     id: priority
     attributes:
@@ -39,8 +37,7 @@ body:
         - P1 — blocks users or breaks protocol
         - P2 — important but has workaround
         - P3 — minor / cosmetic
-    validations:
-      required: true
+      description: Best guess is fine — maintainers will adjust during triage.
   - type: dropdown
     id: area
     attributes:
