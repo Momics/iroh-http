@@ -21,7 +21,7 @@ npm install @momics/iroh-http-node
 ```ts
 import { createNode } from "@momics/iroh-http-node";
 
-const node = await createNode({ verifyNodeId: true });
+const node = await createNode();
 console.log("Node ID:", node.publicKey.toString());
 
 // Serve requests
@@ -44,11 +44,22 @@ await node.close();
 ```ts
 const node = await createNode({
   key: savedKey,                              // SecretKey or Uint8Array — restore identity
-  verifyNodeId: true,                         // trust all incoming peers (or pass a verifier fn)
   relayMode: "https://my-relay.example.com",  // custom relay URL (or "default", "staging", "disabled")
   advanced: { drainTimeout: 30_000 },         // ms to wait for slow body readers
 });
 // Use node.browse() / node.advertise() for mDNS peer discovery.
+```
+
+## Security
+
+Any peer that knows your node's public key can connect and send requests. Iroh QUIC authenticates peer *identity* cryptographically, but not *authorization*. Use `req.headers.get('Peer-Id')` in your handler to implement allowlists or other access control:
+
+```ts
+node.serve({}, (req) => {
+  const peerId = req.headers.get('Peer-Id');
+  if (!ALLOWED_PEERS.has(peerId)) return new Response('Forbidden', { status: 403 });
+  return new Response('ok');
+});
 ```
 
 ## Supported Platforms

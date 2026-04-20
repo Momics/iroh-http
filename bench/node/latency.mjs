@@ -24,7 +24,7 @@ async function makeTcpServer() {
 }
 
 const tcp = await makeTcpServer();
-const server = await createNode({ disableNetworking: true, bindAddr: "127.0.0.1:0", verifyNodeId: true });
+const server = await createNode({ disableNetworking: true, bindAddr: "127.0.0.1:0" });
 const client = await createNode({ disableNetworking: true, bindAddr: "127.0.0.1:0" });
 const { id: serverId, addrs: serverAddrs } = await server.addr();
 const serveAbort = new AbortController();

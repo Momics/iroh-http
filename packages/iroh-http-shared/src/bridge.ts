@@ -375,13 +375,6 @@ export interface NodeOptions {
    *
    * By default, iroh-http rejects all incoming peers until this is explicitly
    * configured.
-   *
-   * - `true` — trust all peer node IDs (no verification).
-   * - `(nodeId) => boolean | Promise<boolean>` — allow only verified node IDs.
-   *
-   * @default undefined (reject all incoming peers)
-   */
-  verifyNodeId?: true | ((nodeId: string) => boolean | Promise<boolean>);
   /**
    * Bind to local addresses only; no relay, no DNS discovery.
    * Use for tests and offline development.

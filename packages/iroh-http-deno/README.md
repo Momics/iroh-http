@@ -42,7 +42,7 @@ iroh-http replaces DNS and TLS with public keys. Each node has a cryptographic i
 ```ts
 import { createNode } from "jsr:@momics/iroh-http-deno";
 
-const node = await createNode({ verifyNodeId: true });
+const node = await createNode();
 console.log("Node ID:", node.publicKey.toString());
 
 node.serve({}, (req) => new Response("Hello from Deno iroh-http!"));
@@ -68,9 +68,20 @@ The native library is placed in `lib/`.
 ```ts
 const node = await createNode({
   key: savedKey,
-  verifyNodeId: true,
   discovery: { mdns: true, serviceName: "my-app.iroh-http" },
   advanced: { drainTimeout: 30_000 },
+});
+```
+
+## Security
+
+Any peer that knows your node's public key can connect and send requests. Iroh QUIC authenticates peer *identity* cryptographically, but not *authorization*. Use `req.headers.get('Peer-Id')` in your handler to implement allowlists or other access control:
+
+```ts
+node.serve({}, (req) => {
+  const peerId = req.headers.get('Peer-Id');
+  if (!ALLOWED_PEERS.has(peerId)) return new Response('Forbidden', { status: 403 });
+  return new Response('ok');
 });
 ```
 

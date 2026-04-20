@@ -258,11 +258,13 @@ export function buildSession(
     closed: closedPromise,
 
     close(closeInfo?: WebTransportCloseInfo): void {
-      void rawSession.close(
-        sessionHandle,
-        closeInfo?.closeCode ?? 0,
-        closeInfo?.reason ?? "",
-      );
+      void rawSession
+        .close(
+          sessionHandle,
+          closeInfo?.closeCode ?? 0,
+          closeInfo?.reason || undefined,
+        )
+        .catch(() => {});
     },
 
     [Symbol.asyncDispose]() {

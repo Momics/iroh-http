@@ -306,7 +306,9 @@ fn safe_f64_to_usize(value: f64, field: &'static str, max: usize) -> napi::Resul
 /// or `BigInt(2n**64n)` receives a structured error rather than silently
 /// operating on a truncated handle value.
 fn get_handle(big: BigInt) -> napi::Result<u64> {
-    let (lossless, val, _signed) = big.get_u64();
+    // bindgen_runtime::BigInt::get_u64() returns (sign_bit, value, lossless).
+    // A handle is valid when it is non-negative and fits in one u64 word.
+    let (_sign_bit, val, lossless) = big.get_u64();
     if !lossless {
         return Err(napi::Error::new(
             Status::InvalidArg,

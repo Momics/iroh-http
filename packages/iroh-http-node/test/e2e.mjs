@@ -25,7 +25,7 @@ try {
 // ── Basic serve / fetch ───────────────────────────────────────────────────────
 
 test("serve + fetch — basic GET round-trip", async () => {
-  const server = await createNode({ verifyNodeId: true });
+  const server = await createNode();
   const client = await createNode();
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
@@ -46,63 +46,8 @@ test("serve + fetch — basic GET round-trip", async () => {
   }
 });
 
-test("serve + fetch — default verifyNodeId rejects incoming peers", async () => {
-  const server = await createNode();
-  const client = await createNode();
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    const ac = new AbortController();
-    server.serve({ signal: ac.signal }, (_req) =>
-      new Response("should not be reached", { status: 200 }),
-    );
-
-    const resp = await client.fetch(serverId, "httpi://example.com/", {
-      directAddrs: serverAddrs,
-    });
-    assert.equal(resp.status, 403);
-    ac.abort();
-  } finally {
-    await server.close();
-    await client.close();
-  }
-});
-
-test("serve + fetch — verifyNodeId callback can allow selected peer", async () => {
-  const client = await createNode();
-  const server = await createNode({
-    verifyNodeId: (peerNodeId) => peerNodeId === client.publicKey.toString(),
-  });
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    const ac = new AbortController();
-    server.serve({ signal: ac.signal }, (_req) =>
-      new Response("allowed", { status: 200 }),
-    );
-
-    const allowed = await client.fetch(serverId, "httpi://example.com/", {
-      directAddrs: serverAddrs,
-    });
-    assert.equal(allowed.status, 200);
-    assert.equal(await allowed.text(), "allowed");
-
-    const stranger = await createNode();
-    try {
-      const denied = await stranger.fetch(serverId, "httpi://example.com/", {
-        directAddrs: serverAddrs,
-      });
-      assert.equal(denied.status, 403);
-    } finally {
-      await stranger.close();
-    }
-    ac.abort();
-  } finally {
-    await server.close();
-    await client.close();
-  }
-});
-
 test("serve + fetch — POST with body round-trip", async () => {
-  const server = await createNode({ verifyNodeId: true });
+  const server = await createNode();
   const client = await createNode();
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
@@ -127,7 +72,7 @@ test("serve + fetch — POST with body round-trip", async () => {
 });
 
 test("serve + fetch — path is reflected correctly", async () => {
-  const server = await createNode({ verifyNodeId: true });
+  const server = await createNode();
   const client = await createNode();
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
@@ -154,7 +99,7 @@ test("serve + fetch — path is reflected correctly", async () => {
 // output buffer were used, concurrent responses would corrupt each other.
 
 test("serve + fetch — 10 concurrent requests return correct bodies", async () => {
-  const server = await createNode({ verifyNodeId: true });
+  const server = await createNode();
   const client = await createNode();
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
@@ -192,7 +137,7 @@ test("serve + fetch — 10 concurrent requests return correct bodies", async () 
 // pipe error".
 
 test("serve + fetch — plain response logs no internal pipe errors", async () => {
-  const server = await createNode({ verifyNodeId: true });
+  const server = await createNode();
   const client = await createNode();
 
   const internalErrors = [];
@@ -272,7 +217,7 @@ test("fetch — rejects http:// URL with TypeError", async () => {
 // ── Error classification ──────────────────────────────────────────────────────
 
 test("serve — handler throws synchronously → client gets 500", async () => {
-  const server = await createNode({ verifyNodeId: true });
+  const server = await createNode();
   const client = await createNode();
 
   // Capture the expected error log so it doesn't leak to test output.
@@ -305,7 +250,7 @@ test("serve — handler throws synchronously → client gets 500", async () => {
 });
 
 test("serve — handler rejects async → client gets 500", async () => {
-  const server = await createNode({ verifyNodeId: true });
+  const server = await createNode();
   const client = await createNode();
 
   const captured = [];
@@ -379,7 +324,7 @@ test("PublicKey.fromString — round-trip via node publicKey", async () => {
 // ── Peer-Id header ────────────────────────────────────────────────────────────
 
 test("peer-id header — present, valid base32, consistent", async () => {
-  const server = await createNode({ verifyNodeId: true });
+  const server = await createNode();
   const client = await createNode();
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
@@ -425,7 +370,7 @@ test("node.close() — second close is safe (throws or resolves)", async () => {
 // ── Large body streaming ──────────────────────────────────────────────────────
 
 test("serve + fetch — 1 MiB body round-trip", async () => {
-  const server = await createNode({ verifyNodeId: true });
+  const server = await createNode();
   const client = await createNode();
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();

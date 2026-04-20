@@ -527,7 +527,6 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     nativeClosed: invoke<void>(`${PLUGIN}|wait_endpoint_closed`, {
       endpointHandle: Number(info.endpointHandle),
     }).then(() => {}),
-    verifyNodeId: options?.verifyNodeId,
     addrFns: tauriAddrFns,
     discoveryFns: tauriDiscoveryFns,
     sessionFns: tauriSessionFns,

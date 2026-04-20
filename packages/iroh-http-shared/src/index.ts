@@ -141,7 +141,6 @@ export interface BuildNodeConfig {
   allocBodyWriter: AllocBodyWriterFn;
   closeEndpoint: (handle: number, force?: boolean) => Promise<void>;
   stopServe: (handle: number) => void;
-  verifyNodeId?: NodeOptions["verifyNodeId"];
   addrFns?: AddrFunctions;
   discoveryFns?: DiscoveryFunctions;
   sessionFns?: RawSessionFns;
@@ -178,7 +177,6 @@ export function buildNode(config: BuildNodeConfig): IrohNode {
     allocBodyWriter,
     closeEndpoint,
     stopServe,
-    verifyNodeId,
     addrFns,
     discoveryFns,
     sessionFns,
@@ -210,7 +208,6 @@ export function buildNode(config: BuildNodeConfig): IrohNode {
         info.nodeId,
         closedPromise.then(() => {}),
         () => stopServe(info.endpointHandle),
-        verifyNodeId,
       ),
     async connect(peer, init?) {
       if (!sessionFns) {

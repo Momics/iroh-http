@@ -59,6 +59,8 @@ The `fetch()` and `serve()` APIs use standard `Request` and `Response` objects. 
 
 Nodes find each other via [Iroh's](https://iroh.computer) relay network or local mDNS discovery. Every connection is end-to-end authenticated using Ed25519 public keys.
 
+> **Security**: Any peer that knows your node's public key can connect and send requests. Iroh QUIC authenticates peer *identity* cryptographically, but not *authorization*. Use `req.headers.get('Peer-Id')` in your handler to implement allowlists or other access control.
+
 > **Built on [Iroh](https://iroh.computer)** — a networking library for connecting devices directly. Iroh handles NAT traversal, relay fallback, and encrypted QUIC transport so iroh-http can focus on the HTTP layer. See the [Iroh documentation](https://iroh.computer/docs) to learn more.
 
 ## Quick start

@@ -112,7 +112,7 @@ async function main() {
   console.log("iroh-http compliance tests — Node.js adapter");
   console.log(`  ${cases.length} cases\n`);
 
-  const server = await createNode({ verifyNodeId: true });
+  const server = await createNode();
   const client = await createNode();
 
   let passed = 0;

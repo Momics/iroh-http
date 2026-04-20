@@ -41,13 +41,24 @@ import { createNode } from "@momics/iroh-http-tauri";
 
 const node = await createNode({
   reconnect: { auto: true, maxRetries: 3 },
-  verifyNodeId: true,
 });
 
 node.serve({}, (req) => new Response("hello from Tauri!"));
 // Node ID is the peer address — share it out-of-band with the remote node
 const remoteNodeId = "<paste the other node's publicKey.toString() here>";
 const res = await node.fetch(remoteNodeId, "/hello");
+```
+
+## Security
+
+Any peer that knows your node's public key can connect and send requests. Iroh QUIC authenticates peer *identity* cryptographically, but not *authorization*. Use `req.headers.get('Peer-Id')` in your handler to implement allowlists or other access control:
+
+```ts
+node.serve({}, (req) => {
+  const peerId = req.headers.get('Peer-Id');
+  if (!ALLOWED_PEERS.has(peerId)) return new Response('Forbidden', { status: 403 });
+  return new Response('ok');
+});
 ```
 
 ## Permissions

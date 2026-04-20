@@ -112,7 +112,7 @@ function buildBody(body: any): BodyInit | null {
 console.log("iroh-http compliance tests — Deno adapter");
 console.log(`  ${cases.length} cases\n`);
 
-const server = await createNode({ verifyNodeId: true });
+const server = await createNode();
 const client = await createNode();
 
 let passed = 0;

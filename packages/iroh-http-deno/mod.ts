@@ -54,7 +54,6 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     closeEndpoint,
     stopServe,
     nativeClosed: waitEndpointClosed(info.endpointHandle),
-    verifyNodeId: options?.verifyNodeId,
     addrFns: denoAddrFns,
     discoveryFns: denoDiscoveryFns,
     sessionFns: denoSessionFns,
