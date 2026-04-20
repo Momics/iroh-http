@@ -1,5 +1,7 @@
 # iroh-http
 
+> **⚠ Experimental — pre-v1.0.** APIs will change between releases. Not recommended for production use yet. Feedback and bug reports welcome.
+
 Peer-to-peer HTTP — fetch and serve between devices using [Iroh](https://iroh.computer) QUIC transport. No servers, no DNS, no TLS certificates. Nodes are addressed by public key.
 
 ## How is this different from regular HTTP?
