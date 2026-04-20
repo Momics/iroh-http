@@ -1733,7 +1733,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-http-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "base32",
  "bytes",
@@ -1762,7 +1762,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-http-deno"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "base64",
  "bytes",
@@ -1778,7 +1778,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-http-discovery"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "futures",
  "iroh",
@@ -1787,7 +1787,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-http-node"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bytes",
  "iroh",

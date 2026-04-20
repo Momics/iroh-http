@@ -2,69 +2,23 @@
 
 ### 🚀 Features
 
-- *(core)* Add max_total_connections limit to prevent Sybil exhaustion
-- *(core,node,tauri,deno,shared)* Resolve issue #44 — endpoint stats + tracing
-- *(serve)* Peer connection lifecycle events (onPeerConnect/onPeerDisconnect)
-- *(#52)* Support request trailers on client fetch
-- *(#49)* Add benchmark infrastructure
-- *(shared)* Enforce incoming peer verification via verifyNodeId (#76)
-- *(#49)* Extend benchmark infrastructure — latency benches, CI regression workflow (#75)
+- *(node)* Napi-rs platform package split
 
 ### 🐛 Bug Fixes
 
-- *(release)* Proper 2FA error detection, scope shared publish by platform
-- *(core)* Eliminate redundant memcpy in pump_quic_recv_to_body
-- *(core)* Widen close_code to u64 and clamp drain semaphore
-- *(core)* Add InsertGuard to prevent handle leaks on partial allocation
-- *(core)* Strip URI fragment identifiers in extract_path
-- *(core)* Return error for out-of-range session close codes
-- *(core)* Widen CoreError::invalid_handle parameter from u32 to u64
-- *(shared)* Include "Internal Server Error" body in default 500 response
-- *(shared)* Prevent AbortSignal listener leak in fetch()
-- *(core,deno,shared)* Resolve issues #7, #12, #39, #58
-- *(discovery,shared)* Resolve issues #45, #48, #61, #62
-- *(core,node,tauri,shared)* Resolve issue #59 — ServeHandle.finished reflects real loop termination
-- *(core,node,tauri,deno,shared)* Resolve issue #60 — node.closed on native endpoint shutdown
-- *(core,node,adapter)* Correct 8 FFI boundary safety and correctness issues (#68)
-- *(node)* Harden FFI boundary — input validation, panic safety, structured errors (#73)
-- *(node)* Destructure 3-tuple from BigInt::get_u64() for napi 2.16
-- *(stream,core)* Resolve #82, #83, #84 — trailer leak, compression default, stream quality
-- *(#79,#80,#46,#81)* Tauri leak, pool docs, CI targets, Tower layers
-
-### 💼 Other
-
-- *(discovery)* Replace n0-future with workspace futures crate
-
-### 🚜 Refactor
-
-- *(core)* Deduplicate box_body, duplex pump, and add extract_path tests
-- Remove rate limiting middleware and update related documentation
-- *(shared)* Replace buildNode() positional args with config object
-- *(core)* Macro-generate handle_to_*_key and enum-based InsertGuard
-- *(#42)* Group NodeOptions fields into semantic sub-structs
+- *(bench)* Uint8Array type cast for Deno strict check, add --skipLibCheck for node tsc
+- *(ci)* Check no-default-features with compression kept on — tests discovery-off path only
 
 ### 📚 Documentation
 
-- Update roadmap with pre-open-source checklist items
-- Handle lifecycle (#41), stale connections (#53), troubleshooting and tuning guides (#55)
-
-### ⚡ Performance
-
-- *(core)* Reduce allocation overhead in pool, pumps, base32, sweep
-- *(core)* Deduplicate base32_encode call in server accept loop
-- *(core)* Eliminate per-read allocation in pump_duplex
-- *(#38)* Optimize Deno FFI hot path — binary sendChunk + dispatch macro
-
-### 🧪 Testing
-
-- *(core)* Replace wall-clock sleeps with deterministic synchronization
-- *(#39)* Expand test coverage — sessions, stress, compliance cases
+- *(readmes)* Fix Windows platform support, add cross-runtime links, fix SPDX license parens; ci: add Windows to Node build matrix
+- Professionalize READMEs and update roadmap
 
 ### ⚙️ Miscellaneous Tasks
 
-- Enable push/PR triggers and add feature matrix coverage
-- *(security)* Add security hardening infrastructure (#74)
-## [0.1.3] - 2026-04-15
+- Skip workflows on docs/markdown-only changes, scope bench to code paths
+- Fix Node version, napi artifacts, zig setup, crates ordering
+## [0.1.3] - 2026-04-20
 
 ### 🚀 Features
 
@@ -122,6 +76,13 @@
 - Add Windows x86_64 target to node build
 - *(release)* Add --only=node|deno|all flag for scoped releases
 - *(release)* Modular release pipeline with individual step scripts
+- *(core)* Add max_total_connections limit to prevent Sybil exhaustion
+- *(core,node,tauri,deno,shared)* Resolve issue #44 — endpoint stats + tracing
+- *(serve)* Peer connection lifecycle events (onPeerConnect/onPeerDisconnect)
+- *(#52)* Support request trailers on client fetch
+- *(#49)* Add benchmark infrastructure
+- *(shared)* Enforce incoming peer verification via verifyNodeId (#76)
+- *(#49)* Extend benchmark infrastructure — latency benches, CI regression workflow (#75)
 
 ### 🐛 Bug Fixes
 
@@ -208,6 +169,25 @@
 - *(shared)* Add license field to jsr.jsonc for JSR publish
 - *(shared)* Consolidate jsr.jsonc into deno.json, add license field
 - *(shared)* Use MIT license for JSR compatibility
+- *(release)* Proper 2FA error detection, scope shared publish by platform
+- *(core)* Eliminate redundant memcpy in pump_quic_recv_to_body
+- *(core)* Widen close_code to u64 and clamp drain semaphore
+- *(core)* Add InsertGuard to prevent handle leaks on partial allocation
+- *(core)* Strip URI fragment identifiers in extract_path
+- *(core)* Return error for out-of-range session close codes
+- *(core)* Widen CoreError::invalid_handle parameter from u32 to u64
+- *(shared)* Include "Internal Server Error" body in default 500 response
+- *(shared)* Prevent AbortSignal listener leak in fetch()
+- *(core,deno,shared)* Resolve issues #7, #12, #39, #58
+- *(discovery,shared)* Resolve issues #45, #48, #61, #62
+- *(core,node,tauri,shared)* Resolve issue #59 — ServeHandle.finished reflects real loop termination
+- *(core,node,tauri,deno,shared)* Resolve issue #60 — node.closed on native endpoint shutdown
+- *(core,node,adapter)* Correct 8 FFI boundary safety and correctness issues (#68)
+- *(node)* Harden FFI boundary — input validation, panic safety, structured errors (#73)
+- *(node)* Destructure 3-tuple from BigInt::get_u64() for napi 2.16
+- *(stream,core)* Resolve #82, #83, #84 — trailer leak, compression default, stream quality
+- *(#79,#80,#46,#81)* Tauri leak, pool docs, CI targets, Tower layers
+- *(issue-templates)* Update acceptance criteria descriptions for bug and feature templates
 
 ### 💼 Other
 
@@ -221,6 +201,7 @@
 - Python integration tests — 6 new tests (3 active, 3 skipped)
 - CI — add Python job, Node compliance, cross-runtime gate
 - Regression test policy — template + copilot instructions
+- *(discovery)* Replace n0-future with workspace futures crate
 
 ### 🚜 Refactor
 
@@ -235,6 +216,11 @@
 - Move build logic into packages
 - Replace global static registries with per-endpoint HandleStore
 - Tighten compression policy and extract adapter error helpers
+- *(core)* Deduplicate box_body, duplex pump, and add extract_path tests
+- Remove rate limiting middleware and update related documentation
+- *(shared)* Replace buildNode() positional args with config object
+- *(core)* Macro-generate handle_to_*_key and enum-based InsertGuard
+- *(#42)* Group NodeOptions fields into semantic sub-structs
 
 ### 📚 Documentation
 
@@ -253,11 +239,17 @@
 - Unify npm scripts and update README development section
 - Enrich copilot-instructions with principles and architecture brief
 - *(scripts)* Update prereqs with LLVM, PATH note, and modular publish commands
+- Update roadmap with pre-open-source checklist items
+- Handle lifecycle (#41), stale connections (#53), troubleshooting and tuning guides (#55)
 
 ### ⚡ Performance
 
 - Fix all findings from 03_review (P0–P3)
 - Speed up CI + multi-platform node builds
+- *(core)* Reduce allocation overhead in pool, pumps, base32, sweep
+- *(core)* Deduplicate base32_encode call in server accept loop
+- *(core)* Eliminate per-read allocation in pump_duplex
+- *(#38)* Optimize Deno FFI hot path — binary sendChunk + dispatch macro
 
 ### 🧪 Testing
 
@@ -269,6 +261,8 @@
 - Wire all test suites into npm test and deno task test
 - *(TEST-004)* Add Rust core edge-case tests
 - Add property tests, fuzz targets, and nightly fuzz CI
+- *(core)* Replace wall-clock sleeps with deterministic synchronization
+- *(#39)* Expand test coverage — sessions, stress, compliance cases
 
 ### ⚙️ Miscellaneous Tasks
 
@@ -312,3 +306,11 @@
 - *(release)* Modularize publish step via npm run publish:* scripts
 - Apply cargo fmt --all
 - Bump deno.jsonc version to 0.1.3
+- Enable push/PR triggers and add feature matrix coverage
+- *(security)* Add security hardening infrastructure (#74)
+- *(oss-prep)* Pre-open-source cleanup
+- *(oss-prep)* CI release pipeline, experimental warning, Deno artifact URL
+- *(bench)* Remove pull_request trigger — benchmarks run on main push and tags only
+- *(.gitignore)* Enhance environment and secrets protection by adding additional patterns
+- *(release)* Switch to OIDC trusted publishing — no tokens needed
+- *(release)* Add CARGO_REGISTRY_TOKEN env to publish-crates job

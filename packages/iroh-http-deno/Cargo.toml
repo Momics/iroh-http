@@ -1,6 +1,6 @@
 [package]
 name = "iroh-http-deno"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Deno FFI native library for iroh-http"
 license = "MIT OR Apache-2.0"
