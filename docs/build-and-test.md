@@ -149,6 +149,27 @@ deno test --allow-read --allow-ffi --allow-env --allow-net packages/iroh-http-de
 
 ---
 
+## Benchmarks
+
+Benchmark suites exist for every runtime:
+
+```sh
+# Node.js (mitata)
+npm run bench:node
+
+# Deno (Deno.bench)
+npm run bench:deno
+
+# Rust core (Criterion)
+npm run bench:rust
+```
+
+CI runs `.github/workflows/bench.yml` on pull requests and pushes to `main`.
+It stores benchmark history via `benchmark-action` and fails when regressions
+exceed the 20% slowdown threshold (`alert-threshold: 120%`).
+
+---
+
 ## CI
 
 CI runs on every push to `main` and every pull request. All of the following
