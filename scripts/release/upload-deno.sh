@@ -12,7 +12,7 @@ source "$(dirname "$0")/_common.sh"
 VERSION="${1:-}"
 require_version "$VERSION"
 
-RELEASE_REPO="Momics/iroh-http-releases"
+RELEASE_REPO="Momics/iroh-http"
 TAG="v$VERSION"
 LIB_DIR="$ROOT/packages/iroh-http-deno/lib"
 

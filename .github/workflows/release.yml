@@ -1,52 +1,41 @@
 name: Release
 
-# Disabled — releasing locally for now. Re-enable when ready:
-# on:
-#   push:
-#     tags:
-#       - 'v[0-9]+.[0-9]+.[0-9]+'
-on: workflow_dispatch
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   contents: write
+  id-token: write   # required for npm --provenance
 
 jobs:
-  release:
-    name: Create GitHub Release
+
+  # ── 1. Create GitHub release ──────────────────────────────────────────────────
+
+  create-release:
+    name: Create GitHub release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Generate release notes
+        run: |
+          cargo install git-cliff --locked
+          git cliff --latest -o RELEASE_NOTES.md
+
+      - uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
 
-  publish-crates:
-    name: Publish Rust crates
-    runs-on: ubuntu-latest
-    needs: release
-    steps:
-      - uses: actions/checkout@v4
+  # ── 2. Build Node native binaries (4 targets) ─────────────────────────────────
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Publish iroh-http-core
-        run: cargo publish -p iroh-http-core --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Publish iroh-http-discovery
-        run: cargo publish -p iroh-http-discovery --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-  build-node-native:
+  build-node:
     name: Build Node native (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
-    needs: release
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -67,14 +56,15 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: Swatinem/rust-cache@v2
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install dependencies
-        run: npm install
+      - run: npm install
 
-      - name: Install cross-compilation tools (Linux aarch64)
+      - name: Install cross-compile tools (aarch64 Linux)
         if: matrix.cross
         run: |
           sudo apt-get update
@@ -86,21 +76,117 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
 
-      - name: Smoke test native binary
+      - name: Smoke test (host-native targets only)
+        if: ${{ !matrix.cross }}
         working-directory: packages/iroh-http-node
-        run: node -e "const n = require('./index.js'); console.log('loaded ok')"
+        run: node -e "require('./index.js'); console.log('loaded ok')"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: node-native-${{ matrix.target }}
           path: packages/iroh-http-node/*.node
           if-no-files-found: error
 
-  publish-node:
-    name: Publish Node.js package
+  # ── 3. Build Deno native binaries (5 targets) ─────────────────────────────────
+  #
+  # Linux and Windows targets use cargo-zigbuild from ubuntu-latest.
+  # macOS targets build natively on dedicated runners.
+
+  build-deno:
+    name: Build Deno native (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: libiroh_http_deno.linux-x86_64.so
+            lib: libiroh_http_deno.so
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            asset: libiroh_http_deno.linux-aarch64.so
+            lib: libiroh_http_deno.so
+            zigbuild: true
+          - os: ubuntu-latest
+            target: x86_64-pc-windows-gnu
+            asset: libiroh_http_deno.windows-x86_64.dll
+            lib: iroh_http_deno.dll
+            zigbuild: true
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: libiroh_http_deno.darwin-aarch64.dylib
+            lib: libiroh_http_deno.dylib
+          - os: macos-13
+            target: x86_64-apple-darwin
+            asset: libiroh_http_deno.darwin-x86_64.dylib
+            lib: libiroh_http_deno.dylib
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install zig + cargo-zigbuild
+        if: matrix.zigbuild
+        run: |
+          pip3 install ziglang
+          cargo install cargo-zigbuild --locked
+
+      - name: Build (cargo-zigbuild)
+        if: matrix.zigbuild
+        run: cargo zigbuild --release -p iroh-http-deno --target ${{ matrix.target }}
+
+      - name: Build (native)
+        if: ${{ !matrix.zigbuild }}
+        run: cargo build --release -p iroh-http-deno --target ${{ matrix.target }}
+
+      - name: Rename to release asset name
+        shell: bash
+        run: cp target/${{ matrix.target }}/release/${{ matrix.lib }} ${{ matrix.asset }}
+
+      - name: Upload to GitHub release
+        run: gh release upload ${{ github.ref_name }} ${{ matrix.asset }} --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deno-native-${{ matrix.target }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  # ── 4. Publish Rust crates ─────────────────────────────────────────────────────
+
+  publish-crates:
+    name: Publish Rust crates
     runs-on: ubuntu-latest
-    needs: build-node-native
+    needs: create-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish iroh-http-core
+        run: cargo publish -p iroh-http-core --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Publish iroh-http-discovery
+        run: cargo publish -p iroh-http-discovery --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ── 5. Publish Node.js packages ───────────────────────────────────────────────
+
+  publish-node:
+    name: Publish npm (shared + node + tauri)
+    runs-on: ubuntu-latest
+    needs: build-node
     steps:
       - uses: actions/checkout@v4
 
@@ -109,44 +195,53 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Install dependencies
-        run: npm install
+      - run: npm install
 
-      - name: Download all native artifacts
+      - name: Download all Node native artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: node-native-*
           path: packages/iroh-http-node/
           merge-multiple: true
 
-      - name: Build TypeScript wrapper
-        working-directory: packages/iroh-http-node
-        run: npx tsc
+      - name: Build TypeScript
+        run: |
+          npm run build --workspace=packages/iroh-http-shared
+          cd packages/iroh-http-node && npx tsc
+          npm run build --workspace=packages/iroh-http-tauri
 
-      - name: Build shared package
-        run: npm run build --workspace=packages/iroh-http-shared
-
-      - name: List package contents
-        run: ls -la packages/iroh-http-node/*.node packages/iroh-http-node/*.js packages/iroh-http-node/*.d.ts
+      - name: Publish iroh-http-shared
+        run: npm publish --workspace packages/iroh-http-shared --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish iroh-http-node
         run: npm publish --workspace packages/iroh-http-node --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Publish iroh-http-tauri
+        run: npm publish --workspace packages/iroh-http-tauri --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── 6. Publish Deno package ────────────────────────────────────────────────────
+  # Binaries are attached to the GitHub release and downloaded at runtime.
+  # The JSR package itself contains only TypeScript source.
+
   publish-deno:
-    name: Publish Deno package
+    name: Publish Deno package (JSR)
     runs-on: ubuntu-latest
-    needs: release
+    needs: build-deno
     steps:
       - uses: actions/checkout@v4
 
-      - uses: denoland/setup-deno@v1
+      - uses: denoland/setup-deno@v2
         with:
-          deno-version: v1.x
+          deno-version: v2.x
 
       - name: Publish to JSR
-        run: deno publish --allow-dirty
         working-directory: packages/iroh-http-deno
+        run: deno publish
         env:
           DENO_AUTH_TOKENS: ${{ secrets.DENO_AUTH_TOKEN }}
