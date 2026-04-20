@@ -22,6 +22,7 @@ jobs:
   bench-node:
     name: Node benchmarks
     runs-on: ${{ vars.BENCHMARK_RUNNER != '' && vars.BENCHMARK_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -75,6 +76,7 @@ jobs:
   bench-deno:
     name: Deno benchmarks
     runs-on: ${{ vars.BENCHMARK_RUNNER != '' && vars.BENCHMARK_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -98,7 +100,7 @@ jobs:
               ;;
           esac
       - name: Run Deno bench suites
-        run: deno bench --allow-net --allow-ffi --allow-env --allow-read --allow-write bench/deno/
+        run: deno bench --allow-net --allow-ffi --allow-env --allow-read --allow-write bench/deno/throughput.bench.ts bench/deno/latency.bench.ts
       - name: Emit normalized Deno benchmark JSON
         run: |
           deno run --allow-net --allow-ffi --allow-env --allow-read --allow-write bench/deno/report.ts throughput > bench/results/deno-throughput.json
@@ -133,6 +135,7 @@ jobs:
   bench-rust:
     name: Rust Criterion benchmarks
     runs-on: ${{ vars.BENCHMARK_RUNNER != '' && vars.BENCHMARK_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
