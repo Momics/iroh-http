@@ -274,6 +274,7 @@ async fn create_endpoint(p: Value) -> Value {
             max_consecutive_errors: args.max_consecutive_errors,
             drain_timeout_secs: None,
             max_total_connections: args.max_total_connections,
+            load_shed: None,
         },
         #[cfg(feature = "compression")]
         compression: if args.compression_min_body_bytes.is_some()

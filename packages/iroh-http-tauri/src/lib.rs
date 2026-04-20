@@ -59,15 +59,23 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::session_recv_datagram,
             commands::session_max_datagram_size,
         ])
-        .setup(|_app, _api| {
+        .setup(|app, _api| {
             #[cfg(mobile)]
             {
                 // ISS-009: return recoverable error instead of panicking on init failure.
-                let mdns = mobile_mdns::init(_app, _api)
+                let mdns = mobile_mdns::init(app, _api)
                     .map_err(|e| e.into())?;
-                _app.manage(mdns);
+                app.manage(mdns);
             }
             Ok(())
+        })
+        // ISS-079: close all registered endpoints when the webview is destroyed
+        // to prevent QUIC socket leaks on Vite HMR hot-reload or window close
+        // without an explicit JS `closeEndpoint` call.
+        .on_event(|_app, event| {
+            if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Destroyed, .. } = event {
+                iroh_http_core::registry::close_all_endpoints();
+            }
         })
         .build()
 }

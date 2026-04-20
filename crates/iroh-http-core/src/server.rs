@@ -8,8 +8,12 @@ use std::{
     collections::HashMap,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     task::{Context, Poll},
+    time::Duration,
 };
 
 use bytes::Bytes;
@@ -49,6 +53,10 @@ pub struct ServerLimits {
     pub max_request_body_bytes: Option<usize>,
     pub drain_timeout_secs: Option<u64>,
     pub max_total_connections: Option<usize>,
+    /// When `true` (the default), reject new requests immediately with `503
+    /// Service Unavailable` when `max_concurrency` is already reached rather
+    /// than queuing them.  Prevents thundering-herd on recovery.
+    pub load_shed: Option<bool>,
 }
 
 /// Backward-compatible alias — existing code that names `ServeOptions` keeps
@@ -601,18 +609,20 @@ where
     let max_errors = options.max_consecutive_errors.unwrap_or(5);
     let request_timeout = options
         .request_timeout_ms
-        .map(std::time::Duration::from_millis)
-        .unwrap_or(std::time::Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS));
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS));
     let max_conns_per_peer = options
         .max_connections_per_peer
         .unwrap_or(DEFAULT_MAX_CONNECTIONS_PER_PEER);
     let max_request_body_bytes = options.max_request_body_bytes;
     let max_total_connections = options.max_total_connections;
-    let drain_timeout = std::time::Duration::from_secs(
+    let drain_timeout = Duration::from_secs(
         options
             .drain_timeout_secs
             .unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS),
     );
+    // Load-shed is opt-out — default `true` (reject immediately when at capacity).
+    let load_shed_enabled = options.load_shed.unwrap_or(true);
     let max_header_size = endpoint.max_header_size();
     #[cfg(feature = "compression")]
     let compression = endpoint.compression().cloned();
@@ -623,9 +633,10 @@ where
         Arc::new(Mutex::new(HashMap::new()));
     let conn_event_fn: Option<ConnectionEventFn> = on_connection_event;
 
-    // Drain semaphore: one permit per in-flight REQUEST (bi-stream), not per connection.
-    // Drain waits for acquire_many(max) which returns only when all requests finish.
-    let drain_semaphore = Arc::new(tokio::sync::Semaphore::new(max));
+    // In-flight request counter: incremented on accept, decremented on drop.
+    // Used for graceful drain (wait until zero or timeout).
+    let in_flight: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+    let drain_notify: Arc<tokio::sync::Notify> = Arc::new(tokio::sync::Notify::new());
 
     let base_svc = RequestService {
         on_request,
@@ -644,7 +655,6 @@ where
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
     let shutdown_listen = shutdown_notify.clone();
-    let drain_sem = drain_semaphore.clone();
     let drain_dur = drain_timeout;
     // Re-use the endpoint's shared counters so that endpoint_stats() reflects
     // the live connection and request counts at all times.
@@ -652,6 +662,9 @@ where
     let total_requests = endpoint.inner.active_requests.clone();
     let (done_tx, done_rx) = tokio::sync::watch::channel(false);
     let endpoint_closed_tx = endpoint.inner.closed_tx.clone();
+
+    let in_flight_drain = in_flight.clone();
+    let drain_notify_drain = drain_notify.clone();
 
     let join = tokio::spawn(async move {
         let ep = endpoint.raw().clone();
@@ -696,7 +709,7 @@ where
 
             // Enforce total connection limit.
             if let Some(max_total) = max_total_connections {
-                let current = total_connections.load(std::sync::atomic::Ordering::Relaxed);
+                let current = total_connections.load(Ordering::Relaxed);
                 if current >= max_total {
                     tracing::warn!(
                         "iroh-http: total connection limit reached ({current}/{max_total})"
@@ -724,22 +737,23 @@ where
             peer_svc.remote_node_id = Some(remote_id);
 
             let timeout_dur = if request_timeout.is_zero() {
-                std::time::Duration::MAX
+                Duration::MAX
             } else {
                 request_timeout
             };
 
-            let conn_drain = drain_semaphore.clone();
             let conn_total = total_connections.clone();
             let conn_requests = total_requests.clone();
-            conn_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let in_flight_conn = in_flight.clone();
+            let drain_notify_conn = drain_notify.clone();
+            conn_total.fetch_add(1, Ordering::Relaxed);
             tokio::spawn(async move {
                 let _guard = guard;
                 // Decrement total connection count when this task exits.
-                struct TotalGuard(Arc<std::sync::atomic::AtomicUsize>);
+                struct TotalGuard(Arc<AtomicUsize>);
                 impl Drop for TotalGuard {
                     fn drop(&mut self) {
-                        self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                        self.0.fetch_sub(1, Ordering::Relaxed);
                     }
                 }
                 let _total_guard = TotalGuard(conn_total);
@@ -750,28 +764,36 @@ where
                         Err(_) => break,
                     };
 
-                    // Acquire one concurrency slot per request (bi-stream).
-                    // Dropping the permit when hyper finishes the request signals drain().
-                    let permit = match conn_drain.clone().acquire_owned().await {
-                        Ok(p) => p,
-                        Err(_) => break, // semaphore closed → shutting down
-                    };
-
                     let io = TokioIo::new(IrohStream::new(send, recv));
                     let svc = peer_svc.clone();
                     let req_counter = conn_requests.clone();
-                    req_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    req_counter.fetch_add(1, Ordering::Relaxed);
+                    in_flight_conn.fetch_add(1, Ordering::Relaxed);
+
+                    let in_flight_req = in_flight_conn.clone();
+                    let drain_notify_req = drain_notify_conn.clone();
 
                     tokio::spawn(async move {
-                        let _permit = permit;
                         // Decrement request count when this task exits.
-                        struct ReqGuard(Arc<std::sync::atomic::AtomicUsize>);
+                        struct ReqGuard {
+                            counter: Arc<AtomicUsize>,
+                            in_flight: Arc<AtomicUsize>,
+                            drain_notify: Arc<tokio::sync::Notify>,
+                        }
                         impl Drop for ReqGuard {
                             fn drop(&mut self) {
-                                self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                                self.counter.fetch_sub(1, Ordering::Relaxed);
+                                if self.in_flight.fetch_sub(1, Ordering::AcqRel) == 1 {
+                                    // Last in-flight request completed — signal drain.
+                                    self.drain_notify.notify_waiters();
+                                }
                             }
                         }
-                        let _req_guard = ReqGuard(req_counter);
+                        let _req_guard = ReqGuard {
+                            counter: req_counter,
+                            in_flight: in_flight_req,
+                            drain_notify: drain_notify_req,
+                        };
                         // ISS-001: clamp to hyper's minimum safe buffer size of 8192.
                         // ISS-020: a stored value of 0 means "use the default" (64 KB).
                         let effective_header_limit = if max_header_size == 0 {
@@ -780,21 +802,27 @@ where
                             max_header_size.max(8192)
                         };
 
-                        // Build the hyper-facing service, optionally wrapping with
-                        // CompressionLayer (zstd-only, for responses ≥ min_body_bytes).
+                        // Build the Tower reliability service stack and serve the connection.
                         //
-                        // The feature flag makes zstd compression *available*; it is
-                        // only activated at runtime when NodeOptions.compression is Some.
-                        // We branch into separate serve_connection calls so each code path
-                        // carries its own concrete service type — avoiding the body-type
-                        // mismatch between CompressionBody<BoxBody> and BoxBody that
-                        // makes tower::util::Either unusable here.
+                        // Layer ordering (outermost first):
+                        //   [CompressionLayer →] TowerErrorHandler → LoadShed → ConcurrencyLimit → Timeout → RequestService
+                        //
+                        // Tower layers are applied around `RequestService` (which returns
+                        // `Response<BoxBody>`) so that `TowerErrorHandler` can convert
+                        // `Elapsed` and `Overloaded` into 408/503 HTTP responses.
+                        // CompressionLayer (if enabled) sits outside the error handler.
+                        //
+                        // Each `if load_shed_enabled` branch produces a concrete type;
+                        // both branches `.await` to `Result<(), hyper::Error>` so the
+                        // `if` expression is well-typed without boxing.
+
+                        use tower::{ServiceBuilder, limit::ConcurrencyLimitLayer, timeout::TimeoutLayer};
+
                         #[cfg(feature = "compression")]
                         let result = {
-                            use http::{Extensions, HeaderMap, StatusCode, Version};
+                            use http::{Extensions, HeaderMap, Version};
                             use tower_http::compression::{predicate::{Predicate, SizeAbove}, CompressionLayer};
 
-                            // Clone the compression config so we can move `svc` below.
                             let compression_config = svc.compression.clone();
                             if let Some(comp) = &compression_config {
                                 let min_bytes = comp.min_body_bytes;
@@ -822,41 +850,92 @@ where
                                     SizeAbove::new(min_bytes.min(u16::MAX as usize) as u16)
                                         .and(not_pre_compressed)
                                         .and(not_no_transform);
-                                let hyper_svc = TowerToHyperService::new(
-                                    tower::ServiceBuilder::new()
-                                        .layer(layer.compress_when(predicate))
-                                        .service(TimeoutService::new(svc, timeout_dur)),
-                                );
+                                if load_shed_enabled {
+                                    use tower::load_shed::LoadShedLayer;
+                                    let stk = TowerErrorHandler(ServiceBuilder::new()
+                                        .layer(LoadShedLayer::new())
+                                        .layer(ConcurrencyLimitLayer::new(max))
+                                        .layer(TimeoutLayer::new(timeout_dur))
+                                        .service(svc));
+                                    hyper::server::conn::http1::Builder::new()
+                                        .max_buf_size(effective_header_limit)
+                                        .max_headers(128)
+                                        .serve_connection(io, TowerToHyperService::new(
+                                            ServiceBuilder::new()
+                                                .layer(layer.compress_when(predicate))
+                                                .service(stk),
+                                        ))
+                                        .with_upgrades()
+                                        .await
+                                } else {
+                                    let stk = TowerErrorHandler(ServiceBuilder::new()
+                                        .layer(ConcurrencyLimitLayer::new(max))
+                                        .layer(TimeoutLayer::new(timeout_dur))
+                                        .service(svc));
+                                    hyper::server::conn::http1::Builder::new()
+                                        .max_buf_size(effective_header_limit)
+                                        .max_headers(128)
+                                        .serve_connection(io, TowerToHyperService::new(
+                                            ServiceBuilder::new()
+                                                .layer(layer.compress_when(predicate))
+                                                .service(stk),
+                                        ))
+                                        .with_upgrades()
+                                        .await
+                                }
+                            } else if load_shed_enabled {
+                                use tower::load_shed::LoadShedLayer;
+                                let stk = TowerErrorHandler(ServiceBuilder::new()
+                                    .layer(LoadShedLayer::new())
+                                    .layer(ConcurrencyLimitLayer::new(max))
+                                    .layer(TimeoutLayer::new(timeout_dur))
+                                    .service(svc));
                                 hyper::server::conn::http1::Builder::new()
                                     .max_buf_size(effective_header_limit)
                                     .max_headers(128)
-                                    .serve_connection(io, hyper_svc)
+                                    .serve_connection(io, TowerToHyperService::new(stk))
                                     .with_upgrades()
                                     .await
                             } else {
-                                // compression feature compiled in but not configured
-                                // for this endpoint — use plain service path.
-                                let hyper_svc =
-                                    TowerToHyperService::new(TimeoutService::new(svc, timeout_dur));
+                                let stk = TowerErrorHandler(ServiceBuilder::new()
+                                    .layer(ConcurrencyLimitLayer::new(max))
+                                    .layer(TimeoutLayer::new(timeout_dur))
+                                    .service(svc));
                                 hyper::server::conn::http1::Builder::new()
                                     .max_buf_size(effective_header_limit)
                                     .max_headers(128)
-                                    .serve_connection(io, hyper_svc)
+                                    .serve_connection(io, TowerToHyperService::new(stk))
                                     .with_upgrades()
                                     .await
                             }
                         };
                         #[cfg(not(feature = "compression"))]
-                        let result = {
-                            let hyper_svc =
-                                TowerToHyperService::new(TimeoutService::new(svc, timeout_dur));
+                        let result = if load_shed_enabled {
+                            use tower::load_shed::LoadShedLayer;
+                            let stk = TowerErrorHandler(ServiceBuilder::new()
+                                .layer(LoadShedLayer::new())
+                                .layer(ConcurrencyLimitLayer::new(max))
+                                .layer(TimeoutLayer::new(timeout_dur))
+                                .service(svc));
                             hyper::server::conn::http1::Builder::new()
                                 .max_buf_size(effective_header_limit)
                                 .max_headers(128)
-                                .serve_connection(io, hyper_svc)
+                                .serve_connection(io, TowerToHyperService::new(stk))
+                                .with_upgrades()
+                                .await
+                        } else {
+                            let stk = TowerErrorHandler(ServiceBuilder::new()
+                                .layer(ConcurrencyLimitLayer::new(max))
+                                .layer(TimeoutLayer::new(timeout_dur))
+                                .service(svc));
+                            hyper::server::conn::http1::Builder::new()
+                                .max_buf_size(effective_header_limit)
+                                .max_headers(128)
+                                .serve_connection(io, TowerToHyperService::new(stk))
                                 .with_upgrades()
                                 .await
                         };
+
                         if let Err(e) = result {
                             tracing::debug!("iroh-http: http1 connection error: {e}");
                         }
@@ -865,12 +944,27 @@ where
             });
         }
 
-        let drain_result =
-            tokio::time::timeout(drain_dur, drain_sem.acquire_many(max.min(u32::MAX as usize) as u32)).await;
-        match drain_result {
-            Ok(Ok(_)) => tracing::info!("iroh-http: all in-flight requests drained"),
-            Ok(Err(_)) => tracing::warn!("iroh-http: semaphore closed during drain"),
-            Err(_) => tracing::warn!("iroh-http: drain timed out after {}s", drain_dur.as_secs()),
+        // Graceful drain: wait for all in-flight requests to finish,
+        // or give up after `drain_timeout`.
+        //
+        // Loop avoids the race between `in_flight == 0` check and `notified()`:
+        // if the last request finishes between the load and the await, the loop
+        // re-checks immediately after the timeout wakes it.
+        let deadline = tokio::time::Instant::now() + drain_dur;
+        loop {
+            if in_flight_drain.load(Ordering::Acquire) == 0 {
+                tracing::info!("iroh-http: all in-flight requests drained");
+                break;
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                tracing::warn!("iroh-http: drain timed out after {}s", drain_dur.as_secs());
+                break;
+            }
+            tokio::select! {
+                _ = drain_notify_drain.notified() => {}
+                _ = tokio::time::sleep(remaining) => {}
+            }
         }
         let _ = done_tx.send(true);
     });
@@ -883,52 +977,67 @@ where
     }
 }
 
-// ── TimeoutService — thin per-request timeout wrapper ────────────────────────
+// ── TowerErrorHandler — maps Tower layer errors to HTTP responses ─────────────
+//
+// `ConcurrencyLimitLayer`, `TimeoutLayer`, and `LoadShedLayer` return errors
+// rather than `Response` values when they reject a request.  `TowerErrorHandler`
+// wraps the composed service and converts those errors to proper HTTP responses:
+//
+//   tower::timeout::error::Elapsed     → 408 Request Timeout
+//   tower::load_shed::error::Overloaded → 503 Service Unavailable
+//   anything else                       → 500 Internal Server Error
+//
+// This allows the whole stack to satisfy hyper's requirement that the service
+// returns `Ok(Response)` — errors crash the connection instead of producing a
+// status code.
 
 #[derive(Clone)]
-struct TimeoutService<S> {
-    inner: S,
-    timeout: std::time::Duration,
-}
+struct TowerErrorHandler<S>(S);
 
-impl<S> TimeoutService<S> {
-    fn new(inner: S, timeout: std::time::Duration) -> Self {
-        Self { inner, timeout }
-    }
-}
-
-impl<S, Req> Service<Req> for TimeoutService<S>
+impl<S, Req> Service<Req> for TowerErrorHandler<S>
 where
-    // ISS-007: constrain S::Response to hyper::Response<BoxBody> so we can return
-    // a concrete 408 response on timeout rather than a generic error string.
     S: Service<Req, Response = hyper::Response<BoxBody>>,
-    S::Future: Send + 'static,
     S::Error: Into<BoxError>,
+    S::Future: Send + 'static,
 {
     type Response = hyper::Response<BoxBody>;
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(Into::into)
+        // If ConcurrencyLimitLayer is saturated AND LoadShed is present, it
+        // returns Pending from poll_ready — LoadShed converts that to an
+        // immediate Err(Overloaded).  If LoadShed is absent, poll_ready blocks
+        // until a slot opens.  In both cases we propagate the result here.
+        self.0.poll_ready(cx).map_err(Into::into)
     }
 
     fn call(&mut self, req: Req) -> Self::Future {
-        let fut = self.inner.call(req);
-        let timeout = self.timeout;
+        let fut = self.0.call(req);
         Box::pin(async move {
-            match tokio::time::timeout(timeout, fut).await {
-                Ok(Ok(r)) => Ok(r),
-                Ok(Err(e)) => Err(e.into()),
-                Err(_) => {
-                    // ISS-007: return a proper HTTP 408 Request Timeout instead of a
-                    // generic error string so adapters can relay the status code.
+            match fut.await {
+                Ok(r) => Ok(r),
+                Err(e) => {
+                    let e = e.into();
+                    let status = if e.is::<tower::timeout::error::Elapsed>() {
+                        StatusCode::REQUEST_TIMEOUT
+                    } else if e.is::<tower::load_shed::error::Overloaded>() {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    } else {
+                        tracing::warn!("iroh-http: unexpected tower error: {e}");
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    };
+                    let body_bytes: &'static [u8] = match status {
+                        StatusCode::REQUEST_TIMEOUT => b"request timed out",
+                        StatusCode::SERVICE_UNAVAILABLE => b"server at capacity",
+                        _ => b"internal server error",
+                    };
                     Ok(hyper::Response::builder()
-                        .status(StatusCode::REQUEST_TIMEOUT)
+                        .status(status)
                         .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(
-                            b"request timed out",
+                            body_bytes,
                         ))))
-                        .expect("valid 408 response"))
+                        .expect("valid error response"))
                 }
             }
         })

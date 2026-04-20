@@ -62,3 +62,26 @@ Follow Tauri's permission naming: `allow-<command-name>` in kebab-case. The defa
 - **Rust commands:** test through `iroh-http-core` integration tests. Tauri commands are thin wrappers.
 - **Guest JS:** test through the `IrohNode` surface. The `Bridge` is substitutable — mock tests can replace invoke calls.
 - **End-to-end:** `tauri-driver` or manual webview testing. Reserve for release validation.
+
+---
+
+## Endpoint lifecycle and hot-reload
+
+The plugin registers a `WindowEvent::Destroyed` handler that calls
+`iroh_http_core::registry::close_all_endpoints()`. This force-closes every
+open endpoint when the webview is destroyed, preventing QUIC socket leaks
+during Vite HMR hot-reload.
+
+For well-behaved apps, still call `closeEndpoint(handle)` explicitly before
+your frontend framework teardown (e.g. `onBeforeUnmount` / `beforeunload`).
+This allows a graceful drain instead of a force-close:
+
+```ts
+// Vue / React teardown
+onBeforeUnmount(async () => {
+  await node.close();
+});
+```
+
+The `WindowEvent::Destroyed` handler is the safety net for the case where the
+page reloads before teardown code runs (common in Vite dev mode).

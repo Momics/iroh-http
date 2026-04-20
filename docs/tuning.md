@@ -121,7 +121,7 @@ cannot distinguish a migrating connection from a dead one. Lower
 |--------|---------|-----------|
 | `idleTimeout` | 30 000 ms | Peers are far away / high-latency relay; increase to keep connections warm |
 | `requestTimeout` | 60 000 ms | Transfers large files (increase) or want fast failure detection (decrease) |
-| `maxPooledConnections` | 128 | Many peers (increase) or memory-constrained (decrease) |
+| `maxPooledConnections` | 512 | Many peers (increase) or memory-constrained (decrease); see [Connection pool sizing](#connection-pool-sizing) |
 | `poolIdleTimeoutMs` | 60 000 ms | Mobile / frequent network changes (decrease); LAN (increase) |
 | `maxConcurrency` | 64 | Serving many concurrent requests (increase); or throttling (decrease) |
 | `maxConnectionsPerPeer` | 8 | IoT with few connections/peer (decrease); busy API clients (increase) |
@@ -174,3 +174,52 @@ exceeds compression benefit below ~512 bytes).
 
 Compression is **zstd only**. Both endpoints must be iroh-http — there is no
 cross-vendor compression negotiation.
+
+---
+
+## Connection pool sizing
+
+`maxPooledConnections` caps the number of idle QUIC connections kept in the
+pool. The default is **512**.
+
+```ts
+const node = await createNode({
+  maxPooledConnections: 512,  // default — fits most workloads
+});
+```
+
+Each pooled entry is one idle QUIC connection. Memory cost is low (~10–30 KB
+per entry in kernel buffers); the main cost is OS file descriptors and UDP
+socket slots.
+
+### How to size the pool
+
+| Topology | Recommended value | Reasoning |
+|---|---|---|
+| Desktop / mobile app (< 20 peers) | 32–64 | Saves FDs; reconnect overhead is negligible |
+| Developer tooling / small mesh | 128–256 | Default overkill; use 128 to be safe |
+| CDN edge / job dispatcher (1 000+ peers) | 1 024–4 096 | Avoids per-request QUIC handshakes (~100–200 ms on WAN) |
+| IoT hub (many low-traffic devices) | 512–2 048 | Devices connect infrequently; pool keeps paths warm |
+
+**Rule of thumb:** set `maxPooledConnections` ≥ your 95th-percentile active
+peer count. Peers beyond the cap will reconnect on next fetch (one QUIC
+handshake ≈ 1–2 RTTs).
+
+### Relationship with `poolIdleTimeoutMs`
+
+The pool evicts entries that have been idle longer than `poolIdleTimeoutMs`
+(default: 60 s). For high-fanout nodes, pair a large `maxPooledConnections`
+with a shorter `poolIdleTimeoutMs` to recycle infrequently used peers quickly:
+
+```ts
+const node = await createNode({
+  maxPooledConnections: 2_048,  // large fleet
+  poolIdleTimeoutMs: 20_000,    // evict after 20 s of no activity
+});
+```
+
+### Finding the full option path
+
+`createNode({ maxPooledConnections })` → `NodeOptions.pool.max_connections`
+→ `ConnectionPool::new(max_idle, …)` in `iroh-http-core`. The JS option is a
+direct alias for the Rust `PoolOptions.max_connections` field.

@@ -181,3 +181,25 @@ jobs:
 
       - name: Cross-runtime compliance (node↔deno)
         run: bash tests/http-compliance/run.sh
+
+  rust-check-macos:
+    name: Rust check (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (iroh-http-core)
+        run: cargo test -p iroh-http-core
+      - name: cargo test (iroh-http-discovery)
+        run: cargo test -p iroh-http-discovery
+
+  rust-check-windows:
+    name: Rust check (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (iroh-http-core)
+        run: cargo test -p iroh-http-core
