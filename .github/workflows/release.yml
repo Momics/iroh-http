@@ -89,7 +89,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: node-native-${{ matrix.target }}
-          path: packages/iroh-http-node/*.node
+          path: packages/iroh-http-node/iroh-http-node.*.node
           if-no-files-found: error
 
   # ── 3. Build Deno native binaries (5 targets) ─────────────────────────────────
@@ -127,7 +127,6 @@ jobs:
             target: x86_64-apple-darwin
             asset: libiroh_http_deno.darwin-x86_64.dylib
             lib: libiroh_http_deno.dylib
-            zigbuild: true
     steps:
       - uses: actions/checkout@v4
 
