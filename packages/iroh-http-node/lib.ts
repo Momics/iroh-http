@@ -433,6 +433,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     closeEndpoint: (handle: number, force?: boolean) => closeEndpoint(handle, force ?? null),
     stopServe: (handle: number) => napiStopServe(handle),
     nativeClosed: napiWaitEndpointClosed(info.endpointHandle),
+    verifyNodeId: options?.verifyNodeId,
     addrFns,
     discoveryFns,
     sessionFns: nodeSessionFns,
