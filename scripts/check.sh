@@ -24,18 +24,21 @@ echo "  → cargo fmt"
 cargo fmt --all -- --check || die "cargo fmt failed — run: cargo fmt --all"
 ok "fmt"
 
-echo "  → cargo clippy"
+echo "  → cargo clippy (workspace)"
 cargo clippy --workspace -- \
   -D warnings \
   -D clippy::unwrap_used \
   -D clippy::panic \
-  -D clippy::arithmetic_side_effects 2>&1 | grep -E "^error" || true
-cargo clippy --workspace -- \
-  -D warnings \
-  -D clippy::unwrap_used \
-  -D clippy::panic \
-  -D clippy::arithmetic_side_effects > /dev/null
+  -D clippy::arithmetic_side_effects
 ok "clippy (workspace)"
+
+echo "  → cargo clippy (iroh-http-tauri)"
+(cd packages/iroh-http-tauri && cargo clippy -- \
+  -D warnings \
+  -D clippy::unwrap_used \
+  -D clippy::panic \
+  -D clippy::arithmetic_side_effects)
+ok "clippy (tauri)"
 
 echo "  → cargo test"
 cargo test --workspace --quiet
