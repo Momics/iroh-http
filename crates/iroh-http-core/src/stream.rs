@@ -115,17 +115,30 @@ fn make_body_channel_with(capacity: usize, drain_timeout: Duration) -> (BodyWrit
     )
 }
 
+// ── Cancellable receive ───────────────────────────────────────────────────────
+
+/// Receive the next chunk from a body channel, aborting immediately if
+/// `cancel` is notified.
+///
+/// Returns `None` on EOF (sender dropped) or on cancellation.  Both call
+/// sites — [`BodyReader::next_chunk`] and [`HandleStore::next_chunk`] — share
+/// this helper so the cancellation semantics are defined and tested in one place.
+async fn recv_with_cancel(
+    rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Bytes>>>,
+    cancel: Arc<tokio::sync::Notify>,
+) -> Option<Bytes> {
+    tokio::select! {
+        biased;
+        _ = cancel.notified() => None,
+        chunk = async { rx.lock().await.recv().await } => chunk,
+    }
+}
+
 impl BodyReader {
     /// Receive the next chunk.  Returns `None` when the writer is gone (EOF)
     /// or when the reader has been cancelled.
     pub async fn next_chunk(&self) -> Option<Bytes> {
-        let cancel = self.cancel.clone();
-        let rx = self.rx.clone();
-        tokio::select! {
-            biased;
-            _ = cancel.notified() => None,
-            chunk = async { rx.lock().await.recv().await } => chunk,
-        }
+        recv_with_cancel(self.rx.clone(), self.cancel.clone()).await
     }
 }
 
@@ -201,6 +214,12 @@ struct PendingReaderEntry {
     created: Instant,
 }
 
+/// Pending trailer receiver tracked with insertion time for TTL sweep.
+struct PendingTrailerRxEntry {
+    rx: TrailerRx,
+    created: Instant,
+}
+
 // ── HandleStore ───────────────────────────────────────────────────────────────
 
 /// Tracks handles inserted during a multi-handle allocation sequence.
@@ -213,6 +232,19 @@ pub(crate) struct InsertGuard<'a> {
 }
 
 /// A handle tracked by [`InsertGuard`] for rollback on drop.
+///
+/// # Intentionally omitted variants
+///
+/// `Session` and `FetchCancel` are not tracked here because their lifecycles
+/// are managed outside of multi-handle allocation sequences:
+/// - Sessions are created and closed by `session_connect` / `session_close`
+///   independently and are never allocated inside a guard.
+/// - Fetch cancel tokens are allocated before a guard is opened and are
+///   always cleaned up by `remove_fetch_token` after the fetch resolves.
+///
+/// If either type is ever added to a guard-guarded allocation path in the
+/// future, add `Session(u64)` or `FetchCancel(u64)` variants here with the
+/// corresponding rollback arms in [`InsertGuard::drop`].
 enum TrackedHandle {
     Reader(u64),
     Writer(u64),
@@ -317,8 +349,9 @@ pub struct HandleStore {
     fetch_cancels: Mutex<SlotMap<FetchCancelKey, Timed<Arc<tokio::sync::Notify>>>>,
     pending_readers: Mutex<HashMap<u64, PendingReaderEntry>>,
     /// Pending trailer receivers matched to allocated sender handles.
-    /// Keyed by the tx handle; claimed by `fetch()` before the request is sent.
-    pending_trailer_rxs: Mutex<HashMap<u64, TrailerRx>>,
+    /// Keyed by the tx handle; claimed by `fetch()` via
+    /// [`claim_pending_trailer_rx`](Self::claim_pending_trailer_rx).
+    pending_trailer_rxs: Mutex<HashMap<u64, PendingTrailerRxEntry>>,
     pub(crate) config: StoreConfig,
 }
 
@@ -459,11 +492,7 @@ impl HandleStore {
             (entry.value.rx.clone(), entry.value.cancel.clone())
         };
 
-        let chunk = tokio::select! {
-            biased;
-            _ = cancel.notified() => None,
-            chunk = async { rx_arc.lock().await.recv().await } => chunk,
-        };
+        let chunk = recv_with_cancel(rx_arc, cancel).await;
 
         // Clean up on EOF so the slot is released promptly.
         if chunk.is_none() {
@@ -565,7 +594,7 @@ impl HandleStore {
         self.pending_trailer_rxs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(handle, rx);
+            .insert(handle, PendingTrailerRxEntry { rx, created: Instant::now() });
         Ok(handle)
     }
 
@@ -578,6 +607,7 @@ impl HandleStore {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&sender_handle)
+            .map(|e| e.rx)
     }
 
     /// Deliver trailers from the JS side to the waiting Rust pump task.
@@ -713,24 +743,21 @@ impl HandleStore {
         Self::sweep_registry(&self.sessions, ttl);
         Self::sweep_registry(&self.fetch_cancels, ttl);
         self.sweep_pending_readers(ttl);
+        self.sweep_pending_trailer_rxs(ttl);
     }
 
     fn sweep_registry<K: slotmap::Key, T>(registry: &Mutex<SlotMap<K, Timed<T>>>, ttl: Duration) {
-        // Phase 1: collect expired keys under a brief read lock.
-        let expired: Vec<K> = {
-            let reg = registry.lock().unwrap_or_else(|e| e.into_inner());
-            reg.iter()
-                .filter(|(_, e)| e.is_expired(ttl))
-                .map(|(k, _)| k)
-                .collect()
-        };
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let expired: Vec<K> = reg
+            .iter()
+            .filter(|(_, e)| e.is_expired(ttl))
+            .map(|(k, _)| k)
+            .collect();
 
         if expired.is_empty() {
             return;
         }
 
-        // Phase 2: remove expired entries. Lock is held only for removals.
-        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
         for key in &expired {
             reg.remove(*key);
         }
@@ -754,6 +781,21 @@ impl HandleStore {
         let removed = before - map.len();
         if removed > 0 {
             tracing::debug!("[iroh-http] swept {removed} stale pending readers (ttl={ttl:?})");
+        }
+    }
+
+    fn sweep_pending_trailer_rxs(&self, ttl: Duration) {
+        let mut map = self
+            .pending_trailer_rxs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let before = map.len();
+        map.retain(|_, e| e.created.elapsed() < ttl);
+        let removed = before - map.len();
+        if removed > 0 {
+            tracing::debug!(
+                "[iroh-http] swept {removed} stale pending trailer receivers (ttl={ttl:?})"
+            );
         }
     }
 }
@@ -955,5 +997,39 @@ mod tests {
         store.insert_reader(r2).unwrap();
         let err = store.insert_reader(r3).unwrap_err();
         assert!(err.message.contains("capacity"));
+    }
+
+    // ── #82 regression: pending_trailer_rxs TTL sweep ──────────────────
+
+    #[test]
+    fn sweep_removes_unclaimed_trailer_receivers() {
+        let store = test_store();
+        // Allocate a sender (which stores the rx in pending_trailer_rxs).
+        let _handle = store.alloc_trailer_sender().unwrap();
+        // Confirm an entry is present.
+        assert_eq!(
+            store.pending_trailer_rxs.lock().unwrap().len(),
+            1
+        );
+        // Sweep with zero TTL — every entry is immediately expired.
+        store.sweep(Duration::ZERO);
+        assert_eq!(
+            store.pending_trailer_rxs.lock().unwrap().len(),
+            0,
+            "sweep() must remove unclaimed pending trailer receivers"
+        );
+    }
+
+    // ── #84 regression: recv_with_cancel cancellation ──────────────────
+
+    #[tokio::test]
+    async fn recv_with_cancel_returns_none_on_cancel() {
+        let (_tx, rx) = mpsc::channel::<Bytes>(4);
+        let rx = Arc::new(tokio::sync::Mutex::new(rx));
+        let cancel = Arc::new(tokio::sync::Notify::new());
+        // Notify before polling — biased select must return None immediately.
+        cancel.notify_one();
+        let result = recv_with_cancel(rx, cancel).await;
+        assert!(result.is_none());
     }
 }
