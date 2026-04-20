@@ -69,7 +69,10 @@ pub async fn fetch(
     {
         let lower = url.to_ascii_lowercase();
         if lower.starts_with("https://") || lower.starts_with("http://") {
-            let scheme_end = lower.find("://").map(|i| i + 3).unwrap_or(lower.len());
+            let scheme_end = lower
+                .find("://")
+                .map(|i| i.saturating_add(3))
+                .unwrap_or(lower.len());
             return Err(CoreError::invalid_input(format!(
                 "iroh-http URLs must use the \"httpi://\" scheme, not \"{}\". \
                  Example: httpi://nodeId/path",
@@ -257,9 +260,13 @@ async fn do_fetch(
     let header_bytes: usize = resp
         .headers()
         .iter()
-        .map(|(k, v)| k.as_str().len() + 2 + v.as_bytes().len() + 2) // "name: value\r\n"
-        .sum::<usize>()
-        + 16; // approximate status line
+        .map(|(k, v)| {
+            k.as_str()
+                .len()
+                .saturating_add(v.as_bytes().len())
+                .saturating_add(4) // "name: value\r\n"
+        })
+        .fold(16usize, |acc, x| acc.saturating_add(x)); // approximate status line
     if header_bytes > max_header_size {
         return Err(CoreError::header_too_large(format!(
             "response header size {header_bytes} exceeds limit {max_header_size}"
@@ -357,7 +364,7 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
             Ok(frame) => {
                 if frame.is_data() {
                     let data = frame.into_data().expect("is_data checked above");
-                    total += data.len();
+                    total = total.saturating_add(data.len());
                     if let Some(limit) = max_bytes {
                         if total > limit {
                             tracing::warn!("iroh-http: request body exceeded {limit} bytes");
@@ -457,7 +464,7 @@ pub(crate) fn body_from_reader(
 
 pub(crate) fn extract_path(url: &str) -> String {
     let raw = if let Some(idx) = url.find("://") {
-        let after_scheme = &url[idx + 3..];
+        let after_scheme = url.get(idx.saturating_add(3)..).unwrap_or("");
         if let Some(slash) = after_scheme.find('/') {
             after_scheme[slash..].to_string()
         } else if let Some(q) = after_scheme.find('?') {
@@ -539,7 +546,7 @@ pub async fn raw_connect(
     // Build CONNECT request with Upgrade: iroh-duplex.
     // ISS-015: include Connection: upgrade for strict handshake compliance.
     let mut req_builder = hyper::Request::builder()
-        .method(Method::from_bytes(b"CONNECT").unwrap())
+        .method(Method::from_bytes(b"CONNECT").expect("CONNECT is a valid HTTP method"))
         .uri(path)
         .header(hyper::header::CONNECTION, "upgrade")
         .header(hyper::header::UPGRADE, "iroh-duplex");

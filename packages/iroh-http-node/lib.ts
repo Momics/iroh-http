@@ -413,10 +413,10 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
       napiSessionMaxDatagramSize(eh, sessionHandle) ?? null,
     closed: async (sessionHandle: bigint) => {
       const info = await napiSessionClosed(eh, sessionHandle);
-      return { closeCode: info.closeCode, reason: info.reason };
+      return { closeCode: Number(info.closeCode), reason: info.reason };
     },
     close: async (sessionHandle: bigint, closeCode?: number, reason?: string) =>
-      napiSessionClose(eh, sessionHandle, closeCode, reason),
+      napiSessionClose(eh, sessionHandle, closeCode !== undefined ? BigInt(closeCode) : undefined, reason),
   };
 
   return buildNode({

@@ -122,7 +122,11 @@ pub extern "C" fn iroh_http_call(
     // ── Cached-response retrieval (overflow retry path) ───────────────────
     if method == "__cached" {
         if payload_len >= 8 {
-            let token = u64::from_le_bytes(payload[0..8].try_into().unwrap());
+            let token = u64::from_le_bytes(
+                payload[0..8]
+                    .try_into()
+                    .expect("payload_len >= 8 already checked"),
+            );
             if let Some(entry) = overflow_cache()
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -144,7 +148,9 @@ pub extern "C" fn iroh_http_call(
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert(token, entry);
-                return -(len as i32);
+                return i32::try_from(len)
+                    .map(|n| 0i32.wrapping_sub(n))
+                    .unwrap_or(i32::MIN);
             }
         }
         return -1;
@@ -154,7 +160,8 @@ pub extern "C" fn iroh_http_call(
     let response = runtime().block_on(dispatch::dispatch(method, payload));
 
     let encoded = serde_json::to_vec(&response).unwrap_or_else(|e| {
-        serde_json::to_vec(&serde_json::json!({ "err": e.to_string() })).unwrap()
+        serde_json::to_vec(&serde_json::json!({ "err": e.to_string() }))
+            .expect("static error JSON is always valid")
     });
 
     let len = encoded.len();
@@ -178,7 +185,9 @@ pub extern "C" fn iroh_http_call(
                 created: std::time::Instant::now(),
             },
         );
-        return -(len as i32);
+        return i32::try_from(len)
+            .map(|n| 0i32.wrapping_sub(n))
+            .unwrap_or(i32::MIN);
     }
     // SAFETY: `out_ptr` is non-null (checked above) and `out_cap >= len`.
     unsafe {
@@ -225,7 +234,9 @@ pub unsafe extern "C" fn iroh_http_next_chunk(
         Ok(Some(b)) => {
             let len = b.len();
             if len > out_cap {
-                return -(len as i32);
+                return i32::try_from(len)
+                    .map(|n| 0i32.wrapping_sub(n))
+                    .unwrap_or(i32::MIN);
             }
             // SAFETY: caller guarantees out_ptr is valid for out_cap bytes,
             // and we have verified len <= out_cap.

@@ -401,28 +401,32 @@ impl HandleStore {
             .unwrap_or_else(|e| e.into_inner())
             .len();
         let total = readers
-            + writers
-            + sessions
-            + self
-                .trailer_tx
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .len()
-            + self
-                .trailer_rx
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .len()
-            + self
-                .request_heads
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .len()
-            + self
-                .fetch_cancels
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .len();
+            .saturating_add(writers)
+            .saturating_add(sessions)
+            .saturating_add(
+                self.trailer_tx
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .len(),
+            )
+            .saturating_add(
+                self.trailer_rx
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .len(),
+            )
+            .saturating_add(
+                self.request_heads
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .len(),
+            )
+            .saturating_add(
+                self.fetch_cancels
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .len(),
+            );
         (readers, writers, sessions, total)
     }
 
@@ -548,7 +552,7 @@ impl HandleStore {
             // Split into max-size pieces.
             let mut offset = 0;
             while offset < chunk.len() {
-                let end = (offset + max).min(chunk.len());
+                let end = offset.saturating_add(max).min(chunk.len());
                 tokio::time::timeout(timeout, tx.send(chunk.slice(offset..end)))
                     .await
                     .map_err(|_| CoreError::timeout("drain timeout: body reader is too slow"))?
@@ -804,7 +808,7 @@ impl HandleStore {
             .unwrap_or_else(|e| e.into_inner());
         let before = map.len();
         map.retain(|_, e| e.created.elapsed() < ttl);
-        let removed = before - map.len();
+        let removed = before.saturating_sub(map.len());
         if removed > 0 {
             tracing::debug!("[iroh-http] swept {removed} stale pending readers (ttl={ttl:?})");
         }
@@ -817,7 +821,7 @@ impl HandleStore {
             .unwrap_or_else(|e| e.into_inner());
         let before = map.len();
         map.retain(|_, e| e.created.elapsed() < ttl);
-        let removed = before - map.len();
+        let removed = before.saturating_sub(map.len());
         if removed > 0 {
             tracing::debug!(
                 "[iroh-http] swept {removed} stale pending trailer receivers (ttl={ttl:?})"

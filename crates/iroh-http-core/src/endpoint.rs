@@ -74,7 +74,7 @@ pub struct StreamingOptions {
 }
 
 /// Configuration passed to [`IrohEndpoint::bind`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NodeOptions {
     /// 32-byte Ed25519 secret key. Generate a fresh one when `None`.
     pub key: Option<[u8; 32]>,
@@ -96,24 +96,6 @@ pub struct NodeOptions {
     pub server_limits: crate::server::ServerLimits,
     #[cfg(feature = "compression")]
     pub compression: Option<CompressionOptions>,
-}
-
-impl Default for NodeOptions {
-    fn default() -> Self {
-        Self {
-            key: None,
-            networking: NetworkingOptions::default(),
-            discovery: DiscoveryOptions::default(),
-            pool: PoolOptions::default(),
-            streaming: StreamingOptions::default(),
-            capabilities: Vec::new(),
-            keylog: false,
-            max_header_size: None,
-            server_limits: crate::server::ServerLimits::default(),
-            #[cfg(feature = "compression")]
-            compression: None,
-        }
-    }
 }
 
 /// Compression options for response bodies.
@@ -180,7 +162,7 @@ impl IrohEndpoint {
                 .networking
                 .relay_mode
                 .as_deref()
-                .map_or(false, |m| !matches!(m, "disabled"))
+                .is_some_and(|m| !matches!(m, "disabled"))
         {
             return Err(crate::CoreError::invalid_input(
                 "networking.disabled is true but relay_mode is set to a non-disabled value; \

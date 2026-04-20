@@ -153,7 +153,7 @@ impl PeerConnectionGuard {
             return None;
         }
         let was_zero = *count == 0;
-        *count += 1;
+        *count = count.saturating_add(1);
         let guard = PeerConnectionGuard {
             counts: counts.clone(),
             peer,
@@ -259,19 +259,24 @@ impl RequestService {
                 .headers()
                 .iter()
                 .filter(|(k, _)| !k.as_str().eq_ignore_ascii_case("peer-id"))
-                .map(|(k, v)| k.as_str().len() + v.as_bytes().len() + 4) // ": " + "\r\n"
-                .sum::<usize>()
-                + "peer-id".len()
-                + remote_node_id.len()
-                + 4
-                + req.uri().to_string().len()
-                + method.len()
-                + 12; // "HTTP/1.1 \r\n\r\n" overhead
+                .map(|(k, v)| {
+                    k.as_str()
+                        .len()
+                        .saturating_add(v.as_bytes().len())
+                        .saturating_add(4)
+                }) // ": " + "\r\n"
+                .fold(0usize, |acc, x| acc.saturating_add(x))
+                .saturating_add("peer-id".len())
+                .saturating_add(remote_node_id.len())
+                .saturating_add(4)
+                .saturating_add(req.uri().to_string().len())
+                .saturating_add(method.len())
+                .saturating_add(12); // "HTTP/1.1 \r\n\r\n" overhead
             if header_bytes > limit {
                 let resp = hyper::Response::builder()
                     .status(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE)
                     .body(crate::box_body(http_body_util::Empty::new()))
-                    .unwrap();
+                    .expect("static response args are valid");
                 return Ok(resp);
             }
         }
@@ -290,7 +295,7 @@ impl RequestService {
                         .body(crate::box_body(http_body_util::Full::new(
                             Bytes::from_static(b"non-UTF8 header value"),
                         )))
-                        .unwrap();
+                        .expect("static response args are valid");
                     return Ok(resp);
                 }
             }
@@ -318,7 +323,7 @@ impl RequestService {
                     .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(
                         b"duplex upgrade requires CONNECT method with Connection: upgrade header",
                     ))))
-                    .unwrap();
+                    .expect("static response args are valid");
                 return Ok(resp);
             }
             true
@@ -515,7 +520,7 @@ impl RequestService {
                 .header(hyper::header::CONNECTION, "Upgrade")
                 .header(hyper::header::UPGRADE, "iroh-duplex")
                 .body(crate::box_body(http_body_util::Empty::new()))
-                .unwrap();
+                .expect("static response args are valid");
             return Ok(resp);
         }
 
@@ -693,7 +698,7 @@ where
                     c
                 }
                 Err(e) => {
-                    consecutive_errors += 1;
+                    consecutive_errors = consecutive_errors.saturating_add(1);
                     tracing::warn!(
                         "iroh-http: accept error ({consecutive_errors}/{max_errors}): {e}"
                     );
@@ -976,7 +981,9 @@ where
         // Loop avoids the race between `in_flight == 0` check and `notified()`:
         // if the last request finishes between the load and the await, the loop
         // re-checks immediately after the timeout wakes it.
-        let deadline = tokio::time::Instant::now() + drain_dur;
+        let deadline = tokio::time::Instant::now()
+            .checked_add(drain_dur)
+            .expect("drain duration overflow");
         loop {
             if in_flight_drain.load(Ordering::Acquire) == 0 {
                 tracing::info!("iroh-http: all in-flight requests drained");

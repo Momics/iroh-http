@@ -1031,7 +1031,7 @@ async fn mdns_browse_dispatch(p: Value) -> Value {
             Ok(session) => {
                 let h = browse_slab()
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .insert(Arc::new(TokioMutex::new(session))) as u32;
                 ok(json!(h))
             }
@@ -1048,7 +1048,12 @@ async fn mdns_next_event_dispatch(p: Value) -> Value {
     };
     #[cfg(feature = "discovery")]
     {
-        let session = match browse_slab().lock().unwrap().get(handle as usize).cloned() {
+        let session = match browse_slab()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle as usize)
+            .cloned()
+        {
             Some(s) => s,
             None => return err(format!("invalid browse handle: {handle}")),
         };
@@ -1073,7 +1078,7 @@ fn mdns_browse_close_dispatch(p: Value) -> Value {
     };
     #[cfg(feature = "discovery")]
     {
-        let mut slab = browse_slab().lock().unwrap();
+        let mut slab = browse_slab().lock().unwrap_or_else(|e| e.into_inner());
         if slab.contains(handle as usize) {
             slab.remove(handle as usize);
         }
@@ -1104,7 +1109,10 @@ fn mdns_advertise_dispatch(p: Value) -> Value {
         match iroh_http_discovery::start_advertise(ep.raw(), service_name) {
             Err(e) => err_code("REFUSED", e),
             Ok(session) => {
-                let h = advertise_slab().lock().unwrap().insert(session) as u32;
+                let h = advertise_slab()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(session) as u32;
                 ok(json!(h))
             }
         }
@@ -1120,7 +1128,7 @@ fn mdns_advertise_close_dispatch(p: Value) -> Value {
     };
     #[cfg(feature = "discovery")]
     {
-        let mut slab = advertise_slab().lock().unwrap();
+        let mut slab = advertise_slab().lock().unwrap_or_else(|e| e.into_inner());
         if slab.contains(handle as usize) {
             slab.remove(handle as usize);
         }

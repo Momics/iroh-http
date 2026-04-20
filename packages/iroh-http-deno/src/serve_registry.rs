@@ -58,14 +58,18 @@ pub fn register(endpoint_handle: u32) -> std::sync::Arc<ServeQueue> {
     });
     registry()
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .insert(endpoint_handle, std::sync::Arc::clone(&queue));
     queue
 }
 
 /// Retrieve the queue for an endpoint (used by `nextRequest` / `nextConnectionEvent`).
 pub fn get(endpoint_handle: u32) -> Option<std::sync::Arc<ServeQueue>> {
-    registry().lock().unwrap().get(&endpoint_handle).cloned()
+    registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&endpoint_handle)
+        .cloned()
 }
 
 /// Signal shutdown to all pending `nextRequest` callers, then remove the queue.
@@ -74,7 +78,11 @@ pub fn get(endpoint_handle: u32) -> Option<std::sync::Arc<ServeQueue>> {
 /// blocked `recv()` in `nextRequest`, and any future callers will also observe
 /// the shutdown state immediately (watch persists its last value).
 pub fn remove(endpoint_handle: u32) {
-    if let Some(queue) = registry().lock().unwrap().remove(&endpoint_handle) {
+    if let Some(queue) = registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&endpoint_handle)
+    {
         // Trigger shutdown — this unblocks all pending nextRequest recv() calls.
         let _ = queue.shutdown_tx.send(true);
     }
