@@ -1,4 +1,4 @@
-import { baseline, bench, group, run } from "mitata";
+import { bench, group, run } from "mitata";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { createNode } from "../../packages/iroh-http-node/lib.js";
@@ -34,7 +34,7 @@ try {
   await client.fetch(serverId, "httpi://bench.local/latency", { directAddrs: serverAddrs });
 
   group("latency", () => {
-    baseline("tcp 1KB-ish", async () => {
+    bench("tcp 1KB-ish", async () => {
       const res = await fetch(`${tcp.baseUrl}/latency`);
       await res.arrayBuffer();
     });

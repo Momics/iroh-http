@@ -1,4 +1,4 @@
-import { baseline, bench, group, run } from "mitata";
+import { bench, group, run } from "mitata";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { createNode } from "../../packages/iroh-http-node/lib.js";
@@ -44,7 +44,7 @@ try {
 
   group("throughput", () => {
     for (const size of SIZES) {
-      baseline(`tcp ${size}B`, async () => {
+      bench(`tcp ${size}B`, async () => {
         const res = await fetch(`${tcp.baseUrl}/data?size=${size}`);
         await res.arrayBuffer();
       });

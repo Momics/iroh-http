@@ -84,6 +84,7 @@ fn bench_fetch_get_latency(c: &mut Criterion) {
         (server_ep, client_ep, id, a)
     });
 
+    let _guard = rt.enter();
     start_echo_server(server_ep);
 
     c.bench_function("fetch_get_latency", |b| {
@@ -123,6 +124,7 @@ fn bench_post_body_throughput(c: &mut Criterion) {
         (server_ep, client_ep, id, a)
     });
 
+    let _guard = rt.enter();
     start_echo_server(server_ep);
 
     let mut group = c.benchmark_group("post_body_throughput_bytes");
@@ -188,6 +190,7 @@ fn bench_response_body_streaming(c: &mut Criterion) {
     });
 
     // Server sends a fixed-size response body
+    let _guard = rt.enter();
     let sep = server_ep.clone();
     serve(
         server_ep,
