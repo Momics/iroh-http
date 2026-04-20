@@ -31,10 +31,16 @@
   "dependencies": {
     "@momics/iroh-http-shared": "^0.1.0"
   },
+  "optionalDependencies": {
+    "@momics/iroh-http-node-darwin-arm64": "0.1.3",
+    "@momics/iroh-http-node-darwin-x64": "0.1.3",
+    "@momics/iroh-http-node-linux-x64-gnu": "0.1.3",
+    "@momics/iroh-http-node-linux-arm64-gnu": "0.1.3",
+    "@momics/iroh-http-node-win32-x64-msvc": "0.1.3"
+  },
   "files": [
     "*.js",
-    "*.d.ts",
-    "*.node"
+    "*.d.ts"
   ],
   "publishConfig": {
     "access": "public"

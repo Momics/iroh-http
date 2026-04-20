@@ -186,8 +186,10 @@ jobs:
 
   # ── 5. Publish Node.js packages ───────────────────────────────────────────────
   # Uses npm Trusted Publishers (OIDC) — no NPM_TOKEN needed.
-  # One-time setup: npmjs.com → each package → Settings → Trusted Publishers
+  # One-time setup per package: npmjs.com → package Settings → Trusted Publishers
   # → add this workflow (Momics/iroh-http, release.yml).
+  # Required for: iroh-http-shared, iroh-http-node, iroh-http-tauri,
+  # and all 5 iroh-http-node-* platform packages.
 
   publish-node:
     name: Publish npm (shared + node + tauri)
@@ -209,6 +211,23 @@ jobs:
           pattern: node-native-*
           path: packages/iroh-http-node/
           merge-multiple: true
+
+      - name: Copy binaries into platform package dirs and publish
+        run: |
+          declare -A PLATFORMS=(
+            ["index.darwin-arm64.node"]="darwin-arm64"
+            ["index.darwin-x64.node"]="darwin-x64"
+            ["index.linux-x64-gnu.node"]="linux-x64-gnu"
+            ["index.linux-arm64-gnu.node"]="linux-arm64-gnu"
+            ["index.win32-x64-msvc.node"]="win32-x64-msvc"
+          )
+          for src in "${!PLATFORMS[@]}"; do
+            plat="${PLATFORMS[$src]}"
+            pkg_dir="packages/iroh-http-node/npm/$plat"
+            dest="$pkg_dir/iroh-http-node.$plat.node"
+            cp "packages/iroh-http-node/$src" "$dest"
+            npm publish "$pkg_dir" --access public --provenance
+          done
 
       - name: Build TypeScript
         run: |

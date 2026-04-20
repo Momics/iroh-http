@@ -72,6 +72,28 @@ for f in "${JSON_FILES[@]}"; do
   echo "  ✓ $f"
 done
 
+# ── platform package.json files (iroh-http-node npm/ split) ──────────────────
+PLATFORM_DIRS=(
+  packages/iroh-http-node/npm/darwin-arm64
+  packages/iroh-http-node/npm/darwin-x64
+  packages/iroh-http-node/npm/linux-x64-gnu
+  packages/iroh-http-node/npm/linux-arm64-gnu
+  packages/iroh-http-node/npm/win32-x64-msvc
+)
+
+for dir in "${PLATFORM_DIRS[@]}"; do
+  filepath="$ROOT/$dir/package.json"
+  if [[ ! -f "$filepath" ]]; then
+    echo "  SKIP (not found): $dir/package.json"
+    continue
+  fi
+  sed -i '' "s/\"version\": \"$OLD\"/\"version\": \"$NEW\"/" "$filepath"
+  # Update pinned optionalDependency version in the main node package.json
+  pkg=$(basename "$dir")
+  sed -i '' "s/\"@momics\/iroh-http-node-$pkg\": \"$OLD\"/\"@momics\/iroh-http-node-$pkg\": \"$NEW\"/" "$ROOT/packages/iroh-http-node/package.json"
+  echo "  ✓ $dir/package.json"
+done
+
 # ── deno.jsonc ────────────────────────────────────────────────────────────────
 DENO_JSON="$ROOT/packages/iroh-http-deno/deno.jsonc"
 if [[ -f "$DENO_JSON" ]]; then

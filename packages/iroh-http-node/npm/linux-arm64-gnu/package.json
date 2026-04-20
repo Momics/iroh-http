@@ -1,0 +1,12 @@
+{
+  "name": "@momics/iroh-http-node-linux-arm64-gnu",
+  "version": "0.1.3",
+  "description": "iroh-http Node.js native addon — Linux ARM64 (glibc)",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "main": "iroh-http-node.linux-arm64-gnu.node",
+  "files": ["iroh-http-node.linux-arm64-gnu.node"],
+  "license": "(MIT OR Apache-2.0)",
+  "publishConfig": { "access": "public" },
+  "repository": { "type": "git", "url": "git+https://github.com/Momics/iroh-http.git" }
+}

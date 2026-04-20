@@ -5,12 +5,14 @@ on:
     branches: [main]
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
-    paths:
-      - 'crates/**'
-      - 'packages/**'
-      - 'bench/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/skills/**'
+      - '.vscode/**'
+      - 'CHANGELOG.md'
+      - 'LICENSE*'
   workflow_dispatch:
 
 concurrency:
