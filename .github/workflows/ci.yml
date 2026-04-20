@@ -3,8 +3,28 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/skills/**'
+      - '.vscode/**'
+      - 'CHANGELOG.md'
+      - 'CONTRIBUTING.md'
+      - 'SECURITY.md'
+      - 'LICENSE*'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/skills/**'
+      - '.vscode/**'
+      - 'CHANGELOG.md'
+      - 'CONTRIBUTING.md'
+      - 'SECURITY.md'
+      - 'LICENSE*'
   workflow_dispatch:
 
 permissions:
