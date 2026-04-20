@@ -153,4 +153,4 @@ identity, or when you want to issue access to a peer you haven't met yet.
 
 ## Dependencies
 
-Requires [sign/verify helpers](../features/sign-verify.md) (Patch 25).
+Requires [sign/verify helpers](../features/sign-verify.md).

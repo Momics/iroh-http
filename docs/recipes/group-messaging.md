@@ -112,8 +112,8 @@ sequencer: send to it, and clients fetch from it in order.
 ## Notes
 
 - Membership is managed out-of-band here. A more complete system
-  (`iroh-http-group`) would solve bootstrapping, membership updates, and
-  persistence. See [group-messaging feature](../features/packages/group-messaging.md).
+  would solve bootstrapping, membership updates, and persistence —
+  this is a planned future feature.
 - Because iroh authenticates every connection, you know exactly who `from` is.
   No spoofing.
 - For high fan-out (hundreds of peers), batch with `Promise.all` in chunks to

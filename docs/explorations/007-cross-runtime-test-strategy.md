@@ -35,14 +35,18 @@ itself.
 
 ## What we know
 
-- The build-and-test docs describe per-crate Rust tests and per-package
-  adapter tests, but no cross-runtime compliance harness is documented.
+- A shared compliance harness now exists at `tests/http-compliance/`: a JSON
+  corpus of 40 cases and TypeScript runners for Node and Deno, exercised in CI
+  on every PR (`ci.yml` e2e job: `bash tests/http-compliance/run.sh`).
+- Per-adapter compliance tests also exist: `packages/iroh-http-node/test/compliance.mjs`
+  and `packages/iroh-http-deno/test/compliance.ts`, both now in CI.
 - Iroh requires a real QUIC transport for meaningful integration tests; testing
   over a mock transport risks missing real connectivity bugs.
 - The Web Platform Tests (WPT) project provides a precedent: a shared test
   corpus run against multiple browser engines to verify spec compliance.
-- Tauri presents the hardest testing challenge because it requires a running
-  Tauri application context.
+- **Remaining gap:** Tauri and Python adapters are not covered by the current
+  harness. Tauri presents the hardest testing challenge because it requires a
+  running Tauri application context.
 
 ## Options considered
 
@@ -64,9 +68,11 @@ itself.
 
 ## Next steps
 
-- [ ] Enumerate the HTTP behaviours that must be consistent across runtimes
+- [x] Enumerate the HTTP behaviours that must be consistent across runtimes
   (status codes, streaming, headers, errors, timeouts).
-- [ ] Design a minimal shared test fixture format that all four adapters can
+- [x] Design a minimal shared test fixture format that all four adapters can
   consume.
-- [ ] Prototype a two-node Iroh integration test that runs the same scenario
+- [x] Prototype a two-node Iroh integration test that runs the same scenario
   in Node and Deno.
+- [ ] Extend the harness to cover the Tauri adapter (requires running Tauri app context).
+- [ ] Extend the harness to cover the Python adapter once it ships.

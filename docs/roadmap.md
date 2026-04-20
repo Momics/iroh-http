@@ -72,7 +72,7 @@ Tracked in [#43 — Automate release pipeline](https://github.com/Momics/iroh-ht
 
 1. [ ] Fix Node.js napi-rs platform package split
 2. [ ] Add `CHANGELOG.md` (via `git-cliff` or equivalent)
-3. [ ] Add `SECURITY.md`
+3. [x] Add `SECURITY.md`
 4. [ ] Re-enable CI workflows (`push: [main]`, `pull_request: [main]`)
 5. [ ] Move release flow from `scripts/release.sh` to GitHub Actions
        (`release.yml` triggered by `v*` tags)
