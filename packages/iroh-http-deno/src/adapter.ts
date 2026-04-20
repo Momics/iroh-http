@@ -649,9 +649,16 @@ export const denoDiscoveryFns: DiscoveryFunctions = {
 };
 
 // ── Session functions ─────────────────────────────────────────────────────────
+//
+// Every session dispatch handler in dispatch.rs requires `endpointHandle` to
+// look up the IrohEndpoint from the global registry.  The `RawSessionFns`
+// interface passes `endpointHandle` as a parameter only for `connect`; all
+// other methods only receive the session handle.  We therefore use a factory
+// that closes over the endpoint handle so every call can include it.
 
-export const denoSessionFns: RawSessionFns = {
-  connect: async (endpointHandle, nodeId, directAddrs) => {
+export function makeDenoSessionFns(endpointHandle: number): RawSessionFns {
+  return {
+  connect: async (_endpointHandle, nodeId, directAddrs) => {
     const res = await call<{ sessionHandle: number }>("sessionConnect", {
       endpointHandle,
       nodeId,
@@ -662,7 +669,7 @@ export const denoSessionFns: RawSessionFns = {
   createBidiStream: async (sessionHandle) => {
     const res = await call<{ readHandle: number; writeHandle: number }>(
       "sessionCreateBidiStream",
-      { sessionHandle },
+      { endpointHandle, sessionHandle },
     );
     return {
       readHandle: BigInt(res.readHandle),
@@ -672,7 +679,7 @@ export const denoSessionFns: RawSessionFns = {
   nextBidiStream: async (sessionHandle) => {
     const res = await call<{ readHandle: number; writeHandle: number } | null>(
       "sessionNextBidiStream",
-      { sessionHandle },
+      { endpointHandle, sessionHandle },
     );
     return res
       ? ({
@@ -683,49 +690,50 @@ export const denoSessionFns: RawSessionFns = {
   },
   createUniStream: async (sessionHandle) => {
     const res = await call<{ writeHandle: number }>("sessionCreateUniStream", {
-      sessionHandle,
+      endpointHandle, sessionHandle,
     });
     return BigInt(res.writeHandle);
   },
   nextUniStream: async (sessionHandle) => {
     const res = await call<{ readHandle: number } | null>(
       "sessionNextUniStream",
-      { sessionHandle },
+      { endpointHandle, sessionHandle },
     );
     return res ? BigInt(res.readHandle) : null;
   },
   sendDatagram: async (sessionHandle, data) => {
     await call<Record<never, never>>("sessionSendDatagram", {
-      sessionHandle,
+      endpointHandle, sessionHandle,
       data: encodeBase64(data),
     });
   },
   recvDatagram: async (sessionHandle) => {
     const res = await call<{ data: string } | null>("sessionRecvDatagram", {
-      sessionHandle,
+      endpointHandle, sessionHandle,
     });
     return res ? decodeBase64(res.data) : null;
   },
   maxDatagramSize: async (sessionHandle) => {
     const res = await call<{ maxDatagramSize: number | null }>(
       "sessionMaxDatagramSize",
-      { sessionHandle },
+      { endpointHandle, sessionHandle },
     );
     return res.maxDatagramSize;
   },
   closed: async (sessionHandle) => {
     return call<{ closeCode: number; reason: string }>("sessionClosed", {
-      sessionHandle,
+      endpointHandle, sessionHandle,
     });
   },
   close: async (sessionHandle, closeCode?, reason?) => {
     await call<Record<never, never>>("sessionClose", {
-      sessionHandle,
+      endpointHandle, sessionHandle,
       closeCode,
       reason,
     });
   },
-};
+  };
+}
 
 // ── Cryptography ───────────────────────────────────────────────────────────────
 

@@ -24,7 +24,7 @@ import {
   createEndpointInfo,
   denoAddrFns,
   denoDiscoveryFns,
-  denoSessionFns,
+  makeDenoSessionFns,
   generateSecretKey,
   publicKeyVerify,
   rawConnect,
@@ -56,7 +56,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     nativeClosed: waitEndpointClosed(info.endpointHandle),
     addrFns: denoAddrFns,
     discoveryFns: denoDiscoveryFns,
-    sessionFns: denoSessionFns,
+    sessionFns: makeDenoSessionFns(info.endpointHandle),
   });
 }
 
