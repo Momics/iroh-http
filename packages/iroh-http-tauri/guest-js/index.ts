@@ -80,24 +80,6 @@ const bridge: Bridge = {
   cancelFetch(token: bigint): void {
     void invoke(`${PLUGIN}|cancel_in_flight`, { token: Number(token) });
   },
-
-  async nextTrailer(handle: bigint): Promise<[string, string][] | null> {
-    const rows = await invoke<string[][] | null>(`${PLUGIN}|next_trailer`, {
-      handle: Number(handle),
-    });
-    return rows ? (rows as [string, string][]) : null;
-  },
-
-  sendTrailers(handle: bigint, trailers: [string, string][]): Promise<void> {
-    return invoke(`${PLUGIN}|send_trailers`, {
-      handle: Number(handle),
-      trailers,
-    });
-  },
-
-  allocTrailerSender(_endpointHandle: number): Promise<bigint> {
-    return invoke<number>(`${PLUGIN}|alloc_trailer_sender`).then(BigInt);
-  },
 };
 
 // ── Platform functions ────────────────────────────────────────────────────────
@@ -109,7 +91,6 @@ const rawFetch: RawFetchFn = async (
   method,
   headers,
   reqBodyHandle,
-  reqTrailersHandle,
   fetchToken,
   directAddrs,
 ) => {
@@ -118,7 +99,6 @@ const rawFetch: RawFetchFn = async (
     headers: string[][];
     bodyHandle: number;
     url: string;
-    trailersHandle: number;
   }>(`${PLUGIN}|raw_fetch`, {
     args: {
       endpointHandle: Number(endpointHandle),
@@ -127,7 +107,6 @@ const rawFetch: RawFetchFn = async (
       method,
       headers,
       reqBodyHandle: reqBodyHandle != null ? Number(reqBodyHandle) : null,
-      reqTrailersHandle: reqTrailersHandle != null ? Number(reqTrailersHandle) : null,
       fetchToken: fetchToken != null ? Number(fetchToken) : null,
       directAddrs: directAddrs ?? null,
     },
@@ -137,7 +116,6 @@ const rawFetch: RawFetchFn = async (
     headers: res.headers as [string, string][],
     bodyHandle: BigInt(res.bodyHandle),
     url: res.url,
-    trailersHandle: BigInt(res.trailersHandle),
   } satisfies FfiResponse;
 };
 
@@ -146,8 +124,6 @@ interface TauriRequestPayload {
   reqHandle: number;
   reqBodyHandle: number;
   resBodyHandle: number;
-  reqTrailersHandle: number;
-  resTrailersHandle: number;
   isBidi: boolean;
   method: string;
   url: string;
@@ -175,8 +151,6 @@ const rawServe: RawServeFn = (
       reqHandle: BigInt(raw.reqHandle),
       reqBodyHandle: BigInt(raw.reqBodyHandle),
       resBodyHandle: BigInt(raw.resBodyHandle),
-      reqTrailersHandle: BigInt(raw.reqTrailersHandle),
-      resTrailersHandle: BigInt(raw.resTrailersHandle),
       isBidi: raw.isBidi,
       method: raw.method,
       url: raw.url,

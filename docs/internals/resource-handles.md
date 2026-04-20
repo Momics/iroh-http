@@ -1,6 +1,6 @@
 # Resource Handles
 
-All runtime resources in iroh-http-core — body streams, trailer channels, fetch cancellation tokens, sessions, and pending request heads — are referenced by opaque `u64` handles at the FFI boundary. This document explains the handle system.
+All runtime resources in iroh-http-core — body streams, fetch cancellation tokens, sessions, and pending request heads — are referenced by opaque `u64` handles at the FFI boundary. This document explains the handle system.
 
 ---
 
@@ -35,8 +35,6 @@ This makes handle invalidation automatic and cheap. There is no additional bookk
 |----------|----------|-------------|-------------------|
 | `ReaderKey` | `BodyReader` (mpsc receiver) | `insert_reader` | `next_chunk` (EOF auto-removes), `cancel_reader` |
 | `WriterKey` | `BodyWriter` (mpsc sender) | `insert_writer` | `finish_body` (drops writer) |
-| `TrailerSenderKey` | `oneshot::Sender<Vec<(String,String)>>` | `insert_trailer_sender` | `send_trailers` (fires and removes) |
-| `TrailerReceiverKey` | `oneshot::Receiver<Vec<(String,String)>>` | `insert_trailer_receiver` | `next_trailer` (awaits and removes) |
 | `FetchCancelKey` | `CancellationToken` | `alloc_fetch_token` | `cancel_in_flight`, `remove_fetch_token` |
 | `SessionKey` | `SessionEntry` (QUIC session state) | `insert_session` | `remove_session` |
 | `RequestHeadKey` | `oneshot::Sender<ResponseHeadEntry>` | `allocate_req_handle` | `take_req_sender` (called by `respond()`) |
@@ -60,8 +58,6 @@ serve loop                       JS handler
    │                                │
    │  insert_reader → req_body_handle ──────────────────► nextChunk(req_body_handle)
    │  insert_writer → res_body_handle ──────────────────► sendChunk(res_body_handle, …)
-   │  insert_trailer_receiver → req_trailers_handle ────► nextTrailer(req_trailers_handle)
-   │  insert_trailer_sender   → res_trailers_handle ────► sendTrailers(res_trailers_handle, …)
    │  allocate_req_handle → req_handle ─────────────────► respond(req_handle, 200, […])
    │                                │
    │  head_rx.await ◄─────── take_req_sender fires ◄────── respond() called
@@ -70,7 +66,7 @@ serve loop                       JS handler
    │  body_from_reader(res_body_reader) ◄── JS called sendChunk / finish_body
 ```
 
-All five handles are created before the JS callback fires, so JS always receives a fully valid set of handles.
+All three handles are created before the JS callback fires, so JS always receives a fully valid set of handles.
 
 ---
 
@@ -125,8 +121,7 @@ and stop referencing the closed node.
 
 If a function returns `Err("invalid handle: N")` it means one of:
 
-1. **Already freed** — the handle was consumed (EOF, `finish_body`, `respond`,
-   `next_trailer`) or cancelled. Check for double calls.
+1. **Already freed** — the handle was consumed (EOF, `finish_body`, `respond`) or cancelled. Check for double calls.
 2. **TTL-expired** — the handle lived past the TTL. Increase `handleTtl` if needed.
 3. **Wrong endpoint** — the handle was issued by a different `IrohEndpoint` instance.
 4. **Endpoint closed** — the node was closed while a request was in flight.

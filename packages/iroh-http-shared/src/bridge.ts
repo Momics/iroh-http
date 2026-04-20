@@ -32,26 +32,6 @@ export interface Bridge {
    * already completed.  Fire-and-forget (do not await).
    */
   cancelFetch(token: bigint): void;
-  // ── §4 Trailer headers ──────────────────────────────────────────────────────
-  /**
-   * Await and retrieve trailers produced after the body is consumed.
-   * Returns `null` when no trailers were sent.
-   */
-  nextTrailer(handle: bigint): Promise<[string, string][] | null>;
-  /**
-   * Deliver trailers from the JS handler to the Rust server task (response),
-   * or from the JS caller to the Rust body encoder (request trailers).
-   * Call after `finishBody`. This must be called exactly once per handle;
-   * calling it resolves the waiting pump task.
-   */
-  sendTrailers(handle: bigint, trailers: [string, string][]): Promise<void>;
-  /**
-   * Allocate a request trailer sender handle.
-   * Call before `rawFetch` when the caller wants to send request trailers.
-   * Pass the returned handle as `reqTrailersHandle` to `rawFetch`, then call
-   * `sendTrailers(handle, trailers)` after `finishBody`.
-   */
-  allocTrailerSender(endpointHandle: number): bigint | Promise<bigint>;
 }
 
 // ── FFI data types ────────────────────────────────────────────────────────────
@@ -86,8 +66,6 @@ export interface FfiResponse extends FfiResponseHead {
   bodyHandle: bigint;
   /** Full `httpi://` URL of the responding peer. */
   url: string;
-  /** Handle to the response trailer receiver (pass to `bridge.nextTrailer`). */
-  trailersHandle: bigint;
 }
 
 /**
@@ -103,10 +81,6 @@ export interface RequestPayload extends FfiRequest {
   reqBodyHandle: bigint;
   /** Body writer handle for the response body. */
   resBodyHandle: bigint;
-  /** Trailer receiver handle — JS calls `bridge.nextTrailer(reqTrailersHandle)` to read request trailers. `0n` in duplex mode. */
-  reqTrailersHandle: bigint;
-  /** Trailer sender handle — JS calls `bridge.sendTrailers(resTrailersHandle, pairs)` to send response trailers. `0n` in duplex mode. */
-  resTrailersHandle: bigint;
   /** True when the client sent `Upgrade: iroh-duplex`. */
   isBidi: boolean;
 }
@@ -384,85 +358,6 @@ export interface NodeOptions {
 }
 
 /**
- * An incoming `Request` delivered to a `serve` handler, augmented with
- * iroh-http-specific properties.
- *
- * Use this type instead of the plain `Request` when you need to access trailer
- * headers or other iroh-http extensions:
- *
- * ```ts
- * import type { IrohRequest } from "@momics/iroh-http-shared";
- *
- * node.serve({}, async (req: IrohRequest) => {
- *   const peer = req.headers.get('Peer-Id');
- *   const trailers = await req.trailers;        // null if none were sent
- *   const checksum = trailers?.get('x-checksum');
- *   return Response.json({ peer, checksum });
- * });
- * ```
- */
-export interface IrohRequest extends Request {
-  /**
-   * A promise that resolves to the request trailer headers once the request
-   * body has been fully consumed. Resolves to an empty `Headers` if no
-   * trailers were sent (the runtime never returns `null` — issue-48 fix).
-   */
-  trailers: Promise<Headers>;
-}
-
-/**
- * The `Response`-like object returned by `IrohNode.fetch()`.
- *
- * Extends the standard `Response` with a `trailers` promise so that callers
- * can access response trailer headers without casting. The trailers are
- * populated after the response body is fully consumed.
- *
- * ```ts
- * import type { IrohResponse } from "@momics/iroh-http-shared";
- *
- * const res: IrohResponse = await node.fetch(peer, '/api/data');
- * const body = await res.text();
- * const checksum = (await res.trailers).get('x-checksum');
- * ```
- */
-export interface IrohResponse extends Response {
-  /**
-   * Resolves to the response trailer headers after the response body is
-   * fully consumed. Always resolves to a `Headers` object (never `null`).
-   */
-  trailers: Promise<Headers>;
-}
-
-/**
- * A `Response`-like object that a serve handler may return to include
- * response trailer headers.
- *
- * ```ts
- * node.serve(async (req) => {
- *   const res = new Response("body");
- *   (res as IrohServeResponse).trailers = () => new Headers({ 'x-checksum': '...' });
- *   return res;
- * });
- * ```
- *
- * The simpler way is to simply attach the `trailers` function to any `Response`:
- *
- * ```ts
- * return Object.assign(new Response("body"), {
- *   trailers: () => new Headers({ 'x-checksum': hash }),
- * });
- * ```
- */
-export interface IrohServeResponse extends Response {
-  /**
-   * Called after the response body has been fully sent.
-   * Return the trailer headers to send to the client.
-   * Only invoked when the response includes a `Trailer:` header.
-   */
-  trailers?: () => Headers | Promise<Headers>;
-}
-
-/**
  * Extended `RequestInit` for iroh-http fetch.
  *
  * Adds iroh-specific options alongside the standard web fetch init.
@@ -480,24 +375,6 @@ export interface IrohFetchInit extends RequestInit {
    * Each entry must be an `"ip:port"` string, e.g. `"127.0.0.1:12345"`.
    */
   directAddrs?: string[];
-  /**
-   * Request trailer headers to send after the request body is complete.
-   *
-   * Only valid when a request body is also provided. Trailers are transmitted
-   * as HTTP/1.1 chunked-encoding trailers — the server handler can read them
-   * via `await req.trailers` after consuming the request body.
-   *
-   * @example
-   * ```ts
-   * const hash = computeHash(data);
-   * const res = await node.fetch(peer, '/upload', {
-   *   method: 'POST',
-   *   body: data,
-   *   trailers: { 'content-md5': hash },
-   * });
-   * ```
-   */
-  trailers?: HeadersInit;
 }
 
 /**
@@ -544,18 +421,18 @@ export interface IrohNode {
    *
    * @param input - `httpi://` URL string or URL object (web-standard form).
    * @param init - Standard `RequestInit` options plus iroh-specific `directAddrs`.
-   * @returns An `IrohResponse` — a standard `Response` with an additional `trailers` promise.
+   * @returns A standard `Response`.
    * @throws {IrohConnectError} If the peer is unreachable.
    * @throws {IrohAbortError} If `init.signal` is aborted.
    */
-  fetch(input: string | URL, init?: IrohFetchInit): Promise<IrohResponse>;
+  fetch(input: string | URL, init?: IrohFetchInit): Promise<Response>;
   /**
    * Send an HTTP request to a remote node (legacy form).
    *
    * @param peer - Remote node's public key or base32 node ID string.
    * @param input - Request URL path, e.g. `"/api/data"` or full `"httpi://nodeId/path"`.
    * @param init - Standard `RequestInit` options plus iroh-specific `directAddrs`.
-   * @returns An `IrohResponse` — a standard `Response` with an additional `trailers` promise.
+   * @returns A standard `Response`.
    * @throws {IrohConnectError} If the peer is unreachable.
    * @throws {IrohAbortError} If `init.signal` is aborted.
    */
@@ -563,7 +440,7 @@ export interface IrohNode {
     peer: PublicKey | string,
     input: string | URL,
     init?: IrohFetchInit,
-  ): Promise<IrohResponse>;
+  ): Promise<Response>;
   /**
    * Start listening for incoming HTTP requests.
    *
@@ -737,7 +614,7 @@ export interface EndpointStats {
   activeWriters: number;
   /** Number of live QUIC session handles. */
   activeSessions: number;
-  /** Total allocated handle count (readers + writers + sessions + trailers + …). */
+  /** Total allocated handle count (readers + writers + sessions + …). */
   totalHandles: number;
   /** Number of QUIC connections currently cached in the connection pool. */
   poolSize: number;
@@ -844,7 +721,6 @@ export type RawFetchFn = (
   method: string,
   headers: [string, string][],
   reqBodyHandle: bigint | null,
-  reqTrailersHandle: bigint | null,
   fetchToken: bigint,
   directAddrs: string[] | null,
 ) => Promise<FfiResponse>;

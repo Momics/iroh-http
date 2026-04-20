@@ -21,7 +21,7 @@
 Individual feature specs. See [features/README.md](features/README.md) for the full list.
 
 Compression · Discovery · Observability · Rate limiting · Server limits ·
-Sign/verify · Streaming · Tickets · Trailer headers · WebTransport
+Sign/verify · Streaming · Tickets · WebTransport
 
 ## Internals
 

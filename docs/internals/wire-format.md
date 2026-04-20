@@ -15,19 +15,17 @@ Client → Server (request):
   <headers>\r\n
   \r\n
   [chunked body: <hex-len>\r\n<data>\r\n … 0\r\n\r\n]
-  [optional trailers in final chunk header]
 
 Server → Client (response):
   HTTP/1.1 200 OK\r\n
   <headers>\r\n
   \r\n
   [chunked body: <hex-len>\r\n<data>\r\n … 0\r\n\r\n]
-  [optional trailers in final chunk header]
 ```
 
 This is byte-for-byte standard HTTP/1.1. Any conforming HTTP/1.1 parser can decode it.
 
-hyper v1 handles all framing, chunked encoding, trailer delivery, and header parsing. iroh-http-core contributes no custom framing code.
+hyper v1 handles all framing, chunked encoding, and header parsing. iroh-http-core contributes no custom framing code.
 
 ---
 
@@ -49,21 +47,9 @@ These ALPNs are no longer supported. Any endpoint still using version 1 wire for
 ```
 b"iroh-http/1"
 b"iroh-http/1-duplex"
-b"iroh-http/1-trailers"
-b"iroh-http/1-full"
 ```
 
-The `-trailers` and `-full` variants from version 1 no longer exist because hyper supports trailers natively — they are not optional negotiation points.
-
----
-
-## Trailer support
-
-Trailers are carried in the final chunk of a chunked-encoded HTTP/1.1 body.
-
-For trailers to be delivered in HTTP/1.1, the client **must** include `TE: trailers` in the request. iroh-http-core adds this header automatically on all outgoing `fetch()` calls.
-
-The server declares which trailers to expect by including a `Trailer: <header-name>` response header (added by the JS handler via `respond()`).
+The `-duplex` variant from version 1 no longer exists as a separate ALPN — duplex is now negotiated via the HTTP `Upgrade` mechanism instead.
 
 ---
 

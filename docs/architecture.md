@@ -52,7 +52,7 @@ Any deviation from these contracts is a bug unless explicitly documented.
 ┌──────▼──────────┐        ┌──────────▼───────────────────────┐
 │  tower-http     │        │  hyper v1                         │
 │  Compression    │        │  HTTP/1.1 framing, headers,       │
-│  (zstd, gated)  │        │  chunked encoding, trailers,      │
+│  (zstd, gated)  │        │  chunked encoding,                │
 │                 │        │  upgrade, body streaming           │
 └─────────────────┘        └──────────┬────────────────────────┘
                                       │
@@ -76,7 +76,7 @@ The Rust crate that owns all transport logic. Platform adapters depend only on i
 | `client.rs` | `fetch()` and `raw_connect()`. Obtains a QUIC connection via the pool, wraps it in `IrohStream`, drives hyper's HTTP/1.1 client, pumps the response body into handle-based channels. |
 | `server.rs` | `serve()`. Accepts QUIC connections, spawns per-stream hyper HTTP/1.1 handlers, enforces concurrency via drain semaphore, applies timeout middleware. `RequestService` is the tower `Service` that bridges hyper requests to body channels. |
 | `pool.rs` | `ConnectionPool`. moka async cache keyed by `NodeId`. `try_get_with` provides single-flight connection establishment — concurrent fetches to the same peer share one connection attempt. Failed attempts are not cached. |
-| `stream.rs` | All resource handle registries (body readers, writers, trailer channels, fetch tokens, sessions, request heads). Uses `slotmap` for generational u64 keys. Also defines backpressure config (channel capacity, max chunk size, drain timeout). |
+| `stream.rs` | All resource handle registries (body readers, writers, fetch tokens, sessions, request heads). Uses `slotmap` for generational u64 keys. Also defines backpressure config (channel capacity, max chunk size). |
 | `session.rs` | Session lifecycle: `session_connect` (non-pooled dedicated connections), bidirectional/unidirectional streams, datagrams. Session registry. |
 | `endpoint.rs` | `IrohEndpoint` (cheap `Arc` clone). Bind, share, close. `NodeOptions` for QUIC transport config, discovery, relay. `ServeOptions` for server limits. `CompressionOptions` (feature-gated). |
 | `io.rs` | `IrohStream`: merges Iroh's split `SendStream`/`RecvStream` into a single `AsyncRead + AsyncWrite` type that hyper can drive directly via `hyper_util::rt::TokioIo`. |
@@ -134,7 +134,7 @@ GET /path HTTP/1.1\r\n
 Host: <node-id>\r\n
 <headers>\r\n
 \r\n
-[HTTP/1.1 chunked body with standard trailers]
+[HTTP/1.1 chunked body]
 ```
 
 **ALPN strings:** `iroh-http/2` (standard) and `iroh-http/2-duplex` (raw_connect). The version bump from 1 to 2 marks the migration from custom framing to hyper. Old and new builds refuse to connect — the ALPN mismatch is intentional.

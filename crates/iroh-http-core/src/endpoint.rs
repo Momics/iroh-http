@@ -128,7 +128,7 @@ pub(crate) struct EndpointInner {
     pub max_header_size: usize,
     /// Server-side limits forwarded to the serve loop.
     pub server_limits: crate::server::ServerLimits,
-    /// Per-endpoint handle store — owns all body readers, writers, trailers,
+    /// Per-endpoint handle store — owns all body readers, writers,
     /// sessions, request-head channels, and fetch-cancel tokens.
     pub handles: HandleStore,
     /// Active serve handle, if `serve()` has been called.
@@ -674,7 +674,7 @@ pub struct EndpointStats {
     pub active_writers: usize,
     /// Number of live QUIC sessions (WebTransport connections).
     pub active_sessions: usize,
-    /// Total number of allocated (reader + writer + trailer + session + other) handles.
+    /// Total number of allocated (reader + writer + session + other) handles.
     pub total_handles: usize,
     /// Number of QUIC connections currently cached in the connection pool.
     pub pool_size: u64,

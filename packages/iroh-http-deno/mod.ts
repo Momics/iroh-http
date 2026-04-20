@@ -14,7 +14,6 @@
 import {
   buildNode,
   type IrohNode,
-  type IrohRequest,
   type NodeOptions,
 } from "@momics/iroh-http-shared";
 import {
@@ -60,4 +59,4 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   });
 }
 
-export type { IrohNode, IrohRequest, NodeOptions };
+export type { IrohNode, NodeOptions };

@@ -806,46 +806,6 @@ pub fn js_cancel_request(endpoint_handle: u32, handle: BigInt) -> napi::Result<(
     Ok(())
 }
 
-/// Await and retrieve trailer headers from a completed request/response.
-///
-/// Returns `null` if no trailers were sent.
-#[napi]
-pub async fn js_next_trailer(
-    endpoint_handle: u32,
-    handle: BigInt,
-) -> napi::Result<Option<Vec<Vec<String>>>> {
-    let ep = get_endpoint(endpoint_handle)?;
-    let trailers = ep
-        .handles()
-        .next_trailer(get_handle(handle)?)
-        .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
-    Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
-}
-
-/// Deliver response trailer headers to the Rust pump task.
-#[napi]
-pub fn js_send_trailers(
-    endpoint_handle: u32,
-    handle: BigInt,
-    trailers: Vec<Vec<String>>,
-) -> napi::Result<()> {
-    let ep = get_endpoint(endpoint_handle)?;
-    let pairs: Vec<(String, String)> = trailers
-        .into_iter()
-        .filter_map(|p| {
-            if p.len() == 2 {
-                Some((p[0].clone(), p[1].clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
-    ep.handles()
-        .send_trailers(get_handle(handle)?, pairs)
-        .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
-}
-
 /// Allocate a body writer handle for streaming request bodies.
 ///
 /// Call this before `rawFetch` to get a handle that can be written to
@@ -859,19 +819,6 @@ pub fn js_alloc_body_writer(endpoint_handle: u32) -> napi::Result<u64> {
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     ep.handles().store_pending_reader(handle, reader);
     Ok(handle)
-}
-
-/// Allocate a request trailer sender handle for use with `rawFetch`.
-///
-/// Call this before `rawFetch` when you want to send request trailers.
-/// Pass the returned handle as `reqTrailersHandle` to `rawFetch`, then
-/// call `sendTrailers(handle, trailers)` after the request body is finished.
-#[napi]
-pub fn js_alloc_trailer_sender(endpoint_handle: u32) -> napi::Result<u64> {
-    let ep = get_endpoint(endpoint_handle)?;
-    ep.handles()
-        .alloc_trailer_sender()
-        .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
 
 /// Allocate a cancellation token for an upcoming `rawFetch` call.
@@ -910,8 +857,6 @@ pub struct JsFfiResponse {
     pub body_handle: BigInt,
     /// Full `httpi://` URL of the responding peer.
     pub url: String,
-    /// Handle to await response trailer headers.
-    pub trailers_handle: BigInt,
 }
 
 /// Send an HTTP request to a remote Iroh peer.
@@ -926,7 +871,6 @@ pub async fn raw_fetch(
     method: String,
     headers: Vec<Vec<String>>,
     req_body_handle: Option<BigInt>,
-    req_trailers_handle: Option<BigInt>,
     fetch_token: BigInt,
     direct_addrs: Option<Vec<String>>,
 ) -> napi::Result<JsFfiResponse> {
@@ -943,8 +887,6 @@ pub async fn raw_fetch(
         .transpose()?
         .and_then(|h| ep.handles().claim_pending_reader(h));
 
-    let req_trailer_sender_handle = req_trailers_handle.map(get_handle).transpose()?;
-
     let addrs =
         parse_direct_addrs(&direct_addrs).map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
     let res = iroh_http_core::fetch(
@@ -954,7 +896,6 @@ pub async fn raw_fetch(
         &method,
         &pairs,
         req_body_reader,
-        req_trailer_sender_handle,
         Some(get_handle(fetch_token)?),
         addrs.as_deref(),
     )
@@ -968,7 +909,6 @@ pub async fn raw_fetch(
         headers: resp_headers,
         body_handle: BigInt::from(res.body_handle),
         url: res.url,
-        trailers_handle: BigInt::from(res.trailers_handle),
     })
 }
 
@@ -1023,14 +963,6 @@ pub fn raw_serve(
             obj.set(
                 "resBodyHandle",
                 env.create_bigint_from_u64(p.res_body_handle)?,
-            )?;
-            obj.set(
-                "reqTrailersHandle",
-                env.create_bigint_from_u64(p.req_trailers_handle)?,
-            )?;
-            obj.set(
-                "resTrailersHandle",
-                env.create_bigint_from_u64(p.res_trailers_handle)?,
             )?;
             obj.set("isBidi", env.get_boolean(p.is_bidi)?)?;
             obj.set("method", env.create_string(&p.method)?)?;

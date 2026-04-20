@@ -73,8 +73,6 @@ Body streams are `ReadableStream<Uint8Array>`.
 See [`ServeHandler` in the specification](../specification.md#servehandler) for the canonical type.
 
 - The handler receives a standard `Request`. Authenticated peer identity is available as the `Peer-Id` header.
-- Request trailers: `(req as any).trailers: Promise<Headers>`.
-- Response trailers: sent exactly once via the bridge after the response head.
 - The `httpi:` scheme is normalised to `http:` before constructing `Request` so the WHATWG URL parser accepts it.
 
 ---
@@ -83,7 +81,7 @@ See [`ServeHandler` in the specification](../specification.md#servehandler) for 
 
 See [`IrohFetchInit` in the specification](../specification.md#irohfetchinit) for the canonical type.
 
-`IrohFetchInit` extends standard `RequestInit` with `signal?: AbortSignal` and `directAddrs?: string[]`. The returned `Response` has a non-standard `trailers: Promise<Headers>` property.
+`IrohFetchInit` extends standard `RequestInit` with `signal?: AbortSignal` and `directAddrs?: string[]`.
 
 ---
 

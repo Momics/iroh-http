@@ -14,7 +14,7 @@ functions (~1,400 lines total):
 
 | Custom file | What it did | Replaced by |
 |---|---|---|
-| `iroh-http-framing` | Chunked transfer encoding, trailer byte scanner | hyper v1 |
+| `iroh-http-framing` | Chunked transfer encoding, byte scanner | hyper v1 |
 | `qpack_bridge.rs` | Stateless QPACK header encode/decode | hyper (standard HTTP/1.1 headers) |
 | `compress.rs` | Streaming zstd (255 lines) | `tower-http` `CompressionLayer` |
 | `pool.rs` | `Slot` enum + watch-channel single-flight | `moka` async cache |
@@ -43,13 +43,13 @@ Request:
   Host: <node-id>\r\n
   <headers>\r\n
   \r\n
-  [HTTP/1.1 chunked body with standard trailers]
+  [HTTP/1.1 chunked body]
 
 Response:
   HTTP/1.1 200 OK\r\n
   <headers>\r\n
   \r\n
-  [HTTP/1.1 chunked body with standard trailers]
+  [HTTP/1.1 chunked body]
 ```
 
 **ALPN versioning**: wire-format breaks require a new ALPN string. The current
@@ -59,9 +59,6 @@ ALPN won't match — this is intentional.
 
 The `-duplex` variant is preserved for `raw_connect` (uses HTTP Upgrade:
 `CONNECT` + `Upgrade: iroh-duplex` → 101 Switching Protocols → raw stream).
-The separate `-trailers` and `-full` ALPNs from the previous format were
-retired: hyper supports trailers natively, so they are no longer optional
-feature negotiation points.
 
 **hyper configuration notes** (non-obvious):
 - `keep_alive(false)` is mandatory. Each QUIC stream is one exchange; hyper

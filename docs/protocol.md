@@ -56,7 +56,6 @@ Client                              Server
   │  Transfer-Encoding: chunked\r\n   │
   │  \r\n                              │
   │  <chunked body>                    │
-  │  <trailers>                        │
   │                                    │
 ```
 
@@ -79,10 +78,6 @@ Every request carries the peer's authenticated identity from the QUIC connection
 
 Requests with `Upgrade: iroh-duplex` initiate a full-duplex stream. The server responds with `101 Switching Protocols`, and both sides can read and write independently. This is exposed as `session.createBidirectionalStream()` on the client (where `session` is the return value of `node.connect(peer)`) and `req.upgrade()` on the server.
 
-### Trailers
-
-Response trailers are sent after the chunked body using standard HTTP/1.1 trailer encoding. The client accesses them via the non-standard `res.trailers` promise. On the server side, attach a `trailers()` function to the `Response` object.
-
 ---
 
 ## Standards compliance
@@ -93,14 +88,13 @@ iroh-http is built on standards wherever they provide the right abstraction. Whe
 
 | Standard | Where it applies | Notes |
 |----------|-----------------|-------|
-| HTTP/1.1 semantics (RFC 7230–7235) | All requests and responses | Methods, status codes, headers, chunked encoding, trailers — delegated entirely to hyper v1 |
+| HTTP/1.1 semantics (RFC 7230–7235) | All requests and responses | Methods, status codes, headers, chunked encoding — delegated entirely to hyper v1 |
 | WHATWG Fetch API | `node.fetch()` | The `fetch()` contract is the API contract; deviations are bugs |
 | Deno.serve contract | `node.serve()` | Handler signature, `onListen`, `signal` shutdown, `onError` — all follow Deno.serve exactly |
 | WHATWG `Request` / `Response` / `Headers` / `ReadableStream` | All platform adapters | Native platform types are used throughout; no custom wrappers |
 | WHATWG WebTransport API | `IrohSession` | `IrohSession` satisfies the full `WebTransport` interface: `ready`, `closed`, `datagrams`, `createBidirectionalStream()`, `incomingBidirectionalStreams`, etc. |
 | HTTP Upgrade (RFC 7230 §6.7) | `raw_connect` / duplex streams | Standard `Upgrade: iroh-duplex` + `101 Switching Protocols` handshake via hyper |
 | HTTP compression negotiation | Compression | `Accept-Encoding` / `Content-Encoding` / `Vary` headers follow standard HTTP negotiation rules, including quality value (`q=`) preference ordering |
-| HTTP trailer encoding | Response trailers | Standard HTTP/1.1 chunked trailer encoding, delivered via hyper |
 
 ### Where we deviate, and why
 

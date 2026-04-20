@@ -269,27 +269,6 @@ pub fn cancel_request(endpoint_handle: u64, handle: u64) -> Result<(), String> {
     Ok(())
 }
 
-/// Await and retrieve trailer headers from a completed request/response.
-#[command]
-pub async fn next_trailer(endpoint_handle: u64, handle: u64) -> Result<Option<Vec<Vec<String>>>, String> {
-    let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
-    let trailers = ep.handles().next_trailer(handle).await.map_err(|e| core_error_to_json(&e))?;
-    Ok(trailers.map(|t| t.into_iter().map(|(k, v)| vec![k, v]).collect()))
-}
-
-/// Deliver response trailer headers to the Rust pump task.
-#[command]
-pub fn send_trailers(endpoint_handle: u64, handle: u64, trailers: Vec<Vec<String>>) -> Result<(), String> {
-    let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
-    let pairs: Vec<(String, String)> = trailers
-        .into_iter()
-        .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
-        .collect();
-    ep.handles().send_trailers(handle, pairs).map_err(|e| core_error_to_json(&e))
-}
-
 /// Allocate a body writer handle for streaming request bodies.
 #[command]
 pub fn alloc_body_writer(endpoint_handle: u64) -> Result<u64, String> {
@@ -298,17 +277,6 @@ pub fn alloc_body_writer(endpoint_handle: u64) -> Result<u64, String> {
     let (handle, reader) = ep.handles().alloc_body_writer().map_err(|e| core_error_to_json(&e))?;
     ep.handles().store_pending_reader(handle, reader);
     Ok(handle)
-}
-
-/// Allocate a request trailer sender handle for use with `rawFetch`.
-///
-/// Pass the returned handle as `reqTrailersHandle` to `rawFetch`, then call
-/// `sendTrailers(endpointHandle, handle, trailers)` after sending the request body.
-#[command]
-pub fn alloc_trailer_sender(endpoint_handle: u64) -> Result<u64, String> {
-    let ep = state::get_endpoint(endpoint_handle)
-        .ok_or_else(|| format_error_json("INVALID_HANDLE", format!("invalid endpoint handle: {endpoint_handle}")))?;
-    ep.handles().alloc_trailer_sender().map_err(|e| core_error_to_json(&e))
 }
 
 /// Allocate a cancellation token for an upcoming fetch call.
@@ -340,7 +308,6 @@ pub struct RawFetchArgs {
     pub method: String,
     pub headers: Vec<Vec<String>>,
     pub req_body_handle: Option<u64>,
-    pub req_trailers_handle: Option<u64>,
     pub fetch_token: Option<u64>,
     pub direct_addrs: Option<Vec<String>>,
 }
@@ -353,7 +320,6 @@ pub struct FfiResponsePayload {
     pub headers: Vec<Vec<String>>,
     pub body_handle: u64,
     pub url: String,
-    pub trailers_handle: u64,
 }
 
 /// Send an HTTP request to a remote Iroh peer.
@@ -371,7 +337,7 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
     let req_body_reader = args.req_body_handle.and_then(|h| ep.handles().claim_pending_reader(h));
 
     let addrs = parse_direct_addrs(&args.direct_addrs)?;
-    let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.req_trailers_handle, args.fetch_token, addrs.as_deref())
+    let res = iroh_http_core::fetch(&ep, &args.node_id, &args.url, &args.method, &pairs, req_body_reader, args.fetch_token, addrs.as_deref())
         .await.map_err(|e| core_error_to_json(&e))?;
 
     let resp_headers: Vec<Vec<String>> = res
@@ -385,7 +351,6 @@ pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String>
         headers: resp_headers,
         body_handle: res.body_handle,
         url: res.url,
-        trailers_handle: res.trailers_handle,
     })
 }
 
@@ -398,8 +363,6 @@ pub struct ServeEventPayload {
     pub req_handle: u64,
     pub req_body_handle: u64,
     pub res_body_handle: u64,
-    pub req_trailers_handle: u64,
-    pub res_trailers_handle: u64,
     pub is_bidi: bool,
     pub method: String,
     pub url: String,
@@ -441,8 +404,6 @@ pub async fn serve(
                 req_handle: payload.req_handle,
                 req_body_handle: payload.req_body_handle,
                 res_body_handle: payload.res_body_handle,
-                req_trailers_handle: payload.req_trailers_handle,
-                res_trailers_handle: payload.res_trailers_handle,
                 is_bidi: payload.is_bidi,
                 method: payload.method,
                 url: payload.url,

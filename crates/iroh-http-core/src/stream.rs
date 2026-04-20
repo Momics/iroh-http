@@ -40,8 +40,6 @@ pub struct ResponseHeadEntry {
 
 slotmap::new_key_type! { pub(crate) struct ReaderKey; }
 slotmap::new_key_type! { pub(crate) struct WriterKey; }
-slotmap::new_key_type! { pub(crate) struct TrailerTxKey; }
-slotmap::new_key_type! { pub(crate) struct TrailerRxKey; }
 slotmap::new_key_type! { pub(crate) struct FetchCancelKey; }
 slotmap::new_key_type! { pub(crate) struct SessionKey; }
 slotmap::new_key_type! { pub(crate) struct RequestHeadKey; }
@@ -62,8 +60,6 @@ macro_rules! handle_to_key {
 
 handle_to_key!(handle_to_reader_key, ReaderKey);
 handle_to_key!(handle_to_writer_key, WriterKey);
-handle_to_key!(handle_to_trailer_tx_key, TrailerTxKey);
-handle_to_key!(handle_to_trailer_rx_key, TrailerRxKey);
 handle_to_key!(handle_to_session_key, SessionKey);
 handle_to_key!(handle_to_request_head_key, RequestHeadKey);
 handle_to_key!(handle_to_fetch_cancel_key, FetchCancelKey);
@@ -78,8 +74,6 @@ pub struct BodyReader {
     /// ISS-010: cancellation signal — notified when `cancel_reader` is called
     /// so in-flight `next_chunk` awaits terminate promptly.
     pub(crate) cancel: Arc<tokio::sync::Notify>,
-    /// Drain timeout inherited from the endpoint config at channel-creation time.
-    pub(crate) drain_timeout: Duration,
 }
 
 /// Producer end — stored in the writer registry.
@@ -110,7 +104,6 @@ fn make_body_channel_with(capacity: usize, drain_timeout: Duration) -> (BodyWrit
         BodyReader {
             rx: Arc::new(tokio::sync::Mutex::new(rx)),
             cancel: Arc::new(tokio::sync::Notify::new()),
-            drain_timeout,
         },
     )
 }
@@ -152,11 +145,6 @@ impl BodyWriter {
             .map_err(|_| "body reader dropped".to_string())
     }
 }
-
-// ── Trailer type aliases ──────────────────────────────────────────────────────
-
-type TrailerTx = tokio::sync::oneshot::Sender<Vec<(String, String)>>;
-pub(crate) type TrailerRx = tokio::sync::oneshot::Receiver<Vec<(String, String)>>;
 
 // ── StoreConfig ───────────────────────────────────────────────────────────────
 
@@ -214,12 +202,6 @@ struct PendingReaderEntry {
     created: Instant,
 }
 
-/// Pending trailer receiver tracked with insertion time for TTL sweep.
-struct PendingTrailerRxEntry {
-    rx: TrailerRx,
-    created: Instant,
-}
-
 // ── HandleStore ───────────────────────────────────────────────────────────────
 
 /// Tracks handles inserted during a multi-handle allocation sequence.
@@ -248,8 +230,6 @@ pub(crate) struct InsertGuard<'a> {
 enum TrackedHandle {
     Reader(u64),
     Writer(u64),
-    TrailerTx(u64),
-    TrailerRx(u64),
     ReqHead(u64),
 }
 
@@ -271,18 +251,6 @@ impl<'a> InsertGuard<'a> {
     pub fn insert_writer(&mut self, writer: BodyWriter) -> Result<u64, CoreError> {
         let h = self.store.insert_writer(writer)?;
         self.tracked.push(TrackedHandle::Writer(h));
-        Ok(h)
-    }
-
-    pub fn insert_trailer_sender(&mut self, tx: TrailerTx) -> Result<u64, CoreError> {
-        let h = self.store.insert_trailer_sender(tx)?;
-        self.tracked.push(TrackedHandle::TrailerTx(h));
-        Ok(h)
-    }
-
-    pub fn insert_trailer_receiver(&mut self, rx: TrailerRx) -> Result<u64, CoreError> {
-        let h = self.store.insert_trailer_receiver(rx)?;
-        self.tracked.push(TrackedHandle::TrailerRx(h));
         Ok(h)
     }
 
@@ -312,14 +280,6 @@ impl Drop for InsertGuard<'_> {
                 TrackedHandle::Writer(h) => {
                     let _ = self.store.finish_body(*h);
                 }
-                TrackedHandle::TrailerTx(h) => self.store.remove_trailer_sender(*h),
-                TrackedHandle::TrailerRx(h) => {
-                    self.store
-                        .trailer_rx
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(handle_to_trailer_rx_key(*h));
-                }
                 TrackedHandle::ReqHead(h) => {
                     self.store
                         .request_heads
@@ -332,7 +292,7 @@ impl Drop for InsertGuard<'_> {
     }
 }
 
-/// Per-endpoint handle registry.  Owns all body readers, writers, trailers,
+/// Per-endpoint handle registry.  Owns all body readers, writers,
 /// sessions, request-head rendezvous channels, and fetch-cancel tokens for
 /// a single `IrohEndpoint`.
 ///
@@ -341,17 +301,11 @@ impl Drop for InsertGuard<'_> {
 pub struct HandleStore {
     readers: Mutex<SlotMap<ReaderKey, Timed<BodyReader>>>,
     writers: Mutex<SlotMap<WriterKey, Timed<BodyWriter>>>,
-    trailer_tx: Mutex<SlotMap<TrailerTxKey, Timed<TrailerTx>>>,
-    trailer_rx: Mutex<SlotMap<TrailerRxKey, Timed<TrailerRx>>>,
     sessions: Mutex<SlotMap<SessionKey, Timed<Arc<SessionEntry>>>>,
     request_heads:
         Mutex<SlotMap<RequestHeadKey, Timed<tokio::sync::oneshot::Sender<ResponseHeadEntry>>>>,
     fetch_cancels: Mutex<SlotMap<FetchCancelKey, Timed<Arc<tokio::sync::Notify>>>>,
     pending_readers: Mutex<HashMap<u64, PendingReaderEntry>>,
-    /// Pending trailer receivers matched to allocated sender handles.
-    /// Keyed by the tx handle; claimed by `fetch()` via
-    /// [`claim_pending_trailer_rx`](Self::claim_pending_trailer_rx).
-    pending_trailer_rxs: Mutex<HashMap<u64, PendingTrailerRxEntry>>,
     pub(crate) config: StoreConfig,
 }
 
@@ -361,13 +315,10 @@ impl HandleStore {
         Self {
             readers: Mutex::new(SlotMap::with_key()),
             writers: Mutex::new(SlotMap::with_key()),
-            trailer_tx: Mutex::new(SlotMap::with_key()),
-            trailer_rx: Mutex::new(SlotMap::with_key()),
             sessions: Mutex::new(SlotMap::with_key()),
             request_heads: Mutex::new(SlotMap::with_key()),
             fetch_cancels: Mutex::new(SlotMap::with_key()),
             pending_readers: Mutex::new(HashMap::new()),
-            pending_trailer_rxs: Mutex::new(HashMap::new()),
             config,
         }
     }
@@ -403,18 +354,6 @@ impl HandleStore {
         let total = readers
             .saturating_add(writers)
             .saturating_add(sessions)
-            .saturating_add(
-                self.trailer_tx
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .len(),
-            )
-            .saturating_add(
-                self.trailer_rx
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .len(),
-            )
             .saturating_add(
                 self.request_heads
                     .lock()
@@ -585,96 +524,6 @@ impl HandleStore {
         }
     }
 
-    // ── Trailer operations ───────────────────────────────────────────────
-
-    /// Insert a trailer oneshot **sender** and return a handle.
-    pub fn insert_trailer_sender(&self, tx: TrailerTx) -> Result<u64, CoreError> {
-        Self::insert_checked(&self.trailer_tx, tx, self.config.max_handles)
-    }
-
-    /// Insert a trailer oneshot **receiver** and return a handle.
-    pub fn insert_trailer_receiver(&self, rx: TrailerRx) -> Result<u64, CoreError> {
-        Self::insert_checked(&self.trailer_rx, rx, self.config.max_handles)
-    }
-
-    /// Remove (drop) a trailer sender without sending.
-    pub fn remove_trailer_sender(&self, handle: u64) {
-        self.trailer_tx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(handle_to_trailer_tx_key(handle));
-    }
-
-    /// Allocate a `(tx, rx)` trailer oneshot pair for sending request trailers
-    /// from JavaScript to the Rust body encoder.
-    ///
-    /// Returns the sender handle — JS holds this and calls `send_trailers` when
-    /// it is done writing the request body.  The matching `rx` is stored in
-    /// `pending_trailer_rxs` and claimed by `fetch()` via
-    /// [`claim_pending_trailer_rx`](Self::claim_pending_trailer_rx).
-    pub fn alloc_trailer_sender(&self) -> Result<u64, CoreError> {
-        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-        let handle = self.insert_trailer_sender(tx)?;
-        self.pending_trailer_rxs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(
-                handle,
-                PendingTrailerRxEntry {
-                    rx,
-                    created: Instant::now(),
-                },
-            );
-        Ok(handle)
-    }
-
-    /// Claim the trailer receiver that was paired with the given sender handle.
-    ///
-    /// Returns `None` if the handle was never allocated via
-    /// [`alloc_trailer_sender`](Self::alloc_trailer_sender) or has already been claimed.
-    pub fn claim_pending_trailer_rx(&self, sender_handle: u64) -> Option<TrailerRx> {
-        self.pending_trailer_rxs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&sender_handle)
-            .map(|e| e.rx)
-    }
-
-    /// Deliver trailers from the JS side to the waiting Rust pump task.
-    pub fn send_trailers(
-        &self,
-        handle: u64,
-        trailers: Vec<(String, String)>,
-    ) -> Result<(), CoreError> {
-        let tx = self
-            .trailer_tx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(handle_to_trailer_tx_key(handle))
-            .ok_or_else(|| CoreError::invalid_handle(handle))?
-            .value;
-        tx.send(trailers)
-            .map_err(|_| CoreError::internal("trailer receiver dropped"))
-    }
-
-    /// Await and retrieve trailers produced by the Rust pump task.
-    pub async fn next_trailer(
-        &self,
-        handle: u64,
-    ) -> Result<Option<Vec<(String, String)>>, CoreError> {
-        let rx = self
-            .trailer_rx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(handle_to_trailer_rx_key(handle))
-            .ok_or_else(|| CoreError::invalid_handle(handle))?
-            .value;
-        match rx.await {
-            Ok(trailers) => Ok(Some(trailers)),
-            Err(_) => Ok(None), // sender dropped = no trailers
-        }
-    }
-
     // ── Session ──────────────────────────────────────────────────────────
 
     /// Insert a `SessionEntry` and return a handle.
@@ -767,13 +616,10 @@ impl HandleStore {
     pub fn sweep(&self, ttl: Duration) {
         Self::sweep_registry(&self.readers, ttl);
         Self::sweep_registry(&self.writers, ttl);
-        Self::sweep_registry(&self.trailer_tx, ttl);
-        Self::sweep_registry(&self.trailer_rx, ttl);
         Self::sweep_registry(&self.request_heads, ttl);
         Self::sweep_registry(&self.sessions, ttl);
         Self::sweep_registry(&self.fetch_cancels, ttl);
         self.sweep_pending_readers(ttl);
-        self.sweep_pending_trailer_rxs(ttl);
     }
 
     fn sweep_registry<K: slotmap::Key, T>(registry: &Mutex<SlotMap<K, Timed<T>>>, ttl: Duration) {
@@ -811,21 +657,6 @@ impl HandleStore {
         let removed = before.saturating_sub(map.len());
         if removed > 0 {
             tracing::debug!("[iroh-http] swept {removed} stale pending readers (ttl={ttl:?})");
-        }
-    }
-
-    fn sweep_pending_trailer_rxs(&self, ttl: Duration) {
-        let mut map = self
-            .pending_trailer_rxs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let before = map.len();
-        map.retain(|_, e| e.created.elapsed() < ttl);
-        let removed = before.saturating_sub(map.len());
-        if removed > 0 {
-            tracing::debug!(
-                "[iroh-http] swept {removed} stale pending trailer receivers (ttl={ttl:?})"
-            );
         }
     }
 }
@@ -1023,24 +854,6 @@ mod tests {
         store.insert_reader(r2).unwrap();
         let err = store.insert_reader(r3).unwrap_err();
         assert!(err.message.contains("capacity"));
-    }
-
-    // ── #82 regression: pending_trailer_rxs TTL sweep ──────────────────
-
-    #[test]
-    fn sweep_removes_unclaimed_trailer_receivers() {
-        let store = test_store();
-        // Allocate a sender (which stores the rx in pending_trailer_rxs).
-        let _handle = store.alloc_trailer_sender().unwrap();
-        // Confirm an entry is present.
-        assert_eq!(store.pending_trailer_rxs.lock().unwrap().len(), 1);
-        // Sweep with zero TTL — every entry is immediately expired.
-        store.sweep(Duration::ZERO);
-        assert_eq!(
-            store.pending_trailer_rxs.lock().unwrap().len(),
-            0,
-            "sweep() must remove unclaimed pending trailer receivers"
-        );
     }
 
     // ── #84 regression: recv_with_cancel cancellation ──────────────────

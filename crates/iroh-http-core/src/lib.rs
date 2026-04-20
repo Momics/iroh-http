@@ -262,10 +262,9 @@ pub fn parse_node_addr(s: &str) -> Result<ParsedNodeAddr, CoreError> {
 
 /// Flat response-head struct that crosses the FFI boundary.
 ///
-/// `body_handle` and `trailers_handle` are `0` (the slotmap null sentinel)
-/// for null-body status codes (RFC 9110 §6.3: 204, 205, 304).  Adapters
-/// should treat `0` as "no body / no trailers" rather than inspecting the
-/// status code themselves.
+/// `body_handle` is `0` (the slotmap null sentinel) for null-body status codes
+/// (RFC 9110 §6.3: 204, 205, 304).  Adapters should treat `0` as "no body"
+/// rather than inspecting the status code themselves.
 #[derive(Debug, Clone)]
 pub struct FfiResponse {
     pub status: u16,
@@ -274,8 +273,6 @@ pub struct FfiResponse {
     pub body_handle: u64,
     /// Full `httpi://` URL of the responding peer.
     pub url: String,
-    /// Handle to a trailer receiver.
-    pub trailers_handle: u64,
 }
 
 /// Options passed to the JS serve callback per incoming request.
@@ -284,8 +281,6 @@ pub struct RequestPayload {
     pub req_handle: u64,
     pub req_body_handle: u64,
     pub res_body_handle: u64,
-    pub req_trailers_handle: u64,
-    pub res_trailers_handle: u64,
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,

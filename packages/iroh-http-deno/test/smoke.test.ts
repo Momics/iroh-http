@@ -271,61 +271,6 @@ Deno.test({ name: "serve + fetch — concurrent requests return correct bodies (
   }
 }));
 
-// ── Regression: invalid trailer sender handle for plain responses ──────────────
-//
-// Before the fix, serve.ts called bridge.sendTrailers() for every response,
-// but the Rust server removes the trailer sender handle from its slab when the
-// response carries no `Trailer:` header.  This produced:
-//   [iroh-http] response body pipe error: IrohHandleError: invalid trailer sender handle
-
-Deno.test({ name: "serve + fetch — plain response produces no internal pipe errors", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-
-  // Intercept console.error to catch any [iroh-http] internal errors.
-  const internalErrors: string[] = [];
-  const origConsoleError = console.error;
-  console.error = (...args: unknown[]) => {
-    const msg = args.map(String).join(" ");
-    if (msg.includes("[iroh-http]")) {
-      internalErrors.push(msg);
-    } else {
-      origConsoleError(...args);
-    }
-  };
-
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
-
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-
-    handle = server.serve({ signal: ac.signal }, (_req: Request) =>
-      new Response("hello", { status: 200 })
-    );
-
-    const resp = await client.fetch(serverId, "httpi://example.com/", {
-      directAddrs: serverAddrs,
-    });
-    assertEquals(resp.status, 200);
-    assertEquals(await resp.text(), "hello");
-
-    // All assertions before teardown — the handler has already responded.
-    assertEquals(
-      internalErrors,
-      [],
-      `Unexpected internal errors:\n${internalErrors.join("\n")}`,
-    );
-  } finally {
-    console.error = origConsoleError;
-    // Signal stop, close endpoint (drains nextRequest → loop exits → handle.finished resolves).
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
-
 // ── Error classification ──────────────────────────────────────────────────────
 
 Deno.test({ name: "serve — handler throws synchronously → client gets 500", sanitizeOps: false }, () => withTimeout(20_000, async () => {

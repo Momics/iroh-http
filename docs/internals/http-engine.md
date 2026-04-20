@@ -1,6 +1,6 @@
 # HTTP Engine Internals
 
-This document covers how iroh-http-core uses hyper v1 and tower. It is aimed at contributors who need to understand the request/response lifecycle, the service layer, or the body/trailer channel bridge.
+This document covers how iroh-http-core uses hyper v1 and tower. It is aimed at contributors who need to understand the request/response lifecycle, the service layer, or the body channel bridge.
 
 ---
 
@@ -51,23 +51,20 @@ hyper::server::conn::http1::Builder::new()
 4. Allocate channels:
      req_body_writer, req_body_reader  ← make_body_channel()
      res_body_writer, res_body_reader  ← make_body_channel()
-     req_trailer oneshot (non-duplex)
-     res_trailer oneshot (non-duplex)
 5. Store handles in global slotmap registries:
      req_body_handle  = insert_reader(ep_idx, req_body_reader)
      res_body_handle  = insert_writer(ep_idx, res_body_writer)
-     req_trailers_handle, res_trailers_handle (non-duplex)
 6. Allocate response-head rendezvous:
      (head_tx, head_rx) = oneshot::channel::<ResponseHeadEntry>()
      req_handle = allocate_req_handle(ep_idx, head_tx)
 7. Pump request body:
-     Non-duplex: spawn pump_hyper_body_to_channel_limited(body, req_body_writer, trailer_tx, limit)
+     Non-duplex: spawn pump_hyper_body_to_channel_limited(body, req_body_writer, limit)
      Duplex: retain req_body_writer for the upgrade spawn
 8. Fire on_request callback with all handles → JS handler runs
 9. Await head_rx — parks here until JS calls respond(req_handle, status, headers)
 10. Non-duplex path:
      Build hyper Response with status/headers from head
-     Body = body_from_reader(res_body_reader, opt_trailer_rx)
+     Body = body_from_reader(res_body_reader)
      Return Ok(response) → hyper sends it
 11. Duplex path:
      Return 101 Switching Protocols immediately
@@ -96,7 +93,6 @@ iroh-http-core uses `BodyWriter`/`BodyReader` channels (mpsc-backed, defined in 
 Drains a hyper `Incoming` body frame-by-frame:
 
 - `Frame::data(bytes)` → `BodyWriter::send_chunk(bytes)`
-- `Frame::trailers(header_map)` → fires `trailer_tx` oneshot
 - Body size counted per-chunk; returns `Err(BodyTooLarge)` if limit exceeded
 - Dropping `BodyWriter` signals EOF on the `BodyReader` side (JS's `nextChunk` returns `null`)
 
@@ -105,27 +101,7 @@ Drains a hyper `Incoming` body frame-by-frame:
 Produces an `http_body::Body` (via `StreamBody`) from a `BodyReader`:
 
 - Yields `Frame::data` for each chunk from the reader
-- After reader EOF: if a trailer `oneshot::Receiver` was provided and resolves with trailers, yields `Frame::trailers`
 - Used both for response bodies (server side) and request bodies (client side)
-
----
-
-## Trailer bridge
-
-Trailers require two oneshot channels per exchange:
-
-| Channel | Direction | Who writes | Who reads |
-|---------|-----------|------------|-----------|
-| `req_trailer` | request trailers (client→server) | pump task (from hyper frame) | JS via `next_trailer(req_trailers_handle)` |
-| `res_trailer` | response trailers (server→client) | JS via `send_trailers(res_trailers_handle, …)` | body_from_reader appends `Frame::trailers` |
-
-The handles stored in the slotmap registries are:
-- `TrailerReceiver`: wraps the `oneshot::Receiver` — JS reads trailers from this
-- `TrailerSender`: wraps the `oneshot::Sender` — JS fires this to send trailers
-
-hyper's wire-level trailer frame mechanism is the transport half. The oneshot channels are the FFI-facing half.
-
-> For `TE: trailers` to work over HTTP/1.1, the client must send `TE: trailers` in the request. iroh-http-core adds this header automatically on all outgoing fetch requests.
 
 ---
 

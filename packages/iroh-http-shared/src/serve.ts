@@ -12,7 +12,6 @@ import type {
   BidirectionalStream,
   Bridge,
   FfiResponseHead,
-  IrohServeResponse,
   NodeOptions,
   PeerConnectionEvent,
   RawServeFn,
@@ -26,13 +25,9 @@ import { classifyError } from "./errors.js";
  *
  * The `Request` is augmented with:
  * - `req.headers.get('Peer-Id')` — the authenticated peer's public key.
- * - `req.trailers` — a `Promise<Headers>` resolving to request trailer headers.
  * - `req.acceptWebTransport()` — (duplex only) returns `{ readable, writable }`.
- *
- * The `Response` may be an `IrohServeResponse` with an optional `trailers` callback:
- * `trailers: () => Headers | Promise<Headers>` called after the body completes.
  */
-export type ServeHandler = (req: Request) => Response | IrohServeResponse | Promise<Response | IrohServeResponse>;
+export type ServeHandler = (req: Request) => Response | Promise<Response>;
 
 /**
  * Options for the `serve()` call.
@@ -220,15 +215,6 @@ export function makeServe(
           reqInit,
         );
 
-        if (!payload.isBidi) {
-          Object.defineProperty(req, "trailers", {
-            value: bridge
-              .nextTrailer(payload.reqTrailersHandle)
-              .then((pairs) => (pairs ? new Headers(pairs) : new Headers())),
-            configurable: true,
-          });
-        }
-
         if (payload.isBidi) {
           // Issue-61: acceptWebTransport() must be single-use per request.
           // Each duplex request has exactly one pair of body handles; creating
@@ -284,22 +270,9 @@ export function makeServe(
           };
         }
 
-        const trailersFn = (res as IrohServeResponse).trailers;
-
         const bodyStream = res.body ?? emptyStream();
         const doPipe = async () => {
           await pipeToWriter(bridge, bodyStream, payload.resBodyHandle);
-          // The server only keeps the trailer sender handle live when the response
-          // includes a `Trailer:` header — if that header is absent it removes the
-          // handle from the slab before JS gets to call sendTrailers.
-          // Also skip in bidi mode (resTrailersHandle === 0).
-          const hasTrailerHeader = res.headers.has("trailer");
-          if (payload.resTrailersHandle !== 0n && hasTrailerHeader) {
-            const trailerPairs: [string, string][] = trailersFn
-              ? [...(await trailersFn())] as [string, string][]
-              : [];
-            await bridge.sendTrailers(payload.resTrailersHandle, trailerPairs);
-          }
         };
         doPipe().catch((err) =>
           console.error(

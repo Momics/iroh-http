@@ -12,5 +12,4 @@ Design and behaviour documentation for individual iroh-http features.
 | Sign / verify | [sign-verify.md](sign-verify.md) |
 | Streaming | [streaming.md](streaming.md) |
 | Tickets | [tickets.md](tickets.md) |
-| Trailer headers | [trailer-headers.md](trailer-headers.md) |
 | WebTransport | [webtransport.md](webtransport.md) |

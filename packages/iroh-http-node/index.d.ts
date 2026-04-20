@@ -162,28 +162,12 @@ export declare function jsFinishBody(endpointHandle: number, handle: bigint): vo
 /** Cancel a body reader, causing any pending `nextChunk` to return null. */
 export declare function jsCancelRequest(endpointHandle: number, handle: bigint): void
 /**
- * Await and retrieve trailer headers from a completed request/response.
- *
- * Returns `null` if no trailers were sent.
- */
-export declare function jsNextTrailer(endpointHandle: number, handle: bigint): Promise<Array<Array<string>> | null>
-/** Deliver response trailer headers to the Rust pump task. */
-export declare function jsSendTrailers(endpointHandle: number, handle: bigint, trailers: Array<Array<string>>): void
-/**
  * Allocate a body writer handle for streaming request bodies.
  *
  * Call this before `rawFetch` to get a handle that can be written to
  * with `sendChunk` / `finishBody`.
  */
 export declare function jsAllocBodyWriter(endpointHandle: number): bigint
-/**
- * Allocate a request trailer sender handle for use with `rawFetch`.
- *
- * Call this before `rawFetch` when you want to send request trailers.
- * Pass the returned handle as `reqTrailersHandle` to `rawFetch`, then
- * call `sendTrailers(handle, trailers)` after the request body is finished.
- */
-export declare function jsAllocTrailerSender(endpointHandle: number): bigint
 /**
  * Allocate a cancellation token for an upcoming `rawFetch` call.
  *
@@ -210,15 +194,13 @@ export interface JsFfiResponse {
   bodyHandle: bigint
   /** Full `httpi://` URL of the responding peer. */
   url: string
-  /** Handle to await response trailer headers. */
-  trailersHandle: bigint
 }
 /**
  * Send an HTTP request to a remote Iroh peer.
  *
  * Low-level function — the shared TS layer wraps this in `makeFetch`.
  */
-export declare function rawFetch(endpointHandle: number, nodeId: string, url: string, method: string, headers: Array<Array<string>>, reqBodyHandle: bigint | undefined | null, reqTrailersHandle: bigint | undefined | null, fetchToken: bigint, directAddrs?: Array<string> | undefined | null): Promise<JsFfiResponse>
+export declare function rawFetch(endpointHandle: number, nodeId: string, url: string, method: string, headers: Array<Array<string>>, reqBodyHandle: bigint | undefined | null, fetchToken: bigint, directAddrs?: Array<string> | undefined | null): Promise<JsFfiResponse>
 /**
  * Call once per request from the JS handler to send the response head.
  *

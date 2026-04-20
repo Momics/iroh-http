@@ -353,25 +353,6 @@ impl RequestService {
             .insert_writer(res_body_writer)
             .map_err(|e| -> BoxError { e.into() })?;
 
-        // ── Trailer channels (non-duplex only) ───────────────────────────────
-
-        let (req_trailers_handle, res_trailers_handle, req_trailer_tx, opt_res_trailer_rx) =
-            if !is_bidi {
-                // Request trailers: pump delivers them; JS reads via nextTrailer.
-                let (rq_tx, rq_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-                let rq_h = guard
-                    .insert_trailer_receiver(rq_rx)
-                    .map_err(|e| -> BoxError { e.into() })?;
-                // Response trailers: JS delivers via sendTrailers; pump appends to body.
-                let (rs_tx, rs_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-                let rs_h = guard
-                    .insert_trailer_sender(rs_tx)
-                    .map_err(|e| -> BoxError { e.into() })?;
-                (rq_h, rs_h, Some(rq_tx), Some(rs_rx))
-            } else {
-                (0u64, 0u64, None, None)
-            };
-
         // ── Allocate response-head rendezvous ────────────────────────────────
 
         let (head_tx, head_rx) = tokio::sync::oneshot::channel::<ResponseHeadEntry>();
@@ -412,12 +393,10 @@ impl RequestService {
 
         let duplex_req_body_writer = if !is_bidi {
             let body = req.into_body();
-            let trailer_tx = req_trailer_tx.expect("non-duplex has req_trailer_tx");
             let frame_timeout = handles.drain_timeout();
             tokio::spawn(pump_hyper_body_to_channel_limited(
                 body,
                 req_body_writer,
-                trailer_tx,
                 max_request_body_bytes,
                 frame_timeout,
                 body_overflow_tx,
@@ -436,8 +415,6 @@ impl RequestService {
             req_handle,
             req_body_handle,
             res_body_handle,
-            req_trailers_handle,
-            res_trailers_handle,
             method,
             url,
             req_headers,
@@ -526,18 +503,7 @@ impl RequestService {
 
         // ── Regular HTTP response ─────────────────────────────────────────────
 
-        let has_trailer_hdr = response_head
-            .headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("trailer"));
-        let trailer_rx_for_body = if has_trailer_hdr {
-            opt_res_trailer_rx
-        } else {
-            handles.remove_trailer_sender(res_trailers_handle);
-            None
-        };
-
-        let body_stream = body_from_reader(res_body_reader, trailer_rx_for_body);
+        let body_stream = body_from_reader(res_body_reader);
 
         let mut resp_builder = hyper::Response::builder().status(response_head.status);
         for (k, v) in &response_head.headers {
@@ -562,8 +528,6 @@ fn on_request_fire(
     req_handle: u64,
     req_body_handle: u64,
     res_body_handle: u64,
-    req_trailers_handle: u64,
-    res_trailers_handle: u64,
     method: String,
     url: String,
     headers: Vec<(String, String)>,
@@ -574,8 +538,6 @@ fn on_request_fire(
         req_handle,
         req_body_handle,
         res_body_handle,
-        req_trailers_handle,
-        res_trailers_handle,
         method,
         url,
         headers,

@@ -139,7 +139,6 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         sync  "endpointStats"           => endpoint_stats_dispatch,
         // ── Handle allocation ────────────────────────────────────────────────
         sync  "allocBodyWriter"         => alloc_body_writer_dispatch,
-        sync  "allocTrailerSender"      => alloc_trailer_sender_dispatch,
         sync  "allocFetchToken"         => alloc_fetch_token_dispatch,
         sync  "cancelInFlight"          => cancel_in_flight_dispatch,
         // ── Streaming (JSON fallbacks — hot path uses raw FFI symbols) ───────
@@ -147,8 +146,6 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         async "sendChunk"               => send_chunk_dispatch,
         sync  "finishBody"              => finish_body_dispatch,
         sync  "cancelRequest"           => cancel_request_dispatch,
-        async "nextTrailer"             => next_trailer_dispatch,
-        sync  "sendTrailers"            => send_trailers_dispatch,
         // ── HTTP ─────────────────────────────────────────────────────────────
         async "rawFetch"                => raw_fetch,
         async "rawConnect"              => raw_connect_dispatch,
@@ -465,17 +462,6 @@ fn alloc_fetch_token_dispatch(p: Value) -> Value {
     }
 }
 
-fn alloc_trailer_sender_dispatch(p: Value) -> Value {
-    let ep = match require_endpoint(&p) {
-        Ok(ep) => ep,
-        Err(e) => return e,
-    };
-    match ep.handles().alloc_trailer_sender() {
-        Ok(handle) => ok(json!({ "handle": handle })),
-        Err(e) => err_core(e),
-    }
-}
-
 fn cancel_in_flight_dispatch(p: Value) -> Value {
     let ep = match require_endpoint(&p) {
         Ok(ep) => ep,
@@ -558,51 +544,6 @@ fn cancel_request_dispatch(p: Value) -> Value {
     ok(json!({}))
 }
 
-async fn next_trailer_dispatch(p: Value) -> Value {
-    let ep = match require_endpoint(&p) {
-        Ok(ep) => ep,
-        Err(e) => return e,
-    };
-    let handle = match p["handle"].as_u64() {
-        Some(h) => h,
-        None => return err("missing handle"),
-    };
-    match ep.handles().next_trailer(handle).await {
-        Err(e) => err_core(e),
-        Ok(None) => ok(json!({ "trailers": null })),
-        Ok(Some(t)) => ok(json!({ "trailers": t })),
-    }
-}
-
-fn send_trailers_dispatch(p: Value) -> Value {
-    let ep = match require_endpoint(&p) {
-        Ok(ep) => ep,
-        Err(e) => return e,
-    };
-    let handle = match p["handle"].as_u64() {
-        Some(h) => h,
-        None => return err("missing handle"),
-    };
-    let raw: Vec<Vec<String>> = match serde_json::from_value(p["trailers"].clone()) {
-        Ok(v) => v,
-        Err(e) => return err(e),
-    };
-    let pairs: Vec<(String, String)> = raw
-        .into_iter()
-        .filter_map(|p| {
-            if p.len() == 2 {
-                Some((p[0].clone(), p[1].clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
-    match ep.handles().send_trailers(handle, pairs) {
-        Ok(()) => ok(json!({})),
-        Err(e) => err_core(e),
-    }
-}
-
 // ── rawFetch ──────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -614,7 +555,6 @@ struct RawFetchPayload {
     method: String,
     headers: Vec<Vec<String>>,
     req_body_handle: Option<u64>,
-    req_trailers_handle: Option<u64>,
     fetch_token: Option<u64>,
     direct_addrs: Option<Vec<String>>,
 }
@@ -647,7 +587,6 @@ async fn raw_fetch(p: Value) -> Value {
     let reader = args
         .req_body_handle
         .and_then(|h| ep.handles().claim_pending_reader(h));
-    let req_trailer_sender_handle = args.req_trailers_handle;
     let addrs = match parse_direct_addrs(&args.direct_addrs) {
         Ok(a) => a,
         Err(e) => return err(e),
@@ -659,7 +598,6 @@ async fn raw_fetch(p: Value) -> Value {
         &args.method,
         &pairs,
         reader,
-        req_trailer_sender_handle,
         args.fetch_token,
         addrs.as_deref(),
     )
@@ -674,7 +612,6 @@ async fn raw_fetch(p: Value) -> Value {
                 "headers": headers,
                 "bodyHandle": res.body_handle,
                 "url": res.url,
-                "trailersHandle": res.trailers_handle,
             }))
         }
     }
@@ -765,8 +702,6 @@ async fn serve_start(p: Value) -> Value {
                 "reqHandle":         payload.req_handle,
                 "reqBodyHandle":     payload.req_body_handle,
                 "resBodyHandle":     payload.res_body_handle,
-                "reqTrailersHandle": payload.req_trailers_handle,
-                "resTrailersHandle": payload.res_trailers_handle,
                 "isBidi":          payload.is_bidi,
                 "method":            payload.method,
                 "url":               payload.url,

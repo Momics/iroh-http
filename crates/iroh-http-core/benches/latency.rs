@@ -68,7 +68,6 @@ fn bench_latency(c: &mut Criterion) {
                 &[],
                 None,
                 None,
-                None,
                 Some(&server_addrs),
             )
             .await

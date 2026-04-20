@@ -20,14 +20,11 @@ import {
   homeRelay as napiHomeRelay,
   jsAllocBodyWriter,
   jsAllocFetchToken,
-  jsAllocTrailerSender,
   jsCancelInFlight,
   jsCancelRequest,
   jsFinishBody,
   jsNextChunk,
-  jsNextTrailer,
   jsSendChunk,
-  jsSendTrailers,
   mdnsAdvertise as napiMdnsAdvertise,
   mdnsAdvertiseClose as napiMdnsAdvertiseClose,
   mdnsBrowse as napiMdnsBrowse,
@@ -63,7 +60,6 @@ import {
   classifyBindError,
   type DiscoveryFunctions,
   type IrohNode,
-  type IrohRequest,
   type NodeAddrInfo,
   type NodeOptions,
   normaliseRelayMode,
@@ -94,7 +90,6 @@ const rawFetch: RawFetchFn = async (
   method,
   headers,
   reqBodyHandle,
-  reqTrailersHandle,
   fetchToken,
   directAddrs,
 ) => {
@@ -105,7 +100,6 @@ const rawFetch: RawFetchFn = async (
     method: string,
     headers: string[][],
     reqBodyHandle: bigint | null,
-    reqTrailersHandle: bigint | null,
     fetchToken: bigint,
     directAddrs: string[] | null,
   ) => Promise<{
@@ -113,7 +107,6 @@ const rawFetch: RawFetchFn = async (
     headers: string[][];
     bodyHandle: bigint;
     url: string;
-    trailersHandle: bigint;
   }>)(
     endpointHandle,
     nodeId,
@@ -121,7 +114,6 @@ const rawFetch: RawFetchFn = async (
     method,
     headers as string[][],
     reqBodyHandle ?? null,
-    reqTrailersHandle ?? null,
     fetchToken,
     directAddrs ?? null,
   );
@@ -130,7 +122,6 @@ const rawFetch: RawFetchFn = async (
     headers: res.headers as [string, string][],
     bodyHandle: res.bodyHandle,
     url: res.url,
-    trailersHandle: res.trailersHandle,
   } satisfies FfiResponse;
 };
 
@@ -286,7 +277,7 @@ const discoveryFns: DiscoveryFunctions = {
  * @param options Optional configuration.  Omit `key` to generate a fresh identity.
  */
 export { PublicKey, SecretKey } from "@momics/iroh-http-shared";
-export type { IrohNode, IrohRequest, NodeOptions };
+export type { IrohNode, NodeOptions };
 
 export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   const keyBytes = options?.key
@@ -365,18 +356,6 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     cancelFetch: (token: bigint) => {
       jsCancelInFlight(eh, token);
     },
-    nextTrailer: async (handle: bigint) => {
-      const rows = await jsNextTrailer(eh, handle);
-      return rows
-        ? (rows as string[][]).map((p) => [p[0], p[1]] as [string, string])
-        : null;
-    },
-    sendTrailers: (handle: bigint, trailers: [string, string][]) => {
-      jsSendTrailers(eh, handle, trailers as string[][]);
-      return Promise.resolve();
-    },
-    allocTrailerSender: (_endpointHandle: number) =>
-      BigInt(jsAllocTrailerSender(eh)),
   };
 
   const nodeAllocBodyWriter: AllocBodyWriterFn = () => jsAllocBodyWriter(eh);

@@ -149,8 +149,6 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
   [
     "finishBody",
     "cancelRequest",
-    "nextTrailer",
-    "sendTrailers",
     "rawFetch",
     "rawConnect",
     "serveStart",
@@ -158,7 +156,6 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
     "nextConnectionEvent",
     "respond",
     "allocBodyWriter",
-    "allocTrailerSender",
     "createEndpoint",
     "closeEndpoint",
     "allocFetchToken",
@@ -299,23 +296,6 @@ export function makeBridge(endpointHandle: number): Bridge {
     // Fire-and-forget — do not await.
     void call<Record<never, never>>("cancelInFlight", { endpointHandle, token });
   },
-  async nextTrailer(handle: bigint): Promise<[string, string][] | null> {
-    const res = await call<{ trailers: [string, string][] | null }>(
-      "nextTrailer",
-      { endpointHandle, handle },
-    );
-    return res.trailers;
-  },
-  async sendTrailers(
-    handle: bigint,
-    trailers: [string, string][],
-  ): Promise<void> {
-    await call<Record<never, never>>("sendTrailers", { endpointHandle, handle, trailers });
-  },
-  async allocTrailerSender(_endpointHandle: number): Promise<bigint> {
-    const res = await call<{ handle: number }>("allocTrailerSender", { endpointHandle });
-    return BigInt(res.handle);
-  },
   };
 }
 
@@ -328,7 +308,6 @@ export const rawFetch: RawFetchFn = async (
   method: string,
   headers: [string, string][],
   reqBodyHandle: bigint | null,
-  reqTrailersHandle: bigint | null,
   fetchToken: bigint,
   directAddrs: string[] | null,
 ) => {
@@ -337,7 +316,6 @@ export const rawFetch: RawFetchFn = async (
     headers: [string, string][];
     bodyHandle: number;
     url: string;
-    trailersHandle: number;
   }>("rawFetch", {
     endpointHandle,
     nodeId,
@@ -345,7 +323,6 @@ export const rawFetch: RawFetchFn = async (
     method,
     headers,
     reqBodyHandle: reqBodyHandle ?? null,
-    reqTrailersHandle: reqTrailersHandle ?? null,
     fetchToken,
     directAddrs: directAddrs ?? null,
   });
@@ -354,7 +331,6 @@ export const rawFetch: RawFetchFn = async (
     headers: res.headers,
     bodyHandle: BigInt(res.bodyHandle),
     url: res.url,
-    trailersHandle: BigInt(res.trailersHandle),
   } satisfies FfiResponse;
 };
 
@@ -418,8 +394,6 @@ export const rawServe: RawServeFn = (
             reqHandle: number;
             reqBodyHandle: number;
             resBodyHandle: number;
-            reqTrailersHandle: number;
-            resTrailersHandle: number;
             method: string;
             url: string;
             headers: [string, string][];
@@ -431,8 +405,6 @@ export const rawServe: RawServeFn = (
             reqHandle: BigInt(raw.reqHandle),
             reqBodyHandle: BigInt(raw.reqBodyHandle),
             resBodyHandle: BigInt(raw.resBodyHandle),
-            reqTrailersHandle: BigInt(raw.reqTrailersHandle),
-            resTrailersHandle: BigInt(raw.resTrailersHandle),
             method: raw.method,
             url: raw.url,
             headers: raw.headers,

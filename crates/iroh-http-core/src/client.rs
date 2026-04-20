@@ -61,7 +61,6 @@ pub async fn fetch(
     method: &str,
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
-    req_trailer_sender_handle: Option<u64>,
     fetch_token: Option<u64>,
     direct_addrs: Option<&[std::net::SocketAddr]>,
 ) -> Result<FfiResponse, CoreError> {
@@ -94,15 +93,6 @@ pub async fn fetch(
 
     let cancel_notify = fetch_token.and_then(|t| endpoint.handles().get_fetch_cancel_notify(t));
     let handles = endpoint.handles();
-
-    // Claim request trailer receiver (paired with the sender handle JS holds).
-    let req_trailer_rx = req_trailer_sender_handle.and_then(|h| {
-        if h == 0 {
-            None
-        } else {
-            handles.claim_pending_trailer_rx(h)
-        }
-    });
 
     let parsed = parse_node_addr(remote_node_id)?;
     let node_id = parsed.node_id;
@@ -142,7 +132,6 @@ pub async fn fetch(
         http_method,
         headers,
         req_body_reader,
-        req_trailer_rx,
         max_header_size,
     );
 
@@ -172,7 +161,6 @@ async fn do_fetch(
     method: Method,
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
-    req_trailer_rx: Option<crate::stream::TrailerRx>,
     max_header_size: usize,
 ) -> Result<FfiResponse, CoreError> {
     let (send, recv) = conn
@@ -203,9 +191,7 @@ async fn do_fetch(
     let mut req_builder = hyper::Request::builder()
         .method(method)
         .uri(&path)
-        .header(hyper::header::HOST, remote_str)
-        // Tell the server we accept chunked trailers (required for HTTP/1.1 trailer delivery).
-        .header("te", "trailers");
+        .header(hyper::header::HOST, remote_str);
 
     // When compression is enabled, advertise zstd-only Accept-Encoding — but
     // only if the caller has not already set Accept-Encoding.  A caller passing
@@ -226,8 +212,7 @@ async fn do_fetch(
     }
 
     let req_body: BoxBody = if let Some(reader) = req_body_reader {
-        // Adapt BodyReader → hyper body, including optional request trailers.
-        crate::box_body(body_from_reader(reader, req_trailer_rx))
+        crate::box_body(body_from_reader(reader))
     } else {
         crate::box_body(http_body_util::Empty::new())
     };
@@ -290,9 +275,9 @@ async fn do_fetch(
 
     // RFC 9110 §6.3: responses with status 204, 205, or 304 MUST NOT carry a
     // message body.  Skip channel allocation entirely and return the slotmap
-    // null sentinel (0) for both body_handle and trailers_handle so the JS
-    // layer can use `bodyHandle === 0n` as a clean structural check without
-    // re-encoding HTTP semantics in every adapter.
+    // null sentinel (0) for body_handle so the JS layer can use
+    // `bodyHandle === 0n` as a clean structural check without re-encoding
+    // HTTP semantics in every adapter.
     if is_null_body_status(status) {
         // Dropping the body signals to hyper that we are done reading.
         // For a spec-compliant server the body is already empty; this is a
@@ -303,18 +288,15 @@ async fn do_fetch(
             headers: resp_headers,
             body_handle: 0,
             url: response_url,
-            trailers_handle: 0,
         });
     }
 
     // Allocate channels for streaming the response body to JS.
     let mut guard = handles.insert_guard();
-    let (trailer_tx, trailer_rx) = tokio::sync::oneshot::channel::<Vec<(String, String)>>();
-    let trailer_handle = guard.insert_trailer_receiver(trailer_rx)?;
 
     let (res_writer, res_reader) = handles.make_body_channel();
     let body = resp.into_body();
-    tokio::spawn(pump_hyper_body_to_channel(body, res_writer, trailer_tx));
+    tokio::spawn(pump_hyper_body_to_channel(body, res_writer));
 
     let body_handle = guard.insert_reader(res_reader)?;
 
@@ -324,7 +306,6 @@ async fn do_fetch(
         headers: resp_headers,
         body_handle,
         url: response_url,
-        trailers_handle: trailer_handle,
     })
 }
 
@@ -338,18 +319,15 @@ fn is_null_body_status(status: u16) -> bool {
 
 // ── Body bridge utilities ─────────────────────────────────────────────────────
 
-/// Drain a hyper body into `BodyWriter`, delivering trailers via the oneshot when done.
+/// Drain a hyper body into `BodyWriter`.
 /// Generic over any body type with `Data = Bytes` (e.g. `Incoming`, `DecompressionBody`).
-pub(crate) async fn pump_hyper_body_to_channel<B>(
-    body: B,
-    writer: BodyWriter,
-    trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
-) where
+pub(crate) async fn pump_hyper_body_to_channel<B>(body: B, writer: BodyWriter)
+where
     B: http_body::Body<Data = Bytes>,
     B::Error: std::fmt::Debug,
 {
     let timeout = writer.drain_timeout;
-    pump_hyper_body_to_channel_limited(body, writer, trailer_tx, None, timeout, None).await;
+    pump_hyper_body_to_channel_limited(body, writer, None, timeout, None).await;
 }
 
 /// Drain with optional byte limit and a per-frame read timeout.
@@ -362,7 +340,6 @@ pub(crate) async fn pump_hyper_body_to_channel<B>(
 pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
     body: B,
     writer: BodyWriter,
-    trailer_tx: tokio::sync::oneshot::Sender<Vec<(String, String)>>,
     max_bytes: Option<usize>,
     frame_timeout: std::time::Duration,
     overflow_tx: Option<tokio::sync::oneshot::Sender<()>>,
@@ -373,7 +350,6 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
     // Box::pin gives Pin<Box<B>>: Unpin (Box<T>: Unpin ∀T), which satisfies BodyExt::frame().
     let mut body = Box::pin(body);
     let mut total = 0usize;
-    let mut trailers_vec: Vec<(String, String)> = Vec::new();
 
     loop {
         let frame_result = match tokio::time::timeout(frame_timeout, body.frame()).await {
@@ -406,84 +382,27 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
                     if writer.send_chunk(data).await.is_err() {
                         return; // reader dropped
                     }
-                } else if frame.is_trailers() {
-                    let hdrs = frame.into_trailers().expect("is_trailers checked above");
-                    trailers_vec = hdrs
-                        .iter()
-                        .filter_map(|(k, v)| match v.to_str() {
-                            Ok(s) => Some((k.as_str().to_string(), s.to_string())),
-                            Err(_) => {
-                                tracing::warn!(
-                                    "iroh-http: dropping non-UTF8 trailer value for '{}'",
-                                    k.as_str()
-                                );
-                                None
-                            }
-                        })
-                        .collect();
                 }
             }
         }
     }
 
     drop(writer);
-    let _ = trailer_tx.send(trailers_vec);
 }
 
-/// Adapt a `BodyReader` + optional trailer channel into a hyper-compatible
-/// body using `StreamBody` backed by a futures stream.
+/// Adapt a `BodyReader` into a hyper-compatible body using `StreamBody`
+/// backed by a futures stream.
 pub(crate) fn body_from_reader(
     reader: BodyReader,
-    trailer_rx: Option<tokio::sync::oneshot::Receiver<Vec<(String, String)>>>,
 ) -> StreamBody<impl futures::Stream<Item = Result<Frame<Bytes>, std::convert::Infallible>>> {
     use futures::stream;
 
-    // State machine: first yield data frames, then optionally a trailer frame.
-    let s = stream::unfold(
-        (reader, trailer_rx, false),
-        |(reader, trailer_rx, done)| async move {
-            if done {
-                return None;
-            }
-            match reader.next_chunk().await {
-                Some(data) => Some((Ok(Frame::data(data)), (reader, trailer_rx, false))),
-                None => {
-                    // Body data complete — check for trailers.
-                    if let Some(rx) = trailer_rx {
-                        // ISS-016: bound the wait so declared-but-unsent trailers
-                        // don't stall completion indefinitely.
-                        let timeout = reader.drain_timeout;
-                        match tokio::time::timeout(timeout, rx).await {
-                            Ok(Ok(trailers)) => {
-                                let mut map = http::HeaderMap::new();
-                                for (k, v) in trailers {
-                                    if let (Ok(name), Ok(val)) = (
-                                        HeaderName::from_bytes(k.as_bytes()),
-                                        HeaderValue::from_str(&v),
-                                    ) {
-                                        map.append(name, val);
-                                    }
-                                }
-                                if !map.is_empty() {
-                                    return Some((Ok(Frame::trailers(map)), (reader, None, true)));
-                                }
-                            }
-                            Ok(Err(_)) => {
-                                // Sender dropped without sending — treat as no trailers.
-                            }
-                            Err(_) => {
-                                tracing::warn!(
-                                    "iroh-http: trailer wait timed out after {timeout:?}; \
-                                     completing body without trailers"
-                                );
-                            }
-                        }
-                    }
-                    None
-                }
-            }
-        },
-    );
+    let s = stream::unfold(reader, |reader| async move {
+        reader
+            .next_chunk()
+            .await
+            .map(|data| (Ok(Frame::data(data)), reader))
+    });
 
     StreamBody::new(s)
 }

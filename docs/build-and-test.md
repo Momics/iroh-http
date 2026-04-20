@@ -44,7 +44,7 @@ Rust integration tests in `crates/iroh-http-core/tests/` exercise two real
 Iroh nodes over real QUIC connections (no mocks, no stubs). These cover:
 
 - Basic fetch/serve round-trips
-- Request/response bodies and trailers
+- Request/response bodies
 - Streaming
 - Bidirectional streams and WebTransport sessions
 - Timeouts and diagnostics

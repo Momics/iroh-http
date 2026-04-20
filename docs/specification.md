@@ -193,7 +193,6 @@ The incoming `Request` is augmented with:
 | Property | Type | Description |
 |---|---|---|
 | `req.headers.get('Peer-Id')` | `string` | Authenticated peer's public key (base32) |
-| `req.trailers` | `Promise<Headers>` | Trailer headers (see [Trailer headers](#trailer-headers)) |
 
 ---
 
@@ -327,8 +326,8 @@ class IrohStreamError extends IrohError { name = "IrohStreamError"; }
 
 ## Handle Lifecycle
 
-Iroh-http-core represents every in-flight resource — body streams, trailer
-channels, fetch-cancel tokens, sessions, pending request heads — as an opaque
+Iroh-http-core represents every in-flight resource — body streams,
+fetch-cancel tokens, sessions, pending request heads — as an opaque
 `u64` handle at the FFI boundary. This section defines the user-facing
 contract: when handles are valid, what happens when they expire, and how to
 reason about errors.
@@ -342,8 +341,6 @@ reason about errors.
 |--------|-----------|----------------|
 | Body reader | serve loop allocates per request; `allocBodyWriter()` for fetch | `nextChunk()` → EOF (auto-removed), `cancelRequest()`, TTL sweep |
 | Body writer | `allocBodyWriter()` | `finishBody()` (drops the sender), TTL sweep |
-| Trailer sender | serve loop allocates per request | `sendTrailers()` (fires once, then removed), TTL sweep |
-| Trailer receiver | serve loop allocates per request; `fetch()` for responses | `nextTrailer()` (awaits once, then removed), TTL sweep |
 | Fetch cancel token | `allocFetchToken()` | `cancelFetch()`, or auto-removed when `fetch()` completes |
 | Session | `connect()` | `session.close()`, TTL sweep |
 | Request head | serve loop allocates per request | `respond()` (fires once, then removed) |
@@ -355,7 +352,7 @@ reason about errors.
    handler always receives a valid, fully-initialised handle set.
 
 2. **EOF / completion auto-removes.** `nextChunk()` at EOF removes the reader
-   handle automatically. `nextTrailer()` removes the receiver on success.
+   handle automatically.
    `respond()` removes the request-head sender. You do not need to call any
    cleanup function at EOF — but calling the corresponding close/cancel/finish
    on the *other* side is still required.
@@ -391,8 +388,8 @@ it returns an `IrohHandleError` (name `"IrohHandleError"`).
 
 An `IrohHandleError` means one of:
 
-1. **Already freed** — the handle was consumed (EOF, `finishBody`, `respond`,
-   `nextTrailer`) or cancelled. Common adapter bug: calling `nextChunk()` after
+1. **Already freed** — the handle was consumed (EOF, `finishBody`, `respond`)
+   or cancelled. Common adapter bug: calling `nextChunk()` after
    receiving `null` (EOF), or calling `finishBody()` twice.
 
 2. **TTL-expired** — the handle lived past the TTL window without being
@@ -486,18 +483,6 @@ interface MdnsOptions {
   serviceName?: string;  // Default: "iroh-http"
 }
 ```
-
-### Trailer Headers
-
-```ts
-// On incoming Request (inside serve handler):
-req.trailers: Promise<Headers>;
-
-// On outgoing Response:
-(res as any).trailers = () => new Headers({ "x-checksum": value });
-```
-
-See [trailer-headers.md](features/trailer-headers.md) for details.
 
 ### Compression
 

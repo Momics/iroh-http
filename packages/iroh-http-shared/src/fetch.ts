@@ -15,7 +15,6 @@ import type {
   BidirectionalStream,
   Bridge,
   IrohFetchInit,
-  IrohResponse,
   RawConnectFn,
   RawFetchFn,
 } from "./bridge.js";
@@ -26,16 +25,15 @@ import { classifyError } from "./errors.js";
 
 export type FetchFn = {
   /** Web-standard form: peer identity is embedded in the `httpi://` URL hostname. */
-  (input: string | URL, init?: IrohFetchInit): Promise<IrohResponse>;
+  (input: string | URL, init?: IrohFetchInit): Promise<Response>;
   /** Legacy two-argument form: peer and path supplied separately. */
-  (peer: PublicKey | string, input: string | URL, init?: IrohFetchInit): Promise<IrohResponse>;
+  (peer: PublicKey | string, input: string | URL, init?: IrohFetchInit): Promise<Response>;
 };
 
 /**
  * Construct a `fetch`-like function bound to a specific `IrohEndpoint`.
  *
- * Supports `AbortSignal` via `init.signal` (§3) and populates the
- * non-standard `res.trailers` promise with response trailer headers (§4).
+ * Supports `AbortSignal` via `init.signal` (§3).
  *
  * @param bridge          Platform bridge implementation (nextChunk, sendChunk, etc.).
  * @param endpointHandle  Slab handle returned by the low-level bind.
@@ -60,7 +58,7 @@ export function makeFetch(
     peerOrInput: PublicKey | string | URL,
     inputOrInit?: string | URL | IrohFetchInit,
     maybeInit?: IrohFetchInit,
-  ): Promise<IrohResponse> {
+  ): Promise<Response> {
     let nodeId: string;
     let url: string;
     let init: IrohFetchInit | undefined;
@@ -126,13 +124,6 @@ export function makeFetch(
       bodyPipePromise = pipeToWriter(bridge, bodyStream, reqBodyHandle);
     }
 
-    // Allocate request trailer sender if the caller provided request trailers.
-    let reqTrailersHandle: bigint | null = null;
-    const reqTrailerPairs = init?.trailers ? normaliseHeaders(init.trailers) : null;
-    if (reqTrailerPairs && reqTrailerPairs.length > 0 && reqBodyHandle !== null) {
-      reqTrailersHandle = BigInt(await bridge.allocTrailerSender(endpointHandle));
-    }
-
     // Allocate a Rust-side cancellation token so that AbortSignal can cancel
     // the transport even before the response head arrives (§3 enhanced).
     const fetchToken = await bridge.allocFetchToken(endpointHandle);
@@ -171,7 +162,6 @@ export function makeFetch(
             method,
             headers,
             reqBodyHandle,
-            reqTrailersHandle,
             fetchToken,
             directAddrs,
           ),
@@ -184,7 +174,6 @@ export function makeFetch(
           method,
           headers,
           reqBodyHandle,
-          reqTrailersHandle,
           fetchToken,
           directAddrs,
         );
@@ -201,14 +190,6 @@ export function makeFetch(
     }
 
     if (bodyPipePromise) {
-      // If request trailers are provided, send them after the body pipe completes.
-      if (reqTrailersHandle !== null && reqTrailerPairs && reqTrailerPairs.length > 0) {
-        const trailerHandle = reqTrailersHandle;
-        const trailers = reqTrailerPairs;
-        bodyPipePromise.then(() => bridge.sendTrailers(trailerHandle, trailers)).catch((err) =>
-          console.error("[iroh-http] request trailer send error:", err)
-        );
-      }
       bodyPipePromise.catch((err) =>
         console.error("[iroh-http] request body pipe error:", err)
       );
@@ -251,26 +232,7 @@ export function makeFetch(
       configurable: true,
     });
 
-    // Populate res.trailers as a cached lazy Promise<Headers> (§4).
-    // Caching is required because the Rust slab entry is consumed on first access.
-    // For null-body responses (trailers_handle = 0) no slab entry was allocated;
-    // pre-resolve to empty Headers so callers can always await res.trailers safely.
-    const trailersHandle = rawRes.trailersHandle;
-    let cachedTrailers: Promise<Headers> | null =
-      trailersHandle === 0n ? Promise.resolve(new Headers()) : null;
-    Object.defineProperty(response, "trailers", {
-      get: () => {
-        if (!cachedTrailers) {
-          cachedTrailers = bridge
-            .nextTrailer(trailersHandle)
-            .then((pairs) => (pairs ? new Headers(pairs) : new Headers()));
-        }
-        return cachedTrailers;
-      },
-      configurable: true,
-    });
-
-    return response as IrohResponse;
+    return response;
   };
 }
 
