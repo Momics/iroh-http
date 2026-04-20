@@ -2,8 +2,8 @@ import { createNode } from "../../packages/iroh-http-deno/mod.ts";
 
 const SIZES = [1, 1024, 64 * 1024, 1024 * 1024];
 
-function payload(size: number): Uint8Array {
-  return new Uint8Array(size).fill(0x61);
+function payload(size: number): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(size).fill(0x61) as Uint8Array<ArrayBuffer>;
 }
 
 const tcpHandler = async (req: Request): Promise<Response> => {
