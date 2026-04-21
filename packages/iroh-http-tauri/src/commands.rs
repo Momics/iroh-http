@@ -390,20 +390,26 @@ pub async fn serve(
         Some(arc)
     };
 
+    // Clone ep so the request-dispatch closure can close orphaned requests on
+    // channel failure without capturing the outer ep.
+    let ep_for_closure = ep.clone();
+
     let handle = iroh_http_core::serve_with_events(
         ep.clone(),
         ep.serve_options(),
         move |payload: RequestPayload| {
             let ch = channel.clone();
+            let req_handle = payload.req_handle;
+            let res_body_handle = payload.res_body_handle;
             let headers: Vec<Vec<String>> = payload
                 .headers
                 .into_iter()
                 .map(|(k, v)| vec![k, v])
                 .collect();
             let event = ServeEventPayload {
-                req_handle: payload.req_handle,
+                req_handle,
                 req_body_handle: payload.req_body_handle,
-                res_body_handle: payload.res_body_handle,
+                res_body_handle,
                 is_bidi: payload.is_bidi,
                 method: payload.method,
                 url: payload.url,
@@ -411,7 +417,16 @@ pub async fn serve(
                 remote_node_id: payload.remote_node_id,
             };
             if let Err(e) = ch.send(event) {
-                tracing::warn!("iroh-http-tauri: channel send error: {e}");
+                tracing::warn!("iroh-http-tauri: channel send error: {e}; responding 503");
+                // The JS side will never see this request — close it fail-closed so
+                // the client receives a 503 instead of a hung connection.
+                let _ = respond(
+                    ep_for_closure.handles(),
+                    req_handle,
+                    503,
+                    vec![("content-length".into(), "0".into())],
+                );
+                let _ = ep_for_closure.handles().finish_body(res_body_handle);
             }
         },
         conn_event_fn,
