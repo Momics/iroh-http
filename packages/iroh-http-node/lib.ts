@@ -78,6 +78,26 @@ import type {
   RequestPayload,
 } from "@momics/iroh-http-shared/adapter";
 
+// ── Graceful shutdown tracking ─────────────────────────────────────────────────
+// Track all live endpoint handles so SIGTERM/SIGINT handlers can close them.
+// This sends QUIC CONNECTION_CLOSE frames so peers observe a clean disconnect.
+const _liveEndpoints = new Set<number>();
+
+function _closeAllEndpoints(signal: string): void {
+  const handles = [..._liveEndpoints];
+  _liveEndpoints.clear();
+  if (handles.length === 0) return;
+  // Force-close all handles and exit after they drain (or after 2 s).
+  const deadline = setTimeout(() => process.exit(128 + (signal === "SIGTERM" ? 15 : 2)), 2000);
+  if (deadline.unref) deadline.unref();
+  Promise.all(handles.map((h) => closeEndpoint(h, true).catch(() => {}))).then(() => {
+    process.exit(0);
+  });
+}
+
+process.once("SIGTERM", () => _closeAllEndpoints("SIGTERM"));
+process.once("SIGINT", () => _closeAllEndpoints("SIGINT"));
+
 // ── Bridge implementation ─────────────────────────────────────────────────────
 // Constructed per-node inside createNode() to close over endpointHandle.
 
@@ -332,6 +352,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         requestTimeout: options.requestTimeout,
         maxRequestBodyBytes: options.maxRequestBodyBytes,
         maxHeaderBytes: options.maxHeaderBytes,
+        maxTotalConnections: options.maxTotalConnections,
       }
       : undefined,
   ).catch((e: unknown) => {
@@ -339,6 +360,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   });
 
   const eh = info.endpointHandle;
+  _liveEndpoints.add(eh);
 
   // Bridge: close over endpointHandle so body-handle napi calls get it.
   const nodeBridge: Bridge = {
@@ -409,7 +431,10 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     rawServe,
     rawConnect,
     allocBodyWriter: nodeAllocBodyWriter,
-    closeEndpoint: (handle: number, force?: boolean) => closeEndpoint(handle, force ?? null),
+    closeEndpoint: (handle: number, force?: boolean) => {
+      _liveEndpoints.delete(handle);
+      return closeEndpoint(handle, force ?? null);
+    },
     stopServe: (handle: number) => napiStopServe(handle),
     nativeClosed: napiWaitEndpointClosed(info.endpointHandle),
     addrFns,

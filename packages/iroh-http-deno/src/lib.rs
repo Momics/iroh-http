@@ -16,14 +16,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// Global multi-threaded Tokio runtime.  Initialised once on the first FFI call.
-pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
-    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+/// Returns `None` if the OS could not create the required threads.
+pub(crate) fn runtime() -> Option<&'static tokio::runtime::Runtime> {
+    static RT: OnceLock<Option<tokio::runtime::Runtime>> = OnceLock::new();
     RT.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .expect("failed to build Tokio runtime")
+            .ok()
     })
+    .as_ref()
 }
 
 // ── Overflow response cache ───────────────────────────────────────────────────
@@ -93,8 +95,7 @@ fn evict_overflow(cache: &mut HashMap<u64, OverflowEntry>) {
 /// provided and must not overlap. Null pointers are only valid when the
 /// corresponding length is 0.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn iroh_http_call(
+pub unsafe extern "C" fn iroh_http_call(
     method_ptr: *const u8,
     method_len: usize,
     payload_ptr: *const u8,
@@ -166,7 +167,21 @@ pub extern "C" fn iroh_http_call(
     }
 
     // ── Normal dispatch ───────────────────────────────────────────────────
-    let response = runtime().block_on(dispatch::dispatch(method, payload));
+    let rt = match runtime() {
+        Some(rt) => rt,
+        None => {
+            let err =
+                br#"{"err":"RUNTIME_INIT_FAILED: OS refused to create threads for Tokio runtime"}"#;
+            if err.len() <= out_cap {
+                unsafe { std::ptr::copy_nonoverlapping(err.as_ptr(), out_ptr, err.len()) };
+                return err.len() as i32;
+            }
+            return i32::try_from(err.len())
+                .map(|n| 0i32.wrapping_sub(n))
+                .unwrap_or(i32::MIN);
+        }
+    };
+    let response = rt.block_on(dispatch::dispatch(method, payload));
 
     let encoded = serde_json::to_vec(&response).unwrap_or_else(|e| {
         serde_json::to_vec(&serde_json::json!({ "err": e.to_string() }))
@@ -235,7 +250,10 @@ pub unsafe extern "C" fn iroh_http_next_chunk(
         None => return -1,
     };
 
-    let result = runtime().block_on(ep.handles().next_chunk(handle));
+    let result = match runtime() {
+        Some(rt) => rt.block_on(ep.handles().next_chunk(handle)),
+        None => return -1,
+    };
 
     match result {
         Err(_) => -1,
@@ -295,8 +313,16 @@ pub unsafe extern "C" fn iroh_http_send_chunk(
     };
     let bytes = bytes::Bytes::copy_from_slice(slice);
 
-    match runtime().block_on(ep.handles().send_chunk(handle, bytes)) {
-        Ok(()) => 0,
-        Err(_) => -1,
+    match runtime().map(|rt| rt.block_on(ep.handles().send_chunk(handle, bytes))) {
+        Some(Ok(())) => 0,
+        _ => -1,
     }
+}
+
+/// Force-close all open endpoints.  Call from a Deno signal listener or
+/// `unload` event handler so QUIC connections send a proper CONNECTION_CLOSE
+/// frame before the process exits.
+#[unsafe(no_mangle)]
+pub extern "C" fn iroh_http_close_all() {
+    registry::close_all_endpoints();
 }

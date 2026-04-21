@@ -489,6 +489,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         requestTimeout: options.requestTimeout ?? null,
         maxRequestBodyBytes: options.maxRequestBodyBytes ?? null,
         maxHeaderBytes: options.maxHeaderBytes ?? null,
+        maxTotalConnections: options.maxTotalConnections ?? null,
       }
       : null,
   }).catch((e: unknown) => {

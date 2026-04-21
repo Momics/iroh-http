@@ -276,6 +276,7 @@ async fn create_endpoint(p: Value) -> Value {
             max_connections_per_peer: args.max_connections_per_peer,
             request_timeout_ms: args.request_timeout,
             max_request_body_bytes: args.max_request_body_bytes,
+            max_response_body_bytes: None,
             max_consecutive_errors: args.max_consecutive_errors,
             drain_timeout_secs: None,
             max_total_connections: args.max_total_connections,

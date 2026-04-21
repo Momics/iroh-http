@@ -115,6 +115,7 @@ pub async fn create_endpoint(
                 max_connections_per_peer: a.max_connections_per_peer,
                 request_timeout_ms: a.request_timeout,
                 max_request_body_bytes: a.max_request_body_bytes,
+                max_response_body_bytes: None,
                 max_consecutive_errors: a.max_consecutive_errors,
                 drain_timeout_secs: None,
                 max_total_connections: a.max_total_connections,
@@ -854,7 +855,7 @@ pub async fn mdns_next_event<R: tauri::Runtime>(
 
     // Return a buffered event if available.
     {
-        let mut map = buffer.lock().unwrap();
+        let mut map = buffer.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(queue) = map.get_mut(&browse_handle) {
             if let Some(ev) = queue.pop_front() {
                 return Ok(Some(PeerDiscoveryEventPayload {
@@ -875,7 +876,7 @@ pub async fn mdns_next_event<R: tauri::Runtime>(
 
     // Buffer remaining events.
     if !events.is_empty() {
-        let mut map = buffer.lock().unwrap();
+        let mut map = buffer.lock().unwrap_or_else(|e| e.into_inner());
         map.entry(browse_handle)
             .or_insert_with(VecDeque::new)
             .extend(events);

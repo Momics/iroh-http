@@ -341,7 +341,7 @@ pub struct JsNodeOptions {
     pub keylog: Option<bool>,
     pub compression_level: Option<i32>,
     pub compression_min_body_bytes: Option<u32>,
-    /// Maximum simultaneous in-flight requests.  Default: 64.
+    /// Maximum simultaneous in-flight requests.  Default: 1024.
     pub max_concurrency: Option<u32>,
     /// Maximum connections from a single peer.  Default: 8.
     pub max_connections_per_peer: Option<u32>,
@@ -426,6 +426,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                         .max_request_body_bytes
                         .map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes", MAX_BODY_BYTES))
                         .transpose()?,
+                    max_response_body_bytes: None,
                     max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
                     drain_timeout_secs: None,
                     max_total_connections: o
@@ -473,7 +474,17 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
     // must overwrite it with zeros after writing to encrypted storage.
     // Never log, include in error payloads, or pass to untrusted code.
     let keypair = ep.secret_key_bytes().to_vec();
-    let handle = registry::insert_endpoint(ep) as u32;
+    let handle_u64 = registry::insert_endpoint(ep);
+    // registry::insert_endpoint returns a slab index (usize), which in
+    // practice is 0, 1, 2, … and never approaches u32::MAX.  Assert in debug
+    // builds to catch any future regression if the registry is ever replaced
+    // with a slotmap (whose keys embed a generation counter in the upper 32 bits).
+    debug_assert!(
+        handle_u64 <= u32::MAX as u64,
+        "endpoint slab index {handle_u64} overflowed u32 — \
+         switch JsEndpointInfo.endpoint_handle to u64/BigInt"
+    );
+    let handle = handle_u64 as u32;
 
     Ok(JsEndpointInfo {
         endpoint_handle: handle,

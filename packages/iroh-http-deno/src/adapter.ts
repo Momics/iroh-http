@@ -128,11 +128,11 @@ const lib = Deno.dlopen(LIB_PATH, {
     result: "i32",
     nonblocking: true,
   },
-} as const);
-
-// ── JSON dispatch helper ──────────────────────────────────────────────────────
-
-const enc = new TextEncoder();
+  iroh_http_close_all: {
+    parameters: [],
+    result: "void",
+    nonblocking: false,
+  },
 const dec = new TextDecoder();
 
 /**
@@ -455,6 +455,18 @@ export function makeAllocBodyWriter(endpointHandle: number): AllocBodyWriterFn {
 
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
 
+// Register graceful-shutdown listeners once at module load time.
+// Sends QUIC CONNECTION_CLOSE frames so peers observe a clean disconnect.
+function _closeAllSync(): void {
+  lib.symbols.iroh_http_close_all();
+}
+Deno.addSignalListener("SIGTERM", _closeAllSync);
+// SIGINT is registered only on platforms that support it (non-Windows).
+if (Deno.build.os !== "windows") {
+  Deno.addSignalListener("SIGINT", _closeAllSync);
+}
+globalThis.addEventListener("unload", _closeAllSync);
+
 /** Normalise the `discovery` option into flat fields for the Rust adapter. */
 function normaliseDiscovery(
   disc?: import("@momics/iroh-http-shared").NodeOptions["discovery"],
@@ -527,6 +539,7 @@ export async function createEndpointInfo(
     requestTimeout: options?.requestTimeout ?? null,
     maxRequestBodyBytes: options?.maxRequestBodyBytes ?? null,
     maxHeaderBytes: options?.maxHeaderBytes ?? null,
+    maxTotalConnections: options?.maxTotalConnections ?? null,
   }).catch((e: unknown) => {
     throw classifyBindError(e);
   });
