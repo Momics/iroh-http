@@ -42,3 +42,4 @@ Read the relevant doc before acting in that area. Don't read all docs upfront.
 
 - [manage-issues](.github/skills/manage-issues/SKILL.md) — create, close, and label GitHub issues. Includes regression test policy and commit-linking format.
 - [git-conventions](.github/skills/git-conventions/SKILL.md) — commit messages, branch names, PR titles. Follow Conventional Commits for every commit.
+- [fix-issues](.github/skills/fix-issues/SKILL.md) — systematically resolve open issues: triage → group → fix → CI → commit → close → push.
