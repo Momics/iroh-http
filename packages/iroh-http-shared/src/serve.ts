@@ -10,13 +10,11 @@
 
 import type {
   BidirectionalStream,
-  Bridge,
   FfiResponseHead,
-  NodeOptions,
+  IrohAdapter,
   PeerConnectionEvent,
-  RawServeFn,
   RequestPayload,
-} from "./bridge.js";
+} from "./IrohAdapter.js";
 import { makeReadable, pipeToWriter } from "./streams.js";
 import { classifyError } from "./errors.js";
 
@@ -155,12 +153,10 @@ const METHODS_WITHOUT_BODY = new Set(["GET", "HEAD", "CONNECT", "TRACE"]);
  * ```
  */
 export function makeServe(
-  bridge: Bridge,
+  adapter: IrohAdapter,
   endpointHandle: number,
-  rawServe: RawServeFn,
   nodeId: string,
   onNodeClose: Promise<void>,
-  stopServe: () => void,
 ): ServeFn {
 
   return ((...args: unknown[]): ServeHandle => {
@@ -205,7 +201,7 @@ export function makeServe(
 
     // rawServe returns a Promise<void> that resolves when its internal polling
     // loop exits (i.e. after stopServe() causes nextRequest to drain to null).
-    const loopDone = rawServe(
+    const loopDone = adapter.rawServe(
       endpointHandle,
       { onConnectionEvent },
       async (payload: RequestPayload): Promise<FfiResponseHead> => {
@@ -214,7 +210,7 @@ export function makeServe(
         // Build a web-standard Request.
         const hasBody = !METHODS_WITHOUT_BODY.has(payload.method.toUpperCase());
         const reqBody = (hasBody && !payload.isBidi)
-          ? makeReadable(bridge, payload.reqBodyHandle)
+          ? makeReadable(adapter, payload.reqBodyHandle)
           : null;
 
         // Peer-Id is stripped (spoof prevention) and re-injected from the
@@ -249,16 +245,16 @@ export function makeServe(
             }
             accepted = true;
             return {
-              readable: makeReadable(bridge, payload.reqBodyHandle),
+              readable: makeReadable(adapter, payload.reqBodyHandle),
               writable: new WritableStream<Uint8Array>({
                 async write(chunk) {
-                  await bridge.sendChunk(payload.resBodyHandle, chunk);
+                  await adapter.sendChunk(payload.resBodyHandle, chunk);
                 },
                 async close() {
-                  await bridge.finishBody(payload.resBodyHandle);
+                  await adapter.finishBody(payload.resBodyHandle);
                 },
                 async abort() {
-                  await bridge.finishBody(payload.resBodyHandle);
+                  await adapter.finishBody(payload.resBodyHandle);
                 },
               }),
             };
@@ -290,7 +286,7 @@ export function makeServe(
 
         const bodyStream = res.body ?? emptyStream();
         const doPipe = async () => {
-          await pipeToWriter(bridge, bodyStream, payload.resBodyHandle);
+          await pipeToWriter(adapter, bodyStream, payload.resBodyHandle);
         };
         doPipe().catch((err) =>
           console.error(
@@ -319,7 +315,7 @@ export function makeServe(
     const finished = Promise.race([loopDone, onNodeClose]);
 
     const doStop = (): void => {
-      stopServe();
+      adapter.stopServe(endpointHandle);
       // Rust will drain the loop and then loopDone resolves; we do NOT resolve
       // finished ourselves here.
     };

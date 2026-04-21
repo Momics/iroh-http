@@ -7,7 +7,7 @@
  * await server.finished;
  * ```
  */
-import type { Bridge, RawServeFn } from "./bridge.js";
+import type { IrohAdapter } from "./IrohAdapter.js";
 /**
  * A request handler that receives a web-standard `Request` and returns a `Response`.
  *
@@ -130,5 +130,5 @@ export type ServeFn = {
  * await server.finished;
  * ```
  */
-export declare function makeServe(bridge: Bridge, endpointHandle: number, rawServe: RawServeFn, nodeId: string, onNodeClose: Promise<void>, stopServe: () => void): ServeFn;
+export declare function makeServe(adapter: IrohAdapter, endpointHandle: number, nodeId: string, onNodeClose: Promise<void>): ServeFn;
 //# sourceMappingURL=serve.d.ts.map

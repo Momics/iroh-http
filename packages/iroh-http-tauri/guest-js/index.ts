@@ -1,128 +1,29 @@
 /**
  * iroh-http-tauri — guest-js entry point.
- *
- * Implements the `Bridge` interface using Tauri `invoke()` calls and wires
- * it into iroh-http-shared to export the standard `createNode` API.
- *
- * ```ts
- * import { createNode } from 'iroh-http-tauri';
- *
- * const node = await createNode({ key: savedKey });
- * node.serve({}, req => new Response('hello'));
- * const res = await node.fetch(peerId, '/api');
- * ```
  */
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
-  type AddrFunctions,
-  buildNode,
   classifyBindError,
   decodeBase64,
-  type DiscoveryFunctions,
   encodeBase64,
-  type EndpointStats,
-  type IrohNode,
-  type NodeAddrInfo,
+  IrohNode,
   type NodeOptions,
   normaliseRelayMode,
-  type PeerConnectionEvent,
-  type PeerDiscoveryEvent,
-  type PeerStats,
-  type RelayMode,
   type SecretKey,
 } from "@momics/iroh-http-shared";
-import type {
-  AllocBodyWriterFn,
-  Bridge,
-  FfiDuplexStream,
-  FfiResponse,
-  FfiResponseHead,
-  RawConnectFn,
-  RawFetchFn,
-  RawServeFn,
-  RawSessionFns,
-  RequestPayload,
+import {
+  IrohAdapter,
+  type FfiDuplexStream,
+  type FfiResponse,
+  type FfiResponseHead,
+  type RequestPayload,
+  type PeerConnectionEvent,
 } from "@momics/iroh-http-shared/adapter";
+import type { RawSessionFns } from "@momics/iroh-http-shared/adapter";
+import type { PeerStats, EndpointStats, NodeAddrInfo, PeerDiscoveryEvent } from "@momics/iroh-http-shared";
 
 const PLUGIN = "plugin:iroh-http";
-
-// ── Bridge factory (endpoint-scoped) ─────────────────────────────────────────
-//
-// The Bridge interface does not carry endpointHandle in most method signatures;
-// it is captured by closure instead.  Create one bridge per endpoint.
-
-function makeEndpointBridge(epHandle: number): Bridge {
-  return {
-    nextChunk(handle: bigint): Promise<Uint8Array | null> {
-      return invoke<string | null>(`${PLUGIN}|next_chunk`, {
-        endpointHandle: epHandle,
-        handle: Number(handle),
-      }).then((b64) => (b64 ? decodeBase64(b64) : null));
-    },
-
-    sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
-      return invoke(`${PLUGIN}|send_chunk`, {
-        endpointHandle: epHandle,
-        handle: Number(handle),
-        chunk: encodeBase64(chunk),
-      });
-    },
-
-    finishBody(handle: bigint): Promise<void> {
-      return invoke(`${PLUGIN}|finish_body`, { endpointHandle: epHandle, handle: Number(handle) });
-    },
-
-    cancelRequest(handle: bigint): Promise<void> {
-      return invoke(`${PLUGIN}|cancel_request`, { endpointHandle: epHandle, handle: Number(handle) });
-    },
-
-    allocFetchToken(endpointHandle: number): Promise<bigint> {
-      return invoke<number>(`${PLUGIN}|alloc_fetch_token`, { endpointHandle }).then(BigInt);
-    },
-
-    cancelFetch(token: bigint): void {
-      void invoke(`${PLUGIN}|cancel_in_flight`, { endpointHandle: epHandle, token: Number(token) });
-    },
-  };
-}
-
-// ── Platform functions ────────────────────────────────────────────────────────
-
-const rawFetch: RawFetchFn = async (
-  endpointHandle,
-  nodeId,
-  url,
-  method,
-  headers,
-  reqBodyHandle,
-  fetchToken,
-  directAddrs,
-) => {
-  const res = await invoke<{
-    status: number;
-    headers: string[][];
-    bodyHandle: number;
-    url: string;
-  }>(`${PLUGIN}|raw_fetch`, {
-    args: {
-      endpointHandle: Number(endpointHandle),
-      nodeId,
-      url,
-      method,
-      headers,
-      reqBodyHandle: reqBodyHandle != null ? Number(reqBodyHandle) : null,
-      fetchToken: fetchToken != null ? Number(fetchToken) : null,
-      directAddrs: directAddrs ?? null,
-    },
-  });
-  return {
-    status: res.status,
-    headers: res.headers as [string, string][],
-    bodyHandle: BigInt(res.bodyHandle),
-    url: res.url,
-  } satisfies FfiResponse;
-};
 
 /** Tauri-specific request payload shape (camelCase, serialised from Rust). */
 interface TauriRequestPayload {
@@ -136,183 +37,278 @@ interface TauriRequestPayload {
   remoteNodeId: string;
 }
 
-const rawServe: RawServeFn = (
-  endpointHandle,
-  options,
-  callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
-): Promise<void> => {
-  const channel = new Channel<TauriRequestPayload>();
+// ── TauriAdapter ──────────────────────────────────────────────────────────────
 
-  // Wire optional connection event channel.
-  let connChannel: Channel<PeerConnectionEvent> | undefined;
-  if (options.onConnectionEvent) {
-    const cb = options.onConnectionEvent;
-    connChannel = new Channel<PeerConnectionEvent>();
-    connChannel.onmessage = (ev: PeerConnectionEvent) => cb(ev);
+class TauriAdapter extends IrohAdapter {
+  #epHandle: number;
+  #sessionFnsCache: RawSessionFns;
+
+  constructor(epHandle: number) {
+    super();
+    this.#epHandle = epHandle;
+    this.#sessionFnsCache = makeTauriSessionFns(epHandle);
   }
 
-  channel.onmessage = async (raw: TauriRequestPayload) => {
-    const payload: RequestPayload = {
-      reqHandle: BigInt(raw.reqHandle),
-      reqBodyHandle: BigInt(raw.reqBodyHandle),
-      resBodyHandle: BigInt(raw.resBodyHandle),
-      isBidi: raw.isBidi,
-      method: raw.method,
-      url: raw.url,
-      headers: raw.headers as [string, string][],
-      remoteNodeId: raw.remoteNodeId,
-    };
+  nextChunk(handle: bigint): Promise<Uint8Array | null> {
+    return invoke<string | null>(`${PLUGIN}|next_chunk`, {
+      endpointHandle: this.#epHandle,
+      handle: Number(handle),
+    }).then((b64) => (b64 ? decodeBase64(b64) : null));
+  }
 
-    try {
-      const head = await callback(payload);
-      await invoke(`${PLUGIN}|respond_to_request`, {
-        args: {
-          endpointHandle: Number(endpointHandle),
-          reqHandle: Number(payload.reqHandle),
-          status: head.status,
-          headers: head.headers,
-        },
-      });
-    } catch (err) {
-      console.error("[iroh-http-tauri] handler error:", err);
-      await invoke(`${PLUGIN}|respond_to_request`, {
-        args: { endpointHandle: Number(endpointHandle), reqHandle: Number(raw.reqHandle), status: 500, headers: [] },
-      }).catch(() => {/* ignore */});
-    }
-  };
+  sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
+    return invoke(`${PLUGIN}|send_chunk`, {
+      endpointHandle: this.#epHandle,
+      handle: Number(handle),
+      chunk: encodeBase64(chunk),
+    });
+  }
 
-  invoke(`${PLUGIN}|serve`, {
-    endpointHandle: Number(endpointHandle),
-    channel,
-    connChannel: connChannel ?? null,
-  })
-    .catch((err: unknown) =>
-      console.error("[iroh-http-tauri] serve error:", err)
-    );
+  finishBody(handle: bigint): Promise<void> {
+    return invoke(`${PLUGIN}|finish_body`, { endpointHandle: this.#epHandle, handle: Number(handle) });
+  }
 
-  // Return a promise that resolves when the native serve loop has fully exited.
-  // The `wait_serve_stop` command blocks until stop_serve() is called and all
-  // in-flight requests have been drained on the Rust side.
-  return invoke<void>(`${PLUGIN}|wait_serve_stop`, {
-    endpointHandle: Number(endpointHandle),
-  });
-};
+  cancelRequest(handle: bigint): Promise<void> {
+    return invoke(`${PLUGIN}|cancel_request`, { endpointHandle: this.#epHandle, handle: Number(handle) });
+  }
 
-function makeAllocBodyWriter(epHandle: number): AllocBodyWriterFn {
-  return (): Promise<bigint> =>
-    invoke<number>(`${PLUGIN}|alloc_body_writer`, { endpointHandle: epHandle }).then(BigInt);
-}
+  allocFetchToken(endpointHandle: number): Promise<bigint> {
+    return invoke<number>(`${PLUGIN}|alloc_fetch_token`, { endpointHandle }).then(BigInt);
+  }
 
-const rawConnect: RawConnectFn = async (
-  endpointHandle,
-  nodeId,
-  path,
-  headers,
-) => {
-  const res = await invoke<{ readHandle: number; writeHandle: number }>(
-    `${PLUGIN}|raw_connect`,
-    {
-      args: { endpointHandle: Number(endpointHandle), nodeId, path, headers },
-    },
-  );
-  return {
-    readHandle: BigInt(res.readHandle),
-    writeHandle: BigInt(res.writeHandle),
-  } satisfies FfiDuplexStream;
-};
+  cancelFetch(token: bigint): void {
+    void invoke(`${PLUGIN}|cancel_in_flight`, { endpointHandle: this.#epHandle, token: Number(token) });
+  }
 
-// ── Session factory (endpoint-scoped) ────────────────────────────────────────
-//
-// Like the bridge, session methods (after connect) do not carry endpointHandle
-// in their TypeScript signatures — it is captured by closure.
+  allocBodyWriter(_endpointHandle: number): Promise<bigint> {
+    return invoke<number>(`${PLUGIN}|alloc_body_writer`, { endpointHandle: this.#epHandle }).then(BigInt);
+  }
 
-function makeSessionFns(epHandle: number): RawSessionFns {
-  return {
-  connect: async (endpointHandle, nodeId, directAddrs) => {
-    return invoke<number>(`${PLUGIN}|session_connect`, {
+  async rawFetch(
+    endpointHandle: number,
+    nodeId: string,
+    url: string,
+    method: string,
+    headers: [string, string][],
+    reqBodyHandle: bigint | null,
+    fetchToken: bigint,
+    directAddrs: string[] | null,
+  ): Promise<FfiResponse> {
+    const res = await invoke<{
+      status: number;
+      headers: string[][];
+      bodyHandle: number;
+      url: string;
+    }>(`${PLUGIN}|raw_fetch`, {
       args: {
         endpointHandle: Number(endpointHandle),
         nodeId,
+        url,
+        method,
+        headers,
+        reqBodyHandle: reqBodyHandle != null ? Number(reqBodyHandle) : null,
+        fetchToken: fetchToken != null ? Number(fetchToken) : null,
         directAddrs: directAddrs ?? null,
       },
-    }).then(BigInt);
-  },
-  createBidiStream: async (sessionHandle) => {
-    const res = await invoke<{ readHandle: number; writeHandle: number }>(
-      `${PLUGIN}|session_create_bidi_stream`,
-      { endpointHandle: epHandle, sessionHandle: Number(sessionHandle) },
-    );
+    });
     return {
-      readHandle: BigInt(res.readHandle),
-      writeHandle: BigInt(res.writeHandle),
-    } satisfies FfiDuplexStream;
-  },
-  nextBidiStream: async (sessionHandle) => {
-    const res = await invoke<
-      { readHandle: number; writeHandle: number } | null
-    >(
-      `${PLUGIN}|session_next_bidi_stream`,
-      { endpointHandle: epHandle, sessionHandle: Number(sessionHandle) },
+      status: res.status,
+      headers: res.headers as [string, string][],
+      bodyHandle: BigInt(res.bodyHandle),
+      url: res.url,
+    } satisfies FfiResponse;
+  }
+
+  rawServe(
+    endpointHandle: number,
+    options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
+    callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
+  ): Promise<void> {
+    const channel = new Channel<TauriRequestPayload>();
+
+    let connChannel: Channel<PeerConnectionEvent> | undefined;
+    if (options.onConnectionEvent) {
+      const cb = options.onConnectionEvent;
+      connChannel = new Channel<PeerConnectionEvent>();
+      connChannel.onmessage = (ev: PeerConnectionEvent) => cb(ev);
+    }
+
+    channel.onmessage = async (raw: TauriRequestPayload) => {
+      const payload: RequestPayload = {
+        reqHandle: BigInt(raw.reqHandle),
+        reqBodyHandle: BigInt(raw.reqBodyHandle),
+        resBodyHandle: BigInt(raw.resBodyHandle),
+        isBidi: raw.isBidi,
+        method: raw.method,
+        url: raw.url,
+        headers: raw.headers as [string, string][],
+        remoteNodeId: raw.remoteNodeId,
+      };
+
+      try {
+        const head = await callback(payload);
+        await invoke(`${PLUGIN}|respond_to_request`, {
+          args: {
+            endpointHandle: Number(endpointHandle),
+            reqHandle: Number(payload.reqHandle),
+            status: head.status,
+            headers: head.headers,
+          },
+        });
+      } catch (err) {
+        console.error("[iroh-http-tauri] handler error:", err);
+        await invoke(`${PLUGIN}|respond_to_request`, {
+          args: { endpointHandle: Number(endpointHandle), reqHandle: Number(raw.reqHandle), status: 500, headers: [] },
+        }).catch(() => {});
+      }
+    };
+
+    invoke(`${PLUGIN}|serve`, {
+      endpointHandle: Number(endpointHandle),
+      channel,
+      connChannel: connChannel ?? null,
+    }).catch((err: unknown) => console.error("[iroh-http-tauri] serve error:", err));
+
+    return invoke<void>(`${PLUGIN}|wait_serve_stop`, { endpointHandle: Number(endpointHandle) });
+  }
+
+  closeEndpoint(handle: number, force?: boolean): Promise<void> {
+    return invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: Number(handle), force: force ?? null });
+  }
+
+  stopServe(handle: number): void {
+    void invoke(`${PLUGIN}|stop_serve`, { endpointHandle: Number(handle) }).catch(() => {});
+  }
+
+  waitEndpointClosed(handle: number): Promise<void> {
+    return invoke<void>(`${PLUGIN}|wait_endpoint_closed`, { endpointHandle: Number(handle) }).then(() => {});
+  }
+
+  async nodeAddr(handle: number): Promise<NodeAddrInfo> {
+    return invoke<NodeAddrInfo>(`${PLUGIN}|node_addr`, { endpointHandle: Number(handle) });
+  }
+
+  async nodeTicket(handle: number): Promise<string> {
+    return invoke<string>(`${PLUGIN}|node_ticket`, { endpointHandle: Number(handle) });
+  }
+
+  async homeRelay(handle: number): Promise<string | null> {
+    return invoke<string | null>(`${PLUGIN}|home_relay`, { endpointHandle: Number(handle) });
+  }
+
+  async peerInfo(handle: number, nodeId: string): Promise<NodeAddrInfo | null> {
+    return invoke<NodeAddrInfo | null>(`${PLUGIN}|peer_info`, { endpointHandle: Number(handle), nodeId });
+  }
+
+  async peerStats(handle: number, nodeId: string): Promise<PeerStats | null> {
+    return invoke<PeerStats | null>(`${PLUGIN}|peer_stats`, { endpointHandle: Number(handle), nodeId });
+  }
+
+  async stats(handle: number): Promise<EndpointStats> {
+    return invoke<EndpointStats>(`${PLUGIN}|endpoint_stats`, { endpointHandle: Number(handle) });
+  }
+
+  async rawConnect(
+    endpointHandle: number,
+    nodeId: string,
+    path: string,
+    headers: [string, string][],
+  ): Promise<FfiDuplexStream> {
+    const res = await invoke<{ readHandle: number; writeHandle: number }>(
+      `${PLUGIN}|raw_connect`,
+      { args: { endpointHandle: Number(endpointHandle), nodeId, path, headers } },
     );
-    return res
-      ? {
-        readHandle: BigInt(res.readHandle),
-        writeHandle: BigInt(res.writeHandle),
-      } satisfies FfiDuplexStream
-      : null;
-  },
-  createUniStream: async (sessionHandle) => {
-    return invoke<number>(`${PLUGIN}|session_create_uni_stream`, {
-      endpointHandle: epHandle,
-      sessionHandle: Number(sessionHandle),
-    }).then(BigInt);
-  },
-  nextUniStream: async (sessionHandle) => {
-    const h = await invoke<number | null>(`${PLUGIN}|session_next_uni_stream`, {
-      endpointHandle: epHandle,
-      sessionHandle: Number(sessionHandle),
-    });
-    return h != null ? BigInt(h) : null;
-  },
-  sendDatagram: async (sessionHandle, data) => {
-    const b64 = btoa(String.fromCharCode(...data));
-    await invoke<void>(`${PLUGIN}|session_send_datagram`, {
-      endpointHandle: epHandle,
-      sessionHandle: Number(sessionHandle),
-      data: b64,
-    });
-  },
-  recvDatagram: async (sessionHandle) => {
-    const res = await invoke<string | null>(`${PLUGIN}|session_recv_datagram`, {
-      endpointHandle: epHandle,
-      sessionHandle: Number(sessionHandle),
-    });
-    if (res === null) return null;
-    const bin = atob(res);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  },
-  maxDatagramSize: async (sessionHandle) => {
-    return invoke<number | null>(`${PLUGIN}|session_max_datagram_size`, {
-      endpointHandle: epHandle,
-      sessionHandle: Number(sessionHandle),
-    });
-  },
-  closed: async (sessionHandle) => {
-    return invoke<{ closeCode: number; reason: string }>(
-      `${PLUGIN}|session_closed`,
-      { endpointHandle: epHandle, sessionHandle: Number(sessionHandle) },
-    );
-  },
-  close: async (sessionHandle, closeCode?, reason?) => {
-    await invoke<void>(`${PLUGIN}|session_close`, {
-      endpointHandle: epHandle,
-      sessionHandle: Number(sessionHandle),
-      closeCode,
-      reason,
-    });
-  },
+    return { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream;
+  }
+
+  override get sessionFns(): RawSessionFns {
+    return this.#sessionFnsCache;
+  }
+
+  async mdnsBrowse(handle: number, serviceName: string): Promise<number> {
+    return invoke<number>(`${PLUGIN}|mdns_browse`, { endpointHandle: Number(handle), serviceName });
+  }
+
+  async mdnsNextEvent(browseHandle: number): Promise<PeerDiscoveryEvent | null> {
+    return invoke<PeerDiscoveryEvent | null>(`${PLUGIN}|mdns_next_event`, { browseHandle: Number(browseHandle) });
+  }
+
+  mdnsBrowseClose(browseHandle: number): void {
+    void invoke(`${PLUGIN}|mdns_browse_close`, { browseHandle: Number(browseHandle) });
+  }
+
+  async mdnsAdvertise(handle: number, serviceName: string): Promise<number> {
+    return invoke<number>(`${PLUGIN}|mdns_advertise`, { endpointHandle: Number(handle), serviceName });
+  }
+
+  mdnsAdvertiseClose(advertiseHandle: number): void {
+    void invoke(`${PLUGIN}|mdns_advertise_close`, { advertiseHandle: Number(advertiseHandle) });
+  }
+}
+
+function makeTauriSessionFns(epHandle: number): RawSessionFns {
+  return {
+    connect: async (endpointHandle, nodeId, directAddrs) => {
+      return invoke<number>(`${PLUGIN}|session_connect`, {
+        args: { endpointHandle: Number(endpointHandle), nodeId, directAddrs: directAddrs ?? null },
+      }).then(BigInt);
+    },
+    createBidiStream: async (sessionHandle) => {
+      const res = await invoke<{ readHandle: number; writeHandle: number }>(
+        `${PLUGIN}|session_create_bidi_stream`,
+        { endpointHandle: epHandle, sessionHandle: Number(sessionHandle) },
+      );
+      return { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream;
+    },
+    nextBidiStream: async (sessionHandle) => {
+      const res = await invoke<{ readHandle: number; writeHandle: number } | null>(
+        `${PLUGIN}|session_next_bidi_stream`,
+        { endpointHandle: epHandle, sessionHandle: Number(sessionHandle) },
+      );
+      return res ? ({ readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream) : null;
+    },
+    createUniStream: async (sessionHandle) => {
+      return invoke<number>(`${PLUGIN}|session_create_uni_stream`, {
+        endpointHandle: epHandle, sessionHandle: Number(sessionHandle),
+      }).then(BigInt);
+    },
+    nextUniStream: async (sessionHandle) => {
+      const h = await invoke<number | null>(`${PLUGIN}|session_next_uni_stream`, {
+        endpointHandle: epHandle, sessionHandle: Number(sessionHandle),
+      });
+      return h != null ? BigInt(h) : null;
+    },
+    sendDatagram: async (sessionHandle, data) => {
+      const b64 = btoa(String.fromCharCode(...data));
+      await invoke<void>(`${PLUGIN}|session_send_datagram`, {
+        endpointHandle: epHandle, sessionHandle: Number(sessionHandle), data: b64,
+      });
+    },
+    recvDatagram: async (sessionHandle) => {
+      const res = await invoke<string | null>(`${PLUGIN}|session_recv_datagram`, {
+        endpointHandle: epHandle, sessionHandle: Number(sessionHandle),
+      });
+      if (res === null) return null;
+      const bin = atob(res);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    },
+    maxDatagramSize: async (sessionHandle) => {
+      return invoke<number | null>(`${PLUGIN}|session_max_datagram_size`, {
+        endpointHandle: epHandle, sessionHandle: Number(sessionHandle),
+      });
+    },
+    closed: async (sessionHandle) => {
+      return invoke<{ closeCode: number; reason: string }>(`${PLUGIN}|session_closed`, {
+        endpointHandle: epHandle, sessionHandle: Number(sessionHandle),
+      });
+    },
+    close: async (sessionHandle, closeCode?, reason?) => {
+      await invoke<void>(`${PLUGIN}|session_close`, {
+        endpointHandle: epHandle, sessionHandle: Number(sessionHandle), closeCode, reason,
+      });
+    },
   };
 }
 
@@ -349,9 +345,6 @@ function installLifecycleListener(
   return () => document.removeEventListener("visibilitychange", handler);
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
-/** Normalise the `discovery` option into flat fields for the Rust adapter. */
 function normaliseDiscovery(disc?: NodeOptions["discovery"]): {
   dnsEnabled: boolean;
   dnsServerUrl?: string;
@@ -364,76 +357,8 @@ function normaliseDiscovery(disc?: NodeOptions["discovery"]): {
   return { dnsEnabled: true };
 }
 
-/** Address introspection functions backed by Tauri invoke calls. */
-const tauriAddrFns: AddrFunctions = {
-  nodeAddr: async (handle) => {
-    return invoke<NodeAddrInfo>(`${PLUGIN}|node_addr`, {
-      endpointHandle: Number(handle),
-    });
-  },
-  nodeTicket: async (handle) => {
-    return invoke<string>(`${PLUGIN}|node_ticket`, {
-      endpointHandle: Number(handle),
-    });
-  },
-  homeRelay: async (handle) => {
-    return invoke<string | null>(`${PLUGIN}|home_relay`, {
-      endpointHandle: Number(handle),
-    });
-  },
-  peerInfo: async (handle, nodeId) => {
-    return invoke<NodeAddrInfo | null>(`${PLUGIN}|peer_info`, {
-      endpointHandle: Number(handle),
-      nodeId,
-    });
-  },
-  peerStats: async (handle, nodeId) => {
-    return invoke<PeerStats | null>(`${PLUGIN}|peer_stats`, {
-      endpointHandle: Number(handle),
-      nodeId,
-    });
-  },
-  stats: async (handle) => {
-    return invoke<EndpointStats>(`${PLUGIN}|endpoint_stats`, {
-      endpointHandle: Number(handle),
-    });
-  },
-};
+// ── Public API ────────────────────────────────────────────────────────────────
 
-/** Discovery functions backed by Tauri invoke calls. */
-const tauriDiscoveryFns: DiscoveryFunctions = {
-  mdnsBrowse: async (handle, serviceName) => {
-    return invoke<number>(`${PLUGIN}|mdns_browse`, {
-      endpointHandle: Number(handle),
-      serviceName,
-    });
-  },
-  mdnsNextEvent: async (browseHandle) => {
-    return invoke<PeerDiscoveryEvent | null>(`${PLUGIN}|mdns_next_event`, {
-      browseHandle: Number(browseHandle),
-    });
-  },
-  mdnsBrowseClose: (browseHandle) => {
-    void invoke(`${PLUGIN}|mdns_browse_close`, {
-      browseHandle: Number(browseHandle),
-    });
-  },
-  mdnsAdvertise: async (handle, serviceName) => {
-    return invoke<number>(`${PLUGIN}|mdns_advertise`, {
-      endpointHandle: Number(handle),
-      serviceName,
-    });
-  },
-  mdnsAdvertiseClose: (advertiseHandle) => {
-    void invoke(`${PLUGIN}|mdns_advertise_close`, {
-      advertiseHandle: Number(advertiseHandle),
-    });
-  },
-};
-
-/**
- * Create an Iroh node for peer-to-peer HTTP inside a Tauri application.
- */
 export async function createNode(options?: NodeOptions): Promise<IrohNode> {
   const keyBytes: string | null = options?.key
     ? encodeBase64(
@@ -443,9 +368,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     )
     : null;
 
-  const { relayMode, relays, disableNetworking } = normaliseRelayMode(
-    options?.relayMode,
-  );
+  const { relayMode, relays, disableNetworking } = normaliseRelayMode(options?.relayMode);
   const discovery = normaliseDiscovery(options?.discovery);
   const bindAddrs = options?.bindAddr
     ? (Array.isArray(options.bindAddr) ? options.bindAddr : [options.bindAddr])
@@ -478,9 +401,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         keylog: options.keylog ?? null,
         compressionLevel: typeof options.compression === "object"
           ? options.compression.level ?? null
-          : options.compression
-          ? 3
-          : null,
+          : options.compression ? 3 : null,
         compressionMinBodyBytes: typeof options.compression === "object"
           ? options.compression.minBodyBytes ?? null
           : null,
@@ -496,57 +417,33 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     throw classifyBindError(e);
   });
 
-  // Create endpoint-scoped bridge, body-writer allocator, and session fns
-  // that capture endpointHandle by closure (the interfaces don't carry it).
   const epHandle = Number(info.endpointHandle);
-  const bridge = makeEndpointBridge(epHandle);
-  const allocBodyWriter = makeAllocBodyWriter(epHandle);
-  const sessionFns = makeSessionFns(epHandle);
+  const adapter = new TauriAdapter(epHandle);
+  const nativeClosed = invoke<void>(`${PLUGIN}|wait_endpoint_closed`, {
+    endpointHandle: Number(info.endpointHandle),
+  }).then(() => {});
 
-  const node = buildNode({
-    bridge,
-    info: {
+  const node = IrohNode._create(
+    adapter,
+    {
       endpointHandle: Number(info.endpointHandle),
       nodeId: info.nodeId,
       keypair: new Uint8Array(info.keypair),
     },
-    rawFetch,
-    rawServe,
-    rawConnect,
-    allocBodyWriter,
-    closeEndpoint: (handle, force?) =>
-      invoke(`${PLUGIN}|close_endpoint`, {
-        endpointHandle: Number(handle),
-        force: force ?? null,
-      }),
-    stopServe: (handle) => {
-      invoke(`${PLUGIN}|stop_serve`, { endpointHandle: Number(handle) }).catch(
-        () => {},
-      );
-    },
-    nativeClosed: invoke<void>(`${PLUGIN}|wait_endpoint_closed`, {
-      endpointHandle: Number(info.endpointHandle),
-    }).then(() => {}),
-    addrFns: tauriAddrFns,
-    discoveryFns: tauriDiscoveryFns,
-    sessionFns: sessionFns,
-  });
+    options,
+    nativeClosed,
+  );
 
-  // TAURI-005: install lifecycle listener and store the unsubscribe function
-  // so it can be called when the node closes, preventing stale callbacks.
   const reconnect = options?.reconnect;
   if (reconnect) {
     const unsubscribe = installLifecycleListener(
       Number(info.endpointHandle),
       reconnect,
-      () => {
-        // Resolve the closed promise to signal the node is dead.
-        node.close().catch(() => {/* already closed */});
-      },
+      () => { node.close().catch(() => {}); },
     );
     if (unsubscribe) {
       const originalClose = node.close.bind(node);
-      (node as { close: () => Promise<void> }).close = async () => {
+      (node as IrohNode & { close: () => Promise<void> }).close = async () => {
         unsubscribe();
         return originalClose();
       };

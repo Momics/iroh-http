@@ -12,18 +12,18 @@ exports.bodyInitToStream = bodyInitToStream;
 /**
  * Wrap a `BodyReader` handle in a web-standard `ReadableStream<Uint8Array>`.
  *
- * Pulls from the bridge via `nextChunk` on each `pull` request.
+ * Pulls from the adapter via `nextChunk` on each `pull` request.
  * The stream closes automatically when `nextChunk` returns `null`.
  *
- * @param bridge  Platform bridge implementation.
- * @param handle  Slab handle for the `BodyReader` to read from.
- * @param onClose Optional callback invoked when the stream reaches EOF or is cancelled.
+ * @param adapter  Platform adapter implementation.
+ * @param handle   Slab handle for the `BodyReader` to read from.
+ * @param onClose  Optional callback invoked when the stream reaches EOF or is cancelled.
  * @returns A `ReadableStream<Uint8Array>` backed by the body channel.
  */
-function makeReadable(bridge, handle, onClose) {
+function makeReadable(adapter, handle, onClose) {
     return new ReadableStream({
         async pull(controller) {
-            const chunk = await bridge.nextChunk(handle);
+            const chunk = await adapter.nextChunk(handle);
             if (chunk === null) {
                 controller.close();
                 onClose?.();
@@ -33,7 +33,7 @@ function makeReadable(bridge, handle, onClose) {
             }
         },
         cancel() {
-            bridge.cancelRequest(handle);
+            adapter.cancelRequest(handle);
             onClose?.();
         },
     });
@@ -44,12 +44,12 @@ function makeReadable(bridge, handle, onClose) {
  * Calls `sendChunk` for each chunk, then `finishBody` when the stream ends.
  * Errors from either side are propagated to the returned `Promise`.
  *
- * @param bridge  Platform bridge implementation.
- * @param stream  The `ReadableStream` to consume.
- * @param handle  Slab handle for the `BodyWriter` to write to.
+ * @param adapter  Platform adapter implementation.
+ * @param stream   The `ReadableStream` to consume.
+ * @param handle   Slab handle for the `BodyWriter` to write to.
  * @returns Resolves when the entire stream has been piped and finished.
  */
-async function pipeToWriter(bridge, stream, handle) {
+async function pipeToWriter(adapter, stream, handle) {
     const reader = stream.getReader();
     try {
         let pending = null;
@@ -60,7 +60,7 @@ async function pipeToWriter(bridge, stream, handle) {
             if (done)
                 break;
             if (value && value.byteLength > 0) {
-                pending = bridge.sendChunk(handle, value);
+                pending = adapter.sendChunk(handle, value);
             }
         }
         if (pending)
@@ -68,7 +68,7 @@ async function pipeToWriter(bridge, stream, handle) {
     }
     finally {
         reader.releaseLock();
-        await bridge.finishBody(handle);
+        await adapter.finishBody(handle);
     }
 }
 /**

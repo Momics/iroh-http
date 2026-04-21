@@ -38,7 +38,7 @@ const METHODS_WITHOUT_BODY = new Set(["GET", "HEAD", "CONNECT", "TRACE"]);
  * await server.finished;
  * ```
  */
-function makeServe(bridge, endpointHandle, rawServe, nodeId, onNodeClose, stopServe) {
+function makeServe(adapter, endpointHandle, nodeId, onNodeClose) {
     return ((...args) => {
         // Parse overloaded arguments.
         let handler;
@@ -78,12 +78,12 @@ function makeServe(bridge, endpointHandle, rawServe, nodeId, onNodeClose, stopSe
             : undefined;
         // rawServe returns a Promise<void> that resolves when its internal polling
         // loop exits (i.e. after stopServe() causes nextRequest to drain to null).
-        const loopDone = rawServe(endpointHandle, { onConnectionEvent }, async (payload) => {
+        const loopDone = adapter.rawServe(endpointHandle, { onConnectionEvent }, async (payload) => {
             const peerId = headerValue(payload.headers, "peer-id");
             // Build a web-standard Request.
             const hasBody = !METHODS_WITHOUT_BODY.has(payload.method.toUpperCase());
             const reqBody = (hasBody && !payload.isBidi)
-                ? (0, streams_js_1.makeReadable)(bridge, payload.reqBodyHandle)
+                ? (0, streams_js_1.makeReadable)(adapter, payload.reqBodyHandle)
                 : null;
             // Peer-Id is stripped (spoof prevention) and re-injected from the
             // authenticated QUIC connection identity in Rust core. No duplication here.
@@ -110,16 +110,16 @@ function makeServe(bridge, endpointHandle, rawServe, nodeId, onNodeClose, stopSe
                     }
                     accepted = true;
                     return {
-                        readable: (0, streams_js_1.makeReadable)(bridge, payload.reqBodyHandle),
+                        readable: (0, streams_js_1.makeReadable)(adapter, payload.reqBodyHandle),
                         writable: new WritableStream({
                             async write(chunk) {
-                                await bridge.sendChunk(payload.resBodyHandle, chunk);
+                                await adapter.sendChunk(payload.resBodyHandle, chunk);
                             },
                             async close() {
-                                await bridge.finishBody(payload.resBodyHandle);
+                                await adapter.finishBody(payload.resBodyHandle);
                             },
                             async abort() {
-                                await bridge.finishBody(payload.resBodyHandle);
+                                await adapter.finishBody(payload.resBodyHandle);
                             },
                         }),
                     };
@@ -150,7 +150,7 @@ function makeServe(bridge, endpointHandle, rawServe, nodeId, onNodeClose, stopSe
             }
             const bodyStream = res.body ?? emptyStream();
             const doPipe = async () => {
-                await (0, streams_js_1.pipeToWriter)(bridge, bodyStream, payload.resBodyHandle);
+                await (0, streams_js_1.pipeToWriter)(adapter, bodyStream, payload.resBodyHandle);
             };
             doPipe().catch((err) => console.error("[iroh-http] response body pipe error:", (0, errors_js_1.classifyError)(err)));
             return {
@@ -169,7 +169,7 @@ function makeServe(bridge, endpointHandle, rawServe, nodeId, onNodeClose, stopSe
         // even when stopServe() was never called explicitly.
         const finished = Promise.race([loopDone, onNodeClose]);
         const doStop = () => {
-            stopServe();
+            adapter.stopServe(endpointHandle);
             // Rust will drain the loop and then loopDone resolves; we do NOT resolve
             // finished ourselves here.
         };

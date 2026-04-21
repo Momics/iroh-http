@@ -6,7 +6,7 @@
  * the standard WebTransport interface.
  */
 
-import type { Bridge, FfiDuplexStream } from "./bridge.js";
+import type { IrohAdapter, FfiDuplexStream } from "./IrohAdapter.js";
 import type { PublicKey } from "./keys.js";
 import { makeReadable } from "./streams.js";
 
@@ -116,7 +116,7 @@ export interface IrohSession {
  * Build an `IrohSession` from raw platform handles.
  */
 export function buildSession(
-  bridge: Bridge,
+  adapter: IrohAdapter,
   sessionHandle: bigint,
   remoteId: PublicKey,
   rawSession: RawSessionFns,
@@ -125,16 +125,16 @@ export function buildSession(
   const closedPromise = rawSession.closed(sessionHandle);
 
   function wrapDuplex(ffi: FfiDuplexStream): WebTransportBidirectionalStream {
-    const readable = makeReadable(bridge, ffi.readHandle);
+    const readable = makeReadable(adapter, ffi.readHandle);
     const writable = new WritableStream<Uint8Array>({
       async write(chunk) {
-        await bridge.sendChunk(ffi.writeHandle, chunk);
+        await adapter.sendChunk(ffi.writeHandle, chunk);
       },
       async close() {
-        await bridge.finishBody(ffi.writeHandle);
+        await adapter.finishBody(ffi.writeHandle);
       },
       async abort() {
-        await bridge.finishBody(ffi.writeHandle);
+        await adapter.finishBody(ffi.writeHandle);
       },
     });
     return { readable, writable };
@@ -168,13 +168,13 @@ export function buildSession(
       const writeHandle = await rawSession.createUniStream(sessionHandle);
       return new WritableStream<Uint8Array>({
         async write(chunk) {
-          await bridge.sendChunk(writeHandle, chunk);
+          await adapter.sendChunk(writeHandle, chunk);
         },
         async close() {
-          await bridge.finishBody(writeHandle);
+          await adapter.finishBody(writeHandle);
         },
         async abort() {
-          await bridge.finishBody(writeHandle);
+          await adapter.finishBody(writeHandle);
         },
       });
     },
@@ -209,7 +209,7 @@ export function buildSession(
             if (readHandle === null) {
               controller.close();
             } else {
-              controller.enqueue(makeReadable(bridge, readHandle));
+              controller.enqueue(makeReadable(adapter, readHandle));
             }
           },
         });

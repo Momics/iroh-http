@@ -5,27 +5,27 @@
  * integer body handles to `ReadableStream` / `WritableStream` abstractions.
  */
 
-import type { Bridge } from "./bridge.js";
+import type { IrohAdapter } from "./IrohAdapter.js";
 
 /**
  * Wrap a `BodyReader` handle in a web-standard `ReadableStream<Uint8Array>`.
  *
- * Pulls from the bridge via `nextChunk` on each `pull` request.
+ * Pulls from the adapter via `nextChunk` on each `pull` request.
  * The stream closes automatically when `nextChunk` returns `null`.
  *
- * @param bridge  Platform bridge implementation.
- * @param handle  Slab handle for the `BodyReader` to read from.
- * @param onClose Optional callback invoked when the stream reaches EOF or is cancelled.
+ * @param adapter  Platform adapter implementation.
+ * @param handle   Slab handle for the `BodyReader` to read from.
+ * @param onClose  Optional callback invoked when the stream reaches EOF or is cancelled.
  * @returns A `ReadableStream<Uint8Array>` backed by the body channel.
  */
 export function makeReadable(
-  bridge: Bridge,
+  adapter: IrohAdapter,
   handle: bigint,
   onClose?: () => void,
 ): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
-      const chunk = await bridge.nextChunk(handle);
+      const chunk = await adapter.nextChunk(handle);
       if (chunk === null) {
         controller.close();
         onClose?.();
@@ -34,7 +34,7 @@ export function makeReadable(
       }
     },
     cancel() {
-      bridge.cancelRequest(handle);
+      adapter.cancelRequest(handle);
       onClose?.();
     },
   });
@@ -46,13 +46,13 @@ export function makeReadable(
  * Calls `sendChunk` for each chunk, then `finishBody` when the stream ends.
  * Errors from either side are propagated to the returned `Promise`.
  *
- * @param bridge  Platform bridge implementation.
- * @param stream  The `ReadableStream` to consume.
- * @param handle  Slab handle for the `BodyWriter` to write to.
+ * @param adapter  Platform adapter implementation.
+ * @param stream   The `ReadableStream` to consume.
+ * @param handle   Slab handle for the `BodyWriter` to write to.
  * @returns Resolves when the entire stream has been piped and finished.
  */
 export async function pipeToWriter(
-  bridge: Bridge,
+  adapter: IrohAdapter,
   stream: ReadableStream<Uint8Array>,
   handle: bigint,
 ): Promise<void> {
@@ -64,13 +64,13 @@ export async function pipeToWriter(
       if (pending) await pending;
       if (done) break;
       if (value && value.byteLength > 0) {
-        pending = bridge.sendChunk(handle, value);
+        pending = adapter.sendChunk(handle, value);
       }
     }
     if (pending) await pending;
   } finally {
     reader.releaseLock();
-    await bridge.finishBody(handle);
+    await adapter.finishBody(handle);
   }
 }
 

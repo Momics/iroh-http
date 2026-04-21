@@ -12,20 +12,20 @@ const streams_js_1 = require("./streams.js");
 /**
  * Build an `IrohSession` from raw platform handles.
  */
-function buildSession(bridge, sessionHandle, remoteId, rawSession) {
+function buildSession(adapter, sessionHandle, remoteId, rawSession) {
     // The session_closed promise from the native side.
     const closedPromise = rawSession.closed(sessionHandle);
     function wrapDuplex(ffi) {
-        const readable = (0, streams_js_1.makeReadable)(bridge, ffi.readHandle);
+        const readable = (0, streams_js_1.makeReadable)(adapter, ffi.readHandle);
         const writable = new WritableStream({
             async write(chunk) {
-                await bridge.sendChunk(ffi.writeHandle, chunk);
+                await adapter.sendChunk(ffi.writeHandle, chunk);
             },
             async close() {
-                await bridge.finishBody(ffi.writeHandle);
+                await adapter.finishBody(ffi.writeHandle);
             },
             async abort() {
-                await bridge.finishBody(ffi.writeHandle);
+                await adapter.finishBody(ffi.writeHandle);
             },
         });
         return { readable, writable };
@@ -47,13 +47,13 @@ function buildSession(bridge, sessionHandle, remoteId, rawSession) {
             const writeHandle = await rawSession.createUniStream(sessionHandle);
             return new WritableStream({
                 async write(chunk) {
-                    await bridge.sendChunk(writeHandle, chunk);
+                    await adapter.sendChunk(writeHandle, chunk);
                 },
                 async close() {
-                    await bridge.finishBody(writeHandle);
+                    await adapter.finishBody(writeHandle);
                 },
                 async abort() {
-                    await bridge.finishBody(writeHandle);
+                    await adapter.finishBody(writeHandle);
                 },
             });
         },
@@ -82,7 +82,7 @@ function buildSession(bridge, sessionHandle, remoteId, rawSession) {
                             controller.close();
                         }
                         else {
-                            controller.enqueue((0, streams_js_1.makeReadable)(bridge, readHandle));
+                            controller.enqueue((0, streams_js_1.makeReadable)(adapter, readHandle));
                         }
                     },
                 });

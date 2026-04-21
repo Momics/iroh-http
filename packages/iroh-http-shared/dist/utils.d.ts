@@ -4,7 +4,7 @@
  * Centralises helpers that were previously duplicated across Node, Deno,
  * and Tauri adapter code.
  */
-import type { RelayMode } from "./bridge.js";
+import type { RelayMode } from "./options/NodeOptions.js";
 export interface NormalisedRelay {
     relayMode: string | undefined;
     relays: string[] | null;

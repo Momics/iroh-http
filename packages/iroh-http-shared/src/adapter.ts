@@ -1,24 +1,4 @@
-/**
- * iroh-http-shared/adapter — types intended for platform adapter authors only.
- *
- * Import this sub-path in adapter packages (iroh-http-node, iroh-http-deno,
- * iroh-http-tauri) rather than importing `@internal` symbols from the root
- * package entry point.
- *
- *   import type { Bridge, RawFetchFn, ... } from "@momics/iroh-http-shared/adapter";
- */
+export { IrohAdapter } from './IrohAdapter.js';
+export type { FfiRequest, FfiResponseHead, FfiResponse, RequestPayload, FfiDuplexStream, BidirectionalStream, RawConnectFn, RawFetchFn, RawServeFn, AllocBodyWriterFn, PeerConnectionEvent } from './IrohAdapter.js';
+export type { RawSessionFns } from './session.js';
 
-export type {
-  AllocBodyWriterFn,
-  Bridge,
-  FfiDuplexStream,
-  FfiRequest,
-  FfiResponse,
-  FfiResponseHead,
-  RawConnectFn,
-  RawFetchFn,
-  RawServeFn,
-  RequestPayload,
-} from "./bridge.js";
-
-export type { RawSessionFns } from "./session.js";

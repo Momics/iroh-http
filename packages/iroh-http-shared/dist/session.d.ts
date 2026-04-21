@@ -5,7 +5,7 @@
  * bidirectional streams, unidirectional streams, and datagrams through
  * the standard WebTransport interface.
  */
-import type { Bridge, FfiDuplexStream } from "./bridge.js";
+import type { IrohAdapter, FfiDuplexStream } from "./IrohAdapter.js";
 import type { PublicKey } from "./keys.js";
 /** WebTransport-compatible bidirectional stream. */
 export interface WebTransportBidirectionalStream {
@@ -86,5 +86,5 @@ export interface IrohSession {
 /**
  * Build an `IrohSession` from raw platform handles.
  */
-export declare function buildSession(bridge: Bridge, sessionHandle: bigint, remoteId: PublicKey, rawSession: RawSessionFns): IrohSession;
+export declare function buildSession(adapter: IrohAdapter, sessionHandle: bigint, remoteId: PublicKey, rawSession: RawSessionFns): IrohSession;
 //# sourceMappingURL=session.d.ts.map

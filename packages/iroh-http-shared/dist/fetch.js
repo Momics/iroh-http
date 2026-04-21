@@ -4,10 +4,10 @@
  * `makeConnect` — wraps the raw platform connect in a `BidirectionalStream`.
  *
  * ```ts
- * const nodeFetch = makeFetch(bridge, endpointHandle, rawFetch, allocBodyWriter);
+ * const nodeFetch = makeFetch(adapter, endpointHandle);
  * const res = await nodeFetch(remotePeerId, '/api/data');
  *
- * const stream = await makeConnect(bridge, endpointHandle, rawConnect)(peerId, '/ws');
+ * const stream = await makeConnect(adapter, endpointHandle)(peerId, '/ws');
  * ```
  */
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -21,20 +21,18 @@ const errors_js_1 = require("./errors.js");
  *
  * Supports `AbortSignal` via `init.signal` (§3).
  *
- * @param bridge          Platform bridge implementation (nextChunk, sendChunk, etc.).
+ * @param adapter         Platform adapter implementation (nextChunk, sendChunk, etc.).
  * @param endpointHandle  Slab handle returned by the low-level bind.
- * @param rawFetch        Platform-specific raw fetch function.
- * @param allocBodyWriter Allocates a `BodyWriter` handle for request body streaming.
  * @returns A `fetch`-like function: `(peer, url, init?) => Promise<Response>`.
  *
  * @example
  * ```ts
- * const doFetch = makeFetch(bridge, handle, rawFetch, allocBodyWriter);
+ * const doFetch = makeFetch(adapter, handle);
  * const res = await doFetch(peerId, '/api/data', { method: 'POST', body: 'hi' });
  * console.log(await res.text());
  * ```
  */
-function makeFetch(bridge, endpointHandle, rawFetch, allocBodyWriter) {
+function makeFetch(adapter, endpointHandle) {
     return async function irohFetch(peerOrInput, inputOrInit, maybeInit) {
         let nodeId;
         let url;
@@ -83,21 +81,21 @@ function makeFetch(bridge, endpointHandle, rawFetch, allocBodyWriter) {
         let bodyPipePromise = null;
         const bodyStream = init?.body ? (0, streams_js_1.bodyInitToStream)(init.body) : null;
         if (bodyStream) {
-            reqBodyHandle = await allocBodyWriter();
-            bodyPipePromise = (0, streams_js_1.pipeToWriter)(bridge, bodyStream, reqBodyHandle);
+            reqBodyHandle = await adapter.allocBodyWriter(endpointHandle);
+            bodyPipePromise = (0, streams_js_1.pipeToWriter)(adapter, bodyStream, reqBodyHandle);
         }
         // Allocate a Rust-side cancellation token so that AbortSignal can cancel
         // the transport even before the response head arrives (§3 enhanced).
-        const fetchToken = await bridge.allocFetchToken(endpointHandle);
+        const fetchToken = await adapter.allocFetchToken(endpointHandle);
         // Wire AbortSignal → cancelFetch as early as possible (fire-and-forget).
         // This fires even if the signal is already aborted.
         let cancelAbortListener = null;
         if (signal) {
             if (signal.aborted) {
-                bridge.cancelFetch(fetchToken);
+                adapter.cancelFetch(fetchToken);
                 throw new DOMException("The operation was aborted", "AbortError");
             }
-            cancelAbortListener = () => bridge.cancelFetch(fetchToken);
+            cancelAbortListener = () => adapter.cancelFetch(fetchToken);
             signal.addEventListener("abort", cancelAbortListener, { once: true });
         }
         // Build an abort promise for the JS-side race (still needed so the Promise
@@ -113,10 +111,10 @@ function makeFetch(bridge, endpointHandle, rawFetch, allocBodyWriter) {
         try {
             rawRes = abortPromise
                 ? await Promise.race([
-                    rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken, directAddrs),
+                    adapter.rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken, directAddrs),
                     abortPromise,
                 ])
-                : await rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken, directAddrs);
+                : await adapter.rawFetch(endpointHandle, nodeId, url, method, headers, reqBodyHandle, fetchToken, directAddrs);
         }
         catch (err) {
             if (err instanceof DOMException && err.name === "AbortError")
@@ -145,12 +143,12 @@ function makeFetch(bridge, endpointHandle, rawFetch, allocBodyWriter) {
             // leaks when the response body is never consumed by the caller.
             let cancelOnAbort = null;
             if (signal) {
-                cancelOnAbort = () => bridge.cancelRequest(rawRes.bodyHandle);
+                cancelOnAbort = () => adapter.cancelRequest(rawRes.bodyHandle);
                 signal.addEventListener("abort", cancelOnAbort, { once: true });
             }
             // Wrap response body in a ReadableStream.
             // When the stream closes (EOF or cancel), remove the abort listener to avoid a leak.
-            responseBody = (0, streams_js_1.makeReadable)(bridge, rawRes.bodyHandle, () => {
+            responseBody = (0, streams_js_1.makeReadable)(adapter, rawRes.bodyHandle, () => {
                 if (signal && cancelOnAbort) {
                     signal.removeEventListener("abort", cancelOnAbort);
                     cancelOnAbort = null;
@@ -178,39 +176,38 @@ function makeFetch(bridge, endpointHandle, rawFetch, allocBodyWriter) {
  * The returned `BidirectionalStream` exposes `readable` (data from server) and
  * `writable` (data to server).  Both sides are open simultaneously.
  *
- * @param bridge          Platform bridge implementation.
+ * @param adapter         Platform adapter implementation.
  * @param endpointHandle  Slab handle returned by the low-level bind.
- * @param rawConnect      Platform-specific raw duplex connect function.
  * @returns A function: `(peer, path, init?) => Promise<BidirectionalStream>`.
  *
  * @throws {@link IrohConnectError} If the remote peer rejects or is unreachable.
  *
  * @example
  * ```ts
- * const connect = makeConnect(bridge, handle, rawConnect);
+ * const connect = makeConnect(adapter, handle);
  * const { readable, writable } = await connect(peerId, '/ws');
  * const writer = writable.getWriter();
  * await writer.write(new TextEncoder().encode('ping'));
  * ```
  */
-function makeConnect(bridge, endpointHandle, rawConnect) {
+function makeConnect(adapter, endpointHandle) {
     return async (peer, path, init) => {
         const nodeId = (0, keys_js_1.resolveNodeId)(peer);
         const headers = normaliseHeaders(init?.headers);
-        const ffi = await rawConnect(endpointHandle, nodeId, path, headers)
+        const ffi = await adapter.rawConnect(endpointHandle, nodeId, path, headers)
             .catch((err) => {
             throw (0, errors_js_1.classifyError)(err);
         });
-        const readable = (0, streams_js_1.makeReadable)(bridge, ffi.readHandle);
+        const readable = (0, streams_js_1.makeReadable)(adapter, ffi.readHandle);
         const writable = new WritableStream({
             async write(chunk) {
-                await bridge.sendChunk(ffi.writeHandle, chunk);
+                await adapter.sendChunk(ffi.writeHandle, chunk);
             },
             async close() {
-                await bridge.finishBody(ffi.writeHandle);
+                await adapter.finishBody(ffi.writeHandle);
             },
             async abort() {
-                await bridge.finishBody(ffi.writeHandle);
+                await adapter.finishBody(ffi.writeHandle);
             },
         });
         return { readable, writable };
