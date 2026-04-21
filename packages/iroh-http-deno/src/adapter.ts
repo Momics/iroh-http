@@ -1,8 +1,7 @@
 /**
  * iroh-http-deno — DenoAdapter.
  *
- * Implements the Bridge interface using Deno.dlopen FFI and exposes the
- * raw platform functions needed by iroh-http-shared's buildNode.
+ * Implements IrohAdapter via Deno.dlopen FFI.
  */
 
 import { resolve, dirname, fromFileUrl } from "@std/path";
@@ -15,8 +14,8 @@ import type {
   PeerDiscoveryEvent,
   PeerStats,
 } from "@momics/iroh-http-shared";
+import { IrohAdapter } from "@momics/iroh-http-shared/adapter";
 import type {
-  Bridge,
   FfiResponse,
   FfiResponseHead,
   FfiDuplexStream,
@@ -28,10 +27,6 @@ import type {
   RawSessionFns,
 } from "@momics/iroh-http-shared/adapter";
 import { classifyError, classifyBindError, encodeBase64, decodeBase64, normaliseRelayMode } from "@momics/iroh-http-shared";
-import type {
-  AddrFunctions,
-  DiscoveryFunctions,
-} from "@momics/iroh-http-shared";
 
 // ── Platform library resolution ───────────────────────────────────────────────
 
@@ -247,7 +242,7 @@ let chunkBufHint = 65536;
 
 // ── Bridge implementation ─────────────────────────────────────────────────────
 
-export function makeBridge(endpointHandle: number): Bridge {
+export function makeBridge(endpointHandle: number) {
   return {
   async nextChunk(handle: bigint): Promise<Uint8Array | null> {
     // DENO-001: allocate a per-call buffer so concurrent reads on different
@@ -585,60 +580,60 @@ export function endpointStats(handle: number): Promise<EndpointStats> {
 
 // ── Address introspection ──────────────────────────────────────────────────────
 
-export const denoAddrFns: AddrFunctions = {
-  nodeAddr: async (handle) => {
+export const denoAddrFns = {
+  nodeAddr: async (handle: number) => {
     const res = await call<NodeAddrInfo>("nodeAddr", {
       endpointHandle: handle,
     });
     return res;
   },
-  nodeTicket: async (handle) => {
+  nodeTicket: async (handle: number) => {
     return call<string>("nodeTicket", { endpointHandle: handle });
   },
-  homeRelay: async (handle) => {
+  homeRelay: async (handle: number) => {
     const res = await call<string | null>("homeRelay", {
       endpointHandle: handle,
     });
     return res;
   },
-  peerInfo: async (handle, nodeId) => {
+  peerInfo: async (handle: number, nodeId: string) => {
     const res = await call<NodeAddrInfo | null>("peerInfo", {
       endpointHandle: handle,
       nodeId,
     });
     return res;
   },
-  peerStats: async (handle, nodeId) => {
+  peerStats: async (handle: number, nodeId: string) => {
     return call<PeerStats | null>("peerStats", {
       endpointHandle: handle,
       nodeId,
     });
   },
-  stats: async (handle) => {
+  stats: async (handle: number) => {
     return call<EndpointStats>("endpointStats", { endpointHandle: handle });
   },
 };
 
 /** Discovery functions backed by Deno FFI calls. */
-export const denoDiscoveryFns: DiscoveryFunctions = {
-  mdnsBrowse: async (handle, serviceName) => {
+export const denoDiscoveryFns = {
+  mdnsBrowse: async (handle: number, serviceName: string) => {
     return call<number>("mdnsBrowse", { endpointHandle: handle, serviceName });
   },
-  mdnsNextEvent: async (browseHandle) => {
+  mdnsNextEvent: async (browseHandle: number) => {
     return call<PeerDiscoveryEvent | null>("mdnsNextEvent", { browseHandle });
   },
-  mdnsBrowseClose: (browseHandle) => {
+  mdnsBrowseClose: (browseHandle: number) => {
     call<Record<never, never>>("mdnsBrowseClose", { browseHandle }).catch(
       () => {},
     );
   },
-  mdnsAdvertise: async (handle, serviceName) => {
+  mdnsAdvertise: async (handle: number, serviceName: string) => {
     return call<number>("mdnsAdvertise", {
       endpointHandle: handle,
       serviceName,
     });
   },
-  mdnsAdvertiseClose: (advertiseHandle) => {
+  mdnsAdvertiseClose: (advertiseHandle: number) => {
     call<Record<never, never>>("mdnsAdvertiseClose", { advertiseHandle }).catch(
       () => {},
     );
@@ -774,4 +769,196 @@ export async function publicKeyVerify(
 export async function generateSecretKey(): Promise<Uint8Array> {
   const b64 = await call<string>("generateSecretKey", {});
   return decodeBase64(b64);
+}
+
+// ── DenoAdapter ───────────────────────────────────────────────────────────────
+
+/**
+ * Concrete IrohAdapter backed by Deno FFI.
+ * One instance per endpoint — constructed with the endpoint handle.
+ */
+export class DenoAdapter extends IrohAdapter {
+  readonly #eh: number;
+  readonly #sessionFnsInstance: RawSessionFns;
+
+  constructor(endpointHandle: number) {
+    super();
+    this.#eh = endpointHandle;
+    this.#sessionFnsInstance = makeDenoSessionFns(endpointHandle);
+  }
+
+  // ── Body streaming ──────────────────────────────────────────────────────────
+
+  async nextChunk(handle: bigint): Promise<Uint8Array | null> {
+    const endpointHandle = this.#eh;
+    let buf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
+    let n = (await lib.symbols.iroh_http_next_chunk(
+      endpointHandle, handle, buf, BigInt(buf.byteLength),
+    )) as number;
+    if (n < -1) {
+      buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
+      n = (await lib.symbols.iroh_http_next_chunk(
+        endpointHandle, handle, buf, BigInt(buf.byteLength),
+      )) as number;
+    }
+    if (n === -1) throw new Error(`nextChunk: stream error on handle ${handle}`);
+    if (n === 0) return null;
+    chunkBufHint = Math.min(Math.max(chunkBufHint, n), MAX_CHUNK_BUF);
+    return buf.slice(0, n);
+  }
+
+  async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
+    const buf = chunk as Uint8Array<ArrayBuffer>;
+    const result = (await lib.symbols.iroh_http_send_chunk(
+      this.#eh, handle, buf, BigInt(buf.byteLength),
+    )) as number;
+    if (result < 0) throw new Error(`sendChunk failed: handle ${handle}`);
+  }
+
+  async finishBody(handle: bigint): Promise<void> {
+    await call<Record<never, never>>("finishBody", { endpointHandle: this.#eh, handle });
+  }
+
+  async cancelRequest(handle: bigint): Promise<void> {
+    await call<Record<never, never>>("cancelRequest", { endpointHandle: this.#eh, handle });
+  }
+
+  async allocFetchToken(_endpointHandle: number): Promise<bigint> {
+    const res = await call<{ token: number }>("allocFetchToken", { endpointHandle: this.#eh });
+    return BigInt(res.token);
+  }
+
+  cancelFetch(token: bigint): void {
+    void call<Record<never, never>>("cancelInFlight", { endpointHandle: this.#eh, token });
+  }
+
+  allocBodyWriter(_endpointHandle: number): Promise<bigint> {
+    return call<{ handle: number }>("allocBodyWriter", { endpointHandle: this.#eh })
+      .then((r) => BigInt(r.handle));
+  }
+
+  // ── Raw transport ───────────────────────────────────────────────────────────
+
+  async rawFetch(
+    endpointHandle: number,
+    nodeId: string,
+    url: string,
+    method: string,
+    headers: [string, string][],
+    reqBodyHandle: bigint | null,
+    fetchToken: bigint,
+    directAddrs: string[] | null,
+  ): Promise<FfiResponse> {
+    const res = await call<{
+      status: number;
+      headers: [string, string][];
+      bodyHandle: number;
+      url: string;
+    }>("rawFetch", {
+      endpointHandle, nodeId, url, method, headers,
+      reqBodyHandle: reqBodyHandle ?? null,
+      fetchToken,
+      directAddrs: directAddrs ?? null,
+    });
+    return {
+      status: res.status,
+      headers: res.headers,
+      bodyHandle: BigInt(res.bodyHandle),
+      url: res.url,
+    };
+  }
+
+  override async rawConnect(
+    endpointHandle: number,
+    nodeId: string,
+    path: string,
+    headers: [string, string][],
+  ): Promise<FfiDuplexStream> {
+    const res = await call<{ readHandle: number; writeHandle: number }>(
+      "rawConnect", { endpointHandle, nodeId, path, headers },
+    );
+    return { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) };
+  }
+
+  rawServe(
+    endpointHandle: number,
+    options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
+    callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
+  ): Promise<void> {
+    // Delegate to the module-level rawServe which owns the polling loop.
+    return rawServe(endpointHandle, options, callback);
+  }
+
+  // ── Lifecycle ───────────────────────────────────────────────────────────────
+
+  async closeEndpoint(handle: number, force?: boolean): Promise<void> {
+    await call<Record<never, never>>("closeEndpoint", {
+      endpointHandle: handle,
+      force: force ?? null,
+    });
+  }
+
+  stopServe(handle: number): void {
+    call<Record<never, never>>("stopServe", { endpointHandle: handle }).catch(() => {});
+  }
+
+  waitEndpointClosed(handle: number): Promise<void> {
+    return call<Record<never, never>>("waitEndpointClosed", {
+      endpointHandle: handle,
+    }).then(() => {});
+  }
+
+  // ── Address / stats ─────────────────────────────────────────────────────────
+
+  async nodeAddr(handle: number): Promise<NodeAddrInfo> {
+    return call<NodeAddrInfo>("nodeAddr", { endpointHandle: handle });
+  }
+
+  async nodeTicket(handle: number): Promise<string> {
+    return call<string>("nodeTicket", { endpointHandle: handle });
+  }
+
+  async homeRelay(handle: number): Promise<string | null> {
+    return call<string | null>("homeRelay", { endpointHandle: handle });
+  }
+
+  async peerInfo(handle: number, nodeId: string): Promise<NodeAddrInfo | null> {
+    return call<NodeAddrInfo | null>("peerInfo", { endpointHandle: handle, nodeId });
+  }
+
+  async peerStats(handle: number, nodeId: string): Promise<PeerStats | null> {
+    return call<PeerStats | null>("peerStats", { endpointHandle: handle, nodeId });
+  }
+
+  async stats(handle: number): Promise<EndpointStats> {
+    return call<EndpointStats>("endpointStats", { endpointHandle: handle });
+  }
+
+  // ── mDNS discovery ──────────────────────────────────────────────────────────
+
+  override mdnsBrowse(endpointHandle: number, serviceName: string): Promise<number> {
+    return call<number>("mdnsBrowse", { endpointHandle, serviceName });
+  }
+
+  override mdnsNextEvent(browseHandle: number): Promise<PeerDiscoveryEvent | null> {
+    return call<PeerDiscoveryEvent | null>("mdnsNextEvent", { browseHandle });
+  }
+
+  override mdnsBrowseClose(browseHandle: number): void {
+    call<Record<never, never>>("mdnsBrowseClose", { browseHandle }).catch(() => {});
+  }
+
+  override mdnsAdvertise(endpointHandle: number, serviceName: string): Promise<number> {
+    return call<number>("mdnsAdvertise", { endpointHandle, serviceName });
+  }
+
+  override mdnsAdvertiseClose(advertiseHandle: number): void {
+    call<Record<never, never>>("mdnsAdvertiseClose", { advertiseHandle }).catch(() => {});
+  }
+
+  // ── Sessions ────────────────────────────────────────────────────────────────
+
+  override get sessionFns(): RawSessionFns {
+    return this.#sessionFnsInstance;
+  }
 }
