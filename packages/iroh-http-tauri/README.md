@@ -43,7 +43,14 @@ const node = await createNode({
   reconnect: { auto: true, maxRetries: 3 },
 });
 
-node.serve({}, (req) => new Response("hello from Tauri!"));
+// serve() opens a public endpoint — any peer that knows your public key can connect.
+// Always check Peer-Id to restrict access to known peers.
+const ALLOWED_PEERS = new Set(["<remote-node-public-key>"]);
+node.serve({}, (req) => {
+  const peerId = req.headers.get("Peer-Id");
+  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
+  return new Response("hello from Tauri!");
+});
 // Node ID is the peer address — share it out-of-band with the remote node
 const remoteNodeId = "<paste the other node's publicKey.toString() here>";
 const res = await node.fetch(remoteNodeId, "/hello");

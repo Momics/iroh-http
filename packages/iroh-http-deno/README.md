@@ -45,7 +45,14 @@ import { createNode } from "jsr:@momics/iroh-http-deno";
 const node = await createNode();
 console.log("Node ID:", node.publicKey.toString());
 
-node.serve({}, (req) => new Response("Hello from Deno iroh-http!"));
+// serve() opens a public endpoint — any peer that knows your public key can connect.
+// Always check Peer-Id to restrict access to known peers.
+const ALLOWED_PEERS = new Set(["<remote-node-public-key>"]);
+node.serve({}, (req) => {
+  const peerId = req.headers.get("Peer-Id");
+  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
+  return new Response("Hello from Deno iroh-http!");
+});
 
 // Node ID is the peer address — share it out-of-band with the remote node
 const remoteNodeId = "<paste the other node's publicKey.toString() here>";

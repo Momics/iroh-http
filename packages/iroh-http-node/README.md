@@ -24,8 +24,12 @@ import { createNode } from "@momics/iroh-http-node";
 const node = await createNode();
 console.log("Node ID:", node.publicKey.toString());
 
-// Serve requests
+// serve() opens a public endpoint — any peer that knows your public key can connect.
+// Always check Peer-Id to restrict access to known peers.
+const ALLOWED_PEERS = new Set(["<remote-node-public-key>"]);
 node.serve({}, (req) => {
+  const peerId = req.headers.get("Peer-Id");
+  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
   const path = new URL(req.url).pathname;
   if (path === "/hello") return new Response("Hello, world!");
   return new Response("Not found", { status: 404 });
