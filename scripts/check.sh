@@ -48,6 +48,14 @@ echo "  → cargo test (iroh-http-tauri)"
 (cd packages/iroh-http-tauri && cargo test --quiet)
 ok "tests (tauri)"
 
+echo "  → cargo deny"
+if command -v cargo-deny &>/dev/null; then
+  cargo-deny check
+  ok "deny"
+else
+  echo "     (skipped — cargo-deny not installed; run: cargo install cargo-deny --locked)"
+fi
+
 echo "  → cargo bench --test (smoke)"
 # Criterion --test mode: one iteration per bench function, no measurement.
 # Fast (~10s) and catches bench code that won't compile or panics at startup.
