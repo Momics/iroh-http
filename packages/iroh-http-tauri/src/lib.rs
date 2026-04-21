@@ -8,7 +8,7 @@ pub mod mobile_mdns;
 
 use tauri::{
     plugin::{Builder, TauriPlugin},
-    Runtime,
+    Manager, Runtime,
 };
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -66,12 +66,19 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             }
             Ok(())
         })
-        // ISS-079: close all registered endpoints when the webview is destroyed
-        // to prevent QUIC socket leaks on Vite HMR hot-reload or window close
-        // without an explicit JS `closeEndpoint` call.
-        .on_event(|_app, event| {
+        // ISS-079: close all registered endpoints when the *last* webview is
+        // destroyed to prevent QUIC socket leaks on window close without an
+        // explicit JS `closeEndpoint` call.
+        //
+        // We count the remaining windows *after* the destroyed event fires.
+        // When that count reaches zero, no webview is left running, so it is
+        // safe to tear down all endpoints.  In multi-window apps this means
+        // closing window A does not affect window B's networking.
+        .on_event(|app, event| {
             if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Destroyed, .. } = event {
-                iroh_http_core::registry::close_all_endpoints();
+                if app.webview_windows().is_empty() {
+                    iroh_http_core::registry::close_all_endpoints();
+                }
             }
         })
         .build()
