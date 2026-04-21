@@ -2445,3 +2445,72 @@ async fn pool_eviction_single_slot() {
         assert_eq!(res.status, 200, "request {i} failed");
     }
 }
+
+/// When `max_request_body_bytes` is exceeded, the pump loop must drain the
+/// remaining body frames so the peer's QUIC send stream can close cleanly.
+/// The client write task should complete well within 500 ms of receiving the
+/// 413 response — not stall until the QUIC idle timeout (ISS-015).
+#[tokio::test]
+async fn body_overflow_drains_quic_stream() {
+    let (server_ep, client_ep) = make_pair().await;
+    let server_id = node_id(&server_ep);
+    let addrs = server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions {
+            // 100-byte limit; client will send 50 KB.
+            max_request_body_bytes: Some(100),
+            ..Default::default()
+        },
+        move |_payload: RequestPayload| {
+            // Handler does nothing: the serve path handles the 413 automatically
+            // via the overflow_tx mechanism.
+        },
+    );
+
+    // Allocate a body writer and stream 50 KB to the server.
+    let big_body = Bytes::from(vec![b'z'; 50_000]);
+    let (writer_handle, body_reader) = client_ep.handles().alloc_body_writer().unwrap();
+
+    let client_ep_write = client_ep.clone();
+    let big_body_clone = big_body.clone();
+    // Spawn the write task; it must finish promptly once the server accepts
+    // enough data to issue the 413.
+    let write_task = tokio::spawn(async move {
+        let _ = client_ep_write
+            .handles()
+            .send_chunk(writer_handle, big_body_clone)
+            .await;
+        let _ = client_ep_write.handles().finish_body(writer_handle);
+    });
+
+    // Drive the fetch.
+    let result = fetch(
+        &client_ep,
+        &server_id,
+        "/upload",
+        "POST",
+        &[],
+        Some(body_reader),
+        None,
+        Some(&addrs),
+    )
+    .await;
+
+    // 413 or error (races are fine); the key invariant is that the write task
+    // above does not stall.
+    let _ = result;
+
+    // The write task must finish within 500 ms — not stall until QUIC idle
+    // timeout.  Before the drain fix this would hang for many seconds.
+    let deadline = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        write_task,
+    )
+    .await;
+    assert!(
+        deadline.is_ok(),
+        "client write task stalled after body overflow — QUIC stream was not drained"
+    );
+}

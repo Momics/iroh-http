@@ -368,7 +368,7 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
     writer: BodyWriter,
     max_bytes: Option<usize>,
     frame_timeout: std::time::Duration,
-    overflow_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    mut overflow_tx: Option<tokio::sync::oneshot::Sender<()>>,
 ) where
     B: http_body::Body<Data = Bytes>,
     B::Error: std::fmt::Debug,
@@ -376,6 +376,10 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
     // Box::pin gives Pin<Box<B>>: Unpin (Box<T>: Unpin ∀T), which satisfies BodyExt::frame().
     let mut body = Box::pin(body);
     let mut total = 0usize;
+    // Set to true once max_bytes is exceeded. When true, frames are read and
+    // discarded so the peer's QUIC send stream can receive flow-control ACKs
+    // and close cleanly instead of stalling until idle timeout (ISS-015).
+    let mut overflowed = false;
 
     loop {
         let frame_result = match tokio::time::timeout(frame_timeout, body.frame()).await {
@@ -392,6 +396,12 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
                 break;
             }
             Ok(frame) => {
+                if overflowed {
+                    // Drain: discard the frame but keep reading so the QUIC
+                    // flow-control window advances and the peer can finish
+                    // writing its body.
+                    continue;
+                }
                 if frame.is_data() {
                     let data = frame.into_data().expect("is_data checked above");
                     total = total.saturating_add(data.len());
@@ -399,10 +409,11 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
                         if total > limit {
                             tracing::warn!("iroh-http: request body exceeded {limit} bytes");
                             // ISS-004: signal overflow so the serve path can send 413.
-                            if let Some(tx) = overflow_tx {
+                            if let Some(tx) = overflow_tx.take() {
                                 let _ = tx.send(());
                             }
-                            break;
+                            overflowed = true;
+                            continue; // drain remaining frames without stalling the peer
                         }
                     }
                     if writer.send_chunk(data).await.is_err() {
