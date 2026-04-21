@@ -65,6 +65,14 @@ echo "  → build iroh-http-shared"
 npm run build --workspace=packages/iroh-http-shared --silent
 ok "build"
 
+echo "  → dist drift check (iroh-http-shared)"
+# Ensure the committed dist/ matches a fresh tsc build.
+# If any file differs, the developer forgot to rebuild before committing.
+if ! git diff --quiet packages/iroh-http-shared/dist/; then
+  die "packages/iroh-http-shared/dist/ is out of sync with src. Run: npm run build --workspace=packages/iroh-http-shared"
+fi
+ok "dist drift"
+
 echo "  → typecheck"
 npm run typecheck --workspace=packages/iroh-http-shared --silent
 npm run typecheck --workspace=packages/iroh-http-tauri --silent

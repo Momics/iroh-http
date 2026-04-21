@@ -4,8 +4,10 @@ target/
 # Node
 node_modules/
 
-# TypeScript build output (iroh-http-shared, iroh-http-tauri guest-js)
+# TypeScript build output (iroh-http-tauri guest-js)
+# iroh-http-shared/dist is committed — it is the published declaration source.
 dist/
+!packages/iroh-http-shared/dist/
 *.tsbuildinfo
 
 # napi-rs generated files (iroh-http-node)
