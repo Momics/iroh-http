@@ -53,7 +53,7 @@ done
 
 PASS_TOTAL=0
 FAIL_TOTAL=0
-declare -a FAILURES
+FAILURES=()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
