@@ -552,6 +552,27 @@ fn on_request_fire(
 ///
 /// This is the 3-argument form for backward compatibility.
 /// Use `serve_with_events` to also receive peer connect/disconnect callbacks.
+///
+/// # Security
+///
+/// Calling `serve()` opens a **public endpoint** on the Iroh overlay network.
+/// Unlike regular HTTP (where you choose whether to bind on `0.0.0.0`), any
+/// peer that knows or discovers your node's public key can connect and send
+/// requests. Iroh QUIC authenticates the peer's *identity* cryptographically,
+/// but does not enforce *authorization*.
+///
+/// Always inspect `RequestPayload::peer_id` (exposed as the `Peer-Id` request
+/// header at the FFI layer) and reject requests from untrusted peers:
+///
+/// ```ignore
+/// serve(endpoint, ServeOptions::default(), |payload| {
+///     if !ALLOWED_PEERS.contains(&payload.peer_id) {
+///         respond(handles, payload.req_handle, 403, vec![]).ok();
+///         return;
+///     }
+///     // ... handle request
+/// });
+/// ```
 pub fn serve<F>(endpoint: IrohEndpoint, options: ServeOptions, on_request: F) -> ServeHandle
 where
     F: Fn(RequestPayload) + Send + Sync + 'static,

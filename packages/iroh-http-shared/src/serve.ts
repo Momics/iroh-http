@@ -26,6 +26,24 @@ import { classifyError } from "./errors.js";
  * The `Request` is augmented with:
  * - `req.headers.get('Peer-Id')` — the authenticated peer's public key.
  * - `req.acceptWebTransport()` — (duplex only) returns `{ readable, writable }`.
+ *
+ * ## Security
+ *
+ * `serve()` opens a **public endpoint** on the Iroh overlay network. Unlike
+ * regular HTTP (where binding on localhost keeps you private), any peer that
+ * knows or discovers your node's public key can connect and send requests.
+ * Iroh QUIC authenticates the peer's *identity*, but not *authorization*.
+ *
+ * Always check `Peer-Id` and reject requests from untrusted peers:
+ *
+ * ```ts
+ * const ALLOWED_PEERS = new Set(["<peer-public-key>"]);
+ * node.serve({}, (req) => {
+ *   const peerId = req.headers.get("Peer-Id");
+ *   if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
+ *   return new Response("ok");
+ * });
+ * ```
  */
 export type ServeHandler = (req: Request) => Response | Promise<Response>;
 

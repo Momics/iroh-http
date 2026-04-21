@@ -77,7 +77,15 @@ import { createNode } from "@momics/iroh-http-node";
 // Node A — share its public key with Node B out-of-band (e.g. console, QR code, config file)
 const nodeA = await createNode();
 console.log("Node A ID:", nodeA.publicKey.toString());
-nodeA.serve({}, (req) => new Response("hello from iroh-http!"));
+
+const ALLOWED_PEERS = new Set(["<node-b-public-key>"]);
+nodeA.serve({}, (req) => {
+  // serve() opens a public endpoint: any peer that knows your public key can connect.
+  // Always check Peer-Id to restrict access to known peers.
+  const peerId = req.headers.get("Peer-Id");
+  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
+  return new Response("hello from iroh-http!");
+});
 
 // Node B — connect using Node A's public key
 const nodeB = await createNode();
@@ -99,7 +107,13 @@ import { createNode } from "jsr:@momics/iroh-http-deno";
 
 const nodeA = await createNode();
 console.log("Node A ID:", nodeA.publicKey.toString());
-nodeA.serve({}, (req) => new Response("hello"));
+
+const ALLOWED_PEERS = new Set(["<node-b-public-key>"]);
+nodeA.serve({}, (req) => {
+  const peerId = req.headers.get("Peer-Id");
+  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
+  return new Response("hello");
+});
 
 const nodeB = await createNode();
 const res = await nodeB.fetch(nodeA.publicKey.toString(), "/hello");
@@ -116,7 +130,13 @@ npm install @momics/iroh-http-tauri
 import { createNode } from "@momics/iroh-http-tauri";
 
 const node = await createNode();
-node.serve({}, (req) => new Response("hello"));
+
+const ALLOWED_PEERS = new Set(["<known-peer-public-key>"]);
+node.serve({}, (req) => {
+  const peerId = req.headers.get("Peer-Id");
+  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
+  return new Response("hello");
+});
 ```
 
 ## Features
