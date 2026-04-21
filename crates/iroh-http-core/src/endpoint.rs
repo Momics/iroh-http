@@ -378,6 +378,24 @@ impl IrohEndpoint {
     }
 
     /// The node's raw secret key bytes (32 bytes).
+    ///
+    /// This is the Ed25519 private key that establishes the node's cryptographic identity.
+    /// Use it **only** to persist and later restore the key via `NodeOptions::secret_key`.
+    ///
+    /// # Security
+    ///
+    /// **These 32 bytes are the irrecoverable private key for this node.**
+    /// Anyone who obtains them can impersonate this node permanently — there is no revocation.
+    ///
+    /// - **Never log, print, or include in error payloads.** Debug formatters, tracing
+    ///   spans, and generic error handlers are common accidental leak vectors.
+    /// - **Encrypt at rest.** Store in a secrets vault or OS keychain, not in
+    ///   plaintext config files or databases.
+    /// - **Zeroize after use.** Call `zeroize::Zeroize::zeroize()` on the returned
+    ///   array (or use a `secrecy`/`zeroize` wrapper) once you have persisted the bytes
+    ///   to an encrypted store. The returned `[u8; 32]` is NOT automatically zeroed on drop.
+    /// - **Never include in network responses, crash dumps, or analytics.**
+    #[must_use]
     pub fn secret_key_bytes(&self) -> [u8; 32] {
         self.inner.ep.secret_key().to_bytes()
     }

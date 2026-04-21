@@ -466,6 +466,10 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
 
     let node_id = ep.node_id().to_string();
+    // SECURITY: secret_key_bytes() returns raw private key material.
+    // The Uint8Array returned to JS is not zeroed automatically; callers
+    // must overwrite it with zeros after writing to encrypted storage.
+    // Never log, include in error payloads, or pass to untrusted code.
     let keypair = ep.secret_key_bytes().to_vec();
     let handle = registry::insert_endpoint(ep) as u32;
 
