@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { createEndpoint, closeEndpoint, mdnsBrowse, mdnsNextEvent, mdnsBrowseClose, mdnsAdvertise, mdnsAdvertiseClose, nodeAddr, nodeTicket, homeRelay, peerInfo, peerStats, endpointStats, jsNextChunk, jsSendChunk, jsFinishBody, jsCancelRequest, jsNextTrailer, jsSendTrailers, jsAllocBodyWriter, jsAllocTrailerSender, jsAllocFetchToken, jsCancelInFlight, rawFetch, rawRespond, rawServe, stopServe, waitServeStop, waitEndpointClosed, rawConnect, sessionConnect, sessionCreateBidiStream, sessionNextBidiStream, sessionCloseHandle, sessionClosed, sessionCreateUniStream, sessionNextUniStream, sessionSendDatagram, sessionRecvDatagram, sessionMaxDatagramSize, secretKeySign, publicKeyVerify, generateSecretKey } = nativeBinding
+const { createEndpoint, closeEndpoint, mdnsBrowse, mdnsNextEvent, mdnsBrowseClose, mdnsAdvertise, mdnsAdvertiseClose, nodeAddr, nodeTicket, homeRelay, peerInfo, peerStats, endpointStats, jsNextChunk, jsSendChunk, jsFinishBody, jsCancelRequest, jsAllocBodyWriter, jsAllocFetchToken, jsCancelInFlight, rawFetch, rawRespond, rawServe, stopServe, waitServeStop, waitEndpointClosed, rawConnect, sessionConnect, sessionCreateBidiStream, sessionNextBidiStream, sessionCloseHandle, sessionClosed, sessionCreateUniStream, sessionNextUniStream, sessionSendDatagram, sessionRecvDatagram, sessionMaxDatagramSize, secretKeySign, publicKeyVerify, generateSecretKey } = nativeBinding
 
 module.exports.createEndpoint = createEndpoint
 module.exports.closeEndpoint = closeEndpoint
@@ -329,10 +329,7 @@ module.exports.jsNextChunk = jsNextChunk
 module.exports.jsSendChunk = jsSendChunk
 module.exports.jsFinishBody = jsFinishBody
 module.exports.jsCancelRequest = jsCancelRequest
-module.exports.jsNextTrailer = jsNextTrailer
-module.exports.jsSendTrailers = jsSendTrailers
 module.exports.jsAllocBodyWriter = jsAllocBodyWriter
-module.exports.jsAllocTrailerSender = jsAllocTrailerSender
 module.exports.jsAllocFetchToken = jsAllocFetchToken
 module.exports.jsCancelInFlight = jsCancelInFlight
 module.exports.rawFetch = rawFetch
