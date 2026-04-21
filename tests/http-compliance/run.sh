@@ -26,7 +26,30 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-FILTER_PAIR="${1:-}"
+FILTER_PAIR=""
+
+# ── Argument parsing ──────────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pairs=*)
+      FILTER_PAIR="${1#--pairs=}"
+      shift
+      ;;
+    --pairs)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --pairs requires a value (e.g. --pairs node-deno)" >&2
+        exit 1
+      fi
+      FILTER_PAIR="$2"
+      shift 2
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      echo "Usage: $0 [--pairs <pair-name>]" >&2
+      exit 1
+      ;;
+  esac
+done
 
 PASS_TOTAL=0
 FAIL_TOTAL=0
@@ -187,6 +210,15 @@ echo ""
 echo "═══ Results ═══"
 echo "  Pairs passed: $PASS_TOTAL"
 echo "  Pairs failed: $FAIL_TOTAL"
+
+if [[ $(( PASS_TOTAL + FAIL_TOTAL )) -eq 0 ]]; then
+  if [[ -n "$FILTER_PAIR" ]]; then
+    echo "  ERROR: no pairs matched filter '$FILTER_PAIR'" >&2
+  else
+    echo "  ERROR: no pairs were executed" >&2
+  fi
+  exit 1
+fi
 
 if [[ ${#FAILURES[@]} -gt 0 ]]; then
   echo "  Failed pairs:"
