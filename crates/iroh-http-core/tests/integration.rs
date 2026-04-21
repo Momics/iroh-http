@@ -2504,11 +2504,7 @@ async fn body_overflow_drains_quic_stream() {
 
     // The write task must finish within 500 ms — not stall until QUIC idle
     // timeout.  Before the drain fix this would hang for many seconds.
-    let deadline = tokio::time::timeout(
-        std::time::Duration::from_millis(500),
-        write_task,
-    )
-    .await;
+    let deadline = tokio::time::timeout(std::time::Duration::from_millis(500), write_task).await;
     assert!(
         deadline.is_ok(),
         "client write task stalled after body overflow — QUIC stream was not drained"
@@ -2556,5 +2552,8 @@ async fn sweep_interval_ms_evicts_handles() {
 
     // The leaked handle should now be gone — finish_body returns an error.
     let evicted = ep.handles().finish_body(leaked_handle).is_err();
-    assert!(evicted, "leaked handle was not evicted by sweep_now() after TTL expired");
+    assert!(
+        evicted,
+        "leaked handle was not evicted by sweep_now() after TTL expired"
+    );
 }
