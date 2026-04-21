@@ -377,7 +377,7 @@ Deno.test("PublicKey — re-exported from mod.ts, round-trip via toString/fromSt
   }
 });
 
-Deno.test({ name: "SecretKey — re-exported from mod.ts, toBytes round-trip", sanitizeOps: false }, async () => {
+Deno.test("SecretKey — re-exported from mod.ts, toBytes round-trip", async () => {
   const node = await createNode({ disableNetworking: true });
   try {
     const sk = node.secretKey;

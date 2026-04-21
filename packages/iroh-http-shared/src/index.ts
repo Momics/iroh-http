@@ -420,6 +420,12 @@ export function buildNode(config: BuildNodeConfig): IrohNode {
     close: async (options?) => {
       await closeEndpoint(info.endpointHandle, options?.force);
       resolveClosed({ closeCode: 0, reason: "" });
+      // Await nativeClosed so that the waitEndpointClosed async FFI op is fully
+      // drained from the runtime's op queue before close() settles. Without this,
+      // Deno's sanitize-ops checker sees the pending non-blocking FFI op as a leak
+      // because closeEndpoint triggers closed_tx in Rust (resolving the Rust
+      // wait_closed future) but the JS side has not yet processed that op result.
+      if (nativeClosed) await nativeClosed;
     },
     [Symbol.asyncDispose]() {
       return node.close();
