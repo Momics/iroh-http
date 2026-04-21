@@ -147,7 +147,7 @@ Host: <node-id>\r\n
 
 The drain semaphore in `server.rs` is the central concurrency gate:
 
-- `max_concurrency` (default: 64) = initial semaphore permits
+- `max_concurrency` (default: 1024) = initial semaphore permits
 - One permit acquired **per QUIC bi-stream** (= per HTTP request), not per connection
 - Permit drops when hyper finishes serving the request
 - `drain()` acquires all permits → blocks until every in-flight request completes

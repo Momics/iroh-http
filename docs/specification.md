@@ -137,7 +137,7 @@ interface NodeOptions {
   compression?: boolean | { level?: number; minBodyBytes?: number };
 
   // ── Server limits ─────────────────────────────────────────────────
-  /** Max concurrent in-flight requests. Default: 64. */
+  /** Max concurrent in-flight requests. Default: 1024. */
   maxConcurrency?: number;
   /** Max QUIC connections from one peer. Default: 8. */
   maxConnectionsPerPeer?: number;

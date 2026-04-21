@@ -8,8 +8,8 @@ against misbehaving or hostile peers at the transport level.
 
 ```ts
 const node = await createNode({
-  /** Maximum simultaneous in-flight requests across all peers. Default: 64. */
-  maxConcurrency: 64,
+  /** Maximum simultaneous in-flight requests across all peers. Default: 1024. */
+  maxConcurrency: 1024,
 
   /** Maximum simultaneous connections from a single peer. Default: 8. */
   maxConnectionsPerPeer: 8,
@@ -18,7 +18,7 @@ const node = await createNode({
   requestTimeout: 60_000,
 
   /** Maximum request body size in bytes. Requests with larger bodies are
-   *  rejected with 413 before the body is read. Default: none. */
+   *  rejected with 413 before the body is read. Default: 16 MiB. */
   maxRequestBodyBytes: 10 * 1024 * 1024,  // 10 MB example
 
   /** Maximum request header block size in bytes. Requests with larger headers

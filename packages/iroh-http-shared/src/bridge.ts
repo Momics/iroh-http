@@ -195,6 +195,12 @@ export interface NodeOptions {
      * - `true` — enabled with service name `"iroh-http"`.
      * - `false` — disabled.
      * - `{ serviceName }` — enabled with a custom service name.
+     *
+     * @remarks This field is **not read at node creation time** — the mDNS
+     * subsystem is started lazily on the first `node.browse()` or
+     * `node.advertise()` call.  Setting `mdns: true` here only pre-configures
+     * the default service name passed to those calls.  Use `node.browse()` /
+     * `node.advertise()` for runtime mDNS control.
      */
     mdns?: boolean | { serviceName?: string };
   };
@@ -286,7 +292,7 @@ export interface NodeOptions {
   // ── Server limits ─────────────────────────────────────────────────────────
   /**
    * Maximum simultaneous in-flight requests, all peers combined.
-   * @default 64
+   * @default 1024
    */
   maxConcurrency?: number;
 
@@ -304,7 +310,7 @@ export interface NodeOptions {
 
   /**
    * Reject request bodies larger than this many bytes with 413.
-   * `undefined` means unlimited (default).
+   * @default 16777216 (16 MiB)
    */
   maxRequestBodyBytes?: number;
 
@@ -317,7 +323,11 @@ export interface NodeOptions {
 
   /**
    * Maximum total QUIC connections the server will accept.
-   * `undefined` means unlimited (default).
+   * @default undefined (unlimited)
+   * @remarks
+   * As of the current release, this option is accepted by all adapters but
+   * not yet forwarded to the Rust endpoint.  It is reserved for a future
+   * release that will enforce the cap at the transport layer.
    */
   maxTotalConnections?: number;
 
@@ -328,6 +338,9 @@ export interface NodeOptions {
    * If enabled, the node will attempt to reconnect to the network after
    * losing connectivity. On mobile platforms this also handles
    * app-backgrounding and suspend cycles.
+   *
+   * @remarks **Tauri only.** This option has no effect in the Node.js or Deno
+   * adapters, which do not implement app-lifecycle management.
    */
   reconnect?: {
     /**
@@ -344,11 +357,6 @@ export interface NodeOptions {
   };
 
   // ── Testing / CI ──────────────────────────────────────────────────────────
-  /**
-   * Peer identity verification for incoming `serve()` requests.
-   *
-   * By default, iroh-http rejects all incoming peers until this is explicitly
-   * configured.
   /**
    * Bind to local addresses only; no relay, no DNS discovery.
    * Use for tests and offline development.
