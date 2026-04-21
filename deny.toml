@@ -1,6 +1,14 @@
 [advisories]
-unmaintained = "none"
+unmaintained = "warn"
 yanked = "deny"
+
+[bans]
+# Deny multiple versions of the same crate to prevent supply-chain confusion
+# and keep the dependency tree auditable.
+multiple-versions = "warn"
+# Wildcard dependencies in published crates are sloppy and can introduce
+# unintended upgrades.
+wildcards = "deny"
 
 [licenses]
 allow = [
