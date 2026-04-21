@@ -94,57 +94,62 @@ pub async fn fetch(
     let cancel_notify = fetch_token.and_then(|t| endpoint.handles().get_fetch_cancel_notify(t));
     let handles = endpoint.handles();
 
-    let parsed = parse_node_addr(remote_node_id)?;
-    let node_id = parsed.node_id;
-    let mut addr = iroh::EndpointAddr::new(node_id);
-    for a in &parsed.direct_addrs {
-        addr = addr.with_ip_addr(*a);
-    }
-    if let Some(addrs) = direct_addrs {
-        for a in addrs {
+    // Wrap all fallible work so the cancel-token cleanup below always runs,
+    // even if connection setup returns early via `?`.
+    let out = async {
+        let parsed = parse_node_addr(remote_node_id)?;
+        let node_id = parsed.node_id;
+        let mut addr = iroh::EndpointAddr::new(node_id);
+        for a in &parsed.direct_addrs {
             addr = addr.with_ip_addr(*a);
         }
-    }
-
-    let ep_raw = endpoint.raw().clone();
-    let addr_clone = addr.clone();
-    let max_header_size = endpoint.max_header_size();
-
-    let pooled = endpoint
-        .pool()
-        .get_or_connect(node_id, ALPN, || async move {
-            ep_raw
-                .connect(addr_clone, ALPN)
-                .await
-                .map_err(|e| format!("connect: {e}"))
-        })
-        .await
-        .map_err(CoreError::connection_failed)?;
-
-    let conn = pooled.conn.clone();
-    let remote_str = pooled.remote_id_str.clone();
-
-    let result = do_fetch(
-        handles,
-        conn,
-        &remote_str,
-        url,
-        http_method,
-        headers,
-        req_body_reader,
-        max_header_size,
-    );
-
-    let out = if let Some(notify) = cancel_notify {
-        tokio::select! {
-            _ = notify.notified() => Err(CoreError::cancelled()),
-            r = result => r,
+        if let Some(addrs) = direct_addrs {
+            for a in addrs {
+                addr = addr.with_ip_addr(*a);
+            }
         }
-    } else {
-        result.await
-    };
 
-    // Clean up the cancellation token.
+        let ep_raw = endpoint.raw().clone();
+        let addr_clone = addr.clone();
+        let max_header_size = endpoint.max_header_size();
+
+        let pooled = endpoint
+            .pool()
+            .get_or_connect(node_id, ALPN, || async move {
+                ep_raw
+                    .connect(addr_clone, ALPN)
+                    .await
+                    .map_err(|e| format!("connect: {e}"))
+            })
+            .await
+            .map_err(CoreError::connection_failed)?;
+
+        let conn = pooled.conn.clone();
+        let remote_str = pooled.remote_id_str.clone();
+
+        let result = do_fetch(
+            handles,
+            conn,
+            &remote_str,
+            url,
+            http_method,
+            headers,
+            req_body_reader,
+            max_header_size,
+        );
+
+        if let Some(notify) = cancel_notify {
+            tokio::select! {
+                _ = notify.notified() => Err(CoreError::cancelled()),
+                r = result => r,
+            }
+        } else {
+            result.await
+        }
+    }
+    .await;
+
+    // Clean up the cancellation token — always, even on early error.
     if let Some(token) = fetch_token {
         endpoint.handles().remove_fetch_token(token);
     }

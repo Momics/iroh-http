@@ -1016,6 +1016,7 @@ async fn pool_different_peers_get_separate_connections() {
     let opts = || NodeOptions {
         networking: NetworkingOptions {
             disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
             ..Default::default()
         },
         ..Default::default()
