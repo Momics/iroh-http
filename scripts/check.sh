@@ -44,6 +44,10 @@ echo "  → cargo test"
 cargo test --workspace --quiet
 ok "tests"
 
+echo "  → cargo test (iroh-http-tauri)"
+(cd packages/iroh-http-tauri && cargo test --quiet)
+ok "tests (tauri)"
+
 echo "  → cargo bench --test (smoke)"
 # Criterion --test mode: one iteration per bench function, no measurement.
 # Fast (~10s) and catches bench code that won't compile or panics at startup.
