@@ -111,6 +111,9 @@ jobs:
           npm run typecheck --workspace=packages/iroh-http-tauri
 
       # ── Security audit ────────────────────────────────────────────────────────
+      - name: cargo deny (licenses, advisories, bans)
+        uses: EmbarkStudios/cargo-deny-action@v2
+
       - name: cargo audit
         run: cargo audit
 
