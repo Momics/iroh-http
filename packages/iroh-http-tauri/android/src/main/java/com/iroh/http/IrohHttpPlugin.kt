@@ -33,6 +33,8 @@ class BrowseStopArgs {
 @InvokeArg
 class AdvertiseStartArgs {
     lateinit var serviceName: String
+    lateinit var pk: String
+    var relay: String? = null
 }
 
 @InvokeArg
@@ -178,9 +180,11 @@ class IrohHttpPlugin(private val activity: Activity) : Plugin(activity) {
         val serviceType = "_${args.serviceName}._udp"
 
         val info = NsdServiceInfo().apply {
-            serviceName = args.serviceName.take(63)
+            serviceName = args.pk.take(63)
             this.serviceType = serviceType
             setPort(1)  // placeholder; iroh-http connections use node-ID, not port
+            setAttribute("pk", args.pk)
+            args.relay?.let { setAttribute("relay", it) }
         }
 
         val listener = object : NsdManager.RegistrationListener {

@@ -18,6 +18,8 @@ struct BrowseStopArgs: Decodable {
 
 struct AdvertiseStartArgs: Decodable {
     let serviceName: String
+    let pk: String
+    let relay: String?
 }
 
 struct AdvertiseStopArgs: Decodable {
@@ -219,7 +221,16 @@ class IrohHttpPlugin: Plugin {
             return
         }
 
-        listener.service = NWListener.Service(type: serviceType)
+        var txtPairs: [String: String] = ["pk": args.pk]
+        if let relay = args.relay { txtPairs["relay"] = relay }
+        let txtData = encodeTxtData(txtPairs)
+
+        listener.service = NWListener.Service(
+            name: String(args.pk.prefix(63)),
+            type: serviceType,
+            domain: nil,
+            txtRecord: txtData
+        )
         listener.newConnectionHandler = { conn in conn.cancel() }
 
         listener.stateUpdateHandler = { [weak self] state in
