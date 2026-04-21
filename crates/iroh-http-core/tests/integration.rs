@@ -2247,10 +2247,16 @@ async fn concurrent_requests_under_tight_concurrency() {
     let server_id = node_id(&server_ep);
     let addrs = server_addrs(&server_ep);
 
+    // Fire 20 requests concurrently — they must all complete despite max_concurrency=2.
     serve(
         server_ep.clone(),
         ServeOptions {
             max_concurrency: Some(2),
+            // Disable load-shedding so excess requests queue rather than
+            // immediately receiving 503. This test verifies that many more
+            // concurrent requests than the concurrency cap all eventually
+            // complete — not that capacity is enforced.
+            load_shed: Some(false),
             ..Default::default()
         },
         move |payload: RequestPayload| {

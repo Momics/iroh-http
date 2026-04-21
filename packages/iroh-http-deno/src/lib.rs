@@ -113,11 +113,20 @@ pub extern "C" fn iroh_http_call(
         return -1;
     }
 
-    // SAFETY: Deno passes valid, non-overlapping, non-null (for nonzero lengths)
-    // pointers for the complete duration of this call.
-    let method_bytes = unsafe { std::slice::from_raw_parts(method_ptr, method_len) };
+    // SAFETY: Guards above ensure pointers are non-null when len > 0. Use empty
+    // slices for zero-length inputs to avoid passing null to `from_raw_parts`,
+    // which is UB even when len is 0 (SEC-001).
+    let method_bytes: &[u8] = if method_len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(method_ptr, method_len) }
+    };
     let method = std::str::from_utf8(method_bytes).unwrap_or("__invalid_utf8__");
-    let payload = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
+    let payload: &[u8] = if payload_len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) }
+    };
 
     // ── Cached-response retrieval (overflow retry path) ───────────────────
     if method == "__cached" {
@@ -277,8 +286,13 @@ pub unsafe extern "C" fn iroh_http_send_chunk(
         None => return -1,
     };
 
-    // SAFETY: caller guarantees ptr is valid for len bytes.
-    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+    // SAFETY: Guard above ensures ptr is non-null when len > 0. Use an empty
+    // slice for zero-length inputs to avoid null-pointer UB (SEC-001).
+    let slice: &[u8] = if len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr, len) }
+    };
     let bytes = bytes::Bytes::copy_from_slice(slice);
 
     match runtime().block_on(ep.handles().send_chunk(handle, bytes)) {

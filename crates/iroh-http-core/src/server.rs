@@ -620,6 +620,12 @@ where
         compression,
     };
 
+    use tower::{limit::ConcurrencyLimitLayer, Layer};
+    // SEC-002: build the concurrency limiter once so all clones share one
+    // Arc<Semaphore>, enforcing a true global request cap across every
+    // connection and request task.
+    let shared_conc = ConcurrencyLimitLayer::new(max).layer(base_svc);
+
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
     let shutdown_listen = shutdown_notify.clone();
     let drain_dur = drain_timeout;
@@ -703,8 +709,8 @@ where
                 }
             };
 
-            let mut peer_svc = base_svc.clone();
-            peer_svc.remote_node_id = Some(remote_id);
+            let mut conn_conc = shared_conc.clone();
+            conn_conc.get_mut().remote_node_id = Some(remote_id);
 
             let timeout_dur = if request_timeout.is_zero() {
                 Duration::MAX
@@ -735,7 +741,7 @@ where
                     };
 
                     let io = TokioIo::new(IrohStream::new(send, recv));
-                    let svc = peer_svc.clone();
+                    let svc = conn_conc.clone();
                     let req_counter = conn_requests.clone();
                     req_counter.fetch_add(1, Ordering::Relaxed);
                     in_flight_conn.fetch_add(1, Ordering::Relaxed);
@@ -786,9 +792,7 @@ where
                         // both branches `.await` to `Result<(), hyper::Error>` so the
                         // `if` expression is well-typed without boxing.
 
-                        use tower::{
-                            limit::ConcurrencyLimitLayer, timeout::TimeoutLayer, ServiceBuilder,
-                        };
+                        use tower::{timeout::TimeoutLayer, ServiceBuilder};
 
                         #[cfg(feature = "compression")]
                         let result = {
@@ -798,7 +802,7 @@ where
                                 CompressionLayer,
                             };
 
-                            let compression_config = svc.compression.clone();
+                            let compression_config = svc.get_ref().compression.clone();
                             if let Some(comp) = &compression_config {
                                 let min_bytes = comp.min_body_bytes;
                                 let mut layer = CompressionLayer::new().zstd(true);
@@ -830,7 +834,6 @@ where
                                     let stk = TowerErrorHandler(
                                         ServiceBuilder::new()
                                             .layer(LoadShedLayer::new())
-                                            .layer(ConcurrencyLimitLayer::new(max))
                                             .layer(TimeoutLayer::new(timeout_dur))
                                             .service(svc),
                                     );
@@ -850,7 +853,6 @@ where
                                 } else {
                                     let stk = TowerErrorHandler(
                                         ServiceBuilder::new()
-                                            .layer(ConcurrencyLimitLayer::new(max))
                                             .layer(TimeoutLayer::new(timeout_dur))
                                             .service(svc),
                                     );
@@ -873,7 +875,6 @@ where
                                 let stk = TowerErrorHandler(
                                     ServiceBuilder::new()
                                         .layer(LoadShedLayer::new())
-                                        .layer(ConcurrencyLimitLayer::new(max))
                                         .layer(TimeoutLayer::new(timeout_dur))
                                         .service(svc),
                                 );
@@ -886,7 +887,6 @@ where
                             } else {
                                 let stk = TowerErrorHandler(
                                     ServiceBuilder::new()
-                                        .layer(ConcurrencyLimitLayer::new(max))
                                         .layer(TimeoutLayer::new(timeout_dur))
                                         .service(svc),
                                 );
@@ -904,7 +904,6 @@ where
                             let stk = TowerErrorHandler(
                                 ServiceBuilder::new()
                                     .layer(LoadShedLayer::new())
-                                    .layer(ConcurrencyLimitLayer::new(max))
                                     .layer(TimeoutLayer::new(timeout_dur))
                                     .service(svc),
                             );
@@ -917,7 +916,6 @@ where
                         } else {
                             let stk = TowerErrorHandler(
                                 ServiceBuilder::new()
-                                    .layer(ConcurrencyLimitLayer::new(max))
                                     .layer(TimeoutLayer::new(timeout_dur))
                                     .service(svc),
                             );
