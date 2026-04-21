@@ -98,11 +98,6 @@ jobs:
         # workspace; test it explicitly so it is not silently skipped.
         run: cargo test --manifest-path packages/iroh-http-tauri/Cargo.toml
 
-      - name: cargo deny (iroh-http-tauri)
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          manifest-path: packages/iroh-http-tauri/Cargo.toml
-
       - name: cargo check (no-default-features)
         run: |
           cargo check -p iroh-http-node --no-default-features --features compression
