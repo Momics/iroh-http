@@ -157,6 +157,27 @@ pub async fn fetch(
     out
 }
 
+/// Classify a hyper send-request or handshake error: if the error message
+/// indicates a header/buffer overflow (hyper emits "header" in its parse error
+/// descriptions), return `CoreError::HeaderTooLarge`; otherwise return
+/// `CoreError::ConnectionFailed`.  This gives callers consistent error types
+/// regardless of where hyper's internal buffer boundary falls relative to the
+/// configured `max_header_size`.
+fn classify_hyper_error(e: &impl std::fmt::Display, context: &str) -> CoreError {
+    let msg = e.to_string();
+    // hyper 1.x surfaces header-parse failures as e.g.
+    //   "error reading a body from connection: header too large"
+    //   "invalid HTTP method"
+    //   "header value is too long"
+    //   "too many headers"
+    // All of these mention "header" in the message.
+    if msg.to_ascii_lowercase().contains("header") {
+        CoreError::header_too_large(format!("{context}: {msg}"))
+    } else {
+        CoreError::connection_failed(format!("{context}: {msg}"))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn do_fetch(
     handles: &HandleStore,
@@ -236,13 +257,13 @@ async fn do_fetch(
             .service(HyperClientSvc(sender));
         svc.oneshot(req)
             .await
-            .map_err(|e| CoreError::connection_failed(format!("send_request: {e}")))?
+            .map_err(|e| classify_hyper_error(&e, "send_request"))?
     };
     #[cfg(not(feature = "compression"))]
     let resp = sender
         .send_request(req)
         .await
-        .map_err(|e| CoreError::connection_failed(format!("send_request: {e}")))?;
+        .map_err(|e| classify_hyper_error(&e, "send_request"))?;
 
     let status = resp.status().as_u16();
     // ISS-011: measure header bytes using raw values before string conversion;

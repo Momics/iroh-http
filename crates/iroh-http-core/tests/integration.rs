@@ -1216,6 +1216,14 @@ async fn response_header_bomb_rejected() {
         "expected error for oversized response header, got: {:?}",
         result
     );
+    // The error must be HeaderTooLarge, not ConnectionFailed.
+    let err = result.unwrap_err();
+    assert_eq!(
+        err.code,
+        iroh_http_core::ErrorCode::HeaderTooLarge,
+        "expected HeaderTooLarge, got: {:?}",
+        err,
+    );
 }
 
 /// Normal traffic should work with default settings.
