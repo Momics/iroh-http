@@ -159,7 +159,7 @@ if [[ -z "$FILTER_PAIR" || "$FILTER_PAIR" == "node-deno" ]]; then
     run_pair "node → deno" \
       node tests/http-compliance/server.mjs \
       -- \
-      deno run --allow-read --allow-ffi \
+      env -u NODE_OPTIONS deno run --allow-read --allow-ffi \
         tests/http-compliance/client.deno.ts \
         SERVER_JSON
   else
@@ -171,7 +171,7 @@ fi
 if [[ -z "$FILTER_PAIR" || "$FILTER_PAIR" == "deno-node" ]]; then
   if command -v deno &>/dev/null && command -v node &>/dev/null; then
     run_pair "deno → node" \
-      deno run --allow-read --allow-ffi \
+      env -u NODE_OPTIONS deno run --allow-read --allow-ffi \
         tests/http-compliance/server.deno.ts \
       -- \
       node tests/http-compliance/client.mjs \
