@@ -133,6 +133,11 @@ const lib = Deno.dlopen(LIB_PATH, {
     result: "void",
     nonblocking: false,
   },
+} as const);
+
+// ── JSON dispatch helper ──────────────────────────────────────────────────────
+
+const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 /**
