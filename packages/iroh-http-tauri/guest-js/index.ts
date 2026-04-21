@@ -47,40 +47,45 @@ import type {
 
 const PLUGIN = "plugin:iroh-http";
 
-// ── Bridge implementation ─────────────────────────────────────────────────────
+// ── Bridge factory (endpoint-scoped) ─────────────────────────────────────────
+//
+// The Bridge interface does not carry endpointHandle in most method signatures;
+// it is captured by closure instead.  Create one bridge per endpoint.
 
-const bridge: Bridge = {
-  nextChunk(handle: bigint): Promise<Uint8Array | null> {
-    return invoke<string | null>(`${PLUGIN}|next_chunk`, {
-      handle: Number(handle),
-    }).then(
-      (b64) => (b64 ? decodeBase64(b64) : null),
-    );
-  },
+function makeEndpointBridge(epHandle: number): Bridge {
+  return {
+    nextChunk(handle: bigint): Promise<Uint8Array | null> {
+      return invoke<string | null>(`${PLUGIN}|next_chunk`, {
+        endpointHandle: epHandle,
+        handle: Number(handle),
+      }).then((b64) => (b64 ? decodeBase64(b64) : null));
+    },
 
-  sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
-    return invoke(`${PLUGIN}|send_chunk`, {
-      handle: Number(handle),
-      chunk: encodeBase64(chunk),
-    });
-  },
+    sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
+      return invoke(`${PLUGIN}|send_chunk`, {
+        endpointHandle: epHandle,
+        handle: Number(handle),
+        chunk: encodeBase64(chunk),
+      });
+    },
 
-  finishBody(handle: bigint): Promise<void> {
-    return invoke(`${PLUGIN}|finish_body`, { handle: Number(handle) });
-  },
+    finishBody(handle: bigint): Promise<void> {
+      return invoke(`${PLUGIN}|finish_body`, { endpointHandle: epHandle, handle: Number(handle) });
+    },
 
-  cancelRequest(handle: bigint): Promise<void> {
-    return invoke(`${PLUGIN}|cancel_request`, { handle: Number(handle) });
-  },
+    cancelRequest(handle: bigint): Promise<void> {
+      return invoke(`${PLUGIN}|cancel_request`, { endpointHandle: epHandle, handle: Number(handle) });
+    },
 
-  allocFetchToken(endpointHandle: number): Promise<bigint> {
-    return invoke<number>(`${PLUGIN}|alloc_fetch_token`, { endpointHandle }).then(BigInt);
-  },
+    allocFetchToken(endpointHandle: number): Promise<bigint> {
+      return invoke<number>(`${PLUGIN}|alloc_fetch_token`, { endpointHandle }).then(BigInt);
+    },
 
-  cancelFetch(token: bigint): void {
-    void invoke(`${PLUGIN}|cancel_in_flight`, { token: Number(token) });
-  },
-};
+    cancelFetch(token: bigint): void {
+      void invoke(`${PLUGIN}|cancel_in_flight`, { endpointHandle: epHandle, token: Number(token) });
+    },
+  };
+}
 
 // ── Platform functions ────────────────────────────────────────────────────────
 
@@ -162,6 +167,7 @@ const rawServe: RawServeFn = (
       const head = await callback(payload);
       await invoke(`${PLUGIN}|respond_to_request`, {
         args: {
+          endpointHandle: Number(endpointHandle),
           reqHandle: Number(payload.reqHandle),
           status: head.status,
           headers: head.headers,
@@ -170,7 +176,7 @@ const rawServe: RawServeFn = (
     } catch (err) {
       console.error("[iroh-http-tauri] handler error:", err);
       await invoke(`${PLUGIN}|respond_to_request`, {
-        args: { reqHandle: Number(raw.reqHandle), status: 500, headers: [] },
+        args: { endpointHandle: Number(endpointHandle), reqHandle: Number(raw.reqHandle), status: 500, headers: [] },
       }).catch(() => {/* ignore */});
     }
   };
@@ -192,9 +198,10 @@ const rawServe: RawServeFn = (
   });
 };
 
-const allocBodyWriter: AllocBodyWriterFn = (): Promise<bigint> => {
-  return invoke<number>(`${PLUGIN}|alloc_body_writer`).then(BigInt);
-};
+function makeAllocBodyWriter(epHandle: number): AllocBodyWriterFn {
+  return (): Promise<bigint> =>
+    invoke<number>(`${PLUGIN}|alloc_body_writer`, { endpointHandle: epHandle }).then(BigInt);
+}
 
 const rawConnect: RawConnectFn = async (
   endpointHandle,
@@ -214,9 +221,13 @@ const rawConnect: RawConnectFn = async (
   } satisfies FfiDuplexStream;
 };
 
-// ── Session functions ─────────────────────────────────────────────────────────
+// ── Session factory (endpoint-scoped) ────────────────────────────────────────
+//
+// Like the bridge, session methods (after connect) do not carry endpointHandle
+// in their TypeScript signatures — it is captured by closure.
 
-const tauriSessionFns: RawSessionFns = {
+function makeSessionFns(epHandle: number): RawSessionFns {
+  return {
   connect: async (endpointHandle, nodeId, directAddrs) => {
     return invoke<number>(`${PLUGIN}|session_connect`, {
       args: {
@@ -229,7 +240,7 @@ const tauriSessionFns: RawSessionFns = {
   createBidiStream: async (sessionHandle) => {
     const res = await invoke<{ readHandle: number; writeHandle: number }>(
       `${PLUGIN}|session_create_bidi_stream`,
-      { sessionHandle: Number(sessionHandle) },
+      { endpointHandle: epHandle, sessionHandle: Number(sessionHandle) },
     );
     return {
       readHandle: BigInt(res.readHandle),
@@ -241,7 +252,7 @@ const tauriSessionFns: RawSessionFns = {
       { readHandle: number; writeHandle: number } | null
     >(
       `${PLUGIN}|session_next_bidi_stream`,
-      { sessionHandle: Number(sessionHandle) },
+      { endpointHandle: epHandle, sessionHandle: Number(sessionHandle) },
     );
     return res
       ? {
@@ -252,11 +263,13 @@ const tauriSessionFns: RawSessionFns = {
   },
   createUniStream: async (sessionHandle) => {
     return invoke<number>(`${PLUGIN}|session_create_uni_stream`, {
+      endpointHandle: epHandle,
       sessionHandle: Number(sessionHandle),
     }).then(BigInt);
   },
   nextUniStream: async (sessionHandle) => {
     const h = await invoke<number | null>(`${PLUGIN}|session_next_uni_stream`, {
+      endpointHandle: epHandle,
       sessionHandle: Number(sessionHandle),
     });
     return h != null ? BigInt(h) : null;
@@ -264,12 +277,14 @@ const tauriSessionFns: RawSessionFns = {
   sendDatagram: async (sessionHandle, data) => {
     const b64 = btoa(String.fromCharCode(...data));
     await invoke<void>(`${PLUGIN}|session_send_datagram`, {
+      endpointHandle: epHandle,
       sessionHandle: Number(sessionHandle),
       data: b64,
     });
   },
   recvDatagram: async (sessionHandle) => {
     const res = await invoke<string | null>(`${PLUGIN}|session_recv_datagram`, {
+      endpointHandle: epHandle,
       sessionHandle: Number(sessionHandle),
     });
     if (res === null) return null;
@@ -280,23 +295,26 @@ const tauriSessionFns: RawSessionFns = {
   },
   maxDatagramSize: async (sessionHandle) => {
     return invoke<number | null>(`${PLUGIN}|session_max_datagram_size`, {
+      endpointHandle: epHandle,
       sessionHandle: Number(sessionHandle),
     });
   },
   closed: async (sessionHandle) => {
     return invoke<{ closeCode: number; reason: string }>(
       `${PLUGIN}|session_closed`,
-      { sessionHandle: Number(sessionHandle) },
+      { endpointHandle: epHandle, sessionHandle: Number(sessionHandle) },
     );
   },
   close: async (sessionHandle, closeCode?, reason?) => {
     await invoke<void>(`${PLUGIN}|session_close`, {
+      endpointHandle: epHandle,
       sessionHandle: Number(sessionHandle),
       closeCode,
       reason,
     });
   },
-};
+  };
+}
 
 // ── Mobile lifecycle listener ─────────────────────────────────────────────────
 
@@ -477,6 +495,13 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     throw classifyBindError(e);
   });
 
+  // Create endpoint-scoped bridge, body-writer allocator, and session fns
+  // that capture endpointHandle by closure (the interfaces don't carry it).
+  const epHandle = Number(info.endpointHandle);
+  const bridge = makeEndpointBridge(epHandle);
+  const allocBodyWriter = makeAllocBodyWriter(epHandle);
+  const sessionFns = makeSessionFns(epHandle);
+
   const node = buildNode({
     bridge,
     info: {
@@ -503,7 +528,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     }).then(() => {}),
     addrFns: tauriAddrFns,
     discoveryFns: tauriDiscoveryFns,
-    sessionFns: tauriSessionFns,
+    sessionFns: sessionFns,
   });
 
   // TAURI-005: install lifecycle listener and store the unsubscribe function
