@@ -63,7 +63,7 @@ pub struct ServerLimits {
 /// compiling without changes.
 pub type ServeOptions = ServerLimits;
 
-const DEFAULT_CONCURRENCY: usize = 64;
+const DEFAULT_CONCURRENCY: usize = 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
 const DEFAULT_MAX_CONNECTIONS_PER_PEER: usize = 8;
 const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
