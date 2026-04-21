@@ -5,6 +5,7 @@
 - [Architecture](architecture.md) — layer diagram, components, scope boundaries, concurrency model
 - [Principles](principles.md) — engineering values, design philosophy, self-evaluation checklist
 - [Protocol](protocol.md) — wire format, `httpi://` URL scheme, ALPN versioning
+- [Threat model](threat-model.md) — what the transport guarantees, what it does not, and required operator mitigations
 
 ## Specification
 

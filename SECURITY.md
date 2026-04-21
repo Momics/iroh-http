@@ -69,3 +69,33 @@ fs.writeFileSync('config.json', JSON.stringify(endpointInfo)); // leaks keypair
 Sentry.captureException(err, { extra: { endpointInfo } });     // leaks keypair
 ```
 
+## Key Revocation — Current Limitation
+
+iroh-http has **no built-in key revocation mechanism**. An Ed25519 keypair is a
+permanent node identity for the lifetime that peers choose to trust it.
+
+**What this means in practice:**
+
+If a node's private key is compromised, the attacker can impersonate that node
+to any peer that still has its public key on an allowlist. There is no
+certificate authority, revocation list, or key-rotation protocol to push a
+"this key is no longer valid" signal to peers automatically.
+
+**Immediate mitigation steps when a key is compromised:**
+
+1. Generate a new keypair and start a fresh endpoint.
+2. Out-of-band, notify all peers that trusted the old public key and have them
+   remove it from their allowlists and add the new public key.
+3. Destroy all persisted copies of the old private key.
+
+**Future mitigation (roadmap):**
+
+The capability-token system described in
+[`docs/explorations/002-capability-url-system.md`](docs/explorations/002-capability-url-system.md)
+will provide short-lived, revocable, scoped tokens that can be invalidated
+without rotating the underlying node identity.  Until that system is available,
+operators must manage revocation out-of-band via allowlist updates.
+
+See [`docs/threat-model.md`](docs/threat-model.md) for a full description of
+the security properties iroh-http provides and does not provide.
+
