@@ -23,6 +23,7 @@ pub const DEFAULT_CHANNEL_CAPACITY: usize = 32;
 pub const DEFAULT_MAX_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
 pub const DEFAULT_DRAIN_TIMEOUT_MS: u64 = 30_000; // 30 s
 pub const DEFAULT_SLAB_TTL_MS: u64 = 300_000; // 5 min
+pub const DEFAULT_SWEEP_INTERVAL_MS: u64 = 60_000; // 60 s
 pub const DEFAULT_MAX_HANDLES: usize = 65_536;
 
 // ── Resource types ────────────────────────────────────────────────────────────

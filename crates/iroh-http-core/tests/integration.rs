@@ -2514,3 +2514,47 @@ async fn body_overflow_drains_quic_stream() {
         "client write task stalled after body overflow — QUIC stream was not drained"
     );
 }
+
+/// sweep_interval_ms: a short TTL + fast sweep interval causes leaked handles
+/// to be evicted promptly.  sweep_now() lets tests trigger immediate sweeps
+/// without waiting for the background tick.
+#[tokio::test]
+async fn sweep_interval_ms_evicts_handles() {
+    // 50 ms TTL; background sweep at 100 ms (validates interval wiring).
+    let ep = iroh_http_core::IrohEndpoint::bind(iroh_http_core::NodeOptions {
+        networking: iroh_http_core::NetworkingOptions {
+            disabled: true,
+            ..Default::default()
+        },
+        streaming: iroh_http_core::StreamingOptions {
+            handle_ttl_ms: Some(50),
+            sweep_interval_ms: Some(100),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+
+    // Allocate a writer handle — immediately "leak" it (don't finish or cancel).
+    let (writer_handle, _reader) = ep.handles().alloc_body_writer().unwrap();
+
+    // The handle should exist right now.
+    assert!(
+        ep.handles().finish_body(writer_handle).is_ok(),
+        "writer handle should be valid immediately after alloc"
+    );
+
+    // Allocate another and truly leak it by not calling finish_body.
+    let (leaked_handle, _reader2) = ep.handles().alloc_body_writer().unwrap();
+
+    // Wait > TTL so the handle's creation timestamp is past the TTL window.
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+    // Trigger an immediate sweep rather than waiting for the background tick.
+    ep.sweep_now();
+
+    // The leaked handle should now be gone — finish_body returns an error.
+    let evicted = ep.handles().finish_body(leaked_handle).is_err();
+    assert!(evicted, "leaked handle was not evicted by sweep_now() after TTL expired");
+}

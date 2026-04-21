@@ -71,6 +71,11 @@ pub struct StreamingOptions {
     pub drain_timeout_ms: Option<u64>,
     /// TTL in ms for slab handle entries. `0` disables sweeping. Default: 300000.
     pub handle_ttl_ms: Option<u64>,
+    /// How often (in ms) the TTL sweep task runs. Default: 60000 (60 s).
+    /// Reducing this lowers the worst-case leaked-handle window at the cost of
+    /// more frequent write-lock acquisitions on every handle registry.
+    /// Useful for short-lived endpoints and test fixtures.
+    pub sweep_interval_ms: Option<u64>,
 }
 
 /// Configuration passed to [`IrohEndpoint::bind`].
@@ -305,6 +310,11 @@ impl IrohEndpoint {
             ),
         };
         let sweep_ttl = store_config.ttl;
+        let sweep_interval = Duration::from_millis(
+            opts.streaming
+                .sweep_interval_ms
+                .unwrap_or(crate::stream::DEFAULT_SWEEP_INTERVAL_MS),
+        );
         let (closed_tx, closed_rx) = tokio::sync::watch::channel(false);
 
         let inner = Arc::new(EndpointInner {
@@ -344,7 +354,7 @@ impl IrohEndpoint {
         if !sweep_ttl.is_zero() {
             let weak = Arc::downgrade(&inner);
             tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(Duration::from_secs(60));
+                let mut ticker = tokio::time::interval(sweep_interval);
                 loop {
                     ticker.tick().await;
                     let Some(inner) = weak.upgrade() else {
@@ -367,6 +377,22 @@ impl IrohEndpoint {
     /// The configured consecutive-error limit for the serve loop.
     pub fn max_consecutive_errors(&self) -> usize {
         self.inner.server_limits.max_consecutive_errors.unwrap_or(5)
+    }
+
+    /// Immediately run a TTL sweep on all handle registries, evicting any
+    /// entries whose TTL has expired.
+    ///
+    /// The background sweep task already runs this automatically on its
+    /// configured interval. `sweep_now()` is provided for test fixtures and
+    /// short-lived endpoints that cannot wait for the next tick.
+    ///
+    /// Returns immediately if the endpoint was created with `handle_ttl_ms: Some(0)`
+    /// (sweeping disabled).
+    pub fn sweep_now(&self) {
+        let ttl = self.inner.handles.config.ttl;
+        if !ttl.is_zero() {
+            self.inner.handles.sweep(ttl);
+        }
     }
 
     /// Build a [`ServeOptions`] from the endpoint's stored configuration.
