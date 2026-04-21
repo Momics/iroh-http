@@ -254,8 +254,9 @@ export function makeBridge(endpointHandle: number): Bridge {
       buf,
       BigInt(buf.byteLength),
     )) as number;
-    if (n < 0) {
-      // Chunk too large for current hint; grow and retry once.
+    if (n < -1) {
+      // Return value encodes the required size as a negative number.
+      // Grow the buffer and retry exactly once.
       buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
       n = (await lib.symbols.iroh_http_next_chunk(
         endpointHandle,
@@ -264,7 +265,13 @@ export function makeBridge(endpointHandle: number): Bridge {
         BigInt(buf.byteLength),
       )) as number;
     }
-    if (n <= 0) return null;
+    // n === -1  → hard error (endpoint gone, handle invalid, stream reset).
+    // n === 0   → clean EOF.
+    // n > 0     → chunk of n bytes.
+    if (n === -1) {
+      throw new Error(`nextChunk: stream error on handle ${handle}`);
+    }
+    if (n === 0) return null;
     // Update hint so future calls start with a better-sized buffer (capped).
     chunkBufHint = Math.min(Math.max(chunkBufHint, n), MAX_CHUNK_BUF);
     return buf.slice(0, n);
