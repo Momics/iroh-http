@@ -112,6 +112,7 @@ pub async fn fetch(
         let ep_raw = endpoint.raw().clone();
         let addr_clone = addr.clone();
         let max_header_size = endpoint.max_header_size();
+        let max_response_body_bytes = endpoint.max_response_body_bytes();
 
         let pooled = endpoint
             .pool()
@@ -136,6 +137,7 @@ pub async fn fetch(
             headers,
             req_body_reader,
             max_header_size,
+            max_response_body_bytes,
         );
 
         if let Some(notify) = cancel_notify {
@@ -188,6 +190,7 @@ async fn do_fetch(
     headers: &[(String, String)],
     req_body_reader: Option<BodyReader>,
     max_header_size: usize,
+    max_response_body_bytes: usize,
 ) -> Result<FfiResponse, CoreError> {
     let (send, recv) = conn
         .open_bi()
@@ -322,7 +325,14 @@ async fn do_fetch(
 
     let (res_writer, res_reader) = handles.make_body_channel();
     let body = resp.into_body();
-    tokio::spawn(pump_hyper_body_to_channel(body, res_writer));
+    let frame_timeout = res_writer.drain_timeout;
+    tokio::spawn(pump_hyper_body_to_channel_limited(
+        body,
+        res_writer,
+        Some(max_response_body_bytes),
+        frame_timeout,
+        None,
+    ));
 
     let body_handle = guard.insert_reader(res_reader)?;
 
@@ -347,6 +357,7 @@ fn is_null_body_status(status: u16) -> bool {
 
 /// Drain a hyper body into `BodyWriter`.
 /// Generic over any body type with `Data = Bytes` (e.g. `Incoming`, `DecompressionBody`).
+#[allow(dead_code)]
 pub(crate) async fn pump_hyper_body_to_channel<B>(body: B, writer: BodyWriter)
 where
     B: http_body::Body<Data = Bytes>,

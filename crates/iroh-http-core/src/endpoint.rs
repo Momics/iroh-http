@@ -253,6 +253,15 @@ impl IrohEndpoint {
             })?;
             let transport = QuicTransportConfig::builder()
                 .max_idle_timeout(Some(timeout))
+                // Limit inbound bidirectional streams per connection to bound
+                // slowloris-style resource exhaustion (P2-4).
+                .max_concurrent_bidi_streams(128u32.into())
+                .build();
+            builder = builder.transport_config(transport);
+        } else {
+            // Even without a custom idle timeout, cap concurrent bidi streams.
+            let transport = QuicTransportConfig::builder()
+                .max_concurrent_bidi_streams(128u32.into())
                 .build();
             builder = builder.transport_config(transport);
         }
@@ -534,6 +543,14 @@ impl IrohEndpoint {
     /// Maximum byte size of an HTTP/1.1 head.
     pub fn max_header_size(&self) -> usize {
         self.inner.max_header_size
+    }
+
+    /// Maximum decompressed response-body bytes accepted per outgoing fetch.
+    pub fn max_response_body_bytes(&self) -> usize {
+        self.inner
+            .server_limits
+            .max_response_body_bytes
+            .unwrap_or(crate::server::DEFAULT_MAX_RESPONSE_BODY_BYTES)
     }
 
     /// Access the connection pool.

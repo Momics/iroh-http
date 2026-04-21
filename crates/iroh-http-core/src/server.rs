@@ -51,6 +51,9 @@ pub struct ServerLimits {
     pub request_timeout_ms: Option<u64>,
     pub max_connections_per_peer: Option<usize>,
     pub max_request_body_bytes: Option<usize>,
+    /// Maximum decompressed response body bytes the client will accept per fetch.
+    /// Applies to the *client* side (outgoing fetch calls).  Default: 256 MiB.
+    pub max_response_body_bytes: Option<usize>,
     pub drain_timeout_secs: Option<u64>,
     pub max_total_connections: Option<usize>,
     /// When `true` (the default), reject new requests immediately with `503
@@ -67,6 +70,13 @@ const DEFAULT_CONCURRENCY: usize = 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
 const DEFAULT_MAX_CONNECTIONS_PER_PEER: usize = 8;
 const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
+/// 16 MiB — applied when `max_request_body_bytes` is not explicitly set.
+/// Prevents memory exhaustion from unbounded request bodies.
+const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// 256 MiB — applied when `max_response_body_bytes` is not explicitly set.
+/// Prevents memory exhaustion from a malicious server sending a compressed
+/// response that expands to an unbounded size (compression bomb).
+pub(crate) const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 256 * 1024 * 1024;
 
 // ── ServeHandle ───────────────────────────────────────────────────────────────
 
@@ -430,7 +440,7 @@ impl RequestService {
         let response_head = if let Some(overflow_rx) = body_overflow_rx {
             tokio::select! {
                 biased;
-                _ = overflow_rx => {
+                Ok(()) = overflow_rx => {
                     // Body too large: ReqHeadCleanup RAII guard will remove the slab
                     // entry when this function exits (issue-7 fix).
                     let resp = hyper::Response::builder()
@@ -602,7 +612,9 @@ where
     let max_conns_per_peer = options
         .max_connections_per_peer
         .unwrap_or(DEFAULT_MAX_CONNECTIONS_PER_PEER);
-    let max_request_body_bytes = options.max_request_body_bytes;
+    let max_request_body_bytes = options
+        .max_request_body_bytes
+        .or(Some(DEFAULT_MAX_REQUEST_BODY_BYTES));
     let max_total_connections = options.max_total_connections;
     let drain_timeout = Duration::from_secs(
         options
