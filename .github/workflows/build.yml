@@ -1,4 +1,4 @@
-name: Release
+name: Build
 
 # Triggered on version tags. Responsibilities:
 #   1. Create the GitHub release with generated notes.
