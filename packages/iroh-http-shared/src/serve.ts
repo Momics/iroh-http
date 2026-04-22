@@ -158,7 +158,6 @@ export function makeServe(
   nodeId: string,
   onNodeClose: Promise<void>,
 ): ServeFn {
-
   return ((...args: unknown[]): ServeHandle => {
     // Parse overloaded arguments.
     let handler: ServeHandler;
@@ -188,8 +187,9 @@ export function makeServe(
     const onError = options.onError ?? defaultOnError;
 
     // Build a unified connection event callback from onPeerConnect / onPeerDisconnect.
-    const onConnectionEvent: ((event: PeerConnectionEvent) => void) | undefined =
-      (options.onPeerConnect || options.onPeerDisconnect)
+    const onConnectionEvent:
+      | ((event: PeerConnectionEvent) => void)
+      | undefined = (options.onPeerConnect || options.onPeerDisconnect)
         ? (ev: PeerConnectionEvent) => {
           if (ev.connected) {
             options.onPeerConnect?.(ev.peerId);
@@ -358,5 +358,3 @@ function headerValue(
   }
   return null;
 }
-
-

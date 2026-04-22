@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { createEndpoint, closeEndpoint, mdnsBrowse, mdnsNextEvent, mdnsBrowseClose, mdnsAdvertise, mdnsAdvertiseClose, nodeAddr, nodeTicket, homeRelay, peerInfo, peerStats, endpointStats, jsNextChunk, jsSendChunk, jsFinishBody, jsCancelRequest, jsAllocBodyWriter, jsAllocFetchToken, jsCancelInFlight, rawFetch, rawRespond, rawServe, stopServe, waitServeStop, waitEndpointClosed, rawConnect, sessionConnect, sessionCreateBidiStream, sessionNextBidiStream, sessionCloseHandle, sessionClosed, sessionCreateUniStream, sessionNextUniStream, sessionSendDatagram, sessionRecvDatagram, sessionMaxDatagramSize, secretKeySign, publicKeyVerify, generateSecretKey } = nativeBinding
+const { createEndpoint, closeEndpoint, mdnsBrowse, mdnsNextEvent, mdnsBrowseClose, mdnsAdvertise, mdnsAdvertiseClose, nodeAddr, nodeTicket, homeRelay, peerInfo, peerStats, endpointStats, startTransportEvents, nextPathChange, jsNextChunk, jsSendChunk, jsFinishBody, jsCancelRequest, jsAllocBodyWriter, jsAllocFetchToken, jsCancelInFlight, rawFetch, rawRespond, rawServe, stopServe, waitServeStop, waitEndpointClosed, rawConnect, sessionConnect, sessionCreateBidiStream, sessionNextBidiStream, sessionCloseHandle, sessionClosed, sessionCreateUniStream, sessionNextUniStream, sessionSendDatagram, sessionRecvDatagram, sessionMaxDatagramSize, secretKeySign, publicKeyVerify, generateSecretKey } = nativeBinding
 
 module.exports.createEndpoint = createEndpoint
 module.exports.closeEndpoint = closeEndpoint
@@ -325,6 +325,8 @@ module.exports.homeRelay = homeRelay
 module.exports.peerInfo = peerInfo
 module.exports.peerStats = peerStats
 module.exports.endpointStats = endpointStats
+module.exports.startTransportEvents = startTransportEvents
+module.exports.nextPathChange = nextPathChange
 module.exports.jsNextChunk = jsNextChunk
 module.exports.jsSendChunk = jsSendChunk
 module.exports.jsFinishBody = jsFinishBody

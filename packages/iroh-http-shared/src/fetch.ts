@@ -25,7 +25,11 @@ export type FetchFn = {
   /** Web-standard form: peer identity is embedded in the `httpi://` URL hostname. */
   (input: string | URL, init?: IrohFetchInit): Promise<Response>;
   /** Legacy two-argument form: peer and path supplied separately. */
-  (peer: PublicKey | string, input: string | URL, init?: IrohFetchInit): Promise<Response>;
+  (
+    peer: PublicKey | string,
+    input: string | URL,
+    init?: IrohFetchInit,
+  ): Promise<Response>;
 };
 
 /**
@@ -64,7 +68,9 @@ export function makeFetch(
       init = maybeInit;
     } else {
       // New form: fetch("httpi://peerId/path", init?)
-      const raw = peerOrInput instanceof URL ? peerOrInput.href : String(peerOrInput);
+      const raw = peerOrInput instanceof URL
+        ? peerOrInput.href
+        : String(peerOrInput);
       if (!/^httpi:\/\//i.test(raw)) {
         throw new TypeError(
           `iroh-http fetch() requires either an httpi:// URL or (peer, path) arguments. ` +
@@ -299,4 +305,3 @@ function normaliseHeaders(
   if (Array.isArray(h)) return h as [string, string][];
   return Object.entries(h) as [string, string][];
 }
-

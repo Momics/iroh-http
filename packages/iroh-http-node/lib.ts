@@ -5,6 +5,7 @@
 import {
   closeEndpoint,
   createEndpoint,
+  endpointStats as napiEndpointStats,
   homeRelay as napiHomeRelay,
   jsAllocBodyWriter,
   jsAllocFetchToken,
@@ -18,11 +19,11 @@ import {
   mdnsBrowse as napiMdnsBrowse,
   mdnsBrowseClose as napiMdnsBrowseClose,
   mdnsNextEvent as napiMdnsNextEvent,
+  nextPathChange as napiNextPathChange,
   nodeAddr as napiNodeAddr,
   nodeTicket as napiNodeTicket,
   peerInfo as napiPeerInfo,
   peerStats as napiPeerStats,
-  endpointStats as napiEndpointStats,
   rawConnect as napiRawConnect,
   rawFetch as napiRawFetch,
   rawRespond as napiRawRespond,
@@ -37,9 +38,10 @@ import {
   sessionNextUniStream as napiSessionNextUniStream,
   sessionRecvDatagram as napiSessionRecvDatagram,
   sessionSendDatagram as napiSessionSendDatagram,
+  startTransportEvents as napiStartTransportEvents,
   stopServe as napiStopServe,
-  waitServeStop as napiWaitServeStop,
   waitEndpointClosed as napiWaitEndpointClosed,
+  waitServeStop as napiWaitServeStop,
 } from "./index.js";
 
 import {
@@ -51,15 +53,21 @@ import {
   type SecretKey,
 } from "@momics/iroh-http-shared";
 import {
-  IrohAdapter,
   type FfiDuplexStream,
   type FfiResponse,
   type FfiResponseHead,
-  type RequestPayload,
+  IrohAdapter,
   type PeerConnectionEvent,
+  type RequestPayload,
 } from "@momics/iroh-http-shared/adapter";
 import type { RawSessionFns } from "@momics/iroh-http-shared/adapter";
-import type { PeerStats, EndpointStats, PeerDiscoveryEvent } from "@momics/iroh-http-shared";
+import type {
+  EndpointStats,
+  PathInfo,
+  PeerDiscoveryEvent,
+  PeerStats,
+  TransportEventPayload,
+} from "@momics/iroh-http-shared";
 
 // ── Graceful shutdown tracking ─────────────────────────────────────────────────
 const _liveEndpoints = new Set<number>();
@@ -68,11 +76,16 @@ function _closeAllEndpoints(signal: string): void {
   const handles = [..._liveEndpoints];
   _liveEndpoints.clear();
   if (handles.length === 0) return;
-  const deadline = setTimeout(() => process.exit(128 + (signal === "SIGTERM" ? 15 : 2)), 2000);
+  const deadline = setTimeout(
+    () => process.exit(128 + (signal === "SIGTERM" ? 15 : 2)),
+    2000,
+  );
   if (deadline.unref) deadline.unref();
-  Promise.all(handles.map((h) => closeEndpoint(h, true).catch(() => {}))).then(() => {
-    process.exit(0);
-  });
+  Promise.all(handles.map((h) => closeEndpoint(h, true).catch(() => {}))).then(
+    () => {
+      process.exit(0);
+    },
+  );
 }
 
 process.once("SIGTERM", () => _closeAllEndpoints("SIGTERM"));
@@ -93,11 +106,19 @@ class NodeAdapter extends IrohAdapter {
         napiSessionConnect(epHandle, nodeId, directAddrs ?? undefined),
       createBidiStream: async (sessionHandle) => {
         const ffi = await napiSessionCreateBidiStream(eh, sessionHandle);
-        return { readHandle: ffi.readHandle, writeHandle: ffi.writeHandle } satisfies FfiDuplexStream;
+        return {
+          readHandle: ffi.readHandle,
+          writeHandle: ffi.writeHandle,
+        } satisfies FfiDuplexStream;
       },
       nextBidiStream: async (sessionHandle) => {
         const ffi = await napiSessionNextBidiStream(eh, sessionHandle);
-        return ffi ? ({ readHandle: ffi.readHandle, writeHandle: ffi.writeHandle } satisfies FfiDuplexStream) : null;
+        return ffi
+          ? ({
+            readHandle: ffi.readHandle,
+            writeHandle: ffi.writeHandle,
+          } satisfies FfiDuplexStream)
+          : null;
       },
       createUniStream: async (sessionHandle: bigint) =>
         napiSessionCreateUniStream(eh, sessionHandle),
@@ -117,8 +138,17 @@ class NodeAdapter extends IrohAdapter {
         const info = await napiSessionClosed(eh, sessionHandle);
         return { closeCode: Number(info.closeCode), reason: info.reason };
       },
-      close: async (sessionHandle: bigint, closeCode?: number, reason?: string) =>
-        napiSessionClose(eh, sessionHandle, closeCode !== undefined ? BigInt(closeCode) : undefined, reason),
+      close: async (
+        sessionHandle: bigint,
+        closeCode?: number,
+        reason?: string,
+      ) =>
+        napiSessionClose(
+          eh,
+          sessionHandle,
+          closeCode !== undefined ? BigInt(closeCode) : undefined,
+          reason,
+        ),
     };
   }
 
@@ -206,7 +236,12 @@ class NodeAdapter extends IrohAdapter {
         callback(typed)
           .then((head) => {
             try {
-              napiRawRespond(endpointHandle, typed.reqHandle, head.status, head.headers as string[][]);
+              napiRawRespond(
+                endpointHandle,
+                typed.reqHandle,
+                head.status,
+                head.headers as string[][],
+              );
             } catch (respondErr) {
               console.error("[iroh-http-node] rawRespond failed:", respondErr);
             }
@@ -216,7 +251,10 @@ class NodeAdapter extends IrohAdapter {
             try {
               napiRawRespond(endpointHandle, typed.reqHandle, 500, []);
             } catch (respondErr) {
-              console.error("[iroh-http-node] rawRespond (fallback 500) failed:", respondErr);
+              console.error(
+                "[iroh-http-node] rawRespond (fallback 500) failed:",
+                respondErr,
+              );
             }
           });
       },
@@ -250,7 +288,9 @@ class NodeAdapter extends IrohAdapter {
   }
   async peerInfo(handle: number, nodeId: string): Promise<NodeAddrInfo | null> {
     const info = await napiPeerInfo(handle, nodeId);
-    return info ? ({ id: info.id, addrs: info.addrs } satisfies NodeAddrInfo) : null;
+    return info
+      ? ({ id: info.id, addrs: info.addrs } satisfies NodeAddrInfo)
+      : null;
   }
   async peerStats(handle: number, nodeId: string): Promise<PeerStats | null> {
     const stats = await napiPeerStats(handle, nodeId);
@@ -287,8 +327,16 @@ class NodeAdapter extends IrohAdapter {
     path: string,
     headers: [string, string][],
   ): Promise<FfiDuplexStream> {
-    const ffi = await napiRawConnect(endpointHandle, nodeId, path, headers as string[][]);
-    return { readHandle: ffi.readHandle, writeHandle: ffi.writeHandle } satisfies FfiDuplexStream;
+    const ffi = await napiRawConnect(
+      endpointHandle,
+      nodeId,
+      path,
+      headers as string[][],
+    );
+    return {
+      readHandle: ffi.readHandle,
+      writeHandle: ffi.writeHandle,
+    } satisfies FfiDuplexStream;
   }
 
   // ── Sessions ────────────────────────────────────────────────────────────────
@@ -300,7 +348,9 @@ class NodeAdapter extends IrohAdapter {
   async mdnsBrowse(handle: number, serviceName: string): Promise<number> {
     return napiMdnsBrowse(handle, serviceName);
   }
-  async mdnsNextEvent(browseHandle: number): Promise<PeerDiscoveryEvent | null> {
+  async mdnsNextEvent(
+    browseHandle: number,
+  ): Promise<PeerDiscoveryEvent | null> {
     const ev = await napiMdnsNextEvent(browseHandle);
     if (!ev) return null;
     return {
@@ -317,6 +367,29 @@ class NodeAdapter extends IrohAdapter {
   }
   mdnsAdvertiseClose(advertiseHandle: number): void {
     napiMdnsAdvertiseClose(advertiseHandle);
+  }
+
+  // ── Transport events ────────────────────────────────────────────────────────
+  override startTransportEvents(
+    endpointHandle: number,
+    callback: (event: TransportEventPayload) => void,
+  ): void {
+    napiStartTransportEvents(endpointHandle, (json: string) => {
+      try {
+        callback(JSON.parse(json) as TransportEventPayload);
+      } catch (err) {
+        console.error("[iroh-http-node] transport event callback error:", err);
+      }
+    });
+  }
+
+  override async nextPathChange(
+    endpointHandle: number,
+    nodeId: string,
+  ): Promise<PathInfo | null> {
+    const json = await napiNextPathChange(endpointHandle, nodeId);
+    if (json === null || json === undefined) return null;
+    return JSON.parse(json) as PathInfo;
   }
 }
 
@@ -344,9 +417,12 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
       : (options.key as SecretKey).toBytes()
     : undefined;
 
-  const { relayMode, relays, disableNetworking } = normaliseRelayMode(options?.relayMode);
+  const { relayMode, relays, disableNetworking } = normaliseRelayMode(
+    options?.relayMode,
+  );
   const discovery = normaliseDiscovery(options?.discovery);
-  const disableNetworkingFinal = disableNetworking || (options?.disableNetworking ?? false);
+  const disableNetworkingFinal = disableNetworking ||
+    (options?.disableNetworking ?? false);
   const bindAddrs = options?.bindAddr
     ? Array.isArray(options.bindAddr) ? options.bindAddr : [options.bindAddr]
     : undefined;
@@ -374,7 +450,9 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         keylog: options.keylog,
         compressionLevel: typeof options.compression === "object"
           ? options.compression.level
-          : options.compression ? 3 : undefined,
+          : options.compression
+          ? 3
+          : undefined,
         compressionMinBodyBytes: typeof options.compression === "object"
           ? options.compression.minBodyBytes
           : undefined,

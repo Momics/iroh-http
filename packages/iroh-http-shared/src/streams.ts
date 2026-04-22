@@ -115,7 +115,11 @@ export function bodyInitToStream(
   // Must come after the Uint8Array check so the common case stays on the fast path.
   if (ArrayBuffer.isView(body)) {
     return singleChunkStream(
-      new Uint8Array((body as ArrayBufferView).buffer, (body as ArrayBufferView).byteOffset, (body as ArrayBufferView).byteLength),
+      new Uint8Array(
+        (body as ArrayBufferView).buffer,
+        (body as ArrayBufferView).byteOffset,
+        (body as ArrayBufferView).byteLength,
+      ),
     );
   }
   throw new TypeError(

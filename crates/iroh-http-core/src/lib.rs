@@ -6,6 +6,7 @@
 
 pub mod client;
 pub mod endpoint;
+pub mod events;
 pub(crate) mod io;
 pub(crate) mod pool;
 pub mod registry;
@@ -21,6 +22,7 @@ pub use endpoint::{
     NetworkingOptions, NodeAddrInfo, NodeOptions, PathInfo, PeerStats, PoolOptions,
     StreamingOptions,
 };
+pub use events::TransportEvent;
 pub use registry::{get_endpoint, insert_endpoint, remove_endpoint};
 pub use server::respond;
 pub use server::serve;

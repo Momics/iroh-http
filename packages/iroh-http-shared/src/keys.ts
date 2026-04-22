@@ -12,15 +12,19 @@
 
 const B32_ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const B32_LOOKUP = new Uint8Array(256).fill(0xff);
-for (let i = 0; i < B32_ALPHA.length; i++)
+for (let i = 0; i < B32_ALPHA.length; i++) {
   B32_LOOKUP[B32_ALPHA.charCodeAt(i)] = i;
+}
 
 const base32Encode = (b: Uint8Array): string => {
   let out = "", buf = 0, bits = 0;
   for (const byte of b) {
     buf = (buf << 8) | byte;
     bits += 8;
-    while (bits >= 5) { bits -= 5; out += B32_ALPHA[(buf >> bits) & 0x1f]; }
+    while (bits >= 5) {
+      bits -= 5;
+      out += B32_ALPHA[(buf >> bits) & 0x1f];
+    }
   }
   if (bits > 0) out += B32_ALPHA[(buf << (5 - bits)) & 0x1f];
   return out.toLowerCase();
@@ -35,7 +39,10 @@ const base32Decode = (s: string): Uint8Array => {
     if (val === 0xff) throw new Error(`Invalid base32 character: ${ch}`);
     buf = (buf << 5) | val;
     bits += 5;
-    if (bits >= 8) { bits -= 8; out.push((buf >> bits) & 0xff); }
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((buf >> bits) & 0xff);
+    }
   }
   return new Uint8Array(out);
 };
@@ -50,8 +57,22 @@ const ED25519: EcKeyAlgorithm = {
 
 /** DER-encoded PKCS8 prefix for an Ed25519 private key (RFC 8410). */
 const ED25519_PKCS8_PREFIX = new Uint8Array([
-  0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
-  0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+  0x30,
+  0x2e,
+  0x02,
+  0x01,
+  0x00,
+  0x30,
+  0x05,
+  0x06,
+  0x03,
+  0x2b,
+  0x65,
+  0x70,
+  0x04,
+  0x22,
+  0x04,
+  0x20,
 ]);
 
 /** Wrap a 32-byte Ed25519 seed in PKCS8 DER encoding for Web Crypto import. */

@@ -680,6 +680,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1223,6 +1237,12 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+
+[[package]]
+name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
@@ -1738,6 +1758,7 @@ dependencies = [
  "base32",
  "bytes",
  "criterion",
+ "dashmap",
  "futures",
  "http",
  "http-body",
@@ -1766,6 +1787,7 @@ version = "0.1.6"
 dependencies = [
  "base64",
  "bytes",
+ "dashmap",
  "iroh-http-adapter",
  "iroh-http-core",
  "iroh-http-discovery",
@@ -1790,6 +1812,7 @@ name = "iroh-http-node"
 version = "0.1.6"
 dependencies = [
  "bytes",
+ "dashmap",
  "iroh",
  "iroh-http-adapter",
  "iroh-http-core",
@@ -1797,6 +1820,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "serde_json",
  "slab",
  "tokio",
  "tracing",

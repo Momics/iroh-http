@@ -69,7 +69,9 @@ function handleComplianceRequest(req: Request): Response | Promise<Response> {
   }
   if (parts[0] === "stream" && parts[1]) {
     const n = parseInt(parts[1], 10);
-    if (!isNaN(n) && n >= 0) return new Response(new Uint8Array(n), { status: 200 });
+    if (!isNaN(n) && n >= 0) {
+      return new Response(new Uint8Array(n), { status: 200 });
+    }
   }
   return new Response("not found", { status: 404 });
 }
@@ -77,13 +79,19 @@ function handleComplianceRequest(req: Request): Response | Promise<Response> {
 // ── Assertion helpers ─────────────────────────────────────────────────────────
 
 // deno-lint-ignore no-explicit-any
-async function assertResponse(resp: Response, expected: any): Promise<string | null> {
-  if (resp.status !== expected.status)
+async function assertResponse(
+  resp: Response,
+  expected: any,
+): Promise<string | null> {
+  if (resp.status !== expected.status) {
     return `status: got ${resp.status}, want ${expected.status}`;
+  }
   if (expected.bodyExact !== undefined) {
     const text = await resp.text();
     return text !== expected.bodyExact
-      ? `body: got ${JSON.stringify(text)}, want ${JSON.stringify(expected.bodyExact)}`
+      ? `body: got ${JSON.stringify(text)}, want ${
+        JSON.stringify(expected.bodyExact)
+      }`
       : null;
   }
   if (expected.bodyNot !== undefined) {
@@ -105,8 +113,11 @@ async function assertResponse(resp: Response, expected: any): Promise<string | n
   if (expected.headers) {
     for (const [k, v] of Object.entries(expected.headers)) {
       const actual = resp.headers.get(k as string);
-      if (actual !== v)
-        return `header ${k}: got ${JSON.stringify(actual)}, want ${JSON.stringify(v)}`;
+      if (actual !== v) {
+        return `header ${k}: got ${JSON.stringify(actual)}, want ${
+          JSON.stringify(v)
+        }`;
+      }
     }
     await resp.body?.cancel();
     return null;
@@ -142,14 +153,20 @@ try {
   for (const c of cases) {
     let resp: Response;
     try {
-      resp = await client.fetch(serverId, `httpi://compliance.test${c.request.path}`, {
-        method: c.request.method,
-        headers: c.request.headers,
-        body: buildBody(c.request.body),
-        directAddrs: serverAddrs,
-      });
+      resp = await client.fetch(
+        serverId,
+        `httpi://compliance.test${c.request.path}`,
+        {
+          method: c.request.method,
+          headers: c.request.headers,
+          body: buildBody(c.request.body),
+          directAddrs: serverAddrs,
+        },
+      );
     } catch (e) {
-      const reason = `fetch threw: ${e instanceof Error ? e.message : String(e)}`;
+      const reason = `fetch threw: ${
+        e instanceof Error ? e.message : String(e)
+      }`;
       failed++;
       failures.push({ id: c.id, reason });
       console.log(`  FAIL  ${c.id}: ${reason}`);

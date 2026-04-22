@@ -137,12 +137,21 @@ impl<R: Runtime> MobileMdns<R> {
     }
 
     /// Start advertising on the native layer. Returns an `advertise_id` handle.
-    pub fn advertise_start(&self, service_name: &str, pk: &str, relay: Option<&str>) -> Result<u64, String> {
+    pub fn advertise_start(
+        &self,
+        service_name: &str,
+        pk: &str,
+        relay: Option<&str>,
+    ) -> Result<u64, String> {
         let resp: AdvertiseStartResponse = self
             .0
             .run_mobile_plugin(
                 "mdns_advertise_start",
-                AdvertiseStartPayload { service_name, pk, relay },
+                AdvertiseStartPayload {
+                    service_name,
+                    pk,
+                    relay,
+                },
             )
             .map_err(|e| e.to_string())?;
         Ok(resp.advertise_id)
@@ -151,10 +160,7 @@ impl<R: Runtime> MobileMdns<R> {
     /// Stop advertising.
     pub fn advertise_stop(&self, advertise_id: u64) -> Result<(), String> {
         self.0
-            .run_mobile_plugin::<()>(
-                "mdns_advertise_stop",
-                AdvertiseStopPayload { advertise_id },
-            )
+            .run_mobile_plugin::<()>("mdns_advertise_stop", AdvertiseStopPayload { advertise_id })
             .map_err(|e| e.to_string())
     }
 }

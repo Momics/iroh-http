@@ -16,6 +16,7 @@ export interface JsNodeOptions {
   maxConsecutiveErrors?: number
   drainTimeout?: number
   handleTtl?: number
+  sweepInterval?: number
   maxPooledConnections?: number
   poolIdleTimeoutMs?: number
   disableNetworking?: boolean
@@ -24,7 +25,7 @@ export interface JsNodeOptions {
   keylog?: boolean
   compressionLevel?: number
   compressionMinBodyBytes?: number
-  /** Maximum simultaneous in-flight requests.  Default: 64. */
+  /** Maximum simultaneous in-flight requests.  Default: 1024. */
   maxConcurrency?: number
   /** Maximum connections from a single peer.  Default: 8. */
   maxConnectionsPerPeer?: number
@@ -141,6 +142,22 @@ export interface JsEndpointStats {
 }
 /** Snapshot of current endpoint statistics (point-in-time). */
 export declare function endpointStats(endpointHandle: number): JsEndpointStats
+/**
+ * Register a push callback for transport-level events.
+ *
+ * Spawns a Tokio task that drains the endpoint's event channel and calls
+ * `handler` on the Node.js thread for each event (JSON-serialised string).
+ * The task exits automatically when the endpoint closes (all senders drop).
+ * Call at most once per endpoint; subsequent calls return an error.
+ */
+export declare function startTransportEvents(endpointHandle: number, handler: (...args: any[]) => any): void
+/**
+ * Subscribe to path changes for a specific peer.
+ * Returns the next path change as a JSON string, or null when done.
+ * Call repeatedly to receive successive changes; the endpoint de-duplicates
+ * watcher tasks so concurrent calls for the same peer share one Rust task.
+ */
+export declare function nextPathChange(endpointHandle: number, nodeId: string): Promise<string | null>
 /**
  * Read the next chunk from a body reader handle.
  *

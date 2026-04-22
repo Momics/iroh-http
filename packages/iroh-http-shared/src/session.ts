@@ -6,7 +6,7 @@
  * the standard WebTransport interface.
  */
 
-import type { IrohAdapter, FfiDuplexStream } from "./IrohAdapter.js";
+import type { FfiDuplexStream, IrohAdapter } from "./IrohAdapter.js";
 import type { PublicKey } from "./keys.js";
 import { makeReadable } from "./streams.js";
 

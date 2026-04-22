@@ -55,13 +55,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::session_send_datagram,
             commands::session_recv_datagram,
             commands::session_max_datagram_size,
+            commands::start_transport_events,
         ])
         .setup(|_app, _api| {
             #[cfg(mobile)]
             {
                 // ISS-009: return recoverable error instead of panicking on init failure.
-                let mdns = mobile_mdns::init(_app, _api)
-                    .map_err(|e| e.into())?;
+                let mdns = mobile_mdns::init(_app, _api).map_err(|e| e.into())?;
                 _app.manage(mdns);
             }
             Ok(())
@@ -75,7 +75,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         // safe to tear down all endpoints.  In multi-window apps this means
         // closing window A does not affect window B's networking.
         .on_event(|app, event| {
-            if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Destroyed, .. } = event {
+            if let tauri::RunEvent::WindowEvent {
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } = event
+            {
                 if app.webview_windows().is_empty() {
                     iroh_http_core::registry::close_all_endpoints();
                 }

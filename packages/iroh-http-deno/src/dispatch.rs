@@ -177,6 +177,10 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         sync  "sessionSendDatagram"     => session_send_datagram_dispatch,
         async "sessionRecvDatagram"     => session_recv_datagram_dispatch,
         sync  "sessionMaxDatagramSize"  => session_max_datagram_size_dispatch,
+        // ── Transport events ──────────────────────────────────────────────────
+        async "startTransportEvents"    => start_transport_events_dispatch,
+        async "nextTransportEvent"      => next_transport_event_dispatch,
+        async "nextPathChange"          => next_path_change_dispatch,
     )
 }
 
@@ -1325,5 +1329,142 @@ fn session_max_datagram_size_dispatch(p: Value) -> Value {
     match iroh_http_core::session_max_datagram_size(&ep, args.session_handle) {
         Err(e) => err_core(e),
         Ok(size) => ok(json!({ "maxDatagramSize": size })),
+    }
+}
+
+// ── Transport events ──────────────────────────────────────────────────────────
+
+type TransportEventRxMap = dashmap::DashMap<
+    u32,
+    std::sync::Arc<
+        tokio::sync::Mutex<tokio::sync::mpsc::Receiver<iroh_http_core::events::TransportEvent>>,
+    >,
+>;
+static TRANSPORT_EVENT_RXS: std::sync::OnceLock<TransportEventRxMap> = std::sync::OnceLock::new();
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartTransportEventsPayload {
+    endpoint_handle: u32,
+}
+
+async fn start_transport_events_dispatch(p: Value) -> Value {
+    let payload: StartTransportEventsPayload = match serde_json::from_value(p) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    let ep = match get_endpoint(payload.endpoint_handle) {
+        Some(ep) => ep,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!(
+                    "node closed or not found (handle {})",
+                    payload.endpoint_handle
+                ),
+            )
+        }
+    };
+    let rx = match ep.subscribe_events() {
+        Some(rx) => rx,
+        None => {
+            return err_code(
+                "ALREADY_STARTED",
+                "transport event receiver already taken; startTransportEvents called twice",
+            )
+        }
+    };
+    let rxs = TRANSPORT_EVENT_RXS.get_or_init(dashmap::DashMap::new);
+    rxs.insert(
+        payload.endpoint_handle,
+        std::sync::Arc::new(tokio::sync::Mutex::new(rx)),
+    );
+    ok(serde_json::Value::Null)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NextTransportEventPayload {
+    endpoint_handle: u32,
+}
+
+async fn next_transport_event_dispatch(p: Value) -> Value {
+    let payload: NextTransportEventPayload = match serde_json::from_value(p) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    let rxs = TRANSPORT_EVENT_RXS.get_or_init(dashmap::DashMap::new);
+    let rx_arc = match rxs.get(&payload.endpoint_handle) {
+        Some(r) => r.value().clone(),
+        None => return ok(serde_json::Value::Null),
+    };
+    // DashMap ref dropped above; now safe to await
+    let mut rx = rx_arc.lock().await;
+    match rx.recv().await {
+        None => {
+            drop(rx);
+            rxs.remove(&payload.endpoint_handle);
+            ok(serde_json::Value::Null)
+        }
+        Some(event) => match serde_json::to_value(&event) {
+            Ok(v) => ok(v),
+            Err(e) => err(e),
+        },
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NextPathChangePayload {
+    endpoint_handle: u32,
+    node_id: String,
+}
+
+async fn next_path_change_dispatch(p: Value) -> Value {
+    use std::sync::Arc;
+    type PathRx = tokio::sync::Mutex<
+        tokio::sync::mpsc::UnboundedReceiver<iroh_http_core::endpoint::PathInfo>,
+    >;
+    type PathRxMap = dashmap::DashMap<(u32, String), Arc<PathRx>>;
+    static PATH_CHANGE_RXS: std::sync::OnceLock<PathRxMap> = std::sync::OnceLock::new();
+    let rxs = PATH_CHANGE_RXS.get_or_init(dashmap::DashMap::new);
+
+    let payload: NextPathChangePayload = match serde_json::from_value(p) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    let ep = match get_endpoint(payload.endpoint_handle) {
+        Some(ep) => ep,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!(
+                    "node closed or not found (handle {})",
+                    payload.endpoint_handle
+                ),
+            )
+        }
+    };
+
+    let key = (payload.endpoint_handle, payload.node_id.clone());
+    let rx_arc = rxs
+        .entry(key.clone())
+        .or_insert_with(|| {
+            let rx = ep.subscribe_path_changes(&payload.node_id);
+            Arc::new(tokio::sync::Mutex::new(rx))
+        })
+        .clone();
+
+    let mut rx = rx_arc.lock().await;
+    match rx.recv().await {
+        None => {
+            drop(rx);
+            rxs.remove(&key);
+            ok(serde_json::Value::Null)
+        }
+        Some(path) => match serde_json::to_value(&path) {
+            Ok(v) => ok(v),
+            Err(e) => err(e),
+        },
     }
 }

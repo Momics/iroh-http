@@ -4,29 +4,37 @@
  * Implements IrohAdapter via Deno.dlopen FFI.
  */
 
-import { resolve, dirname, fromFileUrl } from "@std/path";
+import { dirname, fromFileUrl, resolve } from "@std/path";
 import type {
   EndpointInfo,
   EndpointStats,
-  NodeOptions,
   NodeAddrInfo,
+  NodeOptions,
+  PathInfo,
   PeerConnectionEvent,
   PeerDiscoveryEvent,
   PeerStats,
+  TransportEventPayload,
 } from "@momics/iroh-http-shared";
 import { IrohAdapter } from "@momics/iroh-http-shared/adapter";
 import type {
+  AllocBodyWriterFn,
+  FfiDuplexStream,
   FfiResponse,
   FfiResponseHead,
-  FfiDuplexStream,
+  RawConnectFn,
   RawFetchFn,
   RawServeFn,
-  RawConnectFn,
-  AllocBodyWriterFn,
-  RequestPayload,
   RawSessionFns,
+  RequestPayload,
 } from "@momics/iroh-http-shared/adapter";
-import { classifyError, classifyBindError, encodeBase64, decodeBase64, normaliseRelayMode } from "@momics/iroh-http-shared";
+import {
+  classifyBindError,
+  classifyError,
+  decodeBase64,
+  encodeBase64,
+  normaliseRelayMode,
+} from "@momics/iroh-http-shared";
 
 // ── Platform library resolution ───────────────────────────────────────────────
 
@@ -47,7 +55,8 @@ function libName(): string {
 
 /** Version must match the tag used for GitHub releases (v0.1.0 → tag v0.1.0). */
 const VERSION = "0.1.6";
-const DOWNLOAD_BASE = `https://github.com/Momics/iroh-http/releases/download/v${VERSION}`;
+const DOWNLOAD_BASE =
+  `https://github.com/Momics/iroh-http/releases/download/v${VERSION}`;
 
 function cacheDir(): string {
   // Local dev: import.meta.url is file://, use lib/ next to src/.
@@ -80,8 +89,8 @@ async function ensureLib(): Promise<string> {
   if (!resp.ok || !resp.body) {
     throw new Error(
       `[iroh-http] Failed to download native library: ${resp.status} ${resp.statusText}\n` +
-      `  URL: ${url}\n` +
-      `  Ensure a GitHub release exists for v${VERSION} with the binary attached.`,
+        `  URL: ${url}\n` +
+        `  Ensure a GitHub release exists for v${VERSION} with the binary attached.`,
     );
   }
 
@@ -91,7 +100,11 @@ async function ensureLib(): Promise<string> {
     await resp.body.pipeTo(file.writable);
   } catch (e) {
     // Clean up partial download.
-    try { await Deno.remove(libPath); } catch { /* ignore */ }
+    try {
+      await Deno.remove(libPath);
+    } catch {
+      /* ignore */
+    }
     throw e;
   }
 
@@ -107,28 +120,31 @@ const LIB_PATH = await ensureLib();
 
 // ── FFI symbols ───────────────────────────────────────────────────────────────
 
-const lib = Deno.dlopen(LIB_PATH, {
-  iroh_http_call: {
-    parameters: ["buffer", "usize", "buffer", "usize", "buffer", "usize"],
-    result: "i32",
-    nonblocking: true,
-  },
-  iroh_http_next_chunk: {
-    parameters: ["u32", "u64", "buffer", "usize"],
-    result: "i32",
-    nonblocking: true,
-  },
-  iroh_http_send_chunk: {
-    parameters: ["u32", "u64", "buffer", "usize"],
-    result: "i32",
-    nonblocking: true,
-  },
-  iroh_http_close_all: {
-    parameters: [],
-    result: "void",
-    nonblocking: false,
-  },
-} as const);
+const lib = Deno.dlopen(
+  LIB_PATH,
+  {
+    iroh_http_call: {
+      parameters: ["buffer", "usize", "buffer", "usize", "buffer", "usize"],
+      result: "i32",
+      nonblocking: true,
+    },
+    iroh_http_next_chunk: {
+      parameters: ["u32", "u64", "buffer", "usize"],
+      result: "i32",
+      nonblocking: true,
+    },
+    iroh_http_send_chunk: {
+      parameters: ["u32", "u64", "buffer", "usize"],
+      result: "i32",
+      nonblocking: true,
+    },
+    iroh_http_close_all: {
+      parameters: [],
+      result: "void",
+      nonblocking: false,
+    },
+  } as const,
+);
 
 // ── JSON dispatch helper ──────────────────────────────────────────────────────
 
@@ -165,10 +181,15 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
     "nodeAddr",
     "homeRelay",
     "peerInfo",
+    "startTransportEvents",
+    "nextTransportEvent",
+    "nextPathChange",
   ].map((m) => [m, enc.encode(m)]),
 );
 
-/** Reusable buffer hint for estimating output size of `call()` responses. */async function call<T>(method: string, payload: unknown): Promise<T> {
+/** Reusable buffer hint for estimating output size of `call()` responses. */ async function call<
+  T,
+>(method: string, payload: unknown): Promise<T> {
   const methodBuf = METHOD_BUFS[method] ?? enc.encode(method);
   // ISS-032: bigint handles are slotmap u64 keys (32-bit slot + 32-bit version);
   // practical values are well within Number.MAX_SAFE_INTEGER. Throw early if a
@@ -210,7 +231,11 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
     // an 8-byte retrieval token into the first bytes of `buf`.  Read it and
     // retry with method "__cached" to avoid re-dispatching the original
     // handler (DENO-007).
-    const tokenBuf = new Uint8Array(buf.buffer, buf.byteOffset, 8) as Uint8Array<ArrayBuffer>;
+    const tokenBuf = new Uint8Array(
+      buf.buffer,
+      buf.byteOffset,
+      8,
+    ) as Uint8Array<ArrayBuffer>;
     const cachedMethod = enc.encode("__cached") as Uint8Array<ArrayBuffer>;
     buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
     n = (await lib.symbols.iroh_http_call(
@@ -222,7 +247,9 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
       BigInt(buf.byteLength),
     )) as number;
     // Raise the hint so future calls start with a large enough buffer (capped).
-    if (buf.byteLength > outBufHint) outBufHint = Math.min(buf.byteLength, MAX_OUT_BUF);
+    if (buf.byteLength > outBufHint) {
+      outBufHint = Math.min(buf.byteLength, MAX_OUT_BUF);
+    }
   }
 
   const result = JSON.parse(dec.decode(buf.subarray(0, n))) as
@@ -244,65 +271,76 @@ let chunkBufHint = 65536;
 
 export function makeBridge(endpointHandle: number) {
   return {
-  async nextChunk(handle: bigint): Promise<Uint8Array | null> {
-    // DENO-001: allocate a per-call buffer so concurrent reads on different
-    // handles do not share memory and corrupt each other's data.
-    let buf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
-    let n = (await lib.symbols.iroh_http_next_chunk(
-      endpointHandle,
-      handle,
-      buf,
-      BigInt(buf.byteLength),
-    )) as number;
-    if (n < -1) {
-      // Return value encodes the required size as a negative number.
-      // Grow the buffer and retry exactly once.
-      buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
-      n = (await lib.symbols.iroh_http_next_chunk(
+    async nextChunk(handle: bigint): Promise<Uint8Array | null> {
+      // DENO-001: allocate a per-call buffer so concurrent reads on different
+      // handles do not share memory and corrupt each other's data.
+      let buf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
+      let n = (await lib.symbols.iroh_http_next_chunk(
         endpointHandle,
         handle,
         buf,
         BigInt(buf.byteLength),
       )) as number;
-    }
-    // n === -1  → hard error (endpoint gone, handle invalid, stream reset).
-    // n === 0   → clean EOF.
-    // n > 0     → chunk of n bytes.
-    if (n === -1) {
-      throw new Error(`nextChunk: stream error on handle ${handle}`);
-    }
-    if (n === 0) return null;
-    // Update hint so future calls start with a better-sized buffer (capped).
-    chunkBufHint = Math.min(Math.max(chunkBufHint, n), MAX_CHUNK_BUF);
-    return buf.slice(0, n);
-  },
-  async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
-    // Direct binary FFI — avoids base64 encode / decode round-trip on hot path.
-    const buf = chunk as Uint8Array<ArrayBuffer>;
-    const result = await lib.symbols.iroh_http_send_chunk(
-      endpointHandle,
-      handle,
-      buf,
-      BigInt(buf.byteLength),
-    ) as number;
-    if (result < 0) {
-      throw new Error(`sendChunk failed: handle ${handle}`);
-    }
-  },
-  async finishBody(handle: bigint): Promise<void> {
-    await call<Record<never, never>>("finishBody", { endpointHandle, handle });
-  },
-  async cancelRequest(handle: bigint): Promise<void> {
-    await call<Record<never, never>>("cancelRequest", { endpointHandle, handle });
-  },
-  async allocFetchToken(_endpointHandle: number): Promise<bigint> {
-    const res = await call<{ token: number }>("allocFetchToken", { endpointHandle });
-    return BigInt(res.token);
-  },
-  cancelFetch(token: bigint): void {
-    // Fire-and-forget — do not await.
-    void call<Record<never, never>>("cancelInFlight", { endpointHandle, token });
-  },
+      if (n < -1) {
+        // Return value encodes the required size as a negative number.
+        // Grow the buffer and retry exactly once.
+        buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
+        n = (await lib.symbols.iroh_http_next_chunk(
+          endpointHandle,
+          handle,
+          buf,
+          BigInt(buf.byteLength),
+        )) as number;
+      }
+      // n === -1  → hard error (endpoint gone, handle invalid, stream reset).
+      // n === 0   → clean EOF.
+      // n > 0     → chunk of n bytes.
+      if (n === -1) {
+        throw new Error(`nextChunk: stream error on handle ${handle}`);
+      }
+      if (n === 0) return null;
+      // Update hint so future calls start with a better-sized buffer (capped).
+      chunkBufHint = Math.min(Math.max(chunkBufHint, n), MAX_CHUNK_BUF);
+      return buf.slice(0, n);
+    },
+    async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
+      // Direct binary FFI — avoids base64 encode / decode round-trip on hot path.
+      const buf = chunk as Uint8Array<ArrayBuffer>;
+      const result = (await lib.symbols.iroh_http_send_chunk(
+        endpointHandle,
+        handle,
+        buf,
+        BigInt(buf.byteLength),
+      )) as number;
+      if (result < 0) {
+        throw new Error(`sendChunk failed: handle ${handle}`);
+      }
+    },
+    async finishBody(handle: bigint): Promise<void> {
+      await call<Record<never, never>>("finishBody", {
+        endpointHandle,
+        handle,
+      });
+    },
+    async cancelRequest(handle: bigint): Promise<void> {
+      await call<Record<never, never>>("cancelRequest", {
+        endpointHandle,
+        handle,
+      });
+    },
+    async allocFetchToken(_endpointHandle: number): Promise<bigint> {
+      const res = await call<{ token: number }>("allocFetchToken", {
+        endpointHandle,
+      });
+      return BigInt(res.token);
+    },
+    cancelFetch(token: bigint): void {
+      // Fire-and-forget — do not await.
+      void call<Record<never, never>>("cancelInFlight", {
+        endpointHandle,
+        token,
+      });
+    },
   };
 }
 
@@ -374,8 +412,8 @@ export const rawServe: RawServeFn = (
   options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ): Promise<void> => {
-  return call<Record<never, never>>("serveStart", { endpointHandle })
-    .then(() => {
+  return call<Record<never, never>>("serveStart", { endpointHandle }).then(
+    () => {
       // Start connection event polling loop if a callback was supplied.
       if (options.onConnectionEvent) {
         const onEv = options.onConnectionEvent;
@@ -397,16 +435,18 @@ export const rawServe: RawServeFn = (
 
       return (async () => {
         while (true) {
-          const raw = await call<{
-            reqHandle: number;
-            reqBodyHandle: number;
-            resBodyHandle: number;
-            method: string;
-            url: string;
-            headers: [string, string][];
-            remoteNodeId: string;
-            isBidi: boolean;
-          } | null>("nextRequest", { endpointHandle });
+          const raw = await call<
+            {
+              reqHandle: number;
+              reqBodyHandle: number;
+              resBodyHandle: number;
+              method: string;
+              url: string;
+              headers: [string, string][];
+              remoteNodeId: string;
+              isBidi: boolean;
+            } | null
+          >("nextRequest", { endpointHandle });
           if (raw === null) break;
           const payload: RequestPayload = {
             reqHandle: BigInt(raw.reqHandle),
@@ -445,12 +485,15 @@ export const rawServe: RawServeFn = (
           })();
         }
       })();
-    });
+    },
+  );
 };
 
 export function makeAllocBodyWriter(endpointHandle: number): AllocBodyWriterFn {
   return () =>
-    call<{ handle: number }>("allocBodyWriter", { endpointHandle }).then((r) => BigInt(r.handle));
+    call<{ handle: number }>("allocBodyWriter", { endpointHandle }).then((r) =>
+      BigInt(r.handle)
+    );
 }
 
 // ── Endpoint lifecycle ────────────────────────────────────────────────────────
@@ -487,8 +530,8 @@ export async function createEndpointInfo(
 ): Promise<EndpointInfo> {
   const keyBytes: string | null = options?.key
     ? encodeBase64(
-        options.key instanceof Uint8Array ? options.key : options.key.toBytes(),
-      )
+      options.key instanceof Uint8Array ? options.key : options.key.toBytes(),
+    )
     : null;
 
   const { relayMode, relays, disableNetworking } = normaliseRelayMode(
@@ -496,9 +539,7 @@ export async function createEndpointInfo(
   );
   const discovery = normaliseDiscovery(options?.discovery);
   const bindAddrs = options?.bindAddr
-    ? Array.isArray(options.bindAddr)
-      ? options.bindAddr
-      : [options.bindAddr]
+    ? Array.isArray(options.bindAddr) ? options.bindAddr : [options.bindAddr]
     : null;
 
   const res = await call<{
@@ -524,16 +565,14 @@ export async function createEndpointInfo(
     proxyUrl: options?.proxyUrl ?? null,
     proxyFromEnv: options?.proxyFromEnv ?? null,
     keylog: options?.keylog ?? null,
-    compressionLevel:
-      typeof options?.compression === "object"
-        ? (options.compression.level ?? null)
-        : options?.compression
-          ? 3
-          : null,
-    compressionMinBodyBytes:
-      typeof options?.compression === "object"
-        ? (options.compression.minBodyBytes ?? null)
-        : null,
+    compressionLevel: typeof options?.compression === "object"
+      ? (options.compression.level ?? null)
+      : options?.compression
+      ? 3
+      : null,
+    compressionMinBodyBytes: typeof options?.compression === "object"
+      ? (options.compression.minBodyBytes ?? null)
+      : null,
     maxConcurrency: options?.maxConcurrency ?? null,
     maxConnectionsPerPeer: options?.maxConnectionsPerPeer ?? null,
     requestTimeout: options?.requestTimeout ?? null,
@@ -650,80 +689,90 @@ export const denoDiscoveryFns = {
 
 export function makeDenoSessionFns(endpointHandle: number): RawSessionFns {
   return {
-  connect: async (_endpointHandle, nodeId, directAddrs) => {
-    const res = await call<{ sessionHandle: number }>("sessionConnect", {
-      endpointHandle,
-      nodeId,
-      directAddrs: directAddrs ?? null,
-    });
-    return BigInt(res.sessionHandle as unknown as number);
-  },
-  createBidiStream: async (sessionHandle) => {
-    const res = await call<{ readHandle: number; writeHandle: number }>(
-      "sessionCreateBidiStream",
-      { endpointHandle, sessionHandle },
-    );
-    return {
-      readHandle: BigInt(res.readHandle),
-      writeHandle: BigInt(res.writeHandle),
-    } satisfies FfiDuplexStream;
-  },
-  nextBidiStream: async (sessionHandle) => {
-    const res = await call<{ readHandle: number; writeHandle: number } | null>(
-      "sessionNextBidiStream",
-      { endpointHandle, sessionHandle },
-    );
-    return res
-      ? ({
+    connect: async (_endpointHandle, nodeId, directAddrs) => {
+      const res = await call<{ sessionHandle: number }>("sessionConnect", {
+        endpointHandle,
+        nodeId,
+        directAddrs: directAddrs ?? null,
+      });
+      return BigInt(res.sessionHandle as unknown as number);
+    },
+    createBidiStream: async (sessionHandle) => {
+      const res = await call<{ readHandle: number; writeHandle: number }>(
+        "sessionCreateBidiStream",
+        { endpointHandle, sessionHandle },
+      );
+      return {
+        readHandle: BigInt(res.readHandle),
+        writeHandle: BigInt(res.writeHandle),
+      } satisfies FfiDuplexStream;
+    },
+    nextBidiStream: async (sessionHandle) => {
+      const res = await call<
+        {
+          readHandle: number;
+          writeHandle: number;
+        } | null
+      >("sessionNextBidiStream", { endpointHandle, sessionHandle });
+      return res
+        ? ({
           readHandle: BigInt(res.readHandle),
           writeHandle: BigInt(res.writeHandle),
         } satisfies FfiDuplexStream)
-      : null;
-  },
-  createUniStream: async (sessionHandle) => {
-    const res = await call<{ writeHandle: number }>("sessionCreateUniStream", {
-      endpointHandle, sessionHandle,
-    });
-    return BigInt(res.writeHandle);
-  },
-  nextUniStream: async (sessionHandle) => {
-    const res = await call<{ readHandle: number } | null>(
-      "sessionNextUniStream",
-      { endpointHandle, sessionHandle },
-    );
-    return res ? BigInt(res.readHandle) : null;
-  },
-  sendDatagram: async (sessionHandle, data) => {
-    await call<Record<never, never>>("sessionSendDatagram", {
-      endpointHandle, sessionHandle,
-      data: encodeBase64(data),
-    });
-  },
-  recvDatagram: async (sessionHandle) => {
-    const res = await call<{ data: string } | null>("sessionRecvDatagram", {
-      endpointHandle, sessionHandle,
-    });
-    return res ? decodeBase64(res.data) : null;
-  },
-  maxDatagramSize: async (sessionHandle) => {
-    const res = await call<{ maxDatagramSize: number | null }>(
-      "sessionMaxDatagramSize",
-      { endpointHandle, sessionHandle },
-    );
-    return res.maxDatagramSize;
-  },
-  closed: async (sessionHandle) => {
-    return call<{ closeCode: number; reason: string }>("sessionClosed", {
-      endpointHandle, sessionHandle,
-    });
-  },
-  close: async (sessionHandle, closeCode?, reason?) => {
-    await call<Record<never, never>>("sessionClose", {
-      endpointHandle, sessionHandle,
-      closeCode,
-      reason,
-    });
-  },
+        : null;
+    },
+    createUniStream: async (sessionHandle) => {
+      const res = await call<{ writeHandle: number }>(
+        "sessionCreateUniStream",
+        {
+          endpointHandle,
+          sessionHandle,
+        },
+      );
+      return BigInt(res.writeHandle);
+    },
+    nextUniStream: async (sessionHandle) => {
+      const res = await call<{ readHandle: number } | null>(
+        "sessionNextUniStream",
+        { endpointHandle, sessionHandle },
+      );
+      return res ? BigInt(res.readHandle) : null;
+    },
+    sendDatagram: async (sessionHandle, data) => {
+      await call<Record<never, never>>("sessionSendDatagram", {
+        endpointHandle,
+        sessionHandle,
+        data: encodeBase64(data),
+      });
+    },
+    recvDatagram: async (sessionHandle) => {
+      const res = await call<{ data: string } | null>("sessionRecvDatagram", {
+        endpointHandle,
+        sessionHandle,
+      });
+      return res ? decodeBase64(res.data) : null;
+    },
+    maxDatagramSize: async (sessionHandle) => {
+      const res = await call<{ maxDatagramSize: number | null }>(
+        "sessionMaxDatagramSize",
+        { endpointHandle, sessionHandle },
+      );
+      return res.maxDatagramSize;
+    },
+    closed: async (sessionHandle) => {
+      return call<{ closeCode: number; reason: string }>("sessionClosed", {
+        endpointHandle,
+        sessionHandle,
+      });
+    },
+    close: async (sessionHandle, closeCode?, reason?) => {
+      await call<Record<never, never>>("sessionClose", {
+        endpointHandle,
+        sessionHandle,
+        closeCode,
+        reason,
+      });
+    },
   };
 }
 
@@ -793,15 +842,23 @@ export class DenoAdapter extends IrohAdapter {
     const endpointHandle = this.#eh;
     let buf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
     let n = (await lib.symbols.iroh_http_next_chunk(
-      endpointHandle, handle, buf, BigInt(buf.byteLength),
+      endpointHandle,
+      handle,
+      buf,
+      BigInt(buf.byteLength),
     )) as number;
     if (n < -1) {
       buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
       n = (await lib.symbols.iroh_http_next_chunk(
-        endpointHandle, handle, buf, BigInt(buf.byteLength),
+        endpointHandle,
+        handle,
+        buf,
+        BigInt(buf.byteLength),
       )) as number;
     }
-    if (n === -1) throw new Error(`nextChunk: stream error on handle ${handle}`);
+    if (n === -1) {
+      throw new Error(`nextChunk: stream error on handle ${handle}`);
+    }
     if (n === 0) return null;
     chunkBufHint = Math.min(Math.max(chunkBufHint, n), MAX_CHUNK_BUF);
     return buf.slice(0, n);
@@ -810,31 +867,46 @@ export class DenoAdapter extends IrohAdapter {
   async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
     const buf = chunk as Uint8Array<ArrayBuffer>;
     const result = (await lib.symbols.iroh_http_send_chunk(
-      this.#eh, handle, buf, BigInt(buf.byteLength),
+      this.#eh,
+      handle,
+      buf,
+      BigInt(buf.byteLength),
     )) as number;
     if (result < 0) throw new Error(`sendChunk failed: handle ${handle}`);
   }
 
   async finishBody(handle: bigint): Promise<void> {
-    await call<Record<never, never>>("finishBody", { endpointHandle: this.#eh, handle });
+    await call<Record<never, never>>("finishBody", {
+      endpointHandle: this.#eh,
+      handle,
+    });
   }
 
   async cancelRequest(handle: bigint): Promise<void> {
-    await call<Record<never, never>>("cancelRequest", { endpointHandle: this.#eh, handle });
+    await call<Record<never, never>>("cancelRequest", {
+      endpointHandle: this.#eh,
+      handle,
+    });
   }
 
   async allocFetchToken(_endpointHandle: number): Promise<bigint> {
-    const res = await call<{ token: number }>("allocFetchToken", { endpointHandle: this.#eh });
+    const res = await call<{ token: number }>("allocFetchToken", {
+      endpointHandle: this.#eh,
+    });
     return BigInt(res.token);
   }
 
   cancelFetch(token: bigint): void {
-    void call<Record<never, never>>("cancelInFlight", { endpointHandle: this.#eh, token });
+    void call<Record<never, never>>("cancelInFlight", {
+      endpointHandle: this.#eh,
+      token,
+    });
   }
 
   allocBodyWriter(_endpointHandle: number): Promise<bigint> {
-    return call<{ handle: number }>("allocBodyWriter", { endpointHandle: this.#eh })
-      .then((r) => BigInt(r.handle));
+    return call<{ handle: number }>("allocBodyWriter", {
+      endpointHandle: this.#eh,
+    }).then((r) => BigInt(r.handle));
   }
 
   // ── Raw transport ───────────────────────────────────────────────────────────
@@ -855,7 +927,11 @@ export class DenoAdapter extends IrohAdapter {
       bodyHandle: number;
       url: string;
     }>("rawFetch", {
-      endpointHandle, nodeId, url, method, headers,
+      endpointHandle,
+      nodeId,
+      url,
+      method,
+      headers,
       reqBodyHandle: reqBodyHandle ?? null,
       fetchToken,
       directAddrs: directAddrs ?? null,
@@ -875,9 +951,13 @@ export class DenoAdapter extends IrohAdapter {
     headers: [string, string][],
   ): Promise<FfiDuplexStream> {
     const res = await call<{ readHandle: number; writeHandle: number }>(
-      "rawConnect", { endpointHandle, nodeId, path, headers },
+      "rawConnect",
+      { endpointHandle, nodeId, path, headers },
     );
-    return { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) };
+    return {
+      readHandle: BigInt(res.readHandle),
+      writeHandle: BigInt(res.writeHandle),
+    };
   }
 
   rawServe(
@@ -899,7 +979,9 @@ export class DenoAdapter extends IrohAdapter {
   }
 
   stopServe(handle: number): void {
-    call<Record<never, never>>("stopServe", { endpointHandle: handle }).catch(() => {});
+    call<Record<never, never>>("stopServe", { endpointHandle: handle }).catch(
+      () => {},
+    );
   }
 
   waitEndpointClosed(handle: number): Promise<void> {
@@ -923,11 +1005,17 @@ export class DenoAdapter extends IrohAdapter {
   }
 
   async peerInfo(handle: number, nodeId: string): Promise<NodeAddrInfo | null> {
-    return call<NodeAddrInfo | null>("peerInfo", { endpointHandle: handle, nodeId });
+    return call<NodeAddrInfo | null>("peerInfo", {
+      endpointHandle: handle,
+      nodeId,
+    });
   }
 
   async peerStats(handle: number, nodeId: string): Promise<PeerStats | null> {
-    return call<PeerStats | null>("peerStats", { endpointHandle: handle, nodeId });
+    return call<PeerStats | null>("peerStats", {
+      endpointHandle: handle,
+      nodeId,
+    });
   }
 
   async stats(handle: number): Promise<EndpointStats> {
@@ -936,29 +1024,80 @@ export class DenoAdapter extends IrohAdapter {
 
   // ── mDNS discovery ──────────────────────────────────────────────────────────
 
-  override mdnsBrowse(endpointHandle: number, serviceName: string): Promise<number> {
+  override mdnsBrowse(
+    endpointHandle: number,
+    serviceName: string,
+  ): Promise<number> {
     return call<number>("mdnsBrowse", { endpointHandle, serviceName });
   }
 
-  override mdnsNextEvent(browseHandle: number): Promise<PeerDiscoveryEvent | null> {
+  override mdnsNextEvent(
+    browseHandle: number,
+  ): Promise<PeerDiscoveryEvent | null> {
     return call<PeerDiscoveryEvent | null>("mdnsNextEvent", { browseHandle });
   }
 
   override mdnsBrowseClose(browseHandle: number): void {
-    call<Record<never, never>>("mdnsBrowseClose", { browseHandle }).catch(() => {});
+    call<Record<never, never>>("mdnsBrowseClose", { browseHandle }).catch(
+      () => {},
+    );
   }
 
-  override mdnsAdvertise(endpointHandle: number, serviceName: string): Promise<number> {
+  override mdnsAdvertise(
+    endpointHandle: number,
+    serviceName: string,
+  ): Promise<number> {
     return call<number>("mdnsAdvertise", { endpointHandle, serviceName });
   }
 
   override mdnsAdvertiseClose(advertiseHandle: number): void {
-    call<Record<never, never>>("mdnsAdvertiseClose", { advertiseHandle }).catch(() => {});
+    call<Record<never, never>>("mdnsAdvertiseClose", { advertiseHandle }).catch(
+      () => {},
+    );
   }
 
   // ── Sessions ────────────────────────────────────────────────────────────────
 
   override get sessionFns(): RawSessionFns {
     return this.#sessionFnsInstance;
+  }
+
+  // ── Transport events ────────────────────────────────────────────────────────
+
+  override startTransportEvents(
+    _endpointHandle: number,
+    callback: (event: TransportEventPayload) => void,
+  ): void {
+    // Claim the receiver on the Rust side, then drain in the background.
+    (async () => {
+      await call<null>("startTransportEvents", { endpointHandle: this.#eh });
+      while (true) {
+        const event = await call<TransportEventPayload | null>(
+          "nextTransportEvent",
+          { endpointHandle: this.#eh },
+        );
+        if (event === null) break;
+        try {
+          callback(event);
+        } catch (err) {
+          console.error(
+            "[iroh-http-deno] transport event callback error:",
+            err,
+          );
+        }
+      }
+    })().catch((err: unknown) =>
+      console.error("[iroh-http-deno] startTransportEvents error:", err)
+    );
+  }
+
+  override async nextPathChange(
+    _endpointHandle: number,
+    nodeId: string,
+  ): Promise<PathInfo | null> {
+    return call<PathInfo | null>("nextPathChange", {
+      endpointHandle: this.#eh,
+      nodeId,
+    });
   }
 }

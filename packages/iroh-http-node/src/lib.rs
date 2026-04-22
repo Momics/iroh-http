@@ -771,6 +771,84 @@ pub fn endpoint_stats(endpoint_handle: u32) -> napi::Result<JsEndpointStats> {
     })
 }
 
+// ── Transport events ──────────────────────────────────────────────────────────
+
+/// Register a push callback for transport-level events.
+///
+/// Spawns a Tokio task that drains the endpoint's event channel and calls
+/// `handler` on the Node.js thread for each event (JSON-serialised string).
+/// The task exits automatically when the endpoint closes (all senders drop).
+/// Call at most once per endpoint; subsequent calls return an error.
+#[napi]
+pub fn start_transport_events(endpoint_handle: u32, handler: JsFunction) -> napi::Result<()> {
+    use napi::threadsafe_function::ThreadsafeFunctionCallMode;
+    let ep = get_endpoint(endpoint_handle)?;
+    let rx = ep.subscribe_events().ok_or_else(|| {
+        napi::Error::new(
+            Status::GenericFailure,
+            "transport event receiver already taken; startTransportEvents called twice",
+        )
+    })?;
+    let tsfn: ThreadsafeFunction<String, ErrorStrategy::Fatal> = handler
+        .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
+            Ok(vec![ctx.env.create_string(&ctx.value)?])
+        })?;
+    tokio::spawn(async move {
+        let mut rx = rx;
+        while let Some(ev) = rx.recv().await {
+            if let Ok(json) = serde_json::to_string(&ev) {
+                tsfn.call(json, ThreadsafeFunctionCallMode::NonBlocking);
+            }
+        }
+        // Receiver closed = endpoint closed; tsfn released on drop.
+    });
+    Ok(())
+}
+
+/// Subscribe to path changes for a specific peer.
+/// Returns the next path change as a JSON string, or null when done.
+/// Call repeatedly to receive successive changes; the endpoint de-duplicates
+/// watcher tasks so concurrent calls for the same peer share one Rust task.
+#[napi]
+pub async fn next_path_change(
+    endpoint_handle: u32,
+    node_id: String,
+) -> napi::Result<Option<String>> {
+    type PathRx = tokio::sync::Mutex<
+        tokio::sync::mpsc::UnboundedReceiver<iroh_http_core::endpoint::PathInfo>,
+    >;
+    type PathRxMap = dashmap::DashMap<(u32, String), Arc<PathRx>>;
+    static PATH_CHANGE_RXS: std::sync::OnceLock<PathRxMap> = std::sync::OnceLock::new();
+    let rxs = PATH_CHANGE_RXS.get_or_init(dashmap::DashMap::new);
+
+    validate_node_id_input(&node_id).map_err(ffi_invalid_arg)?;
+    let ep = get_endpoint(endpoint_handle)?;
+
+    let key = (endpoint_handle, node_id.clone());
+
+    let rx_arc = rxs
+        .entry(key.clone())
+        .or_insert_with(|| {
+            let rx = ep.subscribe_path_changes(&node_id);
+            Arc::new(tokio::sync::Mutex::new(rx))
+        })
+        .clone();
+
+    let mut rx = rx_arc.lock().await;
+    match rx.recv().await {
+        None => {
+            drop(rx);
+            rxs.remove(&key);
+            Ok(None)
+        }
+        Some(path) => {
+            let json = serde_json::to_string(&path)
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
+            Ok(Some(json))
+        }
+    }
+}
+
 // ── Body streaming ────────────────────────────────────────────────────────────
 
 /// Read the next chunk from a body reader handle.

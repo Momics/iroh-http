@@ -152,6 +152,15 @@ pub(crate) struct EndpointInner {
     /// Number of currently in-flight HTTP requests (incremented when a
     /// bi-stream is accepted, decremented when the request task exits).
     pub active_requests: Arc<AtomicUsize>,
+    /// Sender for transport-level events (pool hits/misses, path changes, sweep).
+    pub event_tx: tokio::sync::mpsc::Sender<crate::events::TransportEvent>,
+    /// Receiver for transport-level events.  Wrapped in Mutex+Option so
+    /// `subscribe_events()` can take it exactly once for the platform drain task.
+    pub event_rx:
+        std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<crate::events::TransportEvent>>>,
+    /// Per-peer path-change subscriptions.
+    /// Key: node_id_str. Populated lazily when `subscribe_path_changes` is called.
+    pub path_subs: dashmap::DashMap<String, tokio::sync::mpsc::UnboundedSender<PathInfo>>,
     /// Body compression options, if the feature is enabled.
     #[cfg(feature = "compression")]
     pub compression: Option<CompressionOptions>,
@@ -325,6 +334,7 @@ impl IrohEndpoint {
                 .unwrap_or(crate::stream::DEFAULT_SWEEP_INTERVAL_MS),
         );
         let (closed_tx, closed_rx) = tokio::sync::watch::channel(false);
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel::<crate::events::TransportEvent>(256);
 
         let inner = Arc::new(EndpointInner {
             ep,
@@ -334,6 +344,7 @@ impl IrohEndpoint {
                 opts.pool
                     .idle_timeout_ms
                     .map(std::time::Duration::from_millis),
+                Some(event_tx.clone()),
             ),
             // ISS-020: treat 0 as "use default" — it would otherwise underflow
             // the hyper minimum (ISS-001).  None also defaults to 64 KB.
@@ -355,6 +366,9 @@ impl IrohEndpoint {
             closed_rx,
             active_connections: Arc::new(AtomicUsize::new(0)),
             active_requests: Arc::new(AtomicUsize::new(0)),
+            event_tx,
+            event_rx: std::sync::Mutex::new(Some(event_rx)),
+            path_subs: dashmap::DashMap::new(),
             #[cfg(feature = "compression")]
             compression: opts.compression,
         });
@@ -698,6 +712,90 @@ impl IrohEndpoint {
             sent_packets,
             congestion_window,
         })
+    }
+
+    /// Take the transport event receiver, handing it off to a platform drain task.
+    ///
+    /// May only be called once per endpoint.  The drain task owns the receiver and
+    /// loops until `event_tx` is dropped (i.e. the endpoint closes).  Returns `None`
+    /// if the receiver was already taken (i.e. `subscribe_events` was called before).
+    pub fn subscribe_events(
+        &self,
+    ) -> Option<tokio::sync::mpsc::Receiver<crate::events::TransportEvent>> {
+        self.inner
+            .event_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    }
+
+    /// Subscribe to path changes for a specific peer.
+    ///
+    /// Spawns a background watcher task the first time a given peer is subscribed.
+    /// The watcher polls `peer_stats()` every 200 ms and emits on the returned
+    /// channel whenever the active path changes.
+    pub fn subscribe_path_changes(
+        &self,
+        node_id_str: &str,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<PathInfo> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        // Replace any existing sender; old watcher exits when it detects is_closed().
+        self.inner.path_subs.insert(node_id_str.to_string(), tx);
+
+        let ep = self.clone();
+        let nid = node_id_str.to_string();
+        let event_tx = self.inner.event_tx.clone();
+
+        tokio::spawn(async move {
+            let mut last_key: Option<String> = None;
+            let mut closed_rx = ep.inner.closed_rx.clone();
+            loop {
+                // Exit immediately if the endpoint has been closed.
+                if *closed_rx.borrow() {
+                    ep.inner.path_subs.remove(&nid);
+                    break;
+                }
+                let is_closed = ep
+                    .inner
+                    .path_subs
+                    .get(&nid)
+                    .map(|s| s.is_closed())
+                    .unwrap_or(true);
+                if is_closed {
+                    ep.inner.path_subs.remove(&nid);
+                    break;
+                }
+
+                if let Some(stats) = ep.peer_stats(&nid).await {
+                    if let Some(active) = stats.paths.iter().find(|p| p.active) {
+                        let key = format!("{}:{}", active.relay, active.addr);
+                        if Some(&key) != last_key.as_ref() {
+                            last_key = Some(key);
+                            if let Some(sender) = ep.inner.path_subs.get(&nid) {
+                                let _ = sender.send(active.clone());
+                            }
+                            let _ = event_tx.try_send(crate::events::TransportEvent::path_change(
+                                &nid,
+                                &active.addr,
+                                active.relay,
+                            ));
+                        }
+                    }
+                }
+
+                // Sleep 200 ms, but wake early if the endpoint is being closed.
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
+                    result = closed_rx.wait_for(|v| *v) => {
+                        let _ = result;
+                        ep.inner.path_subs.remove(&nid);
+                        break;
+                    }
+                }
+            }
+        });
+
+        rx
     }
 }
 

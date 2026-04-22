@@ -25,3 +25,4 @@ bytes = { workspace = true }
 base64 = "0.22"
 slab = { workspace = true }
 tracing = "0.1"
+dashmap = "6"

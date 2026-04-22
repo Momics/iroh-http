@@ -42,6 +42,7 @@ struct PoolKey {
 /// Thread-safe QUIC connection pool backed by moka.
 pub(crate) struct ConnectionPool {
     cache: moka::future::Cache<PoolKey, Arc<PooledConnection>>,
+    event_tx: Option<tokio::sync::mpsc::Sender<crate::events::TransportEvent>>,
 }
 
 impl ConnectionPool {
@@ -49,7 +50,12 @@ impl ConnectionPool {
     ///
     /// - `max_idle`: max cached connections (None = 512).
     /// - `idle_timeout`: connections idle longer than this are evicted.
-    pub fn new(max_idle: Option<usize>, idle_timeout: Option<std::time::Duration>) -> Self {
+    /// - `event_tx`: optional sender for transport-level events.
+    pub fn new(
+        max_idle: Option<usize>,
+        idle_timeout: Option<std::time::Duration>,
+        event_tx: Option<tokio::sync::mpsc::Sender<crate::events::TransportEvent>>,
+    ) -> Self {
         let cap = max_idle.unwrap_or(512) as u64;
         let mut builder = moka::future::Cache::builder().max_capacity(cap);
         if let Some(tti) = idle_timeout {
@@ -57,6 +63,13 @@ impl ConnectionPool {
         }
         Self {
             cache: builder.build(),
+            event_tx,
+        }
+    }
+
+    fn emit(&self, event: crate::events::TransportEvent) {
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.try_send(event);
         }
     }
 
@@ -81,16 +94,24 @@ impl ConnectionPool {
         if let Some(pooled) = self.cache.get(&key).await {
             if pooled.conn.close_reason().is_none() {
                 tracing::debug!(peer = %pooled.remote_id_str, "iroh-http: pool hit");
+                self.emit(crate::events::TransportEvent::pool_hit(
+                    pooled.remote_id_str.clone(),
+                ));
                 return Ok((*pooled).clone());
             }
             // Stale — invalidate and fall through to a fresh connect.
             tracing::debug!(peer = %pooled.remote_id_str, "iroh-http: pool stale, reconnecting");
+            self.emit(crate::events::TransportEvent::pool_evict(
+                pooled.remote_id_str.clone(),
+            ));
             self.cache.invalidate(&key).await;
         }
 
         // Phase 2: single-flight connect via try_get_with.
         // If multiple callers race, only one invokes connect_fn; the rest wait.
-        tracing::debug!(peer = %crate::base32_encode(key.node_id.as_bytes()), "iroh-http: pool miss, connecting");
+        let peer_id_str = crate::base32_encode(key.node_id.as_bytes());
+        tracing::debug!(peer = %peer_id_str, "iroh-http: pool miss, connecting");
+        self.emit(crate::events::TransportEvent::pool_miss(peer_id_str));
         let result = self
             .cache
             .try_get_with(key.clone(), async move {
@@ -154,7 +175,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_starts_empty() {
-        let pool = ConnectionPool::new(None, None);
+        let pool = ConnectionPool::new(None, None, None);
         assert_eq!(pool.len().await, 0);
     }
 }

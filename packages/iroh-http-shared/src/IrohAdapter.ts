@@ -1,7 +1,7 @@
-import type { PeerStats, EndpointStats } from './observability.js';
-import type { PeerDiscoveryEvent } from './discovery.js';
-import type { TransportEventPayload } from './observability.js';
-import type { RawSessionFns } from './session.js';
+import type { EndpointStats, PathInfo, PeerStats } from "./observability.js";
+import type { PeerDiscoveryEvent } from "./discovery.js";
+import type { TransportEventPayload } from "./observability.js";
+import type { RawSessionFns } from "./session.js";
 
 export interface FfiRequest {
   method: string;
@@ -124,8 +124,14 @@ export abstract class IrohAdapter {
   abstract nodeAddr(endpointHandle: number): Promise<NodeAddrInfo>;
   abstract nodeTicket(endpointHandle: number): Promise<string>;
   abstract homeRelay(endpointHandle: number): Promise<string | null>;
-  abstract peerInfo(endpointHandle: number, nodeId: string): Promise<NodeAddrInfo | null>;
-  abstract peerStats(endpointHandle: number, nodeId: string): Promise<PeerStats | null>;
+  abstract peerInfo(
+    endpointHandle: number,
+    nodeId: string,
+  ): Promise<NodeAddrInfo | null>;
+  abstract peerStats(
+    endpointHandle: number,
+    nodeId: string,
+  ): Promise<PeerStats | null>;
   abstract stats(endpointHandle: number): Promise<EndpointStats>;
 
   // ── Optional: raw connect ────────────────────────────────────────────────────
@@ -135,27 +141,60 @@ export abstract class IrohAdapter {
     _path: string,
     _headers: [string, string][],
   ): Promise<FfiDuplexStream> {
-    return Promise.reject(new Error(`rawConnect() not supported by this adapter`));
+    return Promise.reject(
+      new Error(`rawConnect() not supported by this adapter`),
+    );
   }
 
   // ── Optional: sessions ──────────────────────────────────────────────────────
-  get sessionFns(): RawSessionFns | null { return null; }
+  get sessionFns(): RawSessionFns | null {
+    return null;
+  }
 
   // ── Optional: mDNS discovery ────────────────────────────────────────────────
   mdnsBrowse(_endpointHandle: number, _serviceName: string): Promise<number> {
-    return Promise.reject(new Error(`mdnsBrowse() not supported by this adapter`));
+    return Promise.reject(
+      new Error(`mdnsBrowse() not supported by this adapter`),
+    );
   }
   mdnsNextEvent(_browseHandle: number): Promise<PeerDiscoveryEvent | null> {
-    return Promise.reject(new Error(`mdnsNextEvent() not supported by this adapter`));
+    return Promise.reject(
+      new Error(`mdnsNextEvent() not supported by this adapter`),
+    );
   }
-  mdnsBrowseClose(_browseHandle: number): void { /* no-op */ }
-  mdnsAdvertise(_endpointHandle: number, _serviceName: string): Promise<number> {
-    return Promise.reject(new Error(`mdnsAdvertise() not supported by this adapter`));
+  mdnsBrowseClose(_browseHandle: number): void {/* no-op */}
+  mdnsAdvertise(
+    _endpointHandle: number,
+    _serviceName: string,
+  ): Promise<number> {
+    return Promise.reject(
+      new Error(`mdnsAdvertise() not supported by this adapter`),
+    );
   }
-  mdnsAdvertiseClose(_advertiseHandle: number): void { /* no-op */ }
+  mdnsAdvertiseClose(_advertiseHandle: number): void {/* no-op */}
 
   // ── Optional: transport events ──────────────────────────────────────────────
-  pollTransportEvent(_endpointHandle: number): Promise<TransportEventPayload | null> {
-    return Promise.resolve(null);
+  // Transport events are delivered via a Rust-driven push mechanism: the
+  // platform adapter starts a drain task that reads from the endpoint's mpsc
+  // channel and calls `callback` for each event.  No JS polling loop needed.
+  //
+  // Platform support:
+  //   Node  — ThreadsafeFunction; drain task runs in the napi thread pool.
+  //   Deno  — FFI dispatch queue; JS adapter loops on nextTransportEvent.
+  //   Tauri — Channel<T>; Tauri pipes events to the frontend Channel.
+  //   Base  — no-op; override in each platform adapter.
+  startTransportEvents(
+    _endpointHandle: number,
+    _callback: (event: TransportEventPayload) => void,
+  ): void {/* no-op */}
+
+  /** Subscribe to path changes for a specific peer. Blocks until a change occurs or the subscription ends. */
+  nextPathChange(
+    _endpointHandle: number,
+    _nodeId: string,
+  ): Promise<PathInfo | null> {
+    return Promise.reject(
+      new Error("nextPathChange() not supported by this adapter"),
+    );
   }
 }

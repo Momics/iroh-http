@@ -1,10 +1,16 @@
-/** Payload for a transport-level event dispatched by IrohNode when observability.transportEvents is true. */
-export interface TransportEventPayload {
-  type: 'pool:hit' | 'pool:miss' | 'pool:evict' | 'path:change' | 'handle:sweep';
-  peerId?: string;
-  timestamp: number;
-  data: Record<string, number | string | boolean>;
-}
+/** Transport-level event dispatched by IrohNode when observability.transportEvents is true. */
+export type TransportEventPayload =
+  | { type: "pool:hit"; peerId: string; timestamp: number }
+  | { type: "pool:miss"; peerId: string; timestamp: number }
+  | { type: "pool:evict"; peerId: string; timestamp: number }
+  | {
+    type: "path:change";
+    peerId: string;
+    addr: string;
+    relay: boolean;
+    timestamp: number;
+  }
+  | { type: "handle:sweep"; evicted: number; timestamp: number };
 
 export interface EndpointStats {
   activeReaders: number;

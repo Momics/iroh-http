@@ -13,15 +13,21 @@ import {
   type SecretKey,
 } from "@momics/iroh-http-shared";
 import {
-  IrohAdapter,
   type FfiDuplexStream,
   type FfiResponse,
   type FfiResponseHead,
-  type RequestPayload,
+  IrohAdapter,
   type PeerConnectionEvent,
+  type RequestPayload,
 } from "@momics/iroh-http-shared/adapter";
 import type { RawSessionFns } from "@momics/iroh-http-shared/adapter";
-import type { PeerStats, EndpointStats, NodeAddrInfo, PeerDiscoveryEvent } from "@momics/iroh-http-shared";
+import type {
+  EndpointStats,
+  NodeAddrInfo,
+  PeerDiscoveryEvent,
+  PeerStats,
+  TransportEventPayload,
+} from "@momics/iroh-http-shared";
 
 const PLUGIN = "plugin:iroh-http";
 
@@ -65,23 +71,35 @@ class TauriAdapter extends IrohAdapter {
   }
 
   finishBody(handle: bigint): Promise<void> {
-    return invoke(`${PLUGIN}|finish_body`, { endpointHandle: this.#epHandle, handle: Number(handle) });
+    return invoke(`${PLUGIN}|finish_body`, {
+      endpointHandle: this.#epHandle,
+      handle: Number(handle),
+    });
   }
 
   cancelRequest(handle: bigint): Promise<void> {
-    return invoke(`${PLUGIN}|cancel_request`, { endpointHandle: this.#epHandle, handle: Number(handle) });
+    return invoke(`${PLUGIN}|cancel_request`, {
+      endpointHandle: this.#epHandle,
+      handle: Number(handle),
+    });
   }
 
   allocFetchToken(endpointHandle: number): Promise<bigint> {
-    return invoke<number>(`${PLUGIN}|alloc_fetch_token`, { endpointHandle }).then(BigInt);
+    return invoke<number>(`${PLUGIN}|alloc_fetch_token`, { endpointHandle })
+      .then(BigInt);
   }
 
   cancelFetch(token: bigint): void {
-    void invoke(`${PLUGIN}|cancel_in_flight`, { endpointHandle: this.#epHandle, token: Number(token) });
+    void invoke(`${PLUGIN}|cancel_in_flight`, {
+      endpointHandle: this.#epHandle,
+      token: Number(token),
+    });
   }
 
   allocBodyWriter(_endpointHandle: number): Promise<bigint> {
-    return invoke<number>(`${PLUGIN}|alloc_body_writer`, { endpointHandle: this.#epHandle }).then(BigInt);
+    return invoke<number>(`${PLUGIN}|alloc_body_writer`, {
+      endpointHandle: this.#epHandle,
+    }).then(BigInt);
   }
 
   async rawFetch(
@@ -158,7 +176,12 @@ class TauriAdapter extends IrohAdapter {
       } catch (err) {
         console.error("[iroh-http-tauri] handler error:", err);
         await invoke(`${PLUGIN}|respond_to_request`, {
-          args: { endpointHandle: Number(endpointHandle), reqHandle: Number(raw.reqHandle), status: 500, headers: [] },
+          args: {
+            endpointHandle: Number(endpointHandle),
+            reqHandle: Number(raw.reqHandle),
+            status: 500,
+            headers: [],
+          },
         }).catch(() => {});
       }
     };
@@ -167,45 +190,69 @@ class TauriAdapter extends IrohAdapter {
       endpointHandle: Number(endpointHandle),
       channel,
       connChannel: connChannel ?? null,
-    }).catch((err: unknown) => console.error("[iroh-http-tauri] serve error:", err));
+    }).catch((err: unknown) =>
+      console.error("[iroh-http-tauri] serve error:", err)
+    );
 
-    return invoke<void>(`${PLUGIN}|wait_serve_stop`, { endpointHandle: Number(endpointHandle) });
+    return invoke<void>(`${PLUGIN}|wait_serve_stop`, {
+      endpointHandle: Number(endpointHandle),
+    });
   }
 
   closeEndpoint(handle: number, force?: boolean): Promise<void> {
-    return invoke(`${PLUGIN}|close_endpoint`, { endpointHandle: Number(handle), force: force ?? null });
+    return invoke(`${PLUGIN}|close_endpoint`, {
+      endpointHandle: Number(handle),
+      force: force ?? null,
+    });
   }
 
   stopServe(handle: number): void {
-    void invoke(`${PLUGIN}|stop_serve`, { endpointHandle: Number(handle) }).catch(() => {});
+    void invoke(`${PLUGIN}|stop_serve`, { endpointHandle: Number(handle) })
+      .catch(() => {});
   }
 
   waitEndpointClosed(handle: number): Promise<void> {
-    return invoke<void>(`${PLUGIN}|wait_endpoint_closed`, { endpointHandle: Number(handle) }).then(() => {});
+    return invoke<void>(`${PLUGIN}|wait_endpoint_closed`, {
+      endpointHandle: Number(handle),
+    }).then(() => {});
   }
 
   async nodeAddr(handle: number): Promise<NodeAddrInfo> {
-    return invoke<NodeAddrInfo>(`${PLUGIN}|node_addr`, { endpointHandle: Number(handle) });
+    return invoke<NodeAddrInfo>(`${PLUGIN}|node_addr`, {
+      endpointHandle: Number(handle),
+    });
   }
 
   async nodeTicket(handle: number): Promise<string> {
-    return invoke<string>(`${PLUGIN}|node_ticket`, { endpointHandle: Number(handle) });
+    return invoke<string>(`${PLUGIN}|node_ticket`, {
+      endpointHandle: Number(handle),
+    });
   }
 
   async homeRelay(handle: number): Promise<string | null> {
-    return invoke<string | null>(`${PLUGIN}|home_relay`, { endpointHandle: Number(handle) });
+    return invoke<string | null>(`${PLUGIN}|home_relay`, {
+      endpointHandle: Number(handle),
+    });
   }
 
   async peerInfo(handle: number, nodeId: string): Promise<NodeAddrInfo | null> {
-    return invoke<NodeAddrInfo | null>(`${PLUGIN}|peer_info`, { endpointHandle: Number(handle), nodeId });
+    return invoke<NodeAddrInfo | null>(`${PLUGIN}|peer_info`, {
+      endpointHandle: Number(handle),
+      nodeId,
+    });
   }
 
   async peerStats(handle: number, nodeId: string): Promise<PeerStats | null> {
-    return invoke<PeerStats | null>(`${PLUGIN}|peer_stats`, { endpointHandle: Number(handle), nodeId });
+    return invoke<PeerStats | null>(`${PLUGIN}|peer_stats`, {
+      endpointHandle: Number(handle),
+      nodeId,
+    });
   }
 
   async stats(handle: number): Promise<EndpointStats> {
-    return invoke<EndpointStats>(`${PLUGIN}|endpoint_stats`, { endpointHandle: Number(handle) });
+    return invoke<EndpointStats>(`${PLUGIN}|endpoint_stats`, {
+      endpointHandle: Number(handle),
+    });
   }
 
   async rawConnect(
@@ -216,9 +263,14 @@ class TauriAdapter extends IrohAdapter {
   ): Promise<FfiDuplexStream> {
     const res = await invoke<{ readHandle: number; writeHandle: number }>(
       `${PLUGIN}|raw_connect`,
-      { args: { endpointHandle: Number(endpointHandle), nodeId, path, headers } },
+      {
+        args: { endpointHandle: Number(endpointHandle), nodeId, path, headers },
+      },
     );
-    return { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream;
+    return {
+      readHandle: BigInt(res.readHandle),
+      writeHandle: BigInt(res.writeHandle),
+    } satisfies FfiDuplexStream;
   }
 
   override get sessionFns(): RawSessionFns {
@@ -226,23 +278,53 @@ class TauriAdapter extends IrohAdapter {
   }
 
   async mdnsBrowse(handle: number, serviceName: string): Promise<number> {
-    return invoke<number>(`${PLUGIN}|mdns_browse`, { endpointHandle: Number(handle), serviceName });
+    return invoke<number>(`${PLUGIN}|mdns_browse`, {
+      endpointHandle: Number(handle),
+      serviceName,
+    });
   }
 
-  async mdnsNextEvent(browseHandle: number): Promise<PeerDiscoveryEvent | null> {
-    return invoke<PeerDiscoveryEvent | null>(`${PLUGIN}|mdns_next_event`, { browseHandle: Number(browseHandle) });
+  async mdnsNextEvent(
+    browseHandle: number,
+  ): Promise<PeerDiscoveryEvent | null> {
+    return invoke<PeerDiscoveryEvent | null>(`${PLUGIN}|mdns_next_event`, {
+      browseHandle: Number(browseHandle),
+    });
   }
 
   mdnsBrowseClose(browseHandle: number): void {
-    void invoke(`${PLUGIN}|mdns_browse_close`, { browseHandle: Number(browseHandle) });
+    void invoke(`${PLUGIN}|mdns_browse_close`, {
+      browseHandle: Number(browseHandle),
+    });
   }
 
   async mdnsAdvertise(handle: number, serviceName: string): Promise<number> {
-    return invoke<number>(`${PLUGIN}|mdns_advertise`, { endpointHandle: Number(handle), serviceName });
+    return invoke<number>(`${PLUGIN}|mdns_advertise`, {
+      endpointHandle: Number(handle),
+      serviceName,
+    });
   }
 
   mdnsAdvertiseClose(advertiseHandle: number): void {
-    void invoke(`${PLUGIN}|mdns_advertise_close`, { advertiseHandle: Number(advertiseHandle) });
+    void invoke(`${PLUGIN}|mdns_advertise_close`, {
+      advertiseHandle: Number(advertiseHandle),
+    });
+  }
+
+  // ── Transport events ──────────────────────────────────────────────────────
+
+  override startTransportEvents(
+    endpointHandle: number,
+    callback: (event: TransportEventPayload) => void,
+  ): void {
+    const channel = new Channel<TransportEventPayload>();
+    channel.onmessage = callback;
+    void invoke(`${PLUGIN}|start_transport_events`, {
+      endpointHandle: Number(endpointHandle),
+      channel,
+    }).catch((err: unknown) =>
+      console.error("[iroh-http-tauri] startTransportEvents error:", err)
+    );
   }
 }
 
@@ -250,7 +332,11 @@ function makeTauriSessionFns(epHandle: number): RawSessionFns {
   return {
     connect: async (endpointHandle, nodeId, directAddrs) => {
       return invoke<number>(`${PLUGIN}|session_connect`, {
-        args: { endpointHandle: Number(endpointHandle), nodeId, directAddrs: directAddrs ?? null },
+        args: {
+          endpointHandle: Number(endpointHandle),
+          nodeId,
+          directAddrs: directAddrs ?? null,
+        },
       }).then(BigInt);
     },
     createBidiStream: async (sessionHandle) => {
@@ -258,36 +344,57 @@ function makeTauriSessionFns(epHandle: number): RawSessionFns {
         `${PLUGIN}|session_create_bidi_stream`,
         { endpointHandle: epHandle, sessionHandle: Number(sessionHandle) },
       );
-      return { readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream;
+      return {
+        readHandle: BigInt(res.readHandle),
+        writeHandle: BigInt(res.writeHandle),
+      } satisfies FfiDuplexStream;
     },
     nextBidiStream: async (sessionHandle) => {
-      const res = await invoke<{ readHandle: number; writeHandle: number } | null>(
+      const res = await invoke<
+        { readHandle: number; writeHandle: number } | null
+      >(
         `${PLUGIN}|session_next_bidi_stream`,
         { endpointHandle: epHandle, sessionHandle: Number(sessionHandle) },
       );
-      return res ? ({ readHandle: BigInt(res.readHandle), writeHandle: BigInt(res.writeHandle) } satisfies FfiDuplexStream) : null;
+      return res
+        ? ({
+          readHandle: BigInt(res.readHandle),
+          writeHandle: BigInt(res.writeHandle),
+        } satisfies FfiDuplexStream)
+        : null;
     },
     createUniStream: async (sessionHandle) => {
       return invoke<number>(`${PLUGIN}|session_create_uni_stream`, {
-        endpointHandle: epHandle, sessionHandle: Number(sessionHandle),
+        endpointHandle: epHandle,
+        sessionHandle: Number(sessionHandle),
       }).then(BigInt);
     },
     nextUniStream: async (sessionHandle) => {
-      const h = await invoke<number | null>(`${PLUGIN}|session_next_uni_stream`, {
-        endpointHandle: epHandle, sessionHandle: Number(sessionHandle),
-      });
+      const h = await invoke<number | null>(
+        `${PLUGIN}|session_next_uni_stream`,
+        {
+          endpointHandle: epHandle,
+          sessionHandle: Number(sessionHandle),
+        },
+      );
       return h != null ? BigInt(h) : null;
     },
     sendDatagram: async (sessionHandle, data) => {
       const b64 = btoa(String.fromCharCode(...data));
       await invoke<void>(`${PLUGIN}|session_send_datagram`, {
-        endpointHandle: epHandle, sessionHandle: Number(sessionHandle), data: b64,
+        endpointHandle: epHandle,
+        sessionHandle: Number(sessionHandle),
+        data: b64,
       });
     },
     recvDatagram: async (sessionHandle) => {
-      const res = await invoke<string | null>(`${PLUGIN}|session_recv_datagram`, {
-        endpointHandle: epHandle, sessionHandle: Number(sessionHandle),
-      });
+      const res = await invoke<string | null>(
+        `${PLUGIN}|session_recv_datagram`,
+        {
+          endpointHandle: epHandle,
+          sessionHandle: Number(sessionHandle),
+        },
+      );
       if (res === null) return null;
       const bin = atob(res);
       const out = new Uint8Array(bin.length);
@@ -296,17 +403,25 @@ function makeTauriSessionFns(epHandle: number): RawSessionFns {
     },
     maxDatagramSize: async (sessionHandle) => {
       return invoke<number | null>(`${PLUGIN}|session_max_datagram_size`, {
-        endpointHandle: epHandle, sessionHandle: Number(sessionHandle),
+        endpointHandle: epHandle,
+        sessionHandle: Number(sessionHandle),
       });
     },
     closed: async (sessionHandle) => {
-      return invoke<{ closeCode: number; reason: string }>(`${PLUGIN}|session_closed`, {
-        endpointHandle: epHandle, sessionHandle: Number(sessionHandle),
-      });
+      return invoke<{ closeCode: number; reason: string }>(
+        `${PLUGIN}|session_closed`,
+        {
+          endpointHandle: epHandle,
+          sessionHandle: Number(sessionHandle),
+        },
+      );
     },
     close: async (sessionHandle, closeCode?, reason?) => {
       await invoke<void>(`${PLUGIN}|session_close`, {
-        endpointHandle: epHandle, sessionHandle: Number(sessionHandle), closeCode, reason,
+        endpointHandle: epHandle,
+        sessionHandle: Number(sessionHandle),
+        closeCode,
+        reason,
       });
     },
   };
@@ -368,7 +483,9 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     )
     : null;
 
-  const { relayMode, relays, disableNetworking } = normaliseRelayMode(options?.relayMode);
+  const { relayMode, relays, disableNetworking } = normaliseRelayMode(
+    options?.relayMode,
+  );
   const discovery = normaliseDiscovery(options?.discovery);
   const bindAddrs = options?.bindAddr
     ? (Array.isArray(options.bindAddr) ? options.bindAddr : [options.bindAddr])
@@ -401,7 +518,9 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         keylog: options.keylog ?? null,
         compressionLevel: typeof options.compression === "object"
           ? options.compression.level ?? null
-          : options.compression ? 3 : null,
+          : options.compression
+          ? 3
+          : null,
         compressionMinBodyBytes: typeof options.compression === "object"
           ? options.compression.minBodyBytes ?? null
           : null,
@@ -439,7 +558,9 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     const unsubscribe = installLifecycleListener(
       Number(info.endpointHandle),
       reconnect,
-      () => { node.close().catch(() => {}); },
+      () => {
+        node.close().catch(() => {});
+      },
     );
     if (unsubscribe) {
       const originalClose = node.close.bind(node);

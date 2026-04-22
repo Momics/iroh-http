@@ -1,9 +1,6 @@
 //! Global state managed by the Tauri plugin.
 
-use iroh_http_core::{
-    endpoint::IrohEndpoint,
-    registry,
-};
+use iroh_http_core::{endpoint::IrohEndpoint, registry};
 
 // ── Endpoint slab (delegates to core registry) ───────────────────────────────
 

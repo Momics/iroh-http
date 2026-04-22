@@ -8,9 +8,20 @@
  *   deno run --allow-read --allow-ffi test/smoke.ts
  */
 
-import { assertEquals, assertExists, assertInstanceOf, assert } from "jsr:@std/assert@^1";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+} from "jsr:@std/assert@^1";
 import { createNode } from "../mod.ts";
-import { secretKeySign, publicKeyVerify, generateSecretKey, PublicKey, SecretKey } from "../mod.ts";
+import {
+  generateSecretKey,
+  PublicKey,
+  publicKeyVerify,
+  SecretKey,
+  secretKeySign,
+} from "../mod.ts";
 
 // ── Node creation ──────────────────────────────────────────────────────────────
 
@@ -18,7 +29,10 @@ Deno.test("createNode — publicKey is a non-empty base32 string", async () => {
   const node = await createNode({ disableNetworking: true });
   try {
     assertExists(node.publicKey, "publicKey must exist");
-    assert(node.publicKey.toString().length > 10, `publicKey too short: ${node.publicKey}`);
+    assert(
+      node.publicKey.toString().length > 10,
+      `publicKey too short: ${node.publicKey}`,
+    );
     console.log(`  publicKey = ${node.publicKey}`);
   } finally {
     await node.close();
@@ -28,8 +42,16 @@ Deno.test("createNode — publicKey is a non-empty base32 string", async () => {
 Deno.test("createNode — secretKey is 32 bytes", async () => {
   const node = await createNode({ disableNetworking: true });
   try {
-    assertInstanceOf(node.secretKey.toBytes(), Uint8Array, "secretKey.toBytes() must be Uint8Array");
-    assertEquals(node.secretKey.toBytes().length, 32, "secretKey must be 32 bytes");
+    assertInstanceOf(
+      node.secretKey.toBytes(),
+      Uint8Array,
+      "secretKey.toBytes() must be Uint8Array",
+    );
+    assertEquals(
+      node.secretKey.toBytes().length,
+      32,
+      "secretKey must be 32 bytes",
+    );
   } finally {
     await node.close();
   }
@@ -40,7 +62,11 @@ Deno.test("createNode — same key bytes produce same publicKey", async () => {
   const n1 = await createNode({ key, disableNetworking: true });
   const n2 = await createNode({ key, disableNetworking: true });
   try {
-    assertEquals(n1.publicKey.toString(), n2.publicKey.toString(), "deterministic key must yield deterministic publicKey");
+    assertEquals(
+      n1.publicKey.toString(),
+      n2.publicKey.toString(),
+      "deterministic key must yield deterministic publicKey",
+    );
   } finally {
     await n1.close();
     await n2.close();
@@ -51,7 +77,10 @@ Deno.test("createNode — ticket() returns a non-trivial string", async () => {
   const node = await createNode({ disableNetworking: true });
   try {
     const ticket = await node.ticket();
-    assert(typeof ticket === "string" && ticket.length > 20, "ticket must be a substantial string");
+    assert(
+      typeof ticket === "string" && ticket.length > 20,
+      "ticket must be a substantial string",
+    );
   } finally {
     await node.close();
   }
@@ -108,10 +137,16 @@ Deno.test("publicKeyVerify — valid signature passes", async () => {
 
   const pubBytes = node.publicKey.bytes;
   try {
-    assert(await publicKeyVerify(pubBytes, msg, sig), "Valid signature must verify");
+    assert(
+      await publicKeyVerify(pubBytes, msg, sig),
+      "Valid signature must verify",
+    );
     const tampered = new Uint8Array(sig);
     tampered[0] ^= 0xff;
-    assert(!(await publicKeyVerify(pubBytes, msg, tampered)), "Tampered signature must fail");
+    assert(
+      !(await publicKeyVerify(pubBytes, msg, tampered)),
+      "Tampered signature must fail",
+    );
   } finally {
     await node.close();
   }
@@ -130,8 +165,16 @@ Deno.test("fetch — rejects https:// URL with TypeError", async () => {
       await node.fetch(node.publicKey.toString(), "https://example.com/");
     } catch (e) {
       threw = true;
-      assert(e instanceof TypeError, `Expected TypeError, got ${(e as Error).constructor.name}`);
-      assert((e as TypeError).message.includes("httpi://"), `Error message should mention httpi://, got: ${(e as TypeError).message}`);
+      assert(
+        e instanceof TypeError,
+        `Expected TypeError, got ${(e as Error).constructor.name}`,
+      );
+      assert(
+        (e as TypeError).message.includes("httpi://"),
+        `Error message should mention httpi://, got: ${
+          (e as TypeError).message
+        }`,
+      );
     }
     assert(threw, "Expected fetch to throw for https:// URL");
   } finally {
@@ -147,7 +190,10 @@ Deno.test("fetch — rejects http:// URL with TypeError", async () => {
       await node.fetch(node.publicKey.toString(), "http://example.com/");
     } catch (e) {
       threw = true;
-      assert(e instanceof TypeError, `Expected TypeError, got ${(e as Error).constructor.name}`);
+      assert(
+        e instanceof TypeError,
+        `Expected TypeError, got ${(e as Error).constructor.name}`,
+      );
     }
     assert(threw, "Expected fetch to throw for http:// URL");
   } finally {
@@ -160,7 +206,12 @@ Deno.test("fetch — rejects http:// URL with TypeError", async () => {
 function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T> {
   let id: ReturnType<typeof setTimeout>;
   const timer = new Promise<never>(
-    (_, reject) => { id = setTimeout(() => reject(new Error(`Test timed out after ${ms}ms`)), ms); }
+    (_, reject) => {
+      id = setTimeout(
+        () => reject(new Error(`Test timed out after ${ms}ms`)),
+        ms,
+      );
+    },
   );
   return Promise.race([fn().finally(() => clearTimeout(id!)), timer]);
 }
@@ -169,65 +220,74 @@ function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T> {
 // call in-flight at all times.  After stopServe() + endpoint close, Rust
 // resolves it with null, but that resolution may race Deno's end-of-test check.
 // The teardown is real; this flag just acknowledges the inherent FFI timing gap.
-Deno.test({ name: "serve + fetch — basic round-trip", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test(
+  { name: "serve + fetch — basic round-trip", sanitizeOps: false },
+  () =>
+    withTimeout(20_000, async () => {
+      const server = await createNode({ bindAddr: "127.0.0.1:0" });
+      const client = await createNode({ bindAddr: "127.0.0.1:0" });
+      const ac = new AbortController();
+      let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    console.log(`  server nodeId: ${serverId}`);
-    console.log(`  server addrs:  ${JSON.stringify(serverAddrs)}`);
+      try {
+        const { id: serverId, addrs: serverAddrs } = await server.addr();
+        console.log(`  server nodeId: ${serverId}`);
+        console.log(`  server addrs:  ${JSON.stringify(serverAddrs)}`);
 
-    handle = server.serve({ signal: ac.signal }, (_req: Request) =>
-      new Response("hello from deno", { status: 200 }),
-    );
+        handle = server.serve(
+          { signal: ac.signal },
+          (_req: Request) => new Response("hello from deno", { status: 200 }),
+        );
 
-    const resp = await client.fetch(serverId, "httpi://example.com/", {
-      directAddrs: serverAddrs,
-    });
-    assertEquals(resp.status, 200);
-    const text = await resp.text();
-    assertEquals(text, "hello from deno");
-  } finally {
-    // Signal stop, then close the endpoint (causes Rust to drain nextRequest → null
-    // → loop exits → loopDone resolves → handle.finished resolves).
-    ac.abort();
-    await server.close();
-    await handle?.finished;
-    await client.close();
-  }
-}));
+        const resp = await client.fetch(serverId, "httpi://example.com/", {
+          directAddrs: serverAddrs,
+        });
+        assertEquals(resp.status, 200);
+        const text = await resp.text();
+        assertEquals(text, "hello from deno");
+      } finally {
+        // Signal stop, then close the endpoint (causes Rust to drain nextRequest → null
+        // → loop exits → loopDone resolves → handle.finished resolves).
+        ac.abort();
+        await server.close();
+        await handle?.finished;
+        await client.close();
+      }
+    }),
+);
 
-Deno.test({ name: "serve + fetch — POST with body", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test(
+  { name: "serve + fetch — POST with body", sanitizeOps: false },
+  () =>
+    withTimeout(20_000, async () => {
+      const server = await createNode({ bindAddr: "127.0.0.1:0" });
+      const client = await createNode({ bindAddr: "127.0.0.1:0" });
+      const ac = new AbortController();
+      let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
+      try {
+        const { id: serverId, addrs: serverAddrs } = await server.addr();
 
-    handle = server.serve({ signal: ac.signal }, async (req: Request) => {
-      const body = await req.text();
-      return new Response(body.toUpperCase(), { status: 201 });
-    });
+        handle = server.serve({ signal: ac.signal }, async (req: Request) => {
+          const body = await req.text();
+          return new Response(body.toUpperCase(), { status: 201 });
+        });
 
-    const resp = await client.fetch(serverId, "httpi://example.com/echo", {
-      method: "POST",
-      body: "ping",
-      directAddrs: serverAddrs,
-    });
-    assertEquals(resp.status, 201);
-    assertEquals(await resp.text(), "PING");
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished;
-    await client.close();
-  }
-}));
+        const resp = await client.fetch(serverId, "httpi://example.com/echo", {
+          method: "POST",
+          body: "ping",
+          directAddrs: serverAddrs,
+        });
+        assertEquals(resp.status, 201);
+        assertEquals(await resp.text(), "PING");
+      } finally {
+        ac.abort();
+        await server.close();
+        await handle?.finished;
+        await client.close();
+      }
+    }),
+);
 
 // ── Regression: concurrent FFI call buffer race ────────────────────────────────
 //
@@ -235,112 +295,135 @@ Deno.test({ name: "serve + fetch — POST with body", sanitizeOps: false }, () =
 // shared one output buffer — concurrent responses would overwrite each other,
 // producing corrupted JSON ("Unexpected non-whitespace character after JSON").
 
-Deno.test({ name: "serve + fetch — concurrent requests return correct bodies (no buffer race)", sanitizeOps: false }, () => withTimeout(30_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name:
+    "serve + fetch — concurrent requests return correct bodies (no buffer race)",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(30_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    try {
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
 
-    handle = server.serve({ signal: ac.signal }, (req: Request) => {
-      const path = new URL(req.url).pathname;
-      return new Response(`echo:${path}`, { status: 200 });
-    });
+      handle = server.serve({ signal: ac.signal }, (req: Request) => {
+        const path = new URL(req.url).pathname;
+        return new Response(`echo:${path}`, { status: 200 });
+      });
 
-    // Fire 10 requests simultaneously — if buffers are shared this will corrupt.
-    const N = 10;
-    const paths = Array.from({ length: N }, (_, i) => `/path${i}`);
-    const texts = await Promise.all(
-      paths.map((path) =>
-        client
-          .fetch(serverId, path, { directAddrs: serverAddrs })
-          .then((r) => r.text())
-      ),
-    );
+      // Fire 10 requests simultaneously — if buffers are shared this will corrupt.
+      const N = 10;
+      const paths = Array.from({ length: N }, (_, i) => `/path${i}`);
+      const texts = await Promise.all(
+        paths.map((path) =>
+          client
+            .fetch(serverId, path, { directAddrs: serverAddrs })
+            .then((r) => r.text())
+        ),
+      );
 
-    for (let i = 0; i < N; i++) {
-      assertEquals(texts[i], `echo:${paths[i]}`, `response ${i} body mismatch`);
+      for (let i = 0; i < N; i++) {
+        assertEquals(
+          texts[i],
+          `echo:${paths[i]}`,
+          `response ${i} body mismatch`,
+        );
+      }
+    } finally {
+      ac.abort();
+      await server.close();
+      await handle?.finished;
+      await client.close();
     }
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished;
-    await client.close();
-  }
-}));
+  }));
 
 // ── Error classification ──────────────────────────────────────────────────────
 
-Deno.test({ name: "serve — handler throws synchronously → client gets 500", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name: "serve — handler throws synchronously → client gets 500",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  // Capture the expected error log so it doesn't leak to test output.
-  const captured: string[] = [];
-  const origError = console.error;
-  console.error = (...args: unknown[]) => {
-    const msg = args.map(String).join(" ");
-    if (msg.includes("[iroh-http]")) captured.push(msg);
-    else origError(...args);
-  };
+    // Capture the expected error log so it doesn't leak to test output.
+    const captured: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      const msg = args.map(String).join(" ");
+      if (msg.includes("[iroh-http]")) captured.push(msg);
+      else origError(...args);
+    };
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, (_req: Request) => {
-      throw new Error("handler blow-up");
-    });
+    try {
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (_req: Request) => {
+        throw new Error("handler blow-up");
+      });
 
-    const resp = await client.fetch(serverId, "httpi://example.com/", {
-      directAddrs: serverAddrs,
-    });
-    assertEquals(resp.status, 500);
-    assert(captured.some((m) => m.includes("handler blow-up")), "expected error log");
-  } finally {
-    console.error = origError;
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+      const resp = await client.fetch(serverId, "httpi://example.com/", {
+        directAddrs: serverAddrs,
+      });
+      assertEquals(resp.status, 500);
+      assert(
+        captured.some((m) => m.includes("handler blow-up")),
+        "expected error log",
+      );
+    } finally {
+      console.error = origError;
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
+    }
+  }));
 
-Deno.test({ name: "serve — handler rejects async → client gets 500", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name: "serve — handler rejects async → client gets 500",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  const captured: string[] = [];
-  const origError = console.error;
-  console.error = (...args: unknown[]) => {
-    const msg = args.map(String).join(" ");
-    if (msg.includes("[iroh-http]")) captured.push(msg);
-    else origError(...args);
-  };
+    const captured: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      const msg = args.map(String).join(" ");
+      if (msg.includes("[iroh-http]")) captured.push(msg);
+      else origError(...args);
+    };
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, async (_req: Request) => {
-      throw new Error("async blow-up");
-    });
+    try {
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, async (_req: Request) => {
+        throw new Error("async blow-up");
+      });
 
-    const resp = await client.fetch(serverId, "httpi://example.com/", {
-      directAddrs: serverAddrs,
-    });
-    assertEquals(resp.status, 500);
-    assert(captured.some((m) => m.includes("async blow-up")), "expected error log");
-  } finally {
-    console.error = origError;
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+      const resp = await client.fetch(serverId, "httpi://example.com/", {
+        directAddrs: serverAddrs,
+      });
+      assertEquals(resp.status, 500);
+      assert(
+        captured.some((m) => m.includes("async blow-up")),
+        "expected error log",
+      );
+    } finally {
+      console.error = origError;
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
+    }
+  }));
 
 // ── Serve lifecycle ───────────────────────────────────────────────────────────
 
@@ -393,268 +476,559 @@ Deno.test("SecretKey — re-exported from mod.ts, toBytes round-trip", async () 
 
 // ── peer-id header ───────────────────────────────────────────────────────────
 
-Deno.test({ name: "peer-id header — present and consistent", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name: "peer-id header — present and consistent",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, (req: Request) => {
-      const peerId = req.headers.get("peer-id");
-      return new Response(peerId || "", { status: 200 });
-    });
+    try {
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (req: Request) => {
+        const peerId = req.headers.get("peer-id");
+        return new Response(peerId || "", { status: 200 });
+      });
 
-    const fetchOpts = { directAddrs: serverAddrs };
-    const r1 = await client.fetch(serverId, "httpi://example.com/1", fetchOpts);
-    const id1 = await r1.text();
-    const r2 = await client.fetch(serverId, "httpi://example.com/2", fetchOpts);
-    const id2 = await r2.text();
+      const fetchOpts = { directAddrs: serverAddrs };
+      const r1 = await client.fetch(
+        serverId,
+        "httpi://example.com/1",
+        fetchOpts,
+      );
+      const id1 = await r1.text();
+      const r2 = await client.fetch(
+        serverId,
+        "httpi://example.com/2",
+        fetchOpts,
+      );
+      const id2 = await r2.text();
 
-    assert(id1.length >= 52, `peer-id too short: ${id1.length}`);
-    assertEquals(id1, id2, "peer-id must be consistent across requests");
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+      assert(id1.length >= 52, `peer-id too short: ${id1.length}`);
+      assertEquals(id1, id2, "peer-id must be consistent across requests");
+    } finally {
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
+    }
+  }));
 
 // ── Large body streaming ──────────────────────────────────────────────────────
 
-Deno.test({ name: "serve + fetch — 1 MiB body round-trip", sanitizeOps: false }, () => withTimeout(30_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test(
+  { name: "serve + fetch — 1 MiB body round-trip", sanitizeOps: false },
+  () =>
+    withTimeout(30_000, async () => {
+      const server = await createNode({ bindAddr: "127.0.0.1:0" });
+      const client = await createNode({ bindAddr: "127.0.0.1:0" });
+      const ac = new AbortController();
+      let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, async (req: Request) => {
-      const buf = new Uint8Array(await req.arrayBuffer());
-      return new Response(String(buf.length), { status: 200 });
-    });
+      try {
+        const { id: serverId, addrs: serverAddrs } = await server.addr();
+        handle = server.serve({ signal: ac.signal }, async (req: Request) => {
+          const buf = new Uint8Array(await req.arrayBuffer());
+          return new Response(String(buf.length), { status: 200 });
+        });
 
-    const bigBody = new Uint8Array(1024 * 1024);
-    bigBody.fill(0x42);
-    const resp = await client.fetch(serverId, "httpi://example.com/upload", {
-      method: "POST",
-      body: bigBody,
-      directAddrs: serverAddrs,
-    });
-    assertEquals(resp.status, 200);
-    assertEquals(await resp.text(), String(1024 * 1024));
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+        const bigBody = new Uint8Array(1024 * 1024);
+        bigBody.fill(0x42);
+        const resp = await client.fetch(
+          serverId,
+          "httpi://example.com/upload",
+          {
+            method: "POST",
+            body: bigBody,
+            directAddrs: serverAddrs,
+          },
+        );
+        assertEquals(resp.status, 200);
+        assertEquals(await resp.text(), String(1024 * 1024));
+      } finally {
+        ac.abort();
+        await server.close();
+        await handle?.finished.catch(() => {});
+        await client.close();
+      }
+    }),
+);
 
 // ── httpi:// URL form (web-standard, ISS-001) ─────────────────────────────────
 
-Deno.test({ name: "fetch — httpi:// URL form (peer in hostname)", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name: "fetch — httpi:// URL form (peer in hostname)",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, (_req: Request) => {
-      return new Response("ok-from-httpi-url", { status: 200 });
-    });
+    try {
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (_req: Request) => {
+        return new Response("ok-from-httpi-url", { status: 200 });
+      });
 
-    // New web-standard form: peer ID embedded in httpi:// URL hostname.
-    const url = `httpi://${serverId}/hello`;
-    const resp = await client.fetch(url, { directAddrs: serverAddrs });
-    assertEquals(resp.status, 200);
-    assertEquals(await resp.text(), "ok-from-httpi-url");
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+      // New web-standard form: peer ID embedded in httpi:// URL hostname.
+      const url = `httpi://${serverId}/hello`;
+      const resp = await client.fetch(url, { directAddrs: serverAddrs });
+      assertEquals(resp.status, 200);
+      assertEquals(await resp.text(), "ok-from-httpi-url");
+    } finally {
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
+    }
+  }));
 
 // ── Stress: 100 concurrent requests ──────────────────────────────────────────
 
 // N=20: provides meaningful concurrency coverage without exhausting Tokio's
 // spawn_blocking pool on CI's 2-core runners (100 caused reliable timeouts).
-Deno.test({ name: "serve + fetch — 20 concurrent requests return correct bodies", sanitizeOps: false }, () => withTimeout(90_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name: "serve + fetch — 20 concurrent requests return correct bodies",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(90_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, (req: Request) => {
-      const path = new URL(req.url).pathname;
-      return new Response(`body:${path}`, { status: 200 });
-    });
+    try {
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (req: Request) => {
+        const path = new URL(req.url).pathname;
+        return new Response(`body:${path}`, { status: 200 });
+      });
 
-    const N = 20;
-    const paths = Array.from({ length: N }, (_, i) => `/r${i}`);
-    const texts = await Promise.all(
-      paths.map((path) =>
-        client.fetch(serverId, path, { directAddrs: serverAddrs }).then((r) => r.text())
-      ),
-    );
+      const N = 20;
+      const paths = Array.from({ length: N }, (_, i) => `/r${i}`);
+      const texts = await Promise.all(
+        paths.map((path) =>
+          client.fetch(serverId, path, { directAddrs: serverAddrs }).then((r) =>
+            r.text()
+          )
+        ),
+      );
 
-    for (let i = 0; i < N; i++) {
-      assertEquals(texts[i], `body:${paths[i]}`, `response ${i} body mismatch`);
+      for (let i = 0; i < N; i++) {
+        assertEquals(
+          texts[i],
+          `body:${paths[i]}`,
+          `response ${i} body mismatch`,
+        );
+      }
+    } finally {
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
     }
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+  }));
 
 // ── Session (QUIC WebTransport sessions) ─────────────────────────────────────
 //
 // Full bidi/datagram roundtrip requires `acceptSession` to be exposed on the
 // public JS API.  Until then these tests cover the client-side session lifecycle.
 
-Deno.test({ name: "session — connect() to live endpoint resolves with IrohSession", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name: "session — connect() to live endpoint resolves with IrohSession",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, (_req: Request) => new Response("ok"));
-
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
     try {
-      assert(typeof session.createBidirectionalStream === "function");
-      assert(typeof session.createUnidirectionalStream === "function");
-      assert(session.incomingBidirectionalStreams instanceof ReadableStream);
-      assert(session.incomingUnidirectionalStreams instanceof ReadableStream);
-      assert(session.datagrams !== null && typeof session.datagrams === "object");
-      assert(session.closed instanceof Promise);
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (_req: Request) =>
+        new Response("ok"));
+
+      const session = await client.connect(serverId, {
+        directAddrs: serverAddrs,
+      });
+      try {
+        assert(typeof session.createBidirectionalStream === "function");
+        assert(typeof session.createUnidirectionalStream === "function");
+        assert(session.incomingBidirectionalStreams instanceof ReadableStream);
+        assert(session.incomingUnidirectionalStreams instanceof ReadableStream);
+        assert(
+          session.datagrams !== null && typeof session.datagrams === "object",
+        );
+        assert(session.closed instanceof Promise);
+      } finally {
+        session.close();
+      }
     } finally {
-      session.close();
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
     }
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+  }));
 
-Deno.test({ name: "session — createBidirectionalStream() returns readable+writable pair", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name: "session — createBidirectionalStream() returns readable+writable pair",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, (_req: Request) => new Response("ok"));
-
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
     try {
-      const bidi = await session.createBidirectionalStream();
-      assert(bidi.readable instanceof ReadableStream, "readable must be ReadableStream");
-      assert(bidi.writable instanceof WritableStream, "writable must be WritableStream");
-      await bidi.writable.close().catch(() => {});
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (_req: Request) =>
+        new Response("ok"));
+
+      const session = await client.connect(serverId, {
+        directAddrs: serverAddrs,
+      });
+      try {
+        const bidi = await session.createBidirectionalStream();
+        assert(
+          bidi.readable instanceof ReadableStream,
+          "readable must be ReadableStream",
+        );
+        assert(
+          bidi.writable instanceof WritableStream,
+          "writable must be WritableStream",
+        );
+        await bidi.writable.close().catch(() => {});
+      } finally {
+        session.close();
+      }
     } finally {
-      session.close();
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
     }
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+  }));
 
-Deno.test({ name: "session — createUnidirectionalStream() returns WritableStream", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name: "session — createUnidirectionalStream() returns WritableStream",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, (_req: Request) => new Response("ok"));
-
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
     try {
-      const writable = await session.createUnidirectionalStream();
-      assert(writable instanceof WritableStream, "must be WritableStream");
-      await writable.close().catch(() => {});
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (_req: Request) =>
+        new Response("ok"));
+
+      const session = await client.connect(serverId, {
+        directAddrs: serverAddrs,
+      });
+      try {
+        const writable = await session.createUnidirectionalStream();
+        assert(writable instanceof WritableStream, "must be WritableStream");
+        await writable.close().catch(() => {});
+      } finally {
+        session.close();
+      }
     } finally {
-      session.close();
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
     }
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+  }));
 
-Deno.test({ name: "session — datagrams.maxDatagramSize is null or positive number", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name: "session — datagrams.maxDatagramSize is null or positive number",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, (_req: Request) => new Response("ok"));
-
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
     try {
-      await new Promise((r) => setTimeout(r, 50));
-      const size = session.datagrams.maxDatagramSize;
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (_req: Request) =>
+        new Response("ok"));
+
+      const session = await client.connect(serverId, {
+        directAddrs: serverAddrs,
+      });
+      try {
+        await new Promise((r) =>
+          setTimeout(r, 50)
+        );
+        const size = session.datagrams.maxDatagramSize;
+        assert(
+          size === null || (typeof size === "number" && size > 0),
+          `maxDatagramSize must be null or positive, got ${size}`,
+        );
+      } finally {
+        session.close();
+      }
+    } finally {
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
+    }
+  }));
+
+Deno.test({
+  name: "session — close() is safe to call multiple times",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
+
+    try {
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (_req: Request) =>
+        new Response("ok"));
+
+      const session = await client.connect(serverId, {
+        directAddrs: serverAddrs,
+      });
+      session.close({ closeCode: 0, reason: "done" });
+      try {
+        session.close();
+      } catch {
+        // Allowed — implementations may reject on double-close.
+      }
+    } finally {
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
+    }
+  }));
+
+// ── EventTarget / transport events ───────────────────────────────────────────
+
+Deno.test("IrohNode — extends EventTarget", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    assert(
+      node instanceof EventTarget,
+      "IrohNode must be an instance of EventTarget",
+    );
+    assertEquals(typeof node.addEventListener, "function");
+    assertEquals(typeof node.removeEventListener, "function");
+    assertEquals(typeof node.dispatchEvent, "function");
+  } finally {
+    await node.close();
+  }
+});
+
+Deno.test({
+  name:
+    "transport events — pool:miss fires on first fetch when observability.transportEvents: true",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({
+      bindAddr: "127.0.0.1:0",
+      observability: { transportEvents: true },
+    });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
+
+    try {
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (_req: Request) =>
+        new Response("ok"));
+
+      const received: unknown[] = [];
+      client.addEventListener("transport", (ev: Event) => {
+        received.push((ev as CustomEvent).detail);
+      });
+
+      await client.fetch(serverId, "httpi://example.com/", {
+        directAddrs: serverAddrs,
+      });
+
+      // The transport event loop runs concurrently; yield to let it flush.
+      await new Promise<void>((r) =>
+        setTimeout(r, 10)
+      );
+      await new Promise<void>((r) => setTimeout(r, 10));
+
+      const miss = (received as Array<
+        { type: string; peerId?: string; timestamp?: number }
+      >)
+        .find((e) => e.type === "pool:miss");
       assert(
-        size === null || (typeof size === "number" && size > 0),
-        `maxDatagramSize must be null or positive, got ${size}`,
+        miss !== undefined,
+        `Expected a pool:miss event, got: ${JSON.stringify(received)}`,
+      );
+      assertEquals(typeof miss.peerId, "string", "pool:miss must have peerId");
+      assertEquals(
+        typeof miss.timestamp,
+        "number",
+        "pool:miss must have timestamp",
       );
     } finally {
-      session.close();
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
     }
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+  }));
 
-Deno.test({ name: "session — close() is safe to call multiple times", sanitizeOps: false }, () => withTimeout(20_000, async () => {
-  const server = await createNode({ bindAddr: "127.0.0.1:0" });
-  const client = await createNode({ bindAddr: "127.0.0.1:0" });
-  const ac = new AbortController();
-  let handle: { finished: Promise<void> } | undefined;
+Deno.test({
+  name:
+    "transport events — not emitted when observability.transportEvents is not set",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" }); // no observability
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
 
-  try {
-    const { id: serverId, addrs: serverAddrs } = await server.addr();
-    handle = server.serve({ signal: ac.signal }, (_req: Request) => new Response("ok"));
-
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
-    session.close({ closeCode: 0, reason: "done" });
     try {
-      session.close();
-    } catch {
-      // Allowed — implementations may reject on double-close.
-    }
-  } finally {
-    ac.abort();
-    await server.close();
-    await handle?.finished.catch(() => {});
-    await client.close();
-  }
-}));
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      handle = server.serve({ signal: ac.signal }, (_req: Request) =>
+        new Response("ok"));
 
+      const received: unknown[] = [];
+      client.addEventListener("transport", (ev: Event) => {
+        received.push((ev as CustomEvent).detail);
+      });
+
+      await client.fetch(serverId, "httpi://example.com/", {
+        directAddrs: serverAddrs,
+      });
+      await new Promise<void>((r) =>
+        setTimeout(r, 10)
+      );
+
+      assertEquals(
+        received.length,
+        0,
+        `Expected no events, got: ${JSON.stringify(received)}`,
+      );
+    } finally {
+      ac.abort();
+      await server.close();
+      await handle?.finished.catch(() => {});
+      await client.close();
+    }
+  }));
+
+// ── pathChanges ───────────────────────────────────────────────────────────────
+
+// ── browse / advertise ───────────────────────────────────────────────────────
+
+Deno.test("browse — returns an AsyncIterable", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    const iterable = node.browse();
+    assertEquals(
+      typeof (iterable as AsyncIterable<unknown>)[Symbol.asyncIterator],
+      "function",
+      "browse() must return an AsyncIterable",
+    );
+  } finally {
+    await node.close();
+  }
+});
+
+Deno.test({
+  name: "advertise — resolves when signal is aborted",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(10_000, async () => {
+    const node = await createNode();
+    try {
+      const ac = new AbortController();
+      const p = node.advertise({ signal: ac.signal });
+      ac.abort();
+      await p;
+    } finally {
+      await node.close();
+    }
+  }));
+
+Deno.test({
+  name: "browse + advertise — discovers peer via mDNS",
+  ignore: true, // mDNS discovery requires multicast UDP; unreliable in CI/sandbox environments
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const svcName = `iroh-http-test-${Date.now()}`;
+    const advertiser = await createNode();
+    const browser = await createNode();
+    const ac = new AbortController();
+    // Guard: fire ac.abort() before withTimeout's 20 s deadline so the browse
+    // loop unblocks cleanly and finally can close both nodes.
+    const guard = setTimeout(() => ac.abort(), 14_000);
+    try {
+      const advDone = advertiser.advertise({
+        serviceName: svcName,
+        signal: ac.signal,
+      });
+
+      let found: import("@momics/iroh-http-shared").DiscoveredPeer | null =
+        null;
+      for await (
+        const peer of browser.browse({
+          serviceName: svcName,
+          signal: ac.signal,
+        })
+      ) {
+        if (peer.nodeId === advertiser.publicKey.toString()) {
+          found = peer;
+          break;
+        }
+      }
+
+      assertExists(found, "browse() must discover the advertising peer");
+      assertEquals(
+        found!.nodeId,
+        advertiser.publicKey.toString(),
+        "discovered nodeId must match the advertiser's publicKey",
+      );
+
+      await advDone;
+    } finally {
+      clearTimeout(guard);
+      ac.abort(); // no-op if guard already fired
+      await advertiser.close();
+      await browser.close();
+    }
+  }));
+
+// ── pathChanges ───────────────────────────────────────────────────────────────
+
+Deno.test("pathChanges — returns an AsyncIterable", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    const iterable = node.pathChanges(node.publicKey);
+    assertEquals(
+      typeof (iterable as AsyncIterable<unknown>)[Symbol.asyncIterator],
+      "function",
+      "pathChanges() must return an AsyncIterable",
+    );
+  } finally {
+    await node.close();
+  }
+});

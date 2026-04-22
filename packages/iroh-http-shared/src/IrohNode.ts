@@ -1,19 +1,39 @@
-import { PublicKey, SecretKey, resolveNodeId } from './keys.js';
-import { makeFetch, type FetchFn } from './fetch.js';
-import { makeServe, type ServeFn, type ServeHandle, type ServeHandler, type ServeOptions } from './serve.js';
-import { buildSession, type IrohSession, type WebTransportCloseInfo } from './session.js';
+import { PublicKey, resolveNodeId, SecretKey } from "./keys.js";
+import { type FetchFn, makeFetch } from "./fetch.js";
 import {
-  type IrohAdapter,
-  type EndpointInfo,
-  type IrohFetchInit,
+  makeServe,
+  type ServeFn,
+  type ServeHandle,
+  type ServeHandler,
+  type ServeOptions,
+} from "./serve.js";
+import {
+  buildSession,
+  type IrohSession,
+  type WebTransportCloseInfo,
+} from "./session.js";
+import {
   type CloseOptions,
+  type EndpointInfo,
+  type IrohAdapter,
+  type IrohFetchInit,
   type NodeAddrInfo,
-} from './IrohAdapter.js';
-import type { PeerStats, EndpointStats, PathInfo } from './observability.js';
-import type { DiscoveredPeer, BrowseOptions, AdvertiseOptions, PeerDiscoveryEvent } from './discovery.js';
-import type { NodeOptions } from './options/NodeOptions.js';
+} from "./IrohAdapter.js";
+import type {
+  EndpointStats,
+  PathInfo,
+  PeerStats,
+  TransportEventPayload,
+} from "./observability.js";
+import type {
+  AdvertiseOptions,
+  BrowseOptions,
+  DiscoveredPeer,
+  PeerDiscoveryEvent,
+} from "./discovery.js";
+import type { NodeOptions } from "./options/NodeOptions.js";
 
-const _INTERNAL = Symbol('IrohNode._create');
+const _INTERNAL = Symbol("IrohNode._create");
 
 export class IrohNode extends EventTarget {
   readonly publicKey: PublicKey;
@@ -32,11 +52,11 @@ export class IrohNode extends EventTarget {
     guard: symbol,
     adapter: IrohAdapter,
     info: EndpointInfo,
-    _options: NodeOptions | undefined,
+    options: NodeOptions | undefined,
     nativeClosed: Promise<void>,
   ) {
     if (guard !== _INTERNAL) {
-      throw new TypeError('IrohNode must be created via IrohNode._create()');
+      throw new TypeError("IrohNode must be created via IrohNode._create()");
     }
     super();
     this.#adapter = adapter;
@@ -45,16 +65,36 @@ export class IrohNode extends EventTarget {
     this.#nativeClosed = nativeClosed;
 
     let resolveClose!: (info: WebTransportCloseInfo) => void;
-    this.closed = new Promise<WebTransportCloseInfo>((r) => { resolveClose = r; });
+    this.closed = new Promise<WebTransportCloseInfo>((r) => {
+      resolveClose = r;
+    });
     this.#resolveClose = resolveClose;
 
-    nativeClosed.then(() => resolveClose({ closeCode: 0, reason: 'native shutdown' }));
+    nativeClosed.then(() =>
+      resolveClose({ closeCode: 0, reason: "native shutdown" })
+    );
 
     this.publicKey = PublicKey.fromString(info.nodeId);
-    this.secretKey = SecretKey._fromBytesWithPublicKey(info.keypair, this.publicKey);
+    this.secretKey = SecretKey._fromBytesWithPublicKey(
+      info.keypair,
+      this.publicKey,
+    );
 
     this.#fetchFn = makeFetch(adapter, info.endpointHandle);
-    this.#serveFn = makeServe(adapter, info.endpointHandle, info.nodeId, this.closed.then(() => {}));
+    this.#serveFn = makeServe(
+      adapter,
+      info.endpointHandle,
+      info.nodeId,
+      this.closed.then(() => {}),
+    );
+
+    // Only start the transport event loop when explicitly opted in.
+    // The loop calls pollTransportEvent() which blocks in Rust until an event
+    // arrives — running it unconditionally would waste a background task slot
+    // and drain events nobody is listening for.
+    if (options?.observability?.transportEvents === true) {
+      this.#startTransportEvents();
+    }
   }
 
   static _create(
@@ -67,7 +107,11 @@ export class IrohNode extends EventTarget {
   }
 
   fetch(input: string | URL, init?: IrohFetchInit): Promise<Response>;
-  fetch(peer: PublicKey | string, input: string | URL, init?: IrohFetchInit): Promise<Response>;
+  fetch(
+    peer: PublicKey | string,
+    input: string | URL,
+    init?: IrohFetchInit,
+  ): Promise<Response>;
   fetch(...args: unknown[]): Promise<Response> {
     return (this.#fetchFn as (...a: unknown[]) => Promise<Response>)(...args);
   }
@@ -85,11 +129,15 @@ export class IrohNode extends EventTarget {
   ): Promise<IrohSession> {
     const sessionFns = this.#adapter.sessionFns;
     if (!sessionFns) {
-      throw new Error('connect() not supported by this platform adapter');
+      throw new Error("connect() not supported by this platform adapter");
     }
     const nodeId = resolveNodeId(peer);
     const directAddrs = init?.directAddrs ?? null;
-    const sessionHandle = await sessionFns.connect(this.#endpointHandle, nodeId, directAddrs);
+    const sessionHandle = await sessionFns.connect(
+      this.#endpointHandle,
+      nodeId,
+      directAddrs,
+    );
     const remotePk = PublicKey.fromString(nodeId);
     return buildSession(this.#adapter, sessionHandle, remotePk, sessionFns);
   }
@@ -97,7 +145,7 @@ export class IrohNode extends EventTarget {
   browse(options?: BrowseOptions): AsyncIterable<DiscoveredPeer> {
     const adapter = this.#adapter;
     const handle = this.#endpointHandle;
-    const svcName = options?.serviceName ?? 'iroh-http';
+    const svcName = options?.serviceName ?? "iroh-http";
     const signal = options?.signal;
 
     return {
@@ -117,8 +165,13 @@ export class IrohNode extends EventTarget {
             let event: PeerDiscoveryEvent | null;
             if (signal) {
               const abortPromise = new Promise<null>((resolve) => {
-                if (signal.aborted) { resolve(null); return; }
-                signal.addEventListener('abort', () => resolve(null), { once: true });
+                if (signal.aborted) {
+                  resolve(null);
+                  return;
+                }
+                signal.addEventListener("abort", () => resolve(null), {
+                  once: true,
+                });
               });
               event = await Promise.race([
                 adapter.mdnsNextEvent(browseHandle),
@@ -139,7 +192,7 @@ export class IrohNode extends EventTarget {
             const discovered: DiscoveredPeer = {
               nodeId: event.nodeId,
               addrs: event.addrs ?? [],
-              isActive: event.type === 'discovered',
+              isActive: event.type === "discovered",
             };
             return { done: false as const, value: discovered };
           },
@@ -156,12 +209,15 @@ export class IrohNode extends EventTarget {
   }
 
   async advertise(options?: AdvertiseOptions): Promise<void> {
-    const svcName = options?.serviceName ?? 'iroh-http';
+    const svcName = options?.serviceName ?? "iroh-http";
     const signal = options?.signal;
-    const advHandle = await this.#adapter.mdnsAdvertise(this.#endpointHandle, svcName);
+    const advHandle = await this.#adapter.mdnsAdvertise(
+      this.#endpointHandle,
+      svcName,
+    );
     if (signal) {
       return new Promise<void>((resolve) => {
-        signal.addEventListener('abort', () => {
+        signal.addEventListener("abort", () => {
           this.#adapter.mdnsAdvertiseClose(advHandle);
           resolve();
         }, { once: true });
@@ -197,45 +253,53 @@ export class IrohNode extends EventTarget {
     return this.#adapter.stats(this.#endpointHandle);
   }
 
-  pathChanges(peer: PublicKey | string, pollIntervalMs = 500): ReadableStream<PathInfo> {
+  pathChanges(
+    peer: PublicKey | string,
+    options?: { signal?: AbortSignal },
+  ): AsyncIterable<PathInfo> {
     const nodeId = resolveNodeId(peer);
     const adapter = this.#adapter;
     const endpointHandle = this.#endpointHandle;
+    const signal = options?.signal;
 
-    let cancelled = false;
-    let lastPath: string | null = null;
-
-    return new ReadableStream<PathInfo>({
-      async pull(controller) {
-        while (!cancelled) {
-          const stats = await adapter.peerStats(endpointHandle, nodeId).catch(() => null);
-          if (cancelled) break;
-
-          if (stats) {
-            const selected = stats.paths.find((p) => p.active);
-            if (selected) {
-              const key = `${selected.relay}:${selected.addr}`;
-              if (key !== lastPath) {
-                lastPath = key;
-                controller.enqueue(selected);
-                return;
-              }
+    return {
+      [Symbol.asyncIterator]() {
+        return {
+          async next(): Promise<IteratorResult<PathInfo>> {
+            if (signal?.aborted) {
+              return { done: true, value: undefined };
             }
-          }
+            const path = await adapter.nextPathChange(endpointHandle, nodeId);
+            if (path === null) {
+              return { done: true, value: undefined };
+            }
+            return { done: false, value: path };
+          },
+          return(): Promise<IteratorResult<PathInfo>> {
+            // break / return from for-await — nothing to clean up on JS side;
+            // Rust watcher exits when the channel sender is dropped.
+            return Promise.resolve({ done: true, value: undefined });
+          },
+        };
+      },
+    };
+  }
 
-          await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
-        }
-        controller.close();
-      },
-      cancel() {
-        cancelled = true;
-      },
-    });
+  #startTransportEvents(): void {
+    this.#adapter.startTransportEvents(
+      this.#endpointHandle,
+      (event) =>
+        this.dispatchEvent(
+          new CustomEvent<TransportEventPayload>("transport", {
+            detail: event,
+          }),
+        ),
+    );
   }
 
   async close(options?: CloseOptions): Promise<void> {
     await this.#adapter.closeEndpoint(this.#endpointHandle, options?.force);
-    this.#resolveClose({ closeCode: 0, reason: '' });
+    this.#resolveClose({ closeCode: 0, reason: "" });
     await this.#nativeClosed;
   }
 

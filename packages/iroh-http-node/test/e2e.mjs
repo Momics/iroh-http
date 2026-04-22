@@ -30,8 +30,9 @@ test("serve + fetch — basic GET round-trip", async () => {
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     const ac = new AbortController();
-    server.serve({ signal: ac.signal }, (_req) =>
-      new Response("hello from node", { status: 200 }),
+    server.serve(
+      { signal: ac.signal },
+      (_req) => new Response("hello from node", { status: 200 }),
     );
 
     const resp = await client.fetch(serverId, "httpi://example.com/", {
@@ -82,9 +83,13 @@ test("serve + fetch — path is reflected correctly", async () => {
       return new Response(`path=${path}`, { status: 200 });
     });
 
-    const resp = await client.fetch(serverId, "httpi://example.com/some/deep/path", {
-      directAddrs: serverAddrs,
-    });
+    const resp = await client.fetch(
+      serverId,
+      "httpi://example.com/some/deep/path",
+      {
+        directAddrs: serverAddrs,
+      },
+    );
     assert.equal(await resp.text(), "path=/some/deep/path");
     ac.abort();
   } finally {
@@ -114,8 +119,10 @@ test("serve + fetch — 10 concurrent requests return correct bodies", async () 
     const texts = await Promise.all(
       paths.map((path) =>
         client
-          .fetch(serverId, `httpi://example.com${path}`, { directAddrs: serverAddrs })
-          .then((r) => r.text()),
+          .fetch(serverId, `httpi://example.com${path}`, {
+            directAddrs: serverAddrs,
+          })
+          .then((r) => r.text())
       ),
     );
 
@@ -154,8 +161,9 @@ test("serve + fetch — plain response logs no internal pipe errors", async () =
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     const ac = new AbortController();
-    const handle = server.serve({ signal: ac.signal }, (_req) =>
-      new Response("hello", { status: 200 }),
+    const handle = server.serve(
+      { signal: ac.signal },
+      (_req) => new Response("hello", { status: 200 }),
     );
 
     const resp = await client.fetch(serverId, "httpi://example.com/", {
@@ -189,8 +197,14 @@ test("fetch — rejects https:// URL with TypeError", async () => {
     await assert.rejects(
       () => node.fetch(node.publicKey, "https://example.com/"),
       (err) => {
-        assert.ok(err instanceof TypeError, `Expected TypeError, got ${err.constructor.name}`);
-        assert.ok(err.message.includes("httpi://"), `Error should mention httpi://, got: ${err.message}`);
+        assert.ok(
+          err instanceof TypeError,
+          `Expected TypeError, got ${err.constructor.name}`,
+        );
+        assert.ok(
+          err.message.includes("httpi://"),
+          `Error should mention httpi://, got: ${err.message}`,
+        );
         return true;
       },
     );
@@ -205,7 +219,10 @@ test("fetch — rejects http:// URL with TypeError", async () => {
     await assert.rejects(
       () => node.fetch(node.publicKey, "http://example.com/"),
       (err) => {
-        assert.ok(err instanceof TypeError, `Expected TypeError, got ${err.constructor.name}`);
+        assert.ok(
+          err instanceof TypeError,
+          `Expected TypeError, got ${err.constructor.name}`,
+        );
         return true;
       },
     );
@@ -240,7 +257,10 @@ test("serve — handler throws synchronously → client gets 500", async () => {
       directAddrs: serverAddrs,
     });
     assert.equal(resp.status, 500);
-    assert.ok(captured.some((m) => m.includes("handler blow-up")), "expected error log");
+    assert.ok(
+      captured.some((m) => m.includes("handler blow-up")),
+      "expected error log",
+    );
     ac.abort();
   } finally {
     console.error = origError;
@@ -272,7 +292,10 @@ test("serve — handler rejects async → client gets 500", async () => {
       directAddrs: serverAddrs,
     });
     assert.equal(resp.status, 500);
-    assert.ok(captured.some((m) => m.includes("async handler blow-up")), "expected error log");
+    assert.ok(
+      captured.some((m) => m.includes("async handler blow-up")),
+      "expected error log",
+    );
     ac.abort();
   } finally {
     console.error = origError;
@@ -415,7 +438,7 @@ test("serve + fetch — 100 concurrent requests return correct bodies", async ()
       paths.map((path) =>
         client
           .fetch(serverId, path, { directAddrs: serverAddrs })
-          .then((r) => r.text()),
+          .then((r) => r.text())
       ),
     );
 
@@ -443,13 +466,19 @@ test("session — connect() to live endpoint resolves with IrohSession", async (
     const ac = new AbortController();
     server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
 
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.connect(serverId, {
+      directAddrs: serverAddrs,
+    });
     try {
       assert.equal(typeof session.createBidirectionalStream, "function");
       assert.equal(typeof session.createUnidirectionalStream, "function");
       assert.ok(session.incomingBidirectionalStreams instanceof ReadableStream);
-      assert.ok(session.incomingUnidirectionalStreams instanceof ReadableStream);
-      assert.ok(session.datagrams !== null && typeof session.datagrams === "object");
+      assert.ok(
+        session.incomingUnidirectionalStreams instanceof ReadableStream,
+      );
+      assert.ok(
+        session.datagrams !== null && typeof session.datagrams === "object",
+      );
       assert.ok(session.closed instanceof Promise);
     } finally {
       session.close();
@@ -469,11 +498,19 @@ test("session — createBidirectionalStream() returns readable+writable pair", a
     const ac = new AbortController();
     server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
 
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.connect(serverId, {
+      directAddrs: serverAddrs,
+    });
     try {
       const bidi = await session.createBidirectionalStream();
-      assert.ok(bidi.readable instanceof ReadableStream, "readable must be ReadableStream");
-      assert.ok(bidi.writable instanceof WritableStream, "writable must be WritableStream");
+      assert.ok(
+        bidi.readable instanceof ReadableStream,
+        "readable must be ReadableStream",
+      );
+      assert.ok(
+        bidi.writable instanceof WritableStream,
+        "writable must be WritableStream",
+      );
       // Close the bidi stream cleanly.
       await bidi.writable.close().catch(() => {});
     } finally {
@@ -494,7 +531,9 @@ test("session — createUnidirectionalStream() returns WritableStream", async ()
     const ac = new AbortController();
     server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
 
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.connect(serverId, {
+      directAddrs: serverAddrs,
+    });
     try {
       const writable = await session.createUnidirectionalStream();
       assert.ok(writable instanceof WritableStream, "must be WritableStream");
@@ -517,7 +556,9 @@ test("session — datagrams.maxDatagramSize is null or a positive number", async
     const ac = new AbortController();
     server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
 
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.connect(serverId, {
+      directAddrs: serverAddrs,
+    });
     try {
       // Give time for the async maxDatagramSize fetch to settle.
       await new Promise((r) => setTimeout(r, 50));
@@ -544,7 +585,9 @@ test("session — close() is safe to call multiple times", async () => {
     const ac = new AbortController();
     server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
 
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.connect(serverId, {
+      directAddrs: serverAddrs,
+    });
     // First close.
     session.close({ closeCode: 0, reason: "done" });
     // Second close must not throw.
@@ -560,3 +603,196 @@ test("session — close() is safe to call multiple times", async () => {
   }
 });
 
+// ── EventTarget / transport events ───────────────────────────────────────────
+
+test("IrohNode — extends EventTarget", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    assert.ok(
+      node instanceof EventTarget,
+      "IrohNode must be an instance of EventTarget",
+    );
+    assert.equal(typeof node.addEventListener, "function");
+    assert.equal(typeof node.removeEventListener, "function");
+    assert.equal(typeof node.dispatchEvent, "function");
+  } finally {
+    await node.close();
+  }
+});
+
+test("transport events — pool:miss event fires on first fetch when observability.transportEvents: true", async () => {
+  const server = await createNode();
+  const client = await createNode({ observability: { transportEvents: true } });
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
+
+    const received = [];
+    client.addEventListener("transport", (ev) => {
+      received.push(ev.detail);
+    });
+
+    // First fetch → pool miss (no cached connection yet).
+    await client.fetch(serverId, "httpi://example.com/", {
+      directAddrs: serverAddrs,
+    });
+
+    // The transport event loop runs concurrently; give it a turn to flush.
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    const miss = received.find((e) => e.type === "pool:miss");
+    assert.ok(
+      miss,
+      `Expected a pool:miss event, got: ${JSON.stringify(received)}`,
+    );
+    assert.equal(typeof miss.peerId, "string", "pool:miss must have peerId");
+    assert.equal(
+      typeof miss.timestamp,
+      "number",
+      "pool:miss must have timestamp",
+    );
+
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+test("transport events — not emitted when observability.transportEvents is not set", async () => {
+  const server = await createNode();
+  const client = await createNode(); // no observability option
+  try {
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+    const ac = new AbortController();
+    server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
+
+    const received = [];
+    client.addEventListener("transport", (ev) => {
+      received.push(ev.detail);
+    });
+
+    await client.fetch(serverId, "httpi://example.com/", {
+      directAddrs: serverAddrs,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    // Without the opt-in, no transport events should be dispatched.
+    assert.equal(
+      received.length,
+      0,
+      `Expected no events, got: ${JSON.stringify(received)}`,
+    );
+
+    ac.abort();
+  } finally {
+    await server.close();
+    await client.close();
+  }
+});
+
+// ── browse / advertise ───────────────────────────────────────────────────────
+
+test("browse — returns an AsyncIterable", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    const iterable = node.browse();
+    assert.equal(
+      typeof iterable[Symbol.asyncIterator],
+      "function",
+      "browse() must return an AsyncIterable",
+    );
+  } finally {
+    await node.close();
+  }
+});
+
+test(
+  "advertise — resolves when signal is aborted",
+  { timeout: 10_000 },
+  async () => {
+    const node = await createNode();
+    try {
+      const ac = new AbortController();
+      const p = node.advertise({ signal: ac.signal });
+      // Abort immediately — the Promise should resolve.
+      ac.abort();
+      await p;
+    } finally {
+      await node.close();
+    }
+  },
+);
+
+test(
+  "browse + advertise — discovers peer via mDNS",
+  { timeout: 20_000, skip: "mDNS discovery requires multicast UDP; unreliable in CI/sandbox environments" },
+  async () => {
+    // Use a unique service name to avoid picking up stale advertisements from
+    // other test runs on the same machine.
+    const svcName = `iroh-http-test-${Date.now()}`;
+    const advertiser = await createNode();
+    const browser = await createNode();
+    const ac = new AbortController();
+    // Guard: fire ac.abort() before the 20 s test timeout so the browse loop
+    // unblocks (mdnsNextEvent is blocked in Rust; the signal races it via
+    // Promise.race) and the finally block can close both nodes cleanly.
+    // Without this, node:test's timeout fires while the async fn is still
+    // running, leaving dangling QUIC sockets that prevent process exit.
+    const guard = setTimeout(() => ac.abort(), 14_000);
+    try {
+      // Start advertising; resolves when we abort.
+      const advDone = advertiser.advertise({
+        serviceName: svcName,
+        signal: ac.signal,
+      });
+
+      // Browse until we see the advertiser or the guard aborts us.
+      let found = null;
+      for await (
+        const peer of browser.browse({
+          serviceName: svcName,
+          signal: ac.signal,
+        })
+      ) {
+        if (peer.nodeId === advertiser.publicKey.toString()) {
+          found = peer;
+          break;
+        }
+      }
+
+      assert.ok(found !== null, "browse() must discover the advertising peer");
+      assert.equal(
+        found.nodeId,
+        advertiser.publicKey.toString(),
+        "discovered nodeId must match the advertiser's publicKey",
+      );
+
+      await advDone;
+    } finally {
+      clearTimeout(guard);
+      ac.abort(); // no-op if guard already fired
+      await advertiser.close();
+      await browser.close();
+    }
+  },
+);
+
+// ── pathChanges ───────────────────────────────────────────────────────────────
+
+test("pathChanges — returns an AsyncIterable", async () => {
+  const node = await createNode({ disableNetworking: true });
+  try {
+    const iterable = node.pathChanges(node.publicKey);
+    assert.equal(
+      typeof iterable[Symbol.asyncIterator],
+      "function",
+      "pathChanges() must return an AsyncIterable",
+    );
+  } finally {
+    await node.close();
+  }
+});
