@@ -28,7 +28,7 @@ jobs:
       - name: Generate release notes
         run: git cliff --latest -o RELEASE_NOTES.md
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           body_path: RELEASE_NOTES.md
 
@@ -94,7 +94,8 @@ jobs:
 
   # ── 3. Build Deno native binaries (5 targets) ─────────────────────────────────
   #
-  # Linux and Windows targets use cargo-zigbuild from ubuntu-latest.
+  # aarch64 Linux uses gcc-aarch64-linux-gnu from apt (same approach as Node).
+  # Windows builds natively on windows-latest with MSVC toolchain.
   # macOS targets build natively on dedicated runners.
 
   build-deno:
@@ -113,12 +114,11 @@ jobs:
             target: aarch64-unknown-linux-gnu
             asset: libiroh_http_deno.linux-aarch64.so
             lib: libiroh_http_deno.so
-            zigbuild: true
-          - os: ubuntu-latest
-            target: x86_64-pc-windows-gnu
+            cross: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
             asset: libiroh_http_deno.windows-x86_64.dll
             lib: iroh_http_deno.dll
-            zigbuild: true
           - os: macos-latest
             target: aarch64-apple-darwin
             asset: libiroh_http_deno.darwin-aarch64.dylib
@@ -136,23 +136,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install zig
-        if: matrix.zigbuild
-        uses: mlugg/setup-zig@v2
+      - name: Install cross-compile tools (aarch64 Linux)
+        if: matrix.cross && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
-      - name: Install cargo-zigbuild
-        if: matrix.zigbuild
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-zigbuild
-
-      - name: Build (cargo-zigbuild)
-        if: matrix.zigbuild
-        run: cargo zigbuild --release -p iroh-http-deno --target ${{ matrix.target }}
-
-      - name: Build (native)
-        if: ${{ !matrix.zigbuild }}
+      - name: Build
         run: cargo build --release -p iroh-http-deno --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && runner.os == 'Linux' && 'aarch64-linux-gnu-gcc' || '' }}
 
       - name: Rename to release asset name
         shell: bash

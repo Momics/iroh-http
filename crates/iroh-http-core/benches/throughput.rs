@@ -266,8 +266,11 @@ fn bench_handle_allocation(c: &mut Criterion) {
             // alloc_body_writer allocates a (writer, reader) pair and inserts
             // the writer into the slab, returning a u64 handle.
             let (h, _reader) = ep.handles().alloc_body_writer().unwrap();
-            // Cancel the reader to free the handle slots.
-            ep.handles().cancel_reader(h);
+            // finish_body removes the writer from self.writers, freeing the
+            // slot.  cancel_reader (the previous call here) operated on the
+            // readers slab, which is wrong: the reader is returned directly
+            // from alloc_body_writer and is never inserted into the store.
+            ep.handles().finish_body(h).unwrap();
         });
     });
 

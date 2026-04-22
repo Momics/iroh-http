@@ -118,6 +118,34 @@ if [[ -f "$ADAPTER_TS" ]]; then
   echo "  ✓ packages/iroh-http-deno/src/adapter.ts (VERSION)"
 fi
 
+# ── npm consumer dependency ranges ──────────────────────────────────────────
+# iroh-http-node and iroh-http-tauri declare @momics/iroh-http-shared as a
+# semver range (^MAJOR.MINOR).  When the minor version crosses a boundary the
+# old range can no longer resolve the new version, so we update it here.
+MAJOR_MINOR=$(echo "$NEW" | sed 's/\([0-9]*\.[0-9]*\).*/\1/')
+
+NODE_PKG="$ROOT/packages/iroh-http-node/package.json"
+if [[ -f "$NODE_PKG" ]]; then
+  sed -i '' "s|\"@momics/iroh-http-shared\": \"\^[0-9.]*\"|\"@momics/iroh-http-shared\": \"^$MAJOR_MINOR\"|" "$NODE_PKG"
+  echo "  ✓ packages/iroh-http-node/package.json (@momics/iroh-http-shared dep range → ^$MAJOR_MINOR)"
+fi
+
+TAURI_PKG="$ROOT/packages/iroh-http-tauri/package.json"
+if [[ -f "$TAURI_PKG" ]]; then
+  sed -i '' "s|\"@momics/iroh-http-shared\": \"\^[0-9.]*\"|\"@momics/iroh-http-shared\": \"^$MAJOR_MINOR\"|" "$TAURI_PKG"
+  echo "  ✓ packages/iroh-http-tauri/package.json (@momics/iroh-http-shared dep range → ^$MAJOR_MINOR)"
+fi
+
+# ── Regenerate lock files ─────────────────────────────────────────────────────
+echo ""
+echo "Regenerating Cargo.lock …"
+cargo generate-lockfile --manifest-path "$ROOT/Cargo.toml"
+echo "  ✓ Cargo.lock"
+
+echo "Regenerating package-lock.json …"
+(cd "$ROOT" && npm install --package-lock-only --ignore-scripts)
+echo "  ✓ package-lock.json"
+
 echo ""
 echo "Done. Verify with:  git diff --stat"
 echo "Then commit:        git add -u && git commit -m 'chore: bump version to $NEW'"
