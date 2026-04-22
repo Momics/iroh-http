@@ -146,6 +146,10 @@ echo "Regenerating package-lock.json …"
 (cd "$ROOT" && npm install --package-lock-only --ignore-scripts)
 echo "  ✓ package-lock.json"
 
+echo "Regenerating deno.lock …"
+(cd "$ROOT" && deno install --frozen=false --quiet 2>/dev/null || true)
+echo "  ✓ deno.lock"
+
 echo ""
 echo "Done. Verify with:  git diff --stat"
 echo "Then commit:        git add -u && git commit -m 'chore: bump version to $NEW'"
