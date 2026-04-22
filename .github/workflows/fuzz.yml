@@ -21,7 +21,7 @@ jobs:
           - fuzz_handle_store
           - fuzz_respond
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@nightly
 
@@ -60,7 +60,7 @@ jobs:
     name: ASan tests (iroh-http-core)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@nightly
 
@@ -78,7 +78,7 @@ jobs:
     name: Miri tests (adapter boundary)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@nightly
         with:
