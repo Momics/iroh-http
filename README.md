@@ -51,7 +51,7 @@ The `fetch()` and `serve()` APIs use standard `Request` and `Response` objects. 
 ## How it works
 
 ```
-  ┌──────────┐   QUIC (Iroh)   ┌──────────┐
+  ┌──────────┐   QUIC (Iroh)    ┌──────────┐
   │  Node A  │◄────────────────►│  Node B  │
   └──────────┘                  └──────────┘
   fetch("/api")                 serve(handler)
