@@ -5,7 +5,7 @@
 [![JSR](https://jsr.io/badges/@momics/iroh-http-deno)](https://jsr.io/@momics/iroh-http-deno)
 [![crates.io](https://img.shields.io/crates/v/iroh-http-core)](https://crates.io/crates/iroh-http-core)
 
-> Pre-v1.0 — APIs may change between minor releases.
+> Pre-v1.0 — **DO NOT rely on this package in critical/production!** Still early WIP. APIs may change between minor releases.
 
 iroh-http lets you dial peers by Ed25519 public key and speak HTTP to them. The transport is [Iroh](https://iroh.computer) QUIC — connections are authenticated by keypair, hole-punching and relay are handled for you, and there are no intermediate servers, no DNS records to maintain, and no IP addresses to track.
 
