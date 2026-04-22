@@ -257,6 +257,8 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Download all Node native artifacts
         uses: actions/download-artifact@v8
@@ -274,6 +276,8 @@ jobs:
           for pkg_dir in packages/iroh-http-node/npm/*/; do
             npm publish "$pkg_dir" --access public --provenance
           done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Build TypeScript
         run: |
@@ -283,12 +287,18 @@ jobs:
 
       - name: Publish iroh-http-shared
         run: npm publish --workspace packages/iroh-http-shared --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish iroh-http-node
         run: npm publish --workspace packages/iroh-http-node --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish iroh-http-tauri
         run: npm publish --workspace packages/iroh-http-tauri --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # ── 7. Publish Deno package ────────────────────────────────────────────────────
   # Uses JSR OIDC — no DENO_AUTH_TOKENS needed.
@@ -305,6 +315,10 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Publish to JSR
+      - name: Publish iroh-http-shared to JSR
+        working-directory: packages/iroh-http-shared
+        run: deno publish
+
+      - name: Publish iroh-http-deno to JSR
         working-directory: packages/iroh-http-deno
         run: deno publish
