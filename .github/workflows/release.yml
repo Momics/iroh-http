@@ -86,7 +86,7 @@ jobs:
         working-directory: packages/iroh-http-node
         run: node -e "require('./index.js'); console.log('loaded ok')"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: node-native-${{ matrix.target }}
           path: packages/iroh-http-node/iroh-http-node.*.node
@@ -163,7 +163,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: deno-native-${{ matrix.target }}
           path: ${{ matrix.asset }}
@@ -261,7 +261,7 @@ jobs:
       - run: npm ci
 
       - name: Download all Node native artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: node-native-*
           path: packages/iroh-http-node/artifacts/
