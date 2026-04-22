@@ -284,7 +284,7 @@ jobs:
       - name: Build TypeScript
         run: |
           npm run build --workspace=packages/iroh-http-shared
-          cd packages/iroh-http-node && npx tsc
+          (cd packages/iroh-http-node && npx tsc)
           npm run build --workspace=packages/iroh-http-tauri
 
       - name: Publish iroh-http-shared
