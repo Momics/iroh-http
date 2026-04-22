@@ -7,7 +7,9 @@
 
 > Pre-v1.0 — APIs may change between minor releases.
 
-`fetch()` and `serve()` over [Iroh](https://iroh.computer) QUIC. Peers are addressed by Ed25519 public key; no DNS, no certificates, NAT traversal built in.
+iroh-http lets you dial peers by Ed25519 public key and speak HTTP to them. The transport is [Iroh](https://iroh.computer) QUIC — connections are authenticated by keypair, hole-punching and relay are handled for you, and there are no intermediate servers, no DNS records to maintain, and no IP addresses to track.
+
+The API is standard WHATWG `Request`/`Response`. Handlers, routers, and middleware written for Deno, Cloudflare Workers, Hono, or anything `fetch`-shaped work without modification — you're just changing what's underneath.
 
 ```sh
 npm install @momics/iroh-http-node
@@ -92,16 +94,6 @@ npm run test     # test everything
 npm run build:core    npm run build:node    npm run build:deno    npm run build:tauri
 npm run test:rust     npm run test:node     npm run test:deno     npm run test:interop
 ```
-
-## Release
-
-Tag a commit. CI builds 10 native targets and publishes to npm, JSR, and crates.io.
-
-```sh
-git tag v0.3.0 && git push origin v0.3.0
-```
-
-Progress: [Actions → Build](https://github.com/Momics/iroh-http/actions/workflows/build.yml).
 
 ## Acknowledgements
 
