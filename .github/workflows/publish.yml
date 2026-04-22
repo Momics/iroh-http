@@ -1,0 +1,188 @@
+name: Publish
+
+# Triggered automatically when the Release workflow succeeds, or manually
+# when you need to re-publish without rebuilding all 10 native targets.
+#
+# Manual usage (Actions → Run workflow):
+#   run_id: the ID of the successful Release workflow run whose Node artifacts
+#           you want to publish. Find it in the URL of the release run page.
+#
+# All publish steps are idempotent — safe to run multiple times.
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Release workflow run ID (for Node native artifacts)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write   # npm --provenance (Trusted Publishers) + JSR OIDC
+
+jobs:
+
+  # ── 0. Verify ─────────────────────────────────────────────────────────────────
+  # Skip automatically if triggered by a failed Release run.
+
+  verify:
+    name: Verify before publish
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - run: npm ci
+
+      - name: Install Tauri system dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+      - name: cargo test (iroh-http-tauri)
+        run: cargo test --manifest-path packages/iroh-http-tauri/Cargo.toml
+
+      - name: Build shared TypeScript
+        run: npm run build --workspace=packages/iroh-http-shared
+
+      - name: TypeScript typecheck
+        run: |
+          npm run typecheck --workspace=packages/iroh-http-shared
+          npm run typecheck --workspace=packages/iroh-http-tauri
+
+  # ── 1. Publish Rust crates ────────────────────────────────────────────────────
+
+  publish-crates:
+    name: Publish Rust crates
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish iroh-http-core
+        run: cargo publish -p iroh-http-core || echo "already published, skipping"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for iroh-http-core to be indexed on crates.io
+        run: |
+          for i in $(seq 1 12); do
+            cargo search iroh-http-core 2>/dev/null | grep -q '^iroh-http-core' && break
+            echo "Waiting for crates.io indexing... ($i/12)"
+            sleep 15
+          done
+
+      - name: Publish iroh-http-discovery
+        run: cargo publish -p iroh-http-discovery || echo "already published, skipping"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ── 2. Publish npm packages ────────────────────────────────────────────────────
+  # Uses npm Trusted Publishers (OIDC) — no NPM_TOKEN needed.
+  # One-time setup per package: npmjs.com → package Settings → Trusted Publishers
+  # → add this workflow (Momics/iroh-http, publish.yml).
+  # Packages: iroh-http-shared, iroh-http-node, iroh-http-tauri,
+  #           + all 5 iroh-http-node-* platform packages.
+
+  publish-npm:
+    name: Publish npm packages
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+
+      - name: Download Node native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: node-native-*
+          path: packages/iroh-http-node/artifacts/
+          merge-multiple: true
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move artifacts into platform package dirs
+        working-directory: packages/iroh-http-node
+        run: npx napi artifacts --dir artifacts/ --dist npm/
+
+      - name: Publish platform packages
+        run: |
+          for pkg_dir in packages/iroh-http-node/npm/*/; do
+            npm publish "$pkg_dir" --access public --provenance || echo "already published, skipping $pkg_dir"
+          done
+
+      - name: Build TypeScript
+        run: |
+          npm run build --workspace=packages/iroh-http-shared
+          (cd packages/iroh-http-node && npx tsc)
+          npm run build --workspace=packages/iroh-http-tauri
+
+      - name: Publish iroh-http-shared
+        run: npm publish --workspace packages/iroh-http-shared --access public --provenance || echo "already published, skipping"
+
+      - name: Publish iroh-http-node
+        run: npm publish --workspace packages/iroh-http-node --access public --provenance || echo "already published, skipping"
+
+      - name: Publish iroh-http-tauri
+        run: npm publish --workspace packages/iroh-http-tauri --access public --provenance || echo "already published, skipping"
+
+  # ── 3. Publish JSR packages ────────────────────────────────────────────────────
+  # Uses JSR OIDC — no DENO_AUTH_TOKENS needed.
+  # One-time setup: jsr.io → each package → Settings → GitHub Actions publishing
+  # → add this workflow (Momics/iroh-http, publish.yml).
+
+  publish-jsr:
+    name: Publish JSR packages
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Publish iroh-http-shared to JSR
+        working-directory: packages/iroh-http-shared
+        run: deno publish || echo "already published, skipping"
+
+      - name: Publish iroh-http-deno to JSR
+        working-directory: packages/iroh-http-deno
+        run: deno publish || echo "already published, skipping"
