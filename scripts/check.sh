@@ -3,8 +3,12 @@
 # Pre-push development check. Mirrors exactly what the CI `verify` job does.
 # Run this before pushing to main.
 #
+# Each step delegates to an npm script so the same atomic commands work both
+# here and when called directly by a developer (e.g. `npm run lint`).
+#
 # Usage:
-#   scripts/check.sh
+#   scripts/check.sh        # full check
+#   npm run ci              # same thing
 #
 # Exit code is non-zero if any check fails.
 set -euo pipefail
@@ -20,35 +24,19 @@ die()     { echo -e "  ${RED}✗${NC}  $1"; exit 1; }
 
 section "Rust"
 
-echo "  → cargo fmt"
-cargo fmt --all -- --check || die "cargo fmt failed — run: cargo fmt --all"
-ok "fmt"
+echo "  → lint"
+npm run lint --silent || die "lint failed — run: npm run lint"
+ok "lint"
 
-echo "  → cargo clippy (workspace)"
-cargo clippy --workspace -- \
-  -D warnings \
-  -D clippy::unwrap_used \
-  -D clippy::panic \
-  -D clippy::arithmetic_side_effects
-ok "clippy (workspace)"
-
-echo "  → cargo clippy (iroh-http-tauri)"
-(cd packages/iroh-http-tauri && cargo clippy -- \
-  -D warnings \
-  -D clippy::unwrap_used \
-  -D clippy::panic \
-  -D clippy::arithmetic_side_effects)
-ok "clippy (tauri)"
-
-echo "  → cargo test"
-cargo test --workspace --quiet
+echo "  → test:rust"
+npm run test:rust --silent
 ok "tests"
 
-echo "  → cargo test (iroh-http-tauri)"
-(cd packages/iroh-http-tauri && cargo test --quiet)
+echo "  → test:tauri"
+npm run test:tauri --silent
 ok "tests (tauri)"
 
-echo "  → cargo deny"
+echo "  → deny"
 if command -v cargo-deny &>/dev/null; then
   cargo-deny check
   ok "deny"
@@ -56,23 +44,47 @@ else
   echo "     (skipped — cargo-deny not installed; run: cargo install cargo-deny --locked)"
 fi
 
-echo "  → cargo bench --test (smoke)"
-# Criterion --test mode: one iteration per bench function, no measurement.
-# Fast (~10s) and catches bench code that won't compile or panics at startup.
-cargo bench -p iroh-http-core -- --test --quiet
+echo "  → bench:smoke"
+npm run bench:smoke --silent
 ok "bench smoke"
 
-echo "  → cargo check (no-default-features)"
-cargo check -p iroh-http-node --no-default-features --features compression --quiet
-cargo check -p iroh-http-deno --no-default-features --features compression --quiet
+echo "  → check:features"
+npm run check:features --silent
 ok "feature checks"
+
+section "Build"
+
+echo "  → build:shared"
+npm run build:shared --silent
+ok "shared"
+
+echo "  → build:node"
+npm run build:node --silent
+ok "node"
+
+echo "  → build:deno"
+npm run build:deno --silent
+ok "deno"
 
 section "TypeScript"
 
 echo "  → typecheck"
-npm run typecheck --workspace=packages/iroh-http-shared --silent
-npm run typecheck --workspace=packages/iroh-http-tauri --silent
+npm run typecheck --silent
 ok "typecheck"
+
+section "Tests"
+
+echo "  → test:node"
+npm run test:node --silent
+ok "node"
+
+echo "  → test:deno"
+npm run test:deno --silent
+ok "deno"
+
+echo "  → test:interop"
+npm run test:interop --silent
+ok "interop"
 
 echo ""
 echo -e "${GREEN}${BOLD}All checks passed.${NC} Ready to push."
