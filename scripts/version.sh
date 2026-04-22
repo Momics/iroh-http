@@ -151,5 +151,6 @@ echo "Regenerating deno.lock …"
 echo "  ✓ deno.lock"
 
 echo ""
-echo "Done. Verify with:  git diff --stat"
-echo "Then commit:        git add -u && git commit -m 'chore: bump version to $NEW'"
+echo "Done. All manifests and lock files updated to $NEW."
+echo "Review:  git diff --stat"
+echo "Next:    npm run release:tag -- $NEW"
