@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ── check ──────────────────────────────────────────────────────────────────────
-# Pre-push development check. Mirrors exactly what the CI `verify` job does.
+# Pre-push development check. Mirrors the CI `verify` job exactly.
 # Run this before pushing to main.
 #
 # Each step delegates to an npm script so the same atomic commands work both
@@ -37,12 +37,22 @@ npm run test:tauri --silent
 ok "tests (tauri)"
 
 echo "  → deny"
-if command -v cargo-deny &>/dev/null; then
-  cargo-deny check
-  ok "deny"
-else
-  echo "     (skipped — cargo-deny not installed; run: cargo install cargo-deny --locked)"
+if ! command -v cargo-deny &>/dev/null; then
+  die "cargo-deny not found — install it: cargo install cargo-deny --locked"
 fi
+cargo-deny check
+ok "deny"
+
+echo "  → audit:rust"
+if ! command -v cargo-audit &>/dev/null; then
+  die "cargo-audit not found — install it: cargo install cargo-audit --locked"
+fi
+cargo audit
+ok "audit:rust"
+
+echo "  → audit:npm"
+npm audit --audit-level=high
+ok "audit:npm"
 
 echo "  → bench:smoke"
 npm run bench:smoke --silent
