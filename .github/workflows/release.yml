@@ -38,6 +38,7 @@ jobs:
     name: Build Node native (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     needs: create-release
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -71,9 +72,11 @@ jobs:
 
       - name: Install cross-compile tools (aarch64 Linux)
         if: matrix.cross && runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          sudo apt-get update -q
+          sudo apt-get install -y -q gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
       - name: Build native addon
         working-directory: packages/iroh-http-node
@@ -102,6 +105,7 @@ jobs:
     name: Build Deno native (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     needs: create-release
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -138,9 +142,11 @@ jobs:
 
       - name: Install cross-compile tools (aarch64 Linux)
         if: matrix.cross && runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          sudo apt-get update -q
+          sudo apt-get install -y -q gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
       - name: Build
         run: cargo build --release -p iroh-http-deno --target ${{ matrix.target }}
