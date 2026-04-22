@@ -5,219 +5,112 @@
 [![JSR](https://jsr.io/badges/@momics/iroh-http-deno)](https://jsr.io/@momics/iroh-http-deno)
 [![crates.io](https://img.shields.io/crates/v/iroh-http-core)](https://crates.io/crates/iroh-http-core)
 
-> **⚠ Experimental — pre-v1.0.** APIs will change between releases. Not recommended for production use yet. Feedback and bug reports welcome.
+> Pre-v1.0 — APIs may change between minor releases.
 
-Peer-to-peer HTTP — fetch and serve between devices using [Iroh](https://iroh.computer) QUIC transport. No servers, no DNS, no TLS certificates. Nodes are addressed by public key.
-
-## How is this different from regular HTTP?
-
-Regular HTTP needs infrastructure: a server with a public IP, DNS records, TLS certificates. A client connects to a server — never the other way around.
-
-iroh-http replaces all of that with a **public key**. Every device gets a permanent cryptographic identity. Two devices that know each other's public key can connect directly — peer-to-peer, through NATs, without a server in between.
-
-| | Regular HTTP | iroh-http |
-|---|---|---|
-| **Addressing** | Domain name → IP address (DNS) | Public key (Ed25519) |
-| **Identity** | TLS certificate from a CA | Keypair you generate locally |
-| **Connection** | Client → server only | Any node → any node |
-| **NAT traversal** | Not possible | Built-in (Iroh relay + hole-punching) |
-| **Discovery** | DNS | Relay, DNS, or local mDNS |
-| **Encryption** | TLS (certificate-based) | QUIC (key-based, always on) |
-
-### Why `createNode()`?
-
-In regular HTTP, `fetch()` is a global — the browser or runtime manages the network socket for you. In iroh-http, each node has its own cryptographic identity and QUIC endpoint (like a personal mini-server), so you create one explicitly:
-
-```ts
-const node = await createNode();         // generates a new keypair
-console.log(node.publicKey.toString());  // this is your "address"
-```
-
-The node can both **send and receive** — `fetch()` and `serve()` share the same identity and the same UDP socket. You can persist the keypair to keep the same address across restarts:
-
-```ts
-const node = await createNode({ key: savedKey }); // same public key every time
-```
-
-### Web-standard API
-
-The `fetch()` and `serve()` APIs use standard `Request` and `Response` objects. If you know how to write a `fetch()` call or a request handler, you already know how to use iroh-http. Libraries that work with standard `Request`/`Response` (routing, middleware, body parsers) should work unchanged.
-
-### What doesn't work
-
-- **Browsers** — iroh-http requires raw UDP sockets, which browsers don't expose. A browser-compatible path via WebTransport is a future goal.
-- **Existing HTTP servers/CDNs** — you can't `fetch("https://google.com")` through iroh-http. It's a separate network addressed by public key, not domain names.
-
-## How it works
-
-```
-  ┌──────────┐   QUIC (Iroh)    ┌──────────┐
-  │  Node A  │◄────────────────►│  Node B  │
-  └──────────┘                  └──────────┘
-  fetch("/api")                 serve(handler)
-```
-
-Nodes find each other via [Iroh's](https://iroh.computer) relay network or local mDNS discovery. Every connection is end-to-end authenticated using Ed25519 public keys.
-
-> **Security**: Any peer that knows your node's public key can connect and send requests. Iroh QUIC authenticates peer *identity* cryptographically, but not *authorization*. Use `req.headers.get('Peer-Id')` in your handler to implement allowlists or other access control.
-
-> **Built on [Iroh](https://iroh.computer)** — a networking library for connecting devices directly. Iroh handles NAT traversal, relay fallback, and encrypted QUIC transport so iroh-http can focus on the HTTP layer. See the [Iroh documentation](https://iroh.computer/docs) to learn more.
-
-## Quick start
-
-### Node.js
+`fetch()` and `serve()` over [Iroh](https://iroh.computer) QUIC. Peers are addressed by Ed25519 public key; no DNS, no certificates, NAT traversal built in.
 
 ```sh
 npm install @momics/iroh-http-node
 ```
 
+**Serve:**
+
 ```ts
 import { createNode } from "@momics/iroh-http-node";
 
-// Node A — share its public key with Node B out-of-band (e.g. console, QR code, config file)
-const nodeA = await createNode();
-console.log("Node A ID:", nodeA.publicKey.toString());
+const node = await createNode();
+console.log(node.publicKey.toString()); // give this to peers
 
-const ALLOWED_PEERS = new Set(["<node-b-public-key>"]);
-nodeA.serve({}, (req) => {
-  // serve() opens a public endpoint: any peer that knows your public key can connect.
-  // Always check Peer-Id to restrict access to known peers.
-  const peerId = req.headers.get("Peer-Id");
-  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
-  return new Response("hello from iroh-http!");
-});
-
-// Node B — connect using Node A's public key
-const nodeB = await createNode();
-const res = await nodeB.fetch(nodeA.publicKey.toString(), "/hello");
-console.log(await res.text()); // "hello from iroh-http!"
-
-await nodeA.close();
-await nodeB.close();
+node.serve({}, (req) => new Response("hello"));
 ```
 
-### Deno
+**Fetch:**
+
+```ts
+import { createNode } from "@momics/iroh-http-node";
+
+const node = await createNode();
+const res = await node.fetch("<peer-public-key>", "/");
+console.log(await res.text()); // "hello"
+await node.close();
+```
+
+Each node owns a QUIC endpoint and a keypair. `createNode()` is explicit because there is no ambient socket — a node can both send and receive:
+
+```ts
+const node = await createNode();        // ephemeral keypair
+const node = await createNode({ key }); // stable identity across restarts
+```
+
+Iroh authenticates *who* is connecting, not *whether they should*. If you need access control, gate on the injected `Peer-Id` header:
+
+```ts
+node.serve({}, (req) => {
+  if (req.headers.get("Peer-Id") !== TRUSTED_KEY)
+    return new Response("Forbidden", { status: 403 });
+  return new Response("ok");
+});
+```
+
+Browsers are not supported (raw UDP required). This is not a proxy for public HTTP — peers are addressed by key, not by hostname.
+
+## Deno / Tauri
 
 ```sh
 deno add jsr:@momics/iroh-http-deno
+npm install @momics/iroh-http-tauri   # Tauri v2 plugin
 ```
 
-```ts
-import { createNode } from "jsr:@momics/iroh-http-deno";
-
-const nodeA = await createNode();
-console.log("Node A ID:", nodeA.publicKey.toString());
-
-const ALLOWED_PEERS = new Set(["<node-b-public-key>"]);
-nodeA.serve({}, (req) => {
-  const peerId = req.headers.get("Peer-Id");
-  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
-  return new Response("hello");
-});
-
-const nodeB = await createNode();
-const res = await nodeB.fetch(nodeA.publicKey.toString(), "/hello");
-console.log(await res.text());
-```
-
-### Tauri
-
-```sh
-npm install @momics/iroh-http-tauri
-```
-
-```ts
-import { createNode } from "@momics/iroh-http-tauri";
-
-const node = await createNode();
-
-const ALLOWED_PEERS = new Set(["<known-peer-public-key>"]);
-node.serve({}, (req) => {
-  const peerId = req.headers.get("Peer-Id");
-  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
-  return new Response("hello");
-});
-```
-
-## Features
-
-- **Web-standard `fetch`/`serve` API** — uses standard `Request`/`Response` objects; works with existing routing and middleware libraries
-- **`httpi://` URL scheme** — clean, parseable URLs with the peer's public key as the host (see [Protocol docs](docs/protocol.md))
-- **Bidirectional streaming** — full-duplex streams via `createBidirectionalStream`
-- **AbortSignal** — cancel in-flight requests
-- **mDNS discovery** — find peers on the local network automatically
-- **Mobile lifecycle** — reconnect on app resume (Tauri)
-- **Multi-platform** — Node.js, Deno, Tauri (desktop + mobile)
+The API is identical across runtimes.
 
 ## Architecture
 
 ```
-iroh-http-core (Rust)       — QUIC transport, HTTP framing (via hyper)
+iroh-http-core (Rust)       — QUIC transport, HTTP framing (hyper)
 iroh-http-discovery (Rust)  — optional mDNS (feature = "mdns")
-iroh-http-shared (TS)       — shared Bridge interface + error types
+iroh-http-adapter (Rust)    — shared FFI adapter layer
+iroh-http-shared (TS)       — Bridge interface + error types
 iroh-http-node (napi-rs)    — Node.js native addon
 iroh-http-tauri (Tauri v2)  — Tauri plugin
 iroh-http-deno (FFI)        — Deno native library
 ```
 
-See the [docs/](docs/) folder for architecture details and the [examples/](examples/) folder for runnable demos.
+See [docs/](docs/) and [examples/](examples/).
 
 ## Development
 
-All commands run from the repository root via npm scripts:
-
 ```sh
-npm install                # install workspace dependencies (once)
+npm install
 
-npm run check              # fast typecheck: cargo check + tsc (no linking)
-npm run lint               # cargo fmt --check + clippy
-npm run build              # build everything: Rust, TypeScript, Node, Deno, Tauri
-npm run test               # test everything: Rust, Node e2e, Deno, cross-runtime interop
+npm run check    # cargo check + tsc
+npm run lint     # cargo fmt --check + clippy
+npm run build    # build everything
+npm run test     # test everything
 ```
 
-### Build & test individual platforms
-
 ```sh
-npm run build:core         # Rust workspace only (release)
-npm run build:node         # Node.js native addon (current platform)
-npm run build:deno         # Deno native library (current platform)
-npm run build:tauri        # Tauri plugin TypeScript
-npm run build:all          # all platforms (cross-compile, needs zigbuild)
-
-npm run test:rust          # cargo test (unit + integration + property tests)
-npm run test:node          # Node.js smoke + e2e + compliance
-npm run test:deno          # Deno smoke + compliance
-npm run test:interop       # cross-runtime compliance (node ↔ deno)
+npm run build:core    npm run build:node    npm run build:deno    npm run build:tauri
+npm run test:rust     npm run test:node     npm run test:deno     npm run test:interop
 ```
 
-### Release
+## Release
 
-Create a git tag — CI builds all binaries and publishes to npm, JSR, and crates.io automatically:
+Tag a commit. CI builds 10 native targets and publishes to npm, JSR, and crates.io.
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
-Watch the progress under [Actions → Release](https://github.com/Momics/iroh-http/actions/workflows/release.yml). For manual/local release steps, see [scripts/README.md](scripts/README.md).
+Progress: [Actions → Build](https://github.com/Momics/iroh-http/actions/workflows/build.yml).
 
 ## Acknowledgements
 
-iroh-http is built on top of [Iroh](https://iroh.computer) by [n0, inc.](https://n0.computer) Iroh provides the QUIC transport, NAT traversal, relay infrastructure, and peer identity that make serverless peer-to-peer HTTP possible.
+Built on [Iroh](https://iroh.computer) by [n0](https://n0.computer).
 
 ## License
 
-Licensed under either of
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
+Apache-2.0 or MIT — see [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Security
-
-For private vulnerability disclosure instructions, see [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
