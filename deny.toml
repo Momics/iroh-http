@@ -11,6 +11,110 @@ multiple-versions = "warn"
 # workspace-internal path dependencies (which cannot carry a version field)
 # as wildcards, producing false positives for every monorepo crate.
 
+# ── Known iroh-internal duplicate suppressions ────────────────────────────────
+#
+# All entries below are caused by two splits inside iroh's own transitive graph
+# that we cannot resolve:
+#
+#   Split 1 — reqwest 0.12 vs 0.13:
+#     iroh v0.96.1 uses reqwest v0.12 directly.
+#     iroh v0.96.1 → pkarr v5.0.4 → reqwest v0.13 (pkarr migrated; iroh hasn't).
+#     reqwest v0.13 pulls in rustls-platform-verifier → jni v0.21.1 which still
+#     depends on windows-sys v0.45 / windows-targets v0.42. jni v0.22 fixes this
+#     but rustls-platform-verifier hasn't bumped yet.
+#
+#   Split 2 — ring → windows-sys v0.52:
+#     iroh-quinn-proto → ring v0.17 → windows-sys v0.52 / windows-targets v0.52.
+#
+#   Split 3 — netdev → windows-sys v0.59/v0.61:
+#     iroh → netdev v0.40 → windows-sys v0.59/v0.61.
+#
+# When any of these upstream crates align their windows-sys dependency the
+# skip entries below can be removed.
+
+# reqwest — iroh uses 0.12, pkarr (via iroh) requires 0.13
+[[bans.skip]]
+name = "reqwest"
+reason = "iroh uses 0.12 directly; pkarr (iroh transitive) requires 0.13 — upstream split"
+
+# windows-sys — three generations pulled by jni (0.45), ring (0.52), netdev (0.59/0.61)
+[[bans.skip]]
+name = "windows-sys"
+reason = "jni@0.21→0.45, ring→0.52, netdev→0.59/0.61 — all iroh transitive; unfixable by us"
+
+[[bans.skip]]
+name = "windows-targets"
+reason = "follows windows-sys split: 0.42 via jni, 0.52 via ring"
+
+[[bans.skip]]
+name = "windows_i686_gnu"
+reason = "windows-targets 0.42/0.52 split — iroh transitive"
+
+[[bans.skip]]
+name = "windows_i686_msvc"
+reason = "windows-targets 0.42/0.52 split — iroh transitive"
+
+[[bans.skip]]
+name = "windows_x86_64_gnu"
+reason = "windows-targets 0.42/0.52 split — iroh transitive"
+
+[[bans.skip]]
+name = "windows_x86_64_gnullvm"
+reason = "windows-targets 0.42/0.52 split — iroh transitive"
+
+[[bans.skip]]
+name = "windows_x86_64_msvc"
+reason = "windows-targets 0.42/0.52 split — iroh transitive"
+
+[[bans.skip]]
+name = "windows_aarch64_gnullvm"
+reason = "windows-targets 0.42/0.52 split — iroh transitive"
+
+[[bans.skip]]
+name = "windows_aarch64_msvc"
+reason = "windows-targets 0.42/0.52 split — iroh transitive"
+
+# Other iroh-transitive duplicates
+[[bans.skip]]
+name = "thiserror"
+reason = "thiserror 1.x and 2.x coexist across iroh's dep tree — upstream migration in progress"
+
+[[bans.skip]]
+name = "thiserror-impl"
+reason = "proc-macro companion to thiserror 1.x/2.x split"
+
+[[bans.skip]]
+name = "hashbrown"
+reason = "multiple versions (0.14/0.16/0.17) pulled by different iroh transitive deps"
+
+[[bans.skip]]
+name = "getrandom"
+reason = "0.2/0.3/0.4 coexist across iroh + ring + rand transitive deps"
+
+[[bans.skip]]
+name = "cpufeatures"
+reason = "0.2/0.3 coexist across ring and other crypto libs in iroh"
+
+[[bans.skip]]
+name = "spin"
+reason = "0.9/0.10 split across iroh transitive deps"
+
+[[bans.skip]]
+name = "convert_case"
+reason = "0.6/0.10 split across iroh transitive deps (proc-macro crates)"
+
+[[bans.skip]]
+name = "r-efi"
+reason = "5.x/6.x split across iroh transitive deps"
+
+[[bans.skip]]
+name = "netlink-packet-route"
+reason = "0.28/0.29 split across iroh transitive deps"
+
+[[bans.skip]]
+name = "vergen-lib"
+reason = "0.1/9.x split in vergen build tooling — iroh transitive"
+
 [licenses]
 allow = [
   "Apache-2.0",
