@@ -11,7 +11,7 @@ name: Publish
 
 on:
   workflow_run:
-    workflows: ["Release"]
+    workflows: ["Build"]
     types: [completed]
   workflow_dispatch:
     inputs:
