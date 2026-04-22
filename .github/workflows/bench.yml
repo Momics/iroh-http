@@ -1,18 +1,29 @@
 name: Benchmarks
 
+# Benchmarks are temporarily disabled because the workflow hangs on
+# the current runner configuration. Re-enable once the bench setup is
+# revisited (tracked in: TODO — re-enable bench.yml).
+# To run manually in the meantime: comment out the `if: false` below
+# and trigger via workflow_dispatch from the Actions tab.
+
 on:
-  push:
-    tags:
-      - 'v*.*.*'
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/skills/**'
-      - '.vscode/**'
-      - 'CHANGELOG.md'
-      - 'LICENSE*'
   workflow_dispatch:
+
+# Disabled: tag-triggered runs hang. Re-enable with the push trigger
+# once the benchmark runner and smoke-test timeout issues are resolved.
+# on:
+#   push:
+#     tags:
+#       - 'v*.*.*'
+#     paths-ignore:
+#       - 'docs/**'
+#       - '**.md'
+#       - '.github/ISSUE_TEMPLATE/**'
+#       - '.github/skills/**'
+#       - '.vscode/**'
+#       - 'CHANGELOG.md'
+#       - 'LICENSE*'
+#   workflow_dispatch:
 
 concurrency:
   group: bench-${{ github.workflow }}-${{ github.ref }}
