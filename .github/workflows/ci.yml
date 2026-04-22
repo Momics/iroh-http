@@ -60,7 +60,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install Tauri system dependencies
         run: |
@@ -151,7 +151,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x

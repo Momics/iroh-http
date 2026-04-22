@@ -40,7 +40,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
       - run: npm ci
       - name: Build shared + node adapter
         run: |
@@ -153,7 +153,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
       - name: Run Criterion benches
         run: |
           cargo bench -p iroh-http-core --bench throughput

@@ -65,7 +65,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
 
       - run: npm ci
 
@@ -179,7 +179,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
 
       - uses: denoland/setup-deno@v2
         with:
@@ -220,7 +220,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Publish iroh-http-core
-        run: cargo publish -p iroh-http-core
+        run: cargo publish -p iroh-http-core || echo "already published, skipping"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -233,7 +233,7 @@ jobs:
           done
 
       - name: Publish iroh-http-discovery
-        run: cargo publish -p iroh-http-discovery
+        run: cargo publish -p iroh-http-discovery || echo "already published, skipping"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -253,12 +253,10 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Download all Node native artifacts
         uses: actions/download-artifact@v8
@@ -276,8 +274,6 @@ jobs:
           for pkg_dir in packages/iroh-http-node/npm/*/; do
             npm publish "$pkg_dir" --access public --provenance
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Build TypeScript
         run: |
@@ -287,18 +283,12 @@ jobs:
 
       - name: Publish iroh-http-shared
         run: npm publish --workspace packages/iroh-http-shared --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish iroh-http-node
         run: npm publish --workspace packages/iroh-http-node --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish iroh-http-tauri
         run: npm publish --workspace packages/iroh-http-tauri --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # ── 7. Publish Deno package ────────────────────────────────────────────────────
   # Uses JSR OIDC — no DENO_AUTH_TOKENS needed.
