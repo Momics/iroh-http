@@ -255,6 +255,17 @@ export declare function waitEndpointClosed(endpointHandle: number): Promise<void
  * Returns an opaque session handle.
  */
 export declare function sessionConnect(endpointHandle: number, nodeId: string, directAddrs?: Array<string> | undefined | null): Promise<bigint>
+/**
+ * Accept an incoming session (QUIC connection) from a remote peer.
+ *
+ * Blocks until a peer connects or the endpoint shuts down.  Returns
+ * `{ sessionHandle, nodeId }` on success, or `null` when the endpoint is closed.
+ */
+export interface JsSessionAccepted {
+  sessionHandle: bigint
+  nodeId: string
+}
+export declare function sessionAccept(endpointHandle: number): Promise<JsSessionAccepted | null>
 /** Open a new bidirectional stream on an existing session. */
 export interface JsSessionBidiStream {
   readHandle: bigint

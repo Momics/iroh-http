@@ -452,11 +452,7 @@ test("serve + fetch — 100 concurrent requests return correct bodies", async ()
   }
 });
 
-// ── Session (QUIC WebTransport sessions) ─────────────────────────────────────
-//
-// Full bidi/datagram roundtrip requires `acceptSession` to be exposed on the
-// public JS API (so the server side can retrieve the accepted QUIC session).
-// Until then these tests cover the session client-side lifecycle.
+// ── Sessions (raw QUIC) ───────────────────────────────────────────────────────
 
 test("session — connect() to live endpoint resolves with IrohSession", async () => {
   const server = await createNode();
@@ -602,6 +598,47 @@ test("session — close() is safe to call multiple times", async () => {
     await client.close();
   }
 });
+
+test(
+  "sessions — yields IrohSession when peer calls node.connect()",
+  { timeout: 20_000 },
+  async () => {
+    const server = await createNode({ bindAddr: "0.0.0.0:0" });
+    const client = await createNode({ bindAddr: "0.0.0.0:0" });
+    const ac = new AbortController();
+
+    try {
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      const { id: clientId } = await client.addr();
+
+      // Accept the first incoming session in the background.
+      const serverSessionPromise = (async () => {
+        for await (const session of server.sessions({ signal: ac.signal })) {
+          return session;
+        }
+        return null;
+      })();
+
+      const clientSession = await client.connect(serverId, {
+        directAddrs: serverAddrs,
+      });
+      const serverSession = await serverSessionPromise;
+
+      assert.ok(serverSession !== null, "server should have accepted a session");
+      assert.equal(
+        serverSession.remoteId.toString(),
+        clientId,
+        "server session remoteId must match client publicKey",
+      );
+
+      clientSession.close();
+    } finally {
+      ac.abort();
+      await server.close();
+      await client.close();
+    }
+  },
+);
 
 // ── EventTarget / transport events ───────────────────────────────────────────
 

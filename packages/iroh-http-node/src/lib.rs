@@ -1181,6 +1181,35 @@ pub async fn session_connect(
     Ok(handle)
 }
 
+/// Accept an incoming session (QUIC connection) from a remote peer.
+///
+/// Blocks until a peer connects or the endpoint shuts down.  Returns
+/// `{ sessionHandle, nodeId }` on success, or `null` when the endpoint is closed.
+#[napi(object)]
+pub struct JsSessionAccepted {
+    pub session_handle: BigInt,
+    pub node_id: String,
+}
+
+#[napi]
+pub async fn session_accept(endpoint_handle: u32) -> napi::Result<Option<JsSessionAccepted>> {
+    let ep = get_endpoint(endpoint_handle)?;
+    let handle = match iroh_http_core::session_accept(&ep)
+        .await
+        .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?
+    {
+        Some(h) => h,
+        None => return Ok(None),
+    };
+    let node_id = iroh_http_core::session_remote_id(&ep, handle)
+        .map(|pk| iroh_http_core::base32_encode(pk.as_bytes()))
+        .unwrap_or_default();
+    Ok(Some(JsSessionAccepted {
+        session_handle: BigInt::from(handle),
+        node_id,
+    }))
+}
+
 /// Open a new bidirectional stream on an existing session.
 #[napi(object)]
 pub struct JsSessionBidiStream {

@@ -29,6 +29,7 @@ import {
   rawServe as napiRawServe,
   sessionClosed as napiSessionClosed,
   sessionCloseHandle as napiSessionClose,
+  sessionAccept as napiSessionAccept,
   sessionConnect as napiSessionConnect,
   sessionCreateBidiStream as napiSessionCreateBidiStream,
   sessionCreateUniStream as napiSessionCreateUniStream,
@@ -103,6 +104,11 @@ class NodeAdapter extends IrohAdapter {
     this.#sessionFns = {
       connect: async (epHandle, nodeId, directAddrs) =>
         napiSessionConnect(epHandle, nodeId, directAddrs ?? undefined),
+      sessionAccept: async (epHandle) => {
+        const res = await napiSessionAccept(epHandle);
+        if (res === null) return null;
+        return { sessionHandle: res.sessionHandle, nodeId: res.nodeId };
+      },
       createBidiStream: async (sessionHandle) => {
         const ffi = await napiSessionCreateBidiStream(eh, sessionHandle);
         return {
