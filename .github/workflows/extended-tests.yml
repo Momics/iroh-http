@@ -1,0 +1,87 @@
+name: Extended tests
+
+on:
+  push:
+    branches: [main, test-suite-expansion]
+    paths:
+      - 'tests/**'
+      - 'packages/**'
+      - 'crates/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/**'
+      - 'packages/**'
+      - 'crates/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extended-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  test-node:
+    name: "Node.js — ${{ matrix.category }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        category: [lifecycle, errors, stress, events, sessions]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - run: npm ci --omit=optional
+
+      - name: Build native libs
+        run: cargo build --profile ci -p iroh-http-node
+
+      - name: Build shared TypeScript
+        run: npm run build --workspace=packages/iroh-http-shared
+
+      - name: Build Node binding
+        run: |
+          cd packages/iroh-http-node
+          npx napi build --platform --profile ci
+          npx tsc --skipLibCheck
+
+      - name: Run ${{ matrix.category }} tests
+        run: node tests/${{ matrix.category }}/test-node.mjs
+
+  test-deno:
+    name: "Deno — ${{ matrix.category }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        category: [lifecycle, errors, stress, events, sessions]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Build native libs
+        run: cargo build --profile ci -p iroh-http-deno
+
+      - name: Copy Deno native lib
+        run: |
+          mkdir -p packages/iroh-http-deno/lib
+          cp target/ci/libiroh_http_deno.so \
+             packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
+
+      - name: Run ${{ matrix.category }} tests
+        run: deno run -A tests/${{ matrix.category }}/test-deno.ts

@@ -15,7 +15,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 RUN_NODE=true
 RUN_DENO=true
-CATEGORIES="http-compliance,lifecycle,errors,stress"
+CATEGORIES="http-compliance,lifecycle,errors,stress,events,sessions"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -65,6 +65,14 @@ run_test() {
         cd "$ROOT_DIR/node"
         node "$SCRIPT_DIR/stress/test-node.mjs" || exit_code=$?
         ;;
+      events)
+        cd "$ROOT_DIR/node"
+        node "$SCRIPT_DIR/events/test-node.mjs" || exit_code=$?
+        ;;
+      sessions)
+        cd "$ROOT_DIR/node"
+        node "$SCRIPT_DIR/sessions/test-node.mjs" || exit_code=$?
+        ;;
       *)
         echo "  Unknown category: $category" >&2
         return
@@ -84,6 +92,12 @@ run_test() {
         ;;
       stress)
         deno run -A "$SCRIPT_DIR/stress/test-deno.ts" || exit_code=$?
+        ;;
+      events)
+        deno run -A "$SCRIPT_DIR/events/test-deno.ts" || exit_code=$?
+        ;;
+      sessions)
+        deno run -A "$SCRIPT_DIR/sessions/test-deno.ts" || exit_code=$?
         ;;
       *)
         echo "  Unknown category: $category" >&2

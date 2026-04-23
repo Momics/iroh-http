@@ -192,6 +192,42 @@ test("fetch response body can be read as arrayBuffer", async () => {
   await client.close();
 });
 
+// ── Key persistence ─────────────────────────────────────────────────────────
+
+test("createNode with saved key produces same publicKey", async () => {
+  const node1 = await createNode();
+  const savedKey = node1.secretKey.toBytes();
+  const pk1 = node1.publicKey.toString();
+  await node1.close();
+
+  const node2 = await createNode({ key: savedKey });
+  const pk2 = node2.publicKey.toString();
+  assertEqual(pk1, pk2, "publicKey after key restore");
+  await node2.close();
+});
+
+test("createNode with Uint8Array key works", async () => {
+  const key = new Uint8Array(32).fill(0xab);
+  const node1 = await createNode({ key });
+  const pk1 = node1.publicKey.toString();
+  await node1.close();
+
+  const node2 = await createNode({ key });
+  const pk2 = node2.publicKey.toString();
+  assertEqual(pk1, pk2, "same Uint8Array key → same publicKey");
+  await node2.close();
+});
+
+// ── Ticket ──────────────────────────────────────────────────────────────────
+
+test("node.ticket() returns a non-empty string", async () => {
+  const node = await createNode();
+  const ticket = await node.ticket();
+  assert(typeof ticket === "string", "ticket is not a string");
+  assert(ticket.length > 20, `ticket too short: ${ticket.length}`);
+  await node.close();
+});
+
 // ── Create/close cycles ─────────────────────────────────────────────────────
 
 test("10 sequential create/close cycles", async () => {
