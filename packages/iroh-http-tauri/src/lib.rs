@@ -46,6 +46,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::mdns_advertise,
             commands::mdns_advertise_close,
             commands::session_connect,
+            commands::session_accept,
             commands::session_create_bidi_stream,
             commands::session_next_bidi_stream,
             commands::session_close,

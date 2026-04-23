@@ -321,6 +321,14 @@ function makeTauriSessionFns(epHandle: number): RawSessionFns {
         },
       }).then(BigInt);
     },
+    sessionAccept: async (endpointHandle) => {
+      const res = await invoke<{ sessionHandle: number; nodeId: string } | null>(
+        `${PLUGIN}|session_accept`,
+        { endpointHandle: Number(endpointHandle) },
+      );
+      if (res === null) return null;
+      return { sessionHandle: BigInt(res.sessionHandle), nodeId: res.nodeId };
+    },
     createBidiStream: async (sessionHandle) => {
       const res = await invoke<{ readHandle: number; writeHandle: number }>(
         `${PLUGIN}|session_create_bidi_stream`,

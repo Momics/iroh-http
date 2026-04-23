@@ -755,6 +755,32 @@ Denies the serve command without any pre-configured scope.
 <tr>
 <td>
 
+`iroh-http:allow-session-accept`
+
+</td>
+<td>
+
+Enables the session_accept command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-session-accept`
+
+</td>
+<td>
+
+Denies the session_accept command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `iroh-http:allow-session-close`
 
 </td>

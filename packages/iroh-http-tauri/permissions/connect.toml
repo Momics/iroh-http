@@ -6,6 +6,7 @@ description = "Enables raw QUIC sessions — bidirectional streams and datagrams
 permissions = [
   "allow-connect",
   "allow-session-connect",
+  "allow-session-accept",
   "allow-session-close",
   "allow-session-closed",
   "allow-session-create-bidi-stream",

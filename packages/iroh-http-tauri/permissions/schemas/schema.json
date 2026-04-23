@@ -631,6 +631,18 @@
           "markdownDescription": "Denies the serve command without any pre-configured scope."
         },
         {
+          "description": "Enables the session_accept command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-accept",
+          "markdownDescription": "Enables the session_accept command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_accept command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-accept",
+          "markdownDescription": "Denies the session_accept command without any pre-configured scope."
+        },
+        {
           "description": "Enables the session_close command without any pre-configured scope.",
           "type": "string",
           "const": "allow-session-close",

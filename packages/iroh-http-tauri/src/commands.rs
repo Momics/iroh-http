@@ -737,6 +737,38 @@ pub struct SessionBidiStreamPayload {
     pub write_handle: u64,
 }
 
+/// Accept the next incoming session (QUIC connection) from a remote peer.
+///
+/// Blocks until a peer connects or the endpoint shuts down. Returns
+/// `{ sessionHandle, nodeId }` on success, or `null` when the endpoint is closed.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionAcceptedPayload {
+    pub session_handle: u64,
+    pub node_id: String,
+}
+
+#[command]
+pub async fn session_accept(endpoint_handle: u64) -> Result<Option<SessionAcceptedPayload>, String> {
+    let ep = state::get_endpoint(endpoint_handle).ok_or_else(|| {
+        format_error_json(
+            "INVALID_HANDLE",
+            format!("invalid endpoint handle: {endpoint_handle}"),
+        )
+    })?;
+    let handle = match iroh_http_core::session_accept(&ep)
+        .await
+        .map_err(|e| core_error_to_json(&e))?
+    {
+        Some(h) => h,
+        None => return Ok(None),
+    };
+    let node_id = iroh_http_core::session_remote_id(&ep, handle)
+        .map(|pk| iroh_http_core::base32_encode(pk.as_bytes()))
+        .unwrap_or_default();
+    Ok(Some(SessionAcceptedPayload { session_handle: handle, node_id }))
+}
+
 /// Open a new bidirectional stream on an existing session.
 #[command]
 pub async fn session_create_bidi_stream(
