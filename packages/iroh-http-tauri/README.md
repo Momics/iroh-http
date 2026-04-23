@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@momics/iroh-http-tauri)](https://www.npmjs.com/package/@momics/iroh-http-tauri)
 
-> **Experimental** — This package is in an early, unstable state. APIs may change or break without notice between any releases. Do not depend on it for production use.
+> Pre-v1.0 — APIs may change between minor releases.
 
 Tauri v2 plugin for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer HTTP over [Iroh](https://iroh.computer) QUIC transport.
 
@@ -20,7 +20,7 @@ Add the Rust plugin to your Tauri app's `Cargo.toml`:
 
 ```toml
 [dependencies]
-tauri-plugin-iroh-http = { path = "path/to/packages/iroh-http-tauri" }
+tauri-plugin-iroh-http = "0.2"
 ```
 
 Register in `src-tauri/src/lib.rs`:
