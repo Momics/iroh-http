@@ -53,14 +53,6 @@ export type ServeHandler = (req: Request) => Response | Promise<Response>;
  */
 export interface ServeOptions {
   /**
-   * Called once when the serve loop is ready to accept connections.
-   *
-   * Iroh binds during `createNode`, not during `serve`, so the loop is
-   * immediately live after `serve()` returns.
-   */
-  onListen?: (info: { nodeId: string }) => void;
-
-  /**
    * Called when a request handler throws or rejects.
    *
    * The returned `Response` is sent to the client.  If this callback also
@@ -94,11 +86,6 @@ export interface ServeOptions {
    */
   onPeerDisconnect?: (peerId: string) => void;
 
-  /**
-   * Inline handler — allows the single-argument `serve({ handler })` form.
-   * Mutually exclusive with passing `handler` as the second argument.
-   */
-  handler?: ServeHandler;
 }
 
 /**
@@ -113,16 +100,14 @@ export interface ServeHandle {
 }
 
 /**
- * Three overloaded call signatures for `serve()`:
+ * Two overloaded call signatures for `serve()`:
  *
  * 1. `serve(handler)` — handler only (most common).
- * 2. `serve(options, handler)` — options + handler.
- * 3. `serve(optionsWithHandler)` — handler inside options object.
+ * 2. `serve(options, handler)` — options + separate handler argument.
  */
 export type ServeFn = {
   (handler: ServeHandler): ServeHandle;
   (options: ServeOptions, handler: ServeHandler): ServeHandle;
-  (options: ServeOptions & { handler: ServeHandler }): ServeHandle;
 };
 
 /**
@@ -180,16 +165,6 @@ export function makeServe(
       // serve(options, handler)
       options = (args[0] as ServeOptions) ?? {};
       handler = args[1] as ServeHandler;
-    } else if (
-      args.length === 1 && typeof args[0] === "object" && args[0] !== null
-    ) {
-      // serve({ handler, ...options })
-      const opts = args[0] as ServeOptions & { handler: ServeHandler };
-      if (typeof opts.handler !== "function") {
-        throw new TypeError("serve() requires a handler function");
-      }
-      handler = opts.handler;
-      options = opts;
     } else {
       throw new TypeError("serve() requires a handler function");
     }
@@ -311,10 +286,6 @@ export function makeServe(
         };
       },
     );
-
-    // Fire onListen synchronously — iroh binds during createNode, so the
-    // serve loop is immediately live after rawServe returns.
-    options.onListen?.({ nodeId });
 
     // ISS-029 / #59 / #115: finished resolves when the serve loop actually terminates.
     // `loopDone` is the real loop-lifetime promise returned by rawServe():

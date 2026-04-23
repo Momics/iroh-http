@@ -1,29 +1,37 @@
 import type { SecretKey } from "../keys.js";
 
 /**
- * How to use the global Iroh relay network for NAT traversal.
+ * Named relay mode for the Iroh relay network.
  *
  * - `"default"` — use Iroh's public relay servers (recommended).
  * - `"staging"` — use Iroh's staging relay servers (testing only).
  * - `"disabled"` — direct QUIC only; connections fail if hole-punching is not possible.
- * - `string` — a single custom relay server URL.
- * - `string[]` — multiple custom relay server URLs.
+ * - Any other string — treated as a single custom relay server URL (see `relay.urls`).
+ *
+ * Use `relay.urls` when you need multiple custom relay URLs.
  */
-export type RelayMode = "default" | "staging" | "disabled" | (string & {}) | string[];
+export type RelayMode = "default" | "staging" | "disabled" | (string & {});
 
 export interface NodeOptions {
   /**
-   * Ed25519 identity for this node. Accepts a `SecretKey` instance or raw 32-byte
-   * key material as a `Uint8Array`. When omitted a fresh key is generated.
+   * Ed25519 identity for this node. Accepts a `SecretKey` instance or raw
+   * 32-byte key material as a `Uint8Array`. When omitted a fresh key is generated.
    */
   key?: SecretKey | Uint8Array;
 
-  /**
-   * Relay server configuration. Controls whether and how the node uses the Iroh
-   * relay network for NAT traversal.
-   * @default "default"
-   */
-  relayMode?: RelayMode;
+  /** Relay server configuration for NAT traversal. */
+  relay?: {
+    /**
+     * Which relay network to use.
+     * @default "default"
+     */
+    mode?: RelayMode;
+    /**
+     * One or more custom relay server URLs. When set, `mode` is ignored and
+     * these URLs are used exclusively as the relay server list.
+     */
+    urls?: string[];
+  };
 
   /**
    * Local socket address(es) the QUIC endpoint binds to.
@@ -31,13 +39,6 @@ export interface NodeOptions {
    * @default "0.0.0.0:0"
    */
   bindAddr?: string | string[];
-
-  /**
-   * QUIC idle timeout in milliseconds. Connections with no activity for this
-   * duration are closed. Set to `0` to disable.
-   * @default 30_000
-   */
-  idleTimeout?: number;
 
   /** Peer discovery backends. */
   discovery?: {
@@ -53,127 +54,85 @@ export interface NodeOptions {
     mdns?: boolean | { serviceName?: string };
   };
 
-  /**
-   * HTTP proxy URL for outbound relay connections, e.g. `"http://proxy:8080"`.
-   * Takes precedence over `proxyFromEnv`.
-   */
-  proxyUrl?: string;
-
-  /**
-   * When `true`, read proxy settings from the `HTTP_PROXY` / `HTTPS_PROXY`
-   * environment variables. Ignored when `proxyUrl` is set.
-   */
-  proxyFromEnv?: boolean;
-
-  /**
-   * Write TLS session keys to a keylog file for Wireshark capture.
-   * Reads the `SSLKEYLOGFILE` environment variable for the file path.
-   * Never enable in production.
-   */
-  keylog?: boolean;
-
-  /**
-   * Low-level Rust runtime knobs. Only touch these if you understand the
-   * internal request pipeline.
-   */
-  advanced?: {
+  /** HTTP proxy for outbound relay connections. */
+  proxy?: {
     /**
-     * Capacity of the internal mpsc channel that queues requests from the QUIC
-     * accept loop to the JS handler. Increase if you see dropped requests under
-     * burst load.
-     * @default 256
+     * Proxy URL, e.g. `"http://proxy:8080"`. Takes precedence over `fromEnv`.
      */
-    channelCapacity?: number;
-
+    url?: string;
     /**
-     * Maximum body chunk size in bytes for streaming request/response bodies
-     * over the FFI boundary.
+     * When `true`, read proxy settings from `HTTP_PROXY` / `HTTPS_PROXY`
+     * environment variables. Ignored when `url` is set.
+     */
+    fromEnv?: boolean;
+  };
+
+  /** Connection pool and concurrency limits. */
+  connections?: {
+    /**
+     * Maximum total active QUIC connections across all peers. New connections
+     * are rejected when the limit is reached.
+     * @default unlimited
+     */
+    maxTotal?: number;
+    /**
+     * Maximum simultaneous QUIC connections from a single peer. Additional
+     * connection attempts from that peer are rejected.
+     * @default unlimited
+     */
+    maxPerPeer?: number;
+    /**
+     * Maximum QUIC connections kept alive in the pool. Older idle connections
+     * are evicted when the limit is hit.
+     * @default 64
+     */
+    maxPooled?: number;
+    /**
+     * Maximum requests processed concurrently across the endpoint. Requests
+     * beyond this limit receive `503 Service Unavailable`.
+     * @default unlimited
+     */
+    maxConcurrency?: number;
+    /**
+     * QUIC idle timeout in milliseconds. Connections with no activity for this
+     * duration are closed. Set to `0` to disable.
+     * @default 30_000
+     */
+    idleTimeoutMs?: number;
+    /**
+     * Milliseconds before an idle pooled connection is dropped.
+     * @default 90_000
+     */
+    poolIdleTimeoutMs?: number;
+  };
+
+  /** Request size and timeout limits. */
+  limits?: {
+    /**
+     * Maximum request body size in bytes. Requests with larger bodies receive
+     * `413 Content Too Large`.
+     * @default 10_485_760 (10 MB)
+     */
+    maxRequestBodyBytes?: number;
+    /**
+     * Maximum total size of all request headers in bytes. Requests that exceed
+     * this limit receive `431 Request Header Fields Too Large`.
      * @default 65_536 (64 KB)
      */
-    maxChunkSizeBytes?: number;
-
+    maxHeaderBytes?: number;
     /**
-     * Milliseconds to wait for in-flight requests to complete during graceful
-     * shutdown before forcibly closing connections.
-     * @default 5_000
+     * Milliseconds before an outbound request is aborted with a timeout error.
+     * @default 30_000
      */
-    drainTimeout?: number;
-
-    /**
-     * Milliseconds before an idle body or request handle is evicted from the
-     * slab. Prevents handle leaks when callers fail to consume or cancel a body.
-     * @default 60_000
-     */
-    handleTtl?: number;
-
-    /**
-     * Maximum consecutive accept-loop errors before the serve loop gives up
-     * and terminates with an error.
-     * @default 10
-     */
-    maxConsecutiveErrors?: number;
+    requestTimeoutMs?: number;
   };
 
   /**
-   * Maximum number of QUIC connections kept alive in the connection pool
-   * across all peers. Older idle connections are evicted when the limit is hit.
-   * @default 64
-   */
-  maxPooledConnections?: number;
-
-  /**
-   * Milliseconds before an idle pooled connection is dropped.
-   * @default 90_000
-   */
-  poolIdleTimeoutMs?: number;
-
-  /**
    * Enable zstd response compression. Pass `true` to use defaults, or an
-   * object to tune the level and minimum body size.
+   * object to tune the compression level and minimum body size.
    * @default false
    */
   compression?: boolean | { level?: number; minBodyBytes?: number };
-
-  /**
-   * Maximum number of requests processed concurrently across the endpoint.
-   * Requests beyond this limit receive `503 Service Unavailable`.
-   * @default unlimited
-   */
-  maxConcurrency?: number;
-
-  /**
-   * Maximum number of simultaneous QUIC connections from a single peer.
-   * Additional connection attempts from the same peer are rejected.
-   * @default unlimited
-   */
-  maxConnectionsPerPeer?: number;
-
-  /**
-   * Milliseconds before an outbound request is aborted with a timeout error.
-   * @default 30_000
-   */
-  requestTimeout?: number;
-
-  /**
-   * Maximum request body size in bytes. Requests with larger bodies receive
-   * `413 Content Too Large`.
-   * @default 10_485_760 (10 MB)
-   */
-  maxRequestBodyBytes?: number;
-
-  /**
-   * Maximum total size of all request headers in bytes. Requests that exceed
-   * this limit receive `431 Request Header Fields Too Large`.
-   * @default 65_536 (64 KB)
-   */
-  maxHeaderBytes?: number;
-
-  /**
-   * Maximum total number of active QUIC connections across all peers.
-   * New connections are rejected when the limit is reached.
-   * @default unlimited
-   */
-  maxTotalConnections?: number;
 
   /** Automatic reconnect policy for outbound connections. */
   reconnect?: {
@@ -199,5 +158,51 @@ export interface NodeOptions {
      * @default false
      */
     transportEvents?: boolean;
+  };
+
+  /** Debugging tools. Never enable these in production. */
+  debug?: {
+    /**
+     * Write TLS session keys to a keylog file for Wireshark capture.
+     * Reads the `SSLKEYLOGFILE` environment variable for the file path.
+     */
+    keylog?: boolean;
+  };
+
+  /**
+   * Low-level Rust runtime knobs. Only touch these if you understand the
+   * internal request pipeline.
+   */
+  internals?: {
+    /**
+     * Capacity of the internal mpsc channel that queues requests from the QUIC
+     * accept loop to the JS handler. Increase if you see dropped requests under
+     * burst load.
+     * @default 256
+     */
+    channelCapacity?: number;
+    /**
+     * Maximum body chunk size in bytes for streaming request/response bodies
+     * over the FFI boundary.
+     * @default 65_536 (64 KB)
+     */
+    maxChunkSizeBytes?: number;
+    /**
+     * Milliseconds to wait for in-flight requests to complete during graceful
+     * shutdown before forcibly closing connections.
+     * @default 5_000
+     */
+    drainTimeout?: number;
+    /**
+     * Milliseconds before an idle body or request handle is evicted from the
+     * slab. Prevents handle leaks when callers fail to consume or cancel a body.
+     * @default 60_000
+     */
+    handleTtl?: number;
+    /**
+     * Maximum consecutive accept-loop errors before the serve loop terminates.
+     * @default 10
+     */
+    maxConsecutiveErrors?: number;
   };
 }

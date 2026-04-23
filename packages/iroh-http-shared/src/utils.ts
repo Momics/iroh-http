@@ -16,23 +16,23 @@ export interface NormalisedRelay {
 }
 
 /**
- * Normalise a {@link RelayMode} value into the shape expected by the Rust FFI
- * layer.
+ * Normalise a `relay` option group into the shape expected by the Rust FFI layer.
  */
-export function normaliseRelayMode(mode?: RelayMode): NormalisedRelay {
+export function normaliseRelayMode(
+  relay?: { mode?: RelayMode; urls?: string[] },
+): NormalisedRelay {
+  if (relay?.urls && relay.urls.length > 0) {
+    return { relayMode: "custom", relays: relay.urls, disableNetworking: false };
+  }
+  const mode = relay?.mode;
   if (mode === "disabled") {
     return { relayMode: "disabled", relays: [], disableNetworking: true };
-  }
-  if (mode === "default" || mode === undefined) {
-    return { relayMode: undefined, relays: null, disableNetworking: false };
   }
   if (mode === "staging") {
     return { relayMode: "staging", relays: null, disableNetworking: false };
   }
-  if (Array.isArray(mode)) {
-    return { relayMode: "custom", relays: mode, disableNetworking: false };
-  }
-  return { relayMode: "custom", relays: [mode], disableNetworking: false };
+  // "default" or undefined: use Iroh's public relay servers
+  return { relayMode: undefined, relays: null, disableNetworking: false };
 }
 
 // ── Base64 encoding ───────────────────────────────────────────────────────────

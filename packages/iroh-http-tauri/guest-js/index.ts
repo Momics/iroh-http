@@ -486,7 +486,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     : null;
 
   const { relayMode, relays, disableNetworking } = normaliseRelayMode(
-    options?.relayMode,
+    options?.relay,
   );
   const discovery = normaliseDiscovery(options?.discovery);
   const bindAddrs = options?.bindAddr
@@ -501,23 +501,23 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
     args: options
       ? {
         key: keyBytes,
-        idleTimeout: options.idleTimeout ?? null,
+        idleTimeout: options.connections?.idleTimeoutMs ?? null,
         relayMode: relayMode ?? null,
         relays,
         bindAddrs,
         dnsDiscovery: discovery.dnsServerUrl ?? null,
         dnsDiscoveryEnabled: discovery.dnsEnabled,
-        channelCapacity: options.advanced?.channelCapacity ?? null,
-        maxChunkSizeBytes: options.advanced?.maxChunkSizeBytes ?? null,
-        maxConsecutiveErrors: options.advanced?.maxConsecutiveErrors ?? null,
-        drainTimeout: options.advanced?.drainTimeout ?? null,
-        handleTtl: options.advanced?.handleTtl ?? null,
-        maxPooledConnections: options.maxPooledConnections ?? null,
-        poolIdleTimeoutMs: options.poolIdleTimeoutMs ?? null,
+        channelCapacity: options.internals?.channelCapacity ?? null,
+        maxChunkSizeBytes: options.internals?.maxChunkSizeBytes ?? null,
+        maxConsecutiveErrors: options.internals?.maxConsecutiveErrors ?? null,
+        drainTimeout: options.internals?.drainTimeout ?? null,
+        handleTtl: options.internals?.handleTtl ?? null,
+        maxPooledConnections: options.connections?.maxPooled ?? null,
+        poolIdleTimeoutMs: options.connections?.poolIdleTimeoutMs ?? null,
         disableNetworking,
-        proxyUrl: options.proxyUrl ?? null,
-        proxyFromEnv: options.proxyFromEnv ?? null,
-        keylog: options.keylog ?? null,
+        proxyUrl: options.proxy?.url ?? null,
+        proxyFromEnv: options.proxy?.fromEnv ?? null,
+        keylog: options.debug?.keylog ?? null,
         compressionLevel: typeof options.compression === "object"
           ? options.compression.level ?? null
           : options.compression
@@ -526,12 +526,12 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         compressionMinBodyBytes: typeof options.compression === "object"
           ? options.compression.minBodyBytes ?? null
           : null,
-        maxConcurrency: options.maxConcurrency ?? null,
-        maxConnectionsPerPeer: options.maxConnectionsPerPeer ?? null,
-        requestTimeout: options.requestTimeout ?? null,
-        maxRequestBodyBytes: options.maxRequestBodyBytes ?? null,
-        maxHeaderBytes: options.maxHeaderBytes ?? null,
-        maxTotalConnections: options.maxTotalConnections ?? null,
+        maxConcurrency: options.connections?.maxConcurrency ?? null,
+        maxConnectionsPerPeer: options.connections?.maxPerPeer ?? null,
+        requestTimeout: options.limits?.requestTimeoutMs ?? null,
+        maxRequestBodyBytes: options.limits?.maxRequestBodyBytes ?? null,
+        maxHeaderBytes: options.limits?.maxHeaderBytes ?? null,
+        maxTotalConnections: options.connections?.maxTotal ?? null,
       }
       : null,
   }).catch((e: unknown) => {
