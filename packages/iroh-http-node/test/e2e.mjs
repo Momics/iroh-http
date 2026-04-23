@@ -620,16 +620,16 @@ test("IrohNode — extends EventTarget", async () => {
   }
 });
 
-test("transport events — pool:miss event fires on first fetch when observability.transportEvents: true", async () => {
+test("diagnostics — pool:miss event fires on first fetch", async () => {
   const server = await createNode();
-  const client = await createNode({ observability: { transportEvents: true } });
+  const client = await createNode();
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     const ac = new AbortController();
     server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
 
     const received = [];
-    client.addEventListener("transport", (ev) => {
+    client.addEventListener("diagnostics", (ev) => {
       received.push(ev.detail);
     });
 
@@ -638,11 +638,11 @@ test("transport events — pool:miss event fires on first fetch when observabili
       directAddrs: serverAddrs,
     });
 
-    // The transport event loop runs concurrently; give it a turn to flush.
+    // The diagnostics event loop runs concurrently; give it a turn to flush.
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    const miss = received.find((e) => e.type === "pool:miss");
+    const miss = received.find((e) => e.kind === "pool:miss");
     assert.ok(
       miss,
       `Expected a pool:miss event, got: ${JSON.stringify(received)}`,
@@ -661,16 +661,16 @@ test("transport events — pool:miss event fires on first fetch when observabili
   }
 });
 
-test("transport events — not emitted when observability.transportEvents is not set", async () => {
+test("diagnostics — emitted by default (no opt-in required)", async () => {
   const server = await createNode();
-  const client = await createNode(); // no observability option
+  const client = await createNode(); // no special options — events fire by default
   try {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
     const ac = new AbortController();
     server.serve({ signal: ac.signal }, (_req) => new Response("ok"));
 
     const received = [];
-    client.addEventListener("transport", (ev) => {
+    client.addEventListener("diagnostics", (ev) => {
       received.push(ev.detail);
     });
 
@@ -680,11 +680,10 @@ test("transport events — not emitted when observability.transportEvents is not
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // Without the opt-in, no transport events should be dispatched.
-    assert.equal(
-      received.length,
-      0,
-      `Expected no events, got: ${JSON.stringify(received)}`,
+    // Diagnostics events fire unconditionally — at least one should be present.
+    assert.ok(
+      received.length > 0,
+      `Expected at least one diagnostics event, got none`,
     );
 
     ac.abort();
