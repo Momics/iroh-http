@@ -295,30 +295,6 @@
       "type": "string",
       "oneOf": [
         {
-          "description": "Enables the alloc_body_writer command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-alloc-body-writer",
-          "markdownDescription": "Enables the alloc_body_writer command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the alloc_body_writer command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-alloc-body-writer",
-          "markdownDescription": "Denies the alloc_body_writer command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the alloc_fetch_token command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-alloc-fetch-token",
-          "markdownDescription": "Enables the alloc_fetch_token command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the alloc_fetch_token command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-alloc-fetch-token",
-          "markdownDescription": "Denies the alloc_fetch_token command without any pre-configured scope."
-        },
-        {
           "description": "Enables the cancel_in_flight command without any pre-configured scope.",
           "type": "string",
           "const": "allow-cancel-in-flight",
@@ -355,6 +331,30 @@
           "markdownDescription": "Denies the close_endpoint command without any pre-configured scope."
         },
         {
+          "description": "Enables the connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-connect",
+          "markdownDescription": "Enables the connect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-connect",
+          "markdownDescription": "Denies the connect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_body_writer command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-body-writer",
+          "markdownDescription": "Enables the create_body_writer command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_body_writer command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-body-writer",
+          "markdownDescription": "Denies the create_body_writer command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_endpoint command without any pre-configured scope.",
           "type": "string",
           "const": "allow-create-endpoint",
@@ -367,6 +367,18 @@
           "markdownDescription": "Denies the create_endpoint command without any pre-configured scope."
         },
         {
+          "description": "Enables the create_fetch_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-fetch-token",
+          "markdownDescription": "Enables the create_fetch_token command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_fetch_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-fetch-token",
+          "markdownDescription": "Denies the create_fetch_token command without any pre-configured scope."
+        },
+        {
           "description": "Enables the endpoint_stats command without any pre-configured scope.",
           "type": "string",
           "const": "allow-endpoint-stats",
@@ -377,6 +389,18 @@
           "type": "string",
           "const": "deny-endpoint-stats",
           "markdownDescription": "Denies the endpoint_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch",
+          "markdownDescription": "Enables the fetch command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch",
+          "markdownDescription": "Denies the fetch command without any pre-configured scope."
         },
         {
           "description": "Enables the finish_body command without any pre-configured scope.",
@@ -487,18 +511,6 @@
           "markdownDescription": "Denies the next_chunk command without any pre-configured scope."
         },
         {
-          "description": "Enables the next_trailer command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-next-trailer",
-          "markdownDescription": "Enables the next_trailer command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the next_trailer command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-next-trailer",
-          "markdownDescription": "Denies the next_trailer command without any pre-configured scope."
-        },
-        {
           "description": "Enables the node_addr command without any pre-configured scope.",
           "type": "string",
           "const": "allow-node-addr",
@@ -571,30 +583,6 @@
           "markdownDescription": "Denies the public_key_verify command without any pre-configured scope."
         },
         {
-          "description": "Enables the raw_connect command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-raw-connect",
-          "markdownDescription": "Enables the raw_connect command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the raw_connect command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-raw-connect",
-          "markdownDescription": "Denies the raw_connect command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the raw_fetch command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-raw-fetch",
-          "markdownDescription": "Enables the raw_fetch command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the raw_fetch command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-raw-fetch",
-          "markdownDescription": "Denies the raw_fetch command without any pre-configured scope."
-        },
-        {
           "description": "Enables the respond_to_request command without any pre-configured scope.",
           "type": "string",
           "const": "allow-respond-to-request",
@@ -629,18 +617,6 @@
           "type": "string",
           "const": "deny-send-chunk",
           "markdownDescription": "Denies the send_chunk command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the send_trailers command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-send-trailers",
-          "markdownDescription": "Enables the send_trailers command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the send_trailers command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-send-trailers",
-          "markdownDescription": "Denies the send_trailers command without any pre-configured scope."
         },
         {
           "description": "Enables the serve command without any pre-configured scope.",
@@ -811,10 +787,40 @@
           "markdownDescription": "Denies the wait_serve_stop command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for iroh-http plugin\n#### This default permission set includes:\n\n- `allow-create-endpoint`\n- `allow-close-endpoint`\n- `allow-ping`\n- `allow-node-addr`\n- `allow-node-ticket`\n- `allow-home-relay`\n- `allow-peer-info`\n- `allow-peer-stats`\n- `allow-next-chunk`\n- `allow-send-chunk`\n- `allow-finish-body`\n- `allow-alloc-body-writer`\n- `allow-next-trailer`\n- `allow-send-trailers`\n- `allow-cancel-request`\n- `allow-raw-fetch`\n- `allow-alloc-fetch-token`\n- `allow-cancel-in-flight`\n- `allow-serve`\n- `allow-stop-serve`\n- `allow-respond-to-request`\n- `allow-raw-connect`\n- `allow-session-connect`\n- `allow-session-close`\n- `allow-session-closed`\n- `allow-session-create-bidi-stream`\n- `allow-session-create-uni-stream`\n- `allow-session-next-bidi-stream`\n- `allow-session-next-uni-stream`\n- `allow-session-send-datagram`\n- `allow-session-recv-datagram`\n- `allow-session-max-datagram-size`\n- `allow-generate-secret-key`\n- `allow-secret-key-sign`\n- `allow-public-key-verify`\n- `allow-mdns-browse`\n- `allow-mdns-browse-close`\n- `allow-mdns-next-event`\n- `allow-mdns-advertise`\n- `allow-mdns-advertise-close`",
+          "description": "Enables raw QUIC sessions — bidirectional streams and datagrams directly to a peer, outside of HTTP framing.",
+          "type": "string",
+          "const": "connect",
+          "markdownDescription": "Enables raw QUIC sessions — bidirectional streams and datagrams directly to a peer, outside of HTTP framing."
+        },
+        {
+          "description": "Enables low-level key operations — generate keypairs, sign with a secret key, and verify public key signatures.",
+          "type": "string",
+          "const": "crypto",
+          "markdownDescription": "Enables low-level key operations — generate keypairs, sign with a secret key, and verify public key signatures."
+        },
+        {
+          "description": "Node lifecycle and introspection. Covers createNode() and close(). Add iroh-http:fetch and/or iroh-http:serve for HTTP capability.\n#### This default permission set includes:\n\n- `allow-create-endpoint`\n- `allow-close-endpoint`\n- `allow-wait-endpoint-closed`\n- `allow-ping`\n- `allow-node-addr`\n- `allow-node-ticket`\n- `allow-home-relay`\n- `allow-peer-info`\n- `allow-peer-stats`\n- `allow-endpoint-stats`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for iroh-http plugin\n#### This default permission set includes:\n\n- `allow-create-endpoint`\n- `allow-close-endpoint`\n- `allow-ping`\n- `allow-node-addr`\n- `allow-node-ticket`\n- `allow-home-relay`\n- `allow-peer-info`\n- `allow-peer-stats`\n- `allow-next-chunk`\n- `allow-send-chunk`\n- `allow-finish-body`\n- `allow-alloc-body-writer`\n- `allow-next-trailer`\n- `allow-send-trailers`\n- `allow-cancel-request`\n- `allow-raw-fetch`\n- `allow-alloc-fetch-token`\n- `allow-cancel-in-flight`\n- `allow-serve`\n- `allow-stop-serve`\n- `allow-respond-to-request`\n- `allow-raw-connect`\n- `allow-session-connect`\n- `allow-session-close`\n- `allow-session-closed`\n- `allow-session-create-bidi-stream`\n- `allow-session-create-uni-stream`\n- `allow-session-next-bidi-stream`\n- `allow-session-next-uni-stream`\n- `allow-session-send-datagram`\n- `allow-session-recv-datagram`\n- `allow-session-max-datagram-size`\n- `allow-generate-secret-key`\n- `allow-secret-key-sign`\n- `allow-public-key-verify`\n- `allow-mdns-browse`\n- `allow-mdns-browse-close`\n- `allow-mdns-next-event`\n- `allow-mdns-advertise`\n- `allow-mdns-advertise-close`"
+          "markdownDescription": "Node lifecycle and introspection. Covers createNode() and close(). Add iroh-http:fetch and/or iroh-http:serve for HTTP capability.\n#### This default permission set includes:\n\n- `allow-create-endpoint`\n- `allow-close-endpoint`\n- `allow-wait-endpoint-closed`\n- `allow-ping`\n- `allow-node-addr`\n- `allow-node-ticket`\n- `allow-home-relay`\n- `allow-peer-info`\n- `allow-peer-stats`\n- `allow-endpoint-stats`"
+        },
+        {
+          "description": "Enables node.fetch() — send HTTP requests to remote peers. Includes all internal body-streaming primitives required for fetch to function.",
+          "type": "string",
+          "const": "fetch",
+          "markdownDescription": "Enables node.fetch() — send HTTP requests to remote peers. Includes all internal body-streaming primitives required for fetch to function."
+        },
+        {
+          "description": "Enables local peer discovery via mDNS — browse for peers on the local network and advertise this node.",
+          "type": "string",
+          "const": "mdns",
+          "markdownDescription": "Enables local peer discovery via mDNS — browse for peers on the local network and advertise this node."
+        },
+        {
+          "description": "Enables node.serve() — accept incoming HTTP requests from remote peers. Includes all internal body-streaming primitives required for handlers to read and write bodies.",
+          "type": "string",
+          "const": "serve",
+          "markdownDescription": "Enables node.serve() — accept incoming HTTP requests from remote peers. Includes all internal body-streaming primitives required for handlers to read and write bodies."
         }
       ]
     }

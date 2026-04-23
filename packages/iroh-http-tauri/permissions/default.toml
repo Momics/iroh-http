@@ -1,63 +1,16 @@
 "$schema" = "../schemas/schema.json"
 
 [default]
-description = "Default permissions for iroh-http plugin"
+description = "Node lifecycle and introspection. Covers createNode() and close(). Add iroh-http:fetch and/or iroh-http:serve for HTTP capability."
 permissions = [
-  # Endpoint lifecycle
   "allow-create-endpoint",
   "allow-close-endpoint",
+  "allow-wait-endpoint-closed",
   "allow-ping",
-
-  # Address introspection
   "allow-node-addr",
   "allow-node-ticket",
   "allow-home-relay",
   "allow-peer-info",
   "allow-peer-stats",
-
-  # Streaming primitives
-  "allow-next-chunk",
-  "allow-send-chunk",
-  "allow-finish-body",
-  "allow-alloc-body-writer",
-  "allow-next-trailer",
-  "allow-send-trailers",
-  "allow-cancel-request",
-
-  # HTTP client
-  "allow-raw-fetch",
-  "allow-alloc-fetch-token",
-  "allow-cancel-in-flight",
-
-  # HTTP server
-  "allow-serve",
-  "allow-stop-serve",
-  "allow-respond-to-request",
-
-  # Raw / duplex connect
-  "allow-raw-connect",
-
-  # TAURI-004: session commands were omitted from the default set.
-  "allow-session-connect",
-  "allow-session-close",
-  "allow-session-closed",
-  "allow-session-create-bidi-stream",
-  "allow-session-create-uni-stream",
-  "allow-session-next-bidi-stream",
-  "allow-session-next-uni-stream",
-  "allow-session-send-datagram",
-  "allow-session-recv-datagram",
-  "allow-session-max-datagram-size",
-
-  # TAURI-004: crypto commands were omitted from the default set.
-  "allow-generate-secret-key",
-  "allow-secret-key-sign",
-  "allow-public-key-verify",
-
-  # TAURI-004: mDNS discovery commands were omitted from the default set.
-  "allow-mdns-browse",
-  "allow-mdns-browse-close",
-  "allow-mdns-next-event",
-  "allow-mdns-advertise",
-  "allow-mdns-advertise-close",
+  "allow-endpoint-stats",
 ]

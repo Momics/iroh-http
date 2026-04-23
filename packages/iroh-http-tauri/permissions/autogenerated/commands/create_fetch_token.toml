@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-create-fetch-token"
+description = "Enables the create_fetch_token command without any pre-configured scope."
+commands.allow = ["create_fetch_token"]
+
+[[permission]]
+identifier = "deny-create-fetch-token"
+description = "Denies the create_fetch_token command without any pre-configured scope."
+commands.deny = ["create_fetch_token"]

@@ -85,7 +85,7 @@ class TauriAdapter extends IrohAdapter {
   }
 
   allocFetchToken(endpointHandle: number): Promise<bigint> {
-    return invoke<number>(`${PLUGIN}|alloc_fetch_token`, { endpointHandle })
+    return invoke<number>(`${PLUGIN}|create_fetch_token`, { endpointHandle })
       .then(BigInt);
   }
 
@@ -97,7 +97,7 @@ class TauriAdapter extends IrohAdapter {
   }
 
   allocBodyWriter(_endpointHandle: number): Promise<bigint> {
-    return invoke<number>(`${PLUGIN}|alloc_body_writer`, {
+    return invoke<number>(`${PLUGIN}|create_body_writer`, {
       endpointHandle: this.#epHandle,
     }).then(BigInt);
   }
@@ -117,7 +117,7 @@ class TauriAdapter extends IrohAdapter {
       headers: string[][];
       bodyHandle: number;
       url: string;
-    }>(`${PLUGIN}|raw_fetch`, {
+    }>(`${PLUGIN}|fetch`, {
       args: {
         endpointHandle: Number(endpointHandle),
         nodeId,
@@ -149,6 +149,8 @@ class TauriAdapter extends IrohAdapter {
       const cb = options.onConnectionEvent;
       connChannel = new Channel<PeerConnectionEvent>();
       connChannel.onmessage = (ev: PeerConnectionEvent) => cb(ev);
+    } else {
+      connChannel = new Channel<PeerConnectionEvent>();
     }
 
     channel.onmessage = async (raw: TauriRequestPayload) => {
@@ -189,7 +191,7 @@ class TauriAdapter extends IrohAdapter {
     invoke(`${PLUGIN}|serve`, {
       endpointHandle: Number(endpointHandle),
       channel,
-      connChannel: connChannel ?? null,
+      connChannel,
     }).catch((err: unknown) =>
       console.error("[iroh-http-tauri] serve error:", err)
     );
@@ -262,7 +264,7 @@ class TauriAdapter extends IrohAdapter {
     headers: [string, string][],
   ): Promise<FfiDuplexStream> {
     const res = await invoke<{ readHandle: number; writeHandle: number }>(
-      `${PLUGIN}|raw_connect`,
+      `${PLUGIN}|connect`,
       {
         args: { endpointHandle: Number(endpointHandle), nodeId, path, headers },
       },

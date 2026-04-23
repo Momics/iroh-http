@@ -350,7 +350,7 @@ pub fn cancel_request(endpoint_handle: u64, handle: u64) -> Result<(), String> {
 
 /// Allocate a body writer handle for streaming request bodies.
 #[command]
-pub fn alloc_body_writer(endpoint_handle: u64) -> Result<u64, String> {
+pub fn create_body_writer(endpoint_handle: u64) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle).ok_or_else(|| {
         format_error_json(
             "INVALID_HANDLE",
@@ -367,7 +367,7 @@ pub fn alloc_body_writer(endpoint_handle: u64) -> Result<u64, String> {
 
 /// Allocate a cancellation token for an upcoming fetch call.
 #[command]
-pub fn alloc_fetch_token(endpoint_handle: u64) -> Result<u64, String> {
+pub fn create_fetch_token(endpoint_handle: u64) -> Result<u64, String> {
     let ep = state::get_endpoint(endpoint_handle).ok_or_else(|| {
         format_error_json(
             "INVALID_HANDLE",
@@ -420,7 +420,7 @@ pub struct FfiResponsePayload {
 
 /// Send an HTTP request to a remote Iroh peer.
 #[command]
-pub async fn raw_fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String> {
+pub async fn fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String> {
     let ep = state::get_endpoint(args.endpoint_handle).ok_or_else(|| {
         format_error_json(
             "INVALID_HANDLE",
@@ -653,7 +653,7 @@ pub struct FfiDuplexStreamPayload {
 
 /// Open a full-duplex QUIC connection to a remote peer.
 #[command]
-pub async fn raw_connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload, String> {
+pub async fn connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload, String> {
     let ep = state::get_endpoint(args.endpoint_handle).ok_or_else(|| {
         format_error_json(
             "INVALID_HANDLE",

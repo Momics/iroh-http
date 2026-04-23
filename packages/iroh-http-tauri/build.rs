@@ -4,6 +4,7 @@ fn main() {
         "create_endpoint",
         "close_endpoint",
         "ping",
+        "wait_endpoint_closed",
         // Address introspection
         "node_addr",
         "node_ticket",
@@ -11,27 +12,23 @@ fn main() {
         "peer_info",
         "peer_stats",
         "endpoint_stats",
-        // Streaming primitives
+        // HTTP client (internal streaming primitives bundled into iroh-http:fetch)
+        "fetch",
+        "create_fetch_token",
+        "cancel_in_flight",
+        "cancel_request",
+        "create_body_writer",
         "next_chunk",
         "send_chunk",
         "finish_body",
-        "alloc_body_writer",
-        "alloc_fetch_token",
-        "cancel_in_flight",
-        "cancel_request",
-        "next_trailer",
-        "send_trailers",
-        // HTTP client
-        "raw_fetch",
-        // HTTP server
+        // HTTP server (internal primitives bundled into iroh-http:serve)
         "serve",
         "stop_serve",
         "wait_serve_stop",
-        "wait_endpoint_closed",
         "respond_to_request",
-        // Raw / duplex connect
-        "raw_connect",
-        // Session (QUIC)
+        // Raw QUIC connect (iroh-http:connect)
+        "connect",
+        // Session / duplex streams (iroh-http:connect)
         "session_connect",
         "session_create_bidi_stream",
         "session_next_bidi_stream",
@@ -42,11 +39,11 @@ fn main() {
         "session_send_datagram",
         "session_recv_datagram",
         "session_max_datagram_size",
-        // Crypto utilities
+        // Crypto utilities (iroh-http:crypto)
         "secret_key_sign",
         "public_key_verify",
         "generate_secret_key",
-        // mDNS discovery
+        // mDNS discovery (iroh-http:mdns)
         "mdns_browse",
         "mdns_next_event",
         "mdns_browse_close",

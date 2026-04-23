@@ -1,0 +1,18 @@
+"$schema" = "../schemas/schema.json"
+
+[[permission]]
+identifier = "connect"
+description = "Enables raw QUIC sessions — bidirectional streams and datagrams directly to a peer, outside of HTTP framing."
+permissions = [
+  "allow-connect",
+  "allow-session-connect",
+  "allow-session-close",
+  "allow-session-closed",
+  "allow-session-create-bidi-stream",
+  "allow-session-create-uni-stream",
+  "allow-session-next-bidi-stream",
+  "allow-session-next-uni-stream",
+  "allow-session-send-datagram",
+  "allow-session-recv-datagram",
+  "allow-session-max-datagram-size",
+]

@@ -1,49 +1,19 @@
 ## Default Permission
 
-Default permissions for iroh-http plugin
+Node lifecycle and introspection. Covers createNode() and close(). Add iroh-http:fetch and/or iroh-http:serve for HTTP capability.
 
 #### This default permission set includes the following:
 
 - `allow-create-endpoint`
 - `allow-close-endpoint`
+- `allow-wait-endpoint-closed`
 - `allow-ping`
 - `allow-node-addr`
 - `allow-node-ticket`
 - `allow-home-relay`
 - `allow-peer-info`
 - `allow-peer-stats`
-- `allow-next-chunk`
-- `allow-send-chunk`
-- `allow-finish-body`
-- `allow-alloc-body-writer`
-- `allow-next-trailer`
-- `allow-send-trailers`
-- `allow-cancel-request`
-- `allow-raw-fetch`
-- `allow-alloc-fetch-token`
-- `allow-cancel-in-flight`
-- `allow-serve`
-- `allow-stop-serve`
-- `allow-respond-to-request`
-- `allow-raw-connect`
-- `allow-session-connect`
-- `allow-session-close`
-- `allow-session-closed`
-- `allow-session-create-bidi-stream`
-- `allow-session-create-uni-stream`
-- `allow-session-next-bidi-stream`
-- `allow-session-next-uni-stream`
-- `allow-session-send-datagram`
-- `allow-session-recv-datagram`
-- `allow-session-max-datagram-size`
-- `allow-generate-secret-key`
-- `allow-secret-key-sign`
-- `allow-public-key-verify`
-- `allow-mdns-browse`
-- `allow-mdns-browse-close`
-- `allow-mdns-next-event`
-- `allow-mdns-advertise`
-- `allow-mdns-advertise-close`
+- `allow-endpoint-stats`
 
 ## Permission Table
 
@@ -53,58 +23,6 @@ Default permissions for iroh-http plugin
 <th>Description</th>
 </tr>
 
-
-<tr>
-<td>
-
-`iroh-http:allow-alloc-body-writer`
-
-</td>
-<td>
-
-Enables the alloc_body_writer command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:deny-alloc-body-writer`
-
-</td>
-<td>
-
-Denies the alloc_body_writer command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:allow-alloc-fetch-token`
-
-</td>
-<td>
-
-Enables the alloc_fetch_token command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:deny-alloc-fetch-token`
-
-</td>
-<td>
-
-Denies the alloc_fetch_token command without any pre-configured scope.
-
-</td>
-</tr>
 
 <tr>
 <td>
@@ -187,6 +105,58 @@ Denies the close_endpoint command without any pre-configured scope.
 <tr>
 <td>
 
+`iroh-http:allow-connect`
+
+</td>
+<td>
+
+Enables the connect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-connect`
+
+</td>
+<td>
+
+Denies the connect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:allow-create-body-writer`
+
+</td>
+<td>
+
+Enables the create_body_writer command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-create-body-writer`
+
+</td>
+<td>
+
+Denies the create_body_writer command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `iroh-http:allow-create-endpoint`
 
 </td>
@@ -213,6 +183,32 @@ Denies the create_endpoint command without any pre-configured scope.
 <tr>
 <td>
 
+`iroh-http:allow-create-fetch-token`
+
+</td>
+<td>
+
+Enables the create_fetch_token command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-create-fetch-token`
+
+</td>
+<td>
+
+Denies the create_fetch_token command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `iroh-http:allow-endpoint-stats`
 
 </td>
@@ -232,6 +228,32 @@ Enables the endpoint_stats command without any pre-configured scope.
 <td>
 
 Denies the endpoint_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:allow-fetch`
+
+</td>
+<td>
+
+Enables the fetch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:deny-fetch`
+
+</td>
+<td>
+
+Denies the fetch command without any pre-configured scope.
 
 </td>
 </tr>
@@ -473,32 +495,6 @@ Denies the next_chunk command without any pre-configured scope.
 <tr>
 <td>
 
-`iroh-http:allow-next-trailer`
-
-</td>
-<td>
-
-Enables the next_trailer command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:deny-next-trailer`
-
-</td>
-<td>
-
-Denies the next_trailer command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `iroh-http:allow-node-addr`
 
 </td>
@@ -655,58 +651,6 @@ Denies the public_key_verify command without any pre-configured scope.
 <tr>
 <td>
 
-`iroh-http:allow-raw-connect`
-
-</td>
-<td>
-
-Enables the raw_connect command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:deny-raw-connect`
-
-</td>
-<td>
-
-Denies the raw_connect command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:allow-raw-fetch`
-
-</td>
-<td>
-
-Enables the raw_fetch command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:deny-raw-fetch`
-
-</td>
-<td>
-
-Denies the raw_fetch command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `iroh-http:allow-respond-to-request`
 
 </td>
@@ -778,32 +722,6 @@ Enables the send_chunk command without any pre-configured scope.
 <td>
 
 Denies the send_chunk command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:allow-send-trailers`
-
-</td>
-<td>
-
-Enables the send_trailers command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:deny-send-trailers`
-
-</td>
-<td>
-
-Denies the send_trailers command without any pre-configured scope.
 
 </td>
 </tr>
@@ -1168,6 +1086,71 @@ Enables the wait_serve_stop command without any pre-configured scope.
 <td>
 
 Denies the wait_serve_stop command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:connect`
+
+</td>
+<td>
+
+Enables raw QUIC sessions — bidirectional streams and datagrams directly to a peer, outside of HTTP framing.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:crypto`
+
+</td>
+<td>
+
+Enables low-level key operations — generate keypairs, sign with a secret key, and verify public key signatures.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:fetch`
+
+</td>
+<td>
+
+Enables node.fetch() — send HTTP requests to remote peers. Includes all internal body-streaming primitives required for fetch to function.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:mdns`
+
+</td>
+<td>
+
+Enables local peer discovery via mDNS — browse for peers on the local network and advertise this node.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`iroh-http:serve`
+
+</td>
+<td>
+
+Enables node.serve() — accept incoming HTTP requests from remote peers. Includes all internal body-streaming primitives required for handlers to read and write bodies.
 
 </td>
 </tr>

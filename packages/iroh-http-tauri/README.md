@@ -70,11 +70,26 @@ node.serve({}, (req) => {
 
 ## Permissions
 
-Add to your app's `capabilities/default.json`:
+Permissions are declared in your app's `capabilities/default.json`. They are split by capability so you only grant what your app actually uses.
+
+| Permission | What it covers |
+|---|---|
+| `iroh-http:default` | `createNode()`, `close()`, node introspection (`publicKey`, `nodeAddr`, etc.) |
+| `iroh-http:fetch` | `node.fetch()` and all internal body-streaming required for it |
+| `iroh-http:serve` | `node.serve()` and all internal body-streaming required for it |
+| `iroh-http:connect` | Raw QUIC sessions — bidirectional streams and datagrams |
+| `iroh-http:mdns` | Local peer discovery via mDNS |
+| `iroh-http:crypto` | Key generation, signing, and verification |
+
+A typical app using fetch and serve:
 
 ```json
 {
-  "permissions": ["iroh-http:default"]
+  "permissions": [
+    "iroh-http:default",
+    "iroh-http:fetch",
+    "iroh-http:serve"
+  ]
 }
 ```
 

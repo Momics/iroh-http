@@ -1,0 +1,10 @@
+"$schema" = "../schemas/schema.json"
+
+[[permission]]
+identifier = "crypto"
+description = "Enables low-level key operations — generate keypairs, sign with a secret key, and verify public key signatures."
+permissions = [
+  "allow-generate-secret-key",
+  "allow-secret-key-sign",
+  "allow-public-key-verify",
+]
