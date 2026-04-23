@@ -165,7 +165,6 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
     "finishBody",
     "cancelRequest",
     "rawFetch",
-    "rawConnect",
     "serveStart",
     "nextRequest",
     "nextConnectionEvent",

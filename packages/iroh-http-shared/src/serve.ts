@@ -22,7 +22,6 @@ import { classifyError } from "./errors.js";
  *
  * The `Request` is augmented with:
  * - `req.headers.get('Peer-Id')` — the authenticated peer's public key.
- * - `req.acceptWebTransport()` — (duplex only) returns `{ readable, writable }`.
  *
  * ## Security
  *

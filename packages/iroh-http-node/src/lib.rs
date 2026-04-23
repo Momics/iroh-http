@@ -41,7 +41,6 @@ use iroh_http_adapter::{core_error_to_json, format_error_json};
 const MAX_NODE_ID_LEN: usize = 128;
 const MAX_URL_LEN: usize = 8_192;
 const MAX_METHOD_LEN: usize = 32;
-const MAX_PATH_LEN: usize = 2_048;
 const MAX_HEADER_COUNT: usize = 100;
 const MAX_HEADER_NAME_LEN: usize = 256;
 const MAX_HEADER_VALUE_LEN: usize = 8_192;
@@ -171,10 +170,6 @@ fn validate_url_input(url: &str) -> std::result::Result<(), FfiError> {
 
 fn validate_method_input(method: &str) -> std::result::Result<(), FfiError> {
     validate_bounded_string("method", method, MAX_METHOD_LEN)
-}
-
-fn validate_path_input(path: &str) -> std::result::Result<(), FfiError> {
-    validate_bounded_string("path", path, MAX_PATH_LEN)
 }
 
 fn validate_direct_addrs_input(
@@ -1163,41 +1158,6 @@ pub async fn wait_endpoint_closed(endpoint_handle: u32) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
     ep.wait_closed().await;
     Ok(())
-}
-
-// ── rawConnect ────────────────────────────────────────────────────────────────
-
-/// Handles for a full-duplex QUIC stream.
-#[napi(object)]
-pub struct JsFfiDuplexStream {
-    /// Body reader handle — call `nextChunk(readHandle)` to receive data.
-    pub read_handle: BigInt,
-    /// Body writer handle — call `sendChunk(writeHandle, …)` to send data.
-    pub write_handle: BigInt,
-}
-
-/// Open a full-duplex connection to a remote node.
-#[napi]
-pub async fn raw_connect(
-    endpoint_handle: u32,
-    node_id: String,
-    path: String,
-    headers: Vec<Vec<String>>,
-) -> napi::Result<JsFfiDuplexStream> {
-    let ep = get_endpoint(endpoint_handle)?;
-    validate_node_id_input(&node_id).map_err(ffi_invalid_arg)?;
-    validate_path_input(&path).map_err(ffi_invalid_arg)?;
-
-    let pairs = validate_header_rows(headers)?;
-
-    let duplex = iroh_http_core::raw_connect(&ep, &node_id, &path, &pairs)
-        .await
-        .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
-
-    Ok(JsFfiDuplexStream {
-        read_handle: BigInt::from(duplex.read_handle),
-        write_handle: BigInt::from(duplex.write_handle),
-    })
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────

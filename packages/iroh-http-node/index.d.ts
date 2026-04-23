@@ -250,15 +250,6 @@ export declare function waitServeStop(endpointHandle: number): Promise<void>
  * This is used to surface `node.closed` reliably even without an explicit `close()`.
  */
 export declare function waitEndpointClosed(endpointHandle: number): Promise<void>
-/** Handles for a full-duplex QUIC stream. */
-export interface JsFfiDuplexStream {
-  /** Body reader handle — call `nextChunk(readHandle)` to receive data. */
-  readHandle: bigint
-  /** Body writer handle — call `sendChunk(writeHandle, …)` to send data. */
-  writeHandle: bigint
-}
-/** Open a full-duplex connection to a remote node. */
-export declare function rawConnect(endpointHandle: number, nodeId: string, path: string, headers: Array<Array<string>>): Promise<JsFfiDuplexStream>
 /**
  * Establish a session (QUIC connection) to a remote peer.
  * Returns an opaque session handle.
