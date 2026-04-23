@@ -158,7 +158,17 @@ export function makeServe(
   nodeId: string,
   onNodeClose: Promise<void>,
 ): ServeFn {
+  // #114: guard against starting two polling loops on the same endpoint.
+  let serveRunning = false;
+
   return ((...args: unknown[]): ServeHandle => {
+    if (serveRunning) {
+      throw new TypeError(
+        "serve() is already running on this node. Call signal.abort() or node.close() to stop it first.",
+      );
+    }
+    serveRunning = true;
+
     // Parse overloaded arguments.
     let handler: ServeHandler;
     let options: ServeOptions = {};
@@ -313,6 +323,8 @@ export function makeServe(
     // We also race against onNodeClose so that closing the node unblocks callers
     // even when stopServe() was never called explicitly.
     const finished = Promise.race([loopDone, onNodeClose]);
+    // Reset guard when the loop finishes so serve() can be called again.
+    finished.finally(() => { serveRunning = false; });
 
     const doStop = (): void => {
       adapter.stopServe(endpointHandle);
