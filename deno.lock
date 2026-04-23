@@ -70,6 +70,7 @@
     "members": {
       "examples/deno": {
         "dependencies": [
+          "jsr:@momics/iroh-http-deno@~0.2.1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]
