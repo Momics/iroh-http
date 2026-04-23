@@ -54,6 +54,12 @@ export interface NodeAddrInfo {
 }
 
 export interface IrohFetchInit extends RequestInit {
+  /**
+   * Known direct QUIC addresses for the target peer in `"ip:port"` notation.
+   * When provided, the node attempts these addresses before falling back to
+   * relay-assisted hole-punching. Speeds up the first connection to a peer
+   * whose address is already known out-of-band.
+   */
   directAddrs?: string[];
 }
 
