@@ -464,6 +464,92 @@ Deno.test({
     // sanitizeOps: true enforces no dangling async ops reach here.
   }));
 
+// ── Regression #114: calling serve() twice must throw ────────────────────────
+//
+// Bug: makeServe() had no guard, so calling node.serve() twice started two
+// independent rawServe() polling loops on the same endpoint handle — undefined
+// behaviour at the Rust layer. The second call must throw TypeError immediately.
+Deno.test({
+  name:
+    "serve — calling serve() twice on the same node throws TypeError (regression #114)",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(10_000, async () => {
+    const node = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+    let handle: { finished: Promise<void> } | undefined;
+
+    try {
+      handle = node.serve(
+        { signal: ac.signal },
+        (_req: Request) => new Response("first"),
+      );
+
+      // Second call must throw synchronously before starting another loop.
+      let threw = false;
+      try {
+        node.serve((_req: Request) => new Response("second"));
+      } catch (e) {
+        threw = true;
+        assert(
+          e instanceof TypeError,
+          `Expected TypeError, got ${(e as Error).constructor.name}: ${e}`,
+        );
+        assert(
+          (e as TypeError).message.toLowerCase().includes("already running"),
+          `Error message must mention "already running", got: ${
+            (e as TypeError).message
+          }`,
+        );
+      }
+      assert(threw, "Expected second serve() to throw");
+    } finally {
+      ac.abort();
+      await node.close();
+      await handle?.finished.catch(() => {});
+    }
+  }));
+
+// Companion: after the first loop finishes, a new serve() must be allowed.
+Deno.test({
+  name: "serve — serve() is allowed again after previous loop finishes (regression #114)",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(10_000, async () => {
+    const node = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac1 = new AbortController();
+
+    try {
+      const h1 = node.serve(
+        { signal: ac1.signal },
+        (_req: Request) => new Response("first"),
+      );
+
+      // Stop the first loop and wait for it to fully drain.
+      ac1.abort();
+      await h1.finished.catch(() => {});
+
+      // Now a second serve() must succeed without throwing.
+      let threw = false;
+      let h2: { finished: Promise<void> } | undefined;
+      try {
+        const ac2 = new AbortController();
+        h2 = node.serve(
+          { signal: ac2.signal },
+          (_req: Request) => new Response("second"),
+        );
+        ac2.abort();
+      } catch (e) {
+        threw = true;
+        console.error("Unexpected throw on second serve():", e);
+      }
+      assert(!threw, "serve() must succeed once the previous loop has ended");
+      await h2?.finished.catch(() => {});
+    } finally {
+      await node.close();
+    }
+  }));
+
 // ── Handle lifecycle ──────────────────────────────────────────────────────────
 
 Deno.test("node.close() — second close is safe (throws or resolves)", async () => {
