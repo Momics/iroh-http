@@ -1159,6 +1159,7 @@ async fn response_header_bomb_rejected() {
     let server_ep = IrohEndpoint::bind(NodeOptions {
         networking: NetworkingOptions {
             disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
             ..Default::default()
         },
         ..Default::default()
@@ -1169,6 +1170,7 @@ async fn response_header_bomb_rejected() {
     let client_ep = IrohEndpoint::bind(NodeOptions {
         networking: NetworkingOptions {
             disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
             ..Default::default()
         },
         max_header_size: Some(128),
