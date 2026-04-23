@@ -427,11 +427,42 @@ Deno.test({
 
 // ── Serve lifecycle ───────────────────────────────────────────────────────────
 
-// NOTE: "serve — abort signal stops serve cleanly" test removed.
-// The Deno adapter has a known race: stopServe() removes the serve queue
-// while nextRequest() is still in-flight, causing an unhandled IrohError.
-// This needs a separate adapter fix (stopServe should resolve the pending
-// nextRequest rather than removing the queue out from under it).
+// ── Regression #115: serve loop must not hold pending ops after shutdown ──────
+//
+// Bug: stopServe() removes the serve queue while nextRequest() is still
+// in-flight, leaving a dangling FFI op. Deno treats any pending op as "process
+// not done", so the process never exits naturally after serve() without an
+// explicit node.close().
+//
+// Fix required: stopServe should resolve the pending nextRequest() (return null
+// sentinel) rather than deleting the queue while the call is in-flight.
+//
+// This test uses sanitizeOps: true (the Deno default) intentionally — it will
+// fail until the adapter race is fixed. It is marked `ignore` so CI is not
+// broken in the meantime.
+Deno.test({
+  name:
+    "serve — no pending ops remain after signal abort (regression #115)",
+  ignore: true, // Remove `ignore` when #115 is fixed.
+  sanitizeOps: true,
+}, () =>
+  withTimeout(10_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+
+    const handle = server.serve(
+      { signal: ac.signal },
+      (_req: Request) => new Response("ok"),
+    );
+
+    // Abort and close — after this, finished must resolve AND no FFI ops
+    // should remain in-flight. If stopServe() doesn't drain the pending
+    // nextRequest() call, Deno's sanitizeOps check will fail this test.
+    ac.abort();
+    await server.close();
+    await handle.finished;
+    // sanitizeOps: true enforces no dangling async ops reach here.
+  }));
 
 // ── Handle lifecycle ──────────────────────────────────────────────────────────
 
