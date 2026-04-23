@@ -1053,6 +1053,49 @@ Deno.test({
 
 // ── pathChanges ───────────────────────────────────────────────────────────────
 
+// ── sessions ──────────────────────────────────────────────────────────────────
+
+Deno.test({
+  name: "sessions — yields IrohSession when peer calls node.connect()",
+  sanitizeOps: false,
+}, () =>
+  withTimeout(20_000, async () => {
+    const server = await createNode({ bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
+    const ac = new AbortController();
+
+    try {
+      const { id: serverId, addrs: serverAddrs } = await server.addr();
+      const { id: clientId } = await client.addr();
+
+      // Accept the first incoming session.
+      const serverSessionPromise = (async () => {
+        for await (const session of server.sessions({ signal: ac.signal })) {
+          return session;
+        }
+        return null;
+      })();
+
+      const clientSession = await client.connect(serverId, {
+        directAddrs: serverAddrs,
+      });
+      const serverSession = await serverSessionPromise;
+
+      assert(serverSession !== null, "server should have accepted a session");
+      assertEquals(
+        serverSession!.remoteId.toString(),
+        clientId,
+        "server session remoteId must match client publicKey",
+      );
+
+      await clientSession.close();
+    } finally {
+      ac.abort();
+      await server.close();
+      await client.close();
+    }
+  }));
+
 // ── browse / advertise ───────────────────────────────────────────────────────
 
 Deno.test("browse — returns an AsyncIterable", async () => {

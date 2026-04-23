@@ -36,7 +36,6 @@ interface TauriRequestPayload {
   reqHandle: number;
   reqBodyHandle: number;
   resBodyHandle: number;
-  isBidi: boolean;
   method: string;
   url: string;
   headers: string[][];
@@ -158,7 +157,6 @@ class TauriAdapter extends IrohAdapter {
         reqHandle: BigInt(raw.reqHandle),
         reqBodyHandle: BigInt(raw.reqBodyHandle),
         resBodyHandle: BigInt(raw.resBodyHandle),
-        isBidi: raw.isBidi,
         method: raw.method,
         url: raw.url,
         headers: raw.headers as [string, string][],
@@ -255,24 +253,6 @@ class TauriAdapter extends IrohAdapter {
     return invoke<EndpointStats>(`${PLUGIN}|endpoint_stats`, {
       endpointHandle: Number(handle),
     });
-  }
-
-  async rawConnect(
-    endpointHandle: number,
-    nodeId: string,
-    path: string,
-    headers: [string, string][],
-  ): Promise<FfiDuplexStream> {
-    const res = await invoke<{ readHandle: number; writeHandle: number }>(
-      `${PLUGIN}|connect`,
-      {
-        args: { endpointHandle: Number(endpointHandle), nodeId, path, headers },
-      },
-    );
-    return {
-      readHandle: BigInt(res.readHandle),
-      writeHandle: BigInt(res.writeHandle),
-    } satisfies FfiDuplexStream;
   }
 
   override get sessionFns(): RawSessionFns {

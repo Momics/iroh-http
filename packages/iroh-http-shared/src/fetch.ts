@@ -1,17 +1,13 @@
 /**
  * `makeFetch` — wraps the raw platform fetch in the web-standard signature.
- * `makeConnect` — wraps the raw platform connect in a `BidirectionalStream`.
  *
  * ```ts
  * const nodeFetch = makeFetch(adapter, endpointHandle);
  * const res = await nodeFetch(remotePeerId, '/api/data');
- *
- * const stream = await makeConnect(adapter, endpointHandle)(peerId, '/ws');
  * ```
  */
 
 import type {
-  BidirectionalStream,
   FfiResponse,
   IrohAdapter,
   IrohFetchInit,
@@ -233,61 +229,6 @@ export function makeFetch(
     });
 
     return response;
-  };
-}
-
-// ── §2 Bidirectional streaming ────────────────────────────────────────────────
-
-/**
- * Construct a `createBidirectionalStream`-like function that opens a full-duplex stream.
- *
- * The returned `BidirectionalStream` exposes `readable` (data from server) and
- * `writable` (data to server).  Both sides are open simultaneously.
- *
- * @param adapter         Platform adapter implementation.
- * @param endpointHandle  Slab handle returned by the low-level bind.
- * @returns A function: `(peer, path, init?) => Promise<BidirectionalStream>`.
- *
- * @throws {@link IrohConnectError} If the remote peer rejects or is unreachable.
- *
- * @example
- * ```ts
- * const connect = makeConnect(adapter, handle);
- * const { readable, writable } = await connect(peerId, '/ws');
- * const writer = writable.getWriter();
- * await writer.write(new TextEncoder().encode('ping'));
- * ```
- */
-export function makeConnect(
-  adapter: IrohAdapter,
-  endpointHandle: number,
-): (
-  peer: PublicKey | string,
-  path: string,
-  init?: RequestInit,
-) => Promise<BidirectionalStream> {
-  return async (peer, path, init) => {
-    const nodeId = resolveNodeId(peer);
-    const headers = normaliseHeaders(init?.headers);
-    const ffi = await adapter.rawConnect(endpointHandle, nodeId, path, headers)
-      .catch((err) => {
-        throw classifyError(err);
-      });
-
-    const readable = makeReadable(adapter, ffi.readHandle);
-    const writable = new WritableStream<Uint8Array>({
-      async write(chunk) {
-        await adapter.sendChunk(ffi.writeHandle, chunk);
-      },
-      async close() {
-        await adapter.finishBody(ffi.writeHandle);
-      },
-      async abort() {
-        await adapter.finishBody(ffi.writeHandle);
-      },
-    });
-
-    return { readable, writable };
   };
 }
 

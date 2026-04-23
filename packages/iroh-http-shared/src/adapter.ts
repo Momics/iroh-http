@@ -7,7 +7,6 @@ export type {
   FfiResponse,
   FfiResponseHead,
   PeerConnectionEvent,
-  RawConnectFn,
   RawFetchFn,
   RawServeFn,
   RequestPayload,

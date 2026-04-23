@@ -134,7 +134,6 @@ export class IrohNode extends EventTarget {
 
   serve(handler: ServeHandler): ServeHandle;
   serve(options: ServeOptions, handler: ServeHandler): ServeHandle;
-  serve(options: ServeOptions & { handler: ServeHandler }): ServeHandle;
   serve(...args: unknown[]): ServeHandle {
     return (this.#serveFn as (...a: unknown[]) => ServeHandle)(...args);
   }
@@ -156,6 +155,62 @@ export class IrohNode extends EventTarget {
     );
     const remotePk = PublicKey.fromString(nodeId);
     return buildSession(this.#adapter, sessionHandle, remotePk, sessionFns);
+  }
+
+  /**
+   * Accept incoming raw QUIC sessions from remote peers.
+   *
+   * Returns an async iterable that yields one `IrohSession` for each peer
+   * that calls `node.connect()`.  The iterable ends when the node closes or
+   * the `signal` is aborted.
+   *
+   * ```ts
+   * for await (const session of node.sessions()) {
+   *   console.log("peer connected:", session.remoteId.toString());
+   * }
+   *
+   * // With shutdown signal:
+   * const ac = new AbortController();
+   * for await (const session of node.sessions({ signal: ac.signal })) { ... }
+   * ac.abort();
+   * ```
+   */
+  sessions(options?: { signal?: AbortSignal }): AsyncIterable<IrohSession> {
+    const sessionFns = this.#adapter.sessionFns;
+    if (!sessionFns?.sessionAccept) {
+      throw new Error("sessions() not supported by this platform adapter");
+    }
+    const accept = sessionFns.sessionAccept.bind(sessionFns);
+    const endpointHandle = this.#endpointHandle;
+    const adapter = this.#adapter;
+    const signal = options?.signal;
+
+    return {
+      [Symbol.asyncIterator]() {
+        return {
+          async next(): Promise<IteratorResult<IrohSession>> {
+            if (signal?.aborted) {
+              return { done: true, value: undefined };
+            }
+            const result = await accept(endpointHandle);
+            if (result === null) {
+              return { done: true, value: undefined };
+            }
+            const remotePk = PublicKey.fromString(result.nodeId);
+            const session = buildSession(
+              adapter,
+              result.sessionHandle,
+              remotePk,
+              sessionFns,
+            );
+            return { done: false, value: session };
+          },
+          return(): Promise<IteratorResult<IrohSession>> {
+            return Promise.resolve({ done: true, value: undefined });
+          },
+        };
+      },
+    };
   }
 
   browse(options?: BrowseOptions): AsyncIterable<DiscoveredPeer> {

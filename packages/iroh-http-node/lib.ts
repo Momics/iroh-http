@@ -24,7 +24,6 @@ import {
   nodeTicket as napiNodeTicket,
   peerInfo as napiPeerInfo,
   peerStats as napiPeerStats,
-  rawConnect as napiRawConnect,
   rawFetch as napiRawFetch,
   rawRespond as napiRawRespond,
   rawServe as napiRawServe,
@@ -318,25 +317,6 @@ class NodeAdapter extends IrohAdapter {
       activeConnections: Number(s.activeConnections),
       activeRequests: Number(s.activeRequests),
     };
-  }
-
-  // ── Raw connect ─────────────────────────────────────────────────────────────
-  async rawConnect(
-    endpointHandle: number,
-    nodeId: string,
-    path: string,
-    headers: [string, string][],
-  ): Promise<FfiDuplexStream> {
-    const ffi = await napiRawConnect(
-      endpointHandle,
-      nodeId,
-      path,
-      headers as string[][],
-    );
-    return {
-      readHandle: ffi.readHandle,
-      writeHandle: ffi.writeHandle,
-    } satisfies FfiDuplexStream;
   }
 
   // ── Sessions ────────────────────────────────────────────────────────────────

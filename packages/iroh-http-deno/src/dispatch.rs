@@ -148,7 +148,6 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         sync  "cancelRequest"           => cancel_request_dispatch,
         // ── HTTP ─────────────────────────────────────────────────────────────
         async "rawFetch"                => raw_fetch,
-        async "rawConnect"              => raw_connect_dispatch,
         // ── Serve loop ───────────────────────────────────────────────────────
         async "serveStart"              => serve_start,
         async "stopServe"               => stop_serve,
@@ -167,6 +166,7 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
         sync  "mdnsAdvertise"           => mdns_advertise_dispatch,
         sync  "mdnsAdvertiseClose"      => mdns_advertise_close_dispatch,
         // ── Sessions ─────────────────────────────────────────────────────────
+        async "sessionAccept"           => session_accept_dispatch,
         async "sessionConnect"          => session_connect_dispatch,
         async "sessionCreateBidiStream" => session_create_bidi_stream_dispatch,
         async "sessionNextBidiStream"   => session_next_bidi_stream_dispatch,
@@ -628,48 +628,6 @@ async fn raw_fetch(p: Value) -> Value {
     }
 }
 
-// ── rawConnect ────────────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawConnectPayload {
-    endpoint_handle: u32,
-    node_id: String,
-    path: String,
-    headers: Vec<Vec<String>>,
-}
-
-async fn raw_connect_dispatch(p: Value) -> Value {
-    let args: RawConnectPayload = match serde_json::from_value(p) {
-        Ok(v) => v,
-        Err(e) => return err(e),
-    };
-    let ep = match get_endpoint(args.endpoint_handle) {
-        Some(e) => e,
-        None => {
-            return err_code(
-                "INVALID_HANDLE",
-                format!("node closed or not found (handle {})", args.endpoint_handle),
-            )
-        }
-    };
-    let pairs: Vec<(String, String)> = args
-        .headers
-        .into_iter()
-        .filter_map(|p| {
-            if p.len() == 2 {
-                Some((p[0].clone(), p[1].clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
-    match iroh_http_core::raw_connect(&ep, &args.node_id, &args.path, &pairs).await {
-        Err(e) => err_core(e),
-        Ok(d) => ok(json!({ "readHandle": d.read_handle, "writeHandle": d.write_handle })),
-    }
-}
-
 // ── serve ─────────────────────────────────────────────────────────────────────
 
 async fn serve_start(p: Value) -> Value {
@@ -1083,6 +1041,44 @@ fn mdns_advertise_close_dispatch(_p: Value) -> Value {
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionAcceptPayload {
+    endpoint_handle: u32,
+}
+
+/// Accept the next incoming raw QUIC session from a remote peer.
+///
+/// Blocks until a peer connects or the endpoint shuts down.  Returns
+/// `{ sessionHandle, nodeId }` on success, or `null` when the endpoint
+/// is closed.
+async fn session_accept_dispatch(p: Value) -> Value {
+    let args: SessionAcceptPayload = match serde_json::from_value(p) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    let ep = match get_endpoint(args.endpoint_handle) {
+        Some(e) => e,
+        None => {
+            return err_code(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {})", args.endpoint_handle),
+            )
+        }
+    };
+    match iroh_http_core::session_accept(&ep).await {
+        Err(e) => err_core(e),
+        Ok(None) => ok(json!(null)),
+        Ok(Some(handle)) => {
+            // Retrieve the remote peer's public key so JS can build a PublicKey.
+            let node_id = iroh_http_core::session_remote_id(&ep, handle)
+                .map(|pk| iroh_http_core::base32_encode(pk.as_bytes()))
+                .unwrap_or_default();
+            ok(json!({ "sessionHandle": handle, "nodeId": node_id }))
+        }
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

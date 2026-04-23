@@ -9,7 +9,6 @@
  */
 
 import type {
-  BidirectionalStream,
   FfiResponseHead,
   IrohAdapter,
   PeerConnectionEvent,
@@ -172,7 +171,7 @@ export function makeServe(
 
         // Build a web-standard Request.
         const hasBody = !METHODS_WITHOUT_BODY.has(payload.method.toUpperCase());
-        const reqBody = (hasBody && !payload.isBidi)
+        const reqBody = hasBody
           ? makeReadable(adapter, payload.reqBodyHandle)
           : null;
 
@@ -192,42 +191,6 @@ export function makeServe(
           reqInit,
         );
 
-        if (payload.isBidi) {
-          // Issue-61: acceptWebTransport() must be single-use per request.
-          // Each duplex request has exactly one pair of body handles; creating
-          // multiple stream wrappers over the same handles causes undefined
-          // behaviour. The flag is captured in the closure so it is scoped to
-          // this one request.
-          let accepted = false;
-          const acceptWebTransportFn = (): BidirectionalStream => {
-            if (accepted) {
-              throw new TypeError(
-                "acceptWebTransport() has already been called on this request. " +
-                  "Each duplex request can only be accepted once.",
-              );
-            }
-            accepted = true;
-            return {
-              readable: makeReadable(adapter, payload.reqBodyHandle),
-              writable: new WritableStream<Uint8Array>({
-                async write(chunk) {
-                  await adapter.sendChunk(payload.resBodyHandle, chunk);
-                },
-                async close() {
-                  await adapter.finishBody(payload.resBodyHandle);
-                },
-                async abort() {
-                  await adapter.finishBody(payload.resBodyHandle);
-                },
-              }),
-            };
-          };
-          Object.defineProperty(req, "acceptWebTransport", {
-            value: acceptWebTransportFn,
-            configurable: true,
-          });
-        }
-
         // Invoke the user handler with onError fallback.
         let res: Response;
         try {
@@ -238,13 +201,6 @@ export function makeServe(
           } catch {
             res = new Response("Internal Server Error", { status: 500 });
           }
-        }
-
-        if (payload.isBidi) {
-          return {
-            status: res.status,
-            headers: [...res.headers] as [string, string][],
-          };
         }
 
         const bodyStream = res.body ?? emptyStream();

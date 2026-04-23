@@ -40,7 +40,7 @@ export type {
 } from "./serve.js";
 export { buildSession } from "./session.js";
 export { bodyInitToStream, makeReadable, pipeToWriter } from "./streams.js";
-export { makeConnect, makeFetch } from "./fetch.js";
+export { makeFetch } from "./fetch.js";
 export { makeServe } from "./serve.js";
 export { PublicKey, resolveNodeId, SecretKey } from "./keys.js";
 export {

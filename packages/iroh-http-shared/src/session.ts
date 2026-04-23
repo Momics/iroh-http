@@ -39,6 +39,16 @@ export interface RawSessionFns {
     nodeId: string,
     directAddrs: string[] | null,
   ): Promise<bigint>;
+  /**
+   * Accept an incoming session from a remote peer.
+   *
+   * Blocks until a peer opens a raw QUIC connection.  Returns the session
+   * handle and the remote peer's node ID string, or `null` when the endpoint
+   * is shutting down.
+   */
+  sessionAccept?(
+    endpointHandle: number,
+  ): Promise<{ sessionHandle: bigint; nodeId: string } | null>;
   /** Open a new bidi stream on an existing session. */
   createBidiStream(sessionHandle: bigint): Promise<FfiDuplexStream>;
   /** Accept the next incoming bidi stream. Returns `null` when the session closes. */

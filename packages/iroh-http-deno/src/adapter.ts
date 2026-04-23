@@ -21,7 +21,6 @@ import type {
   FfiDuplexStream,
   FfiResponse,
   FfiResponseHead,
-  RawConnectFn,
   RawFetchFn,
   RawServeFn,
   RawSessionFns,
@@ -184,6 +183,7 @@ const METHOD_BUFS: Record<string, Uint8Array> = Object.fromEntries(
     "startTransportEvents",
     "nextTransportEvent",
     "nextPathChange",
+    "sessionAccept",
   ].map((m) => [m, enc.encode(m)]),
 );
 
@@ -379,22 +379,6 @@ export const rawFetch: RawFetchFn = async (
   } satisfies FfiResponse;
 };
 
-export const rawConnect: RawConnectFn = async (
-  endpointHandle: number,
-  nodeId: string,
-  path: string,
-  headers: [string, string][],
-) => {
-  const res = await call<{ readHandle: number; writeHandle: number }>(
-    "rawConnect",
-    { endpointHandle, nodeId, path, headers },
-  );
-  return {
-    readHandle: BigInt(res.readHandle),
-    writeHandle: BigInt(res.writeHandle),
-  } satisfies FfiDuplexStream;
-};
-
 /**
  * Polling serve loop.
  *
@@ -444,7 +428,6 @@ export const rawServe: RawServeFn = (
               url: string;
               headers: [string, string][];
               remoteNodeId: string;
-              isBidi: boolean;
             } | null
           >("nextRequest", { endpointHandle });
           if (raw === null) break;
@@ -456,7 +439,6 @@ export const rawServe: RawServeFn = (
             url: raw.url,
             headers: raw.headers,
             remoteNodeId: raw.remoteNodeId,
-            isBidi: raw.isBidi,
           };
 
           // Handle in the background — do not await.
@@ -696,6 +678,13 @@ export function makeDenoSessionFns(endpointHandle: number): RawSessionFns {
         directAddrs: directAddrs ?? null,
       });
       return BigInt(res.sessionHandle as unknown as number);
+    },
+    sessionAccept: async (_endpointHandle) => {
+      const res = await call<
+        { sessionHandle: number; nodeId: string } | null
+      >("sessionAccept", { endpointHandle });
+      if (res === null) return null;
+      return { sessionHandle: BigInt(res.sessionHandle), nodeId: res.nodeId };
     },
     createBidiStream: async (sessionHandle) => {
       const res = await call<{ readHandle: number; writeHandle: number }>(
@@ -941,22 +930,6 @@ export class DenoAdapter extends IrohAdapter {
       headers: res.headers,
       bodyHandle: BigInt(res.bodyHandle),
       url: res.url,
-    };
-  }
-
-  override async rawConnect(
-    endpointHandle: number,
-    nodeId: string,
-    path: string,
-    headers: [string, string][],
-  ): Promise<FfiDuplexStream> {
-    const res = await call<{ readHandle: number; writeHandle: number }>(
-      "rawConnect",
-      { endpointHandle, nodeId, path, headers },
-    );
-    return {
-      readHandle: BigInt(res.readHandle),
-      writeHandle: BigInt(res.writeHandle),
     };
   }
 

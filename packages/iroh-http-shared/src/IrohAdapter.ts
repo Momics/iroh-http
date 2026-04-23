@@ -24,7 +24,6 @@ export interface RequestPayload extends FfiRequest {
   reqHandle: bigint;
   reqBodyHandle: bigint;
   resBodyHandle: bigint;
-  isBidi: boolean;
 }
 
 export interface FfiDuplexStream {
@@ -67,12 +66,6 @@ export interface CloseOptions {
   force?: boolean;
 }
 
-export type RawServeFn = (
-  endpointHandle: number,
-  options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
-  callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
-) => Promise<void>;
-
 export type RawFetchFn = (
   endpointHandle: number,
   nodeId: string,
@@ -86,12 +79,11 @@ export type RawFetchFn = (
 
 export type AllocBodyWriterFn = () => bigint | Promise<bigint>;
 
-export type RawConnectFn = (
+export type RawServeFn = (
   endpointHandle: number,
-  nodeId: string,
-  path: string,
-  headers: [string, string][],
-) => Promise<FfiDuplexStream>;
+  options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
+  callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
+) => Promise<void>;
 
 export abstract class IrohAdapter {
   // ── Required: body streaming ────────────────────────────────────────────────
@@ -139,18 +131,6 @@ export abstract class IrohAdapter {
     nodeId: string,
   ): Promise<PeerStats | null>;
   abstract stats(endpointHandle: number): Promise<EndpointStats>;
-
-  // ── Optional: raw connect ────────────────────────────────────────────────────
-  rawConnect(
-    _endpointHandle: number,
-    _nodeId: string,
-    _path: string,
-    _headers: [string, string][],
-  ): Promise<FfiDuplexStream> {
-    return Promise.reject(
-      new Error(`rawConnect() not supported by this adapter`),
-    );
-  }
 
   // ── Optional: sessions ──────────────────────────────────────────────────────
   get sessionFns(): RawSessionFns | null {
