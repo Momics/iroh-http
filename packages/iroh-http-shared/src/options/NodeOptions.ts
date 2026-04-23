@@ -9,7 +9,7 @@ import type { SecretKey } from "../keys.js";
  * - `string` — a single custom relay server URL.
  * - `string[]` — multiple custom relay server URLs.
  */
-export type RelayMode = "default" | "staging" | "disabled" | string | string[];
+export type RelayMode = "default" | "staging" | "disabled" | (string & {}) | string[];
 
 export interface NodeOptions {
   /**
