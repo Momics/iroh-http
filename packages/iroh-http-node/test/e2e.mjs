@@ -832,3 +832,81 @@ test("pathChanges — returns an AsyncIterable", async () => {
     await node.close();
   }
 });
+
+// ── Regression #119: fire-and-forget pipes / stale microtasks ─────────────────
+//
+// Before the fix:
+//   1. doPipe() in makeServe was detached — finished resolved before bodies drained.
+//   2. Node napi callback tasks were untracked — stale callbacks from a previous
+//      iteration called rawRespond() on handles recycled in the current iteration.
+//   3. Timed TTL was creation-time only — slow pipes got swept mid-transfer.
+//
+// This test mirrors the "multiplexing iroh 32 streams" bench pattern that
+// reliably triggered "unknown handle" / "sendChunk failed" errors: multiple
+// iterations of 32 concurrent fetches followed immediately by stopServe +
+// await finished.  Any stale microtask firing on a recycled handle will be
+// captured by the console.error spy and cause the assertion to fail.
+
+test(
+  "regression #119 — 32-stream burst × 5 iterations: no stale-handle errors after finished",
+  { timeout: 120_000 },
+  async () => {
+    const STREAMS = 32;
+    const ITERS = 5;
+    const BODY = "x".repeat(4096); // 4 KiB ensures the pipe spans multiple chunks
+
+    const errors = [];
+    const originalError = console.error.bind(console);
+    console.error = (...args) => {
+      const msg = args.map(String).join(" ");
+      if (
+        msg.includes("unknown handle") ||
+        msg.includes("node closed or not found") ||
+        msg.includes("sendChunk failed")
+      ) {
+        errors.push(msg);
+      }
+      originalError(...args);
+    };
+
+    const server = await createNode({ disableNetworking: true, bindAddr: "127.0.0.1:0" });
+    const client = await createNode({ disableNetworking: true, bindAddr: "127.0.0.1:0" });
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+
+    try {
+      for (let iter = 0; iter < ITERS; iter++) {
+        const ac = new AbortController();
+        const handle = server.serve({ signal: ac.signal }, () =>
+          new Response(BODY),
+        );
+
+        // 32 concurrent fetches — mirrors "multiplexing iroh 32 streams" bench.
+        const bodies = await Promise.all(
+          Array.from({ length: STREAMS }, () =>
+            client
+              .fetch(serverId, "httpi://test.local/data", {
+                directAddrs: serverAddrs,
+              })
+              .then((r) => r.text()),
+          ),
+        );
+
+        // Stop the loop and wait for ALL body pipes to drain before proceeding.
+        ac.abort();
+        await handle.finished;
+
+        // Every body must have arrived intact.
+        for (let i = 0; i < STREAMS; i++) {
+          assert.equal(bodies[i], BODY, `iter ${iter} stream ${i}: body truncated`);
+        }
+      }
+
+      // Any stale-handle log line is a test failure.
+      assert.deepEqual(errors, [], `handle errors detected: ${errors.join(" | ")}`);
+    } finally {
+      console.error = originalError;
+      await server.close();
+      await client.close();
+    }
+  },
+);

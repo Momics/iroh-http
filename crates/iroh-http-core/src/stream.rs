@@ -181,19 +181,26 @@ impl Default for StoreConfig {
 
 struct Timed<T> {
     value: T,
-    created_at: Instant,
+    /// Updated on every access so that actively-used handles are not TTL-swept
+    /// mid-transfer (fix for iroh-http#119 Bug 3).
+    last_accessed: Instant,
 }
 
 impl<T> Timed<T> {
     fn new(value: T) -> Self {
         Self {
             value,
-            created_at: Instant::now(),
+            last_accessed: Instant::now(),
         }
     }
 
+    /// Refresh the last-access timestamp.  Call inside the registry lock.
+    fn touch(&mut self) {
+        self.last_accessed = Instant::now();
+    }
+
     fn is_expired(&self, ttl: Duration) -> bool {
-        self.created_at.elapsed() > ttl
+        self.last_accessed.elapsed() > ttl
     }
 }
 
@@ -449,10 +456,11 @@ impl HandleStore {
     pub async fn next_chunk(&self, handle: u64) -> Result<Option<Bytes>, CoreError> {
         // Clone the Arc — allows awaiting without holding the registry mutex.
         let (rx_arc, cancel) = {
-            let reg = self.readers.lock().unwrap_or_else(|e| e.into_inner());
+            let mut reg = self.readers.lock().unwrap_or_else(|e| e.into_inner());
             let entry = reg
-                .get(handle_to_reader_key(handle))
+                .get_mut(handle_to_reader_key(handle))
                 .ok_or_else(|| CoreError::invalid_handle(handle))?;
+            entry.touch();
             (entry.value.rx.clone(), entry.value.cancel.clone())
         };
 
@@ -476,10 +484,11 @@ impl HandleStore {
     pub async fn send_chunk(&self, handle: u64, chunk: Bytes) -> Result<(), CoreError> {
         // Clone the Sender (cheap) and release the lock before awaiting.
         let (tx, timeout) = {
-            let reg = self.writers.lock().unwrap_or_else(|e| e.into_inner());
+            let mut reg = self.writers.lock().unwrap_or_else(|e| e.into_inner());
             let entry = reg
-                .get(handle_to_writer_key(handle))
+                .get_mut(handle_to_writer_key(handle))
                 .ok_or_else(|| CoreError::invalid_handle(handle))?;
+            entry.touch();
             (entry.value.tx.clone(), entry.value.drain_timeout)
         };
         let max = self.config.max_chunk_size;

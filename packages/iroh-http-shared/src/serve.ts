@@ -160,6 +160,9 @@ export function makeServe(
     const onConnectionEvent: ((event: PeerConnectionEvent) => void) | undefined =
       onPeerEvent;
 
+    // #119: Track active body pipes so `finished` drains them before resolving.
+    const activePipes = new Set<Promise<void>>();
+
     // rawServe returns a Promise<void> that resolves when its internal polling
     // loop exits (i.e. after stopServe() causes nextRequest to drain to null).
     const loopDone = adapter.rawServe(
@@ -206,12 +209,14 @@ export function makeServe(
         const doPipe = async () => {
           await pipeToWriter(adapter, bodyStream, payload.resBodyHandle);
         };
-        doPipe().catch((err) =>
+        const p = doPipe().catch((err) =>
           console.error(
             "[iroh-http] response body pipe error:",
             classifyError(err),
           )
         );
+        activePipes.add(p);
+        p.finally(() => activePipes.delete(p));
 
         return {
           status: res.status,
@@ -235,7 +240,11 @@ export function makeServe(
     // resolve because close_endpoint always calls serve_registry::remove first, which
     // unblocks the pending nextRequest. If loopDone resolves first (normal path when
     // stopServe was called explicitly), the race wins immediately.
-    const finished = Promise.race([loopDone, onNodeClose.then(() => loopDone)]);
+    // #119: drain all in-flight body pipes before resolving so callers of
+    // `await finished` see a true "all work done" guarantee.
+    const finished: Promise<void> = Promise.race([loopDone, onNodeClose.then(() => loopDone)])
+      .then(() => Promise.allSettled([...activePipes]))
+      .then(() => {});
     // Reset guard when the loop finishes so serve() can be called again.
     finished.finally(() => { serveRunning = false; });
 

@@ -230,6 +230,8 @@ class NodeAdapter extends IrohAdapter {
     options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
     callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
   ): Promise<void> {
+    // #119: Track in-flight handler tasks so waitServeStop drains them before resolving.
+    const pending = new Set<Promise<void>>();
     (napiRawServe as (
       handle: number,
       cb: (payload: Record<string, unknown>) => void,
@@ -238,7 +240,7 @@ class NodeAdapter extends IrohAdapter {
       endpointHandle,
       (payload: Record<string, unknown>) => {
         const typed = payload as unknown as RequestPayload;
-        callback(typed)
+        const task = callback(typed)
           .then((head) => {
             try {
               napiRawRespond(
@@ -262,10 +264,14 @@ class NodeAdapter extends IrohAdapter {
               );
             }
           });
+        pending.add(task);
+        task.finally(() => pending.delete(task));
       },
       options.onConnectionEvent ?? null,
     );
-    return napiWaitServeStop(endpointHandle);
+    return napiWaitServeStop(endpointHandle)
+      .then(() => Promise.allSettled([...pending]))
+      .then(() => {});
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────

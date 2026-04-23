@@ -416,6 +416,8 @@ export const rawServe: RawServeFn = (
         })();
       }
 
+      // #119: Track in-flight handler tasks so the loop drains them before resolving.
+      const pending = new Set<Promise<void>>();
       return (async () => {
         while (true) {
           const raw = await call<
@@ -440,8 +442,8 @@ export const rawServe: RawServeFn = (
             remoteNodeId: raw.remoteNodeId,
           };
 
-          // Handle in the background — do not await.
-          (async () => {
+          // Handle in the background — track for drain on shutdown.
+          const task: Promise<void> = (async () => {
             try {
               const head = await callback(payload);
               await call<Record<never, never>>("respond", {
@@ -464,7 +466,10 @@ export const rawServe: RawServeFn = (
               }
             }
           })();
+          pending.add(task);
+          task.finally(() => pending.delete(task));
         }
+        await Promise.allSettled([...pending]);
       })();
     },
   );

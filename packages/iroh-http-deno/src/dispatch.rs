@@ -660,8 +660,23 @@ async fn serve_start(p: Value) -> Value {
         ep.clone(),
         ep.serve_options(),
         move |payload: RequestPayload| {
+            // #122: enqueue synchronously from the on_request closure — no
+            // detached `tokio::spawn`.
+            //
+            // Previously this spawned a tokio task to call `try_send`, which
+            // created a race window: the RequestService future could await
+            // `head_rx` (and, with TimeoutLayer, be cancelled after 60s,
+            // dropping the `ReqHeadCleanup` RAII guard that removes the
+            // `req_handle` slab entry) before the spawned task actually
+            // delivered the event to the JS polling loop.  JS then polled
+            // the event, ran the handler, and called `respond()` on a slab
+            // entry that no longer existed → `unknown handle`.
+            //
+            // `try_send` is non-blocking (mpsc buffer push) and the 503
+            // fallback `respond()` is also synchronous (slab lookup +
+            // oneshot send), so both are safe to call from the callback.
             let q = std::sync::Arc::clone(&queue);
-            let ep_ref = ep_clone.clone();
+            let req_handle = payload.req_handle;
             let headers: Vec<Vec<String>> = payload
                 .headers
                 .into_iter()
@@ -671,26 +686,21 @@ async fn serve_start(p: Value) -> Value {
                 "reqHandle":         payload.req_handle,
                 "reqBodyHandle":     payload.req_body_handle,
                 "resBodyHandle":     payload.res_body_handle,
-                "isBidi":          payload.is_bidi,
+                "isBidi":            payload.is_bidi,
                 "method":            payload.method,
                 "url":               payload.url,
                 "headers":           headers,
                 "remoteNodeId":      payload.remote_node_id,
             });
-            let tx = q.tx.clone();
-            tokio::spawn(async move {
-                // try_send: if queue is full, reject with a 503 immediately
-                // rather than stalling the accept loop or growing memory unboundedly.
-                if tx.try_send(event).is_err() {
-                    tracing::warn!("iroh-http-deno: serve queue full — dropping request with 503");
-                    let _ = respond(
-                        ep_ref.handles(),
-                        payload.req_handle,
-                        503,
-                        vec![("content-length".to_string(), "0".to_string())],
-                    );
-                }
-            });
+            if q.tx.try_send(event).is_err() {
+                tracing::warn!("iroh-http-deno: serve queue full — dropping request with 503");
+                let _ = respond(
+                    ep_clone.handles(),
+                    req_handle,
+                    503,
+                    vec![("content-length".to_string(), "0".to_string())],
+                );
+            }
         },
         conn_event_fn,
     );
@@ -718,6 +728,13 @@ async fn stop_serve(p: Value) -> Value {
     // Once the serve closure also drops its cloned tx, the channel closes and
     // nextRequest's recv() returns None, allowing the polling loop to exit.
     serve_registry::remove(handle);
+    // #122: wait for the previous serve loop to fully terminate before returning.
+    // Without this, a subsequent `serve_start` on the same endpoint would
+    // overwrite `serve_handle` while the old loop is still draining; new
+    // incoming requests would be routed through the old `on_request` closure
+    // (capturing the old queue's `tx`) and never delivered to the new
+    // `nextRequest` poller — they would just time out at 60s.
+    ep.wait_serve_stop().await;
     ok(json!({}))
 }
 
