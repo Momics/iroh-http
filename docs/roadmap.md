@@ -1,11 +1,12 @@
 # Roadmap
 
-## Horizon 1 — v1.0 Release
+## Current state — v0.2.x (testing phase)
 
-The primary near-term goal. The library works; this is about making it
-releasable and trustworthy for public consumption.
+The library is functionally complete and published on npm and JSR, but we are
+in an active testing phase before calling anything "stable". Semver signals
+this: all packages are `0.x`. Breaking changes are possible.
 
-### Done
+### What is shipped and working
 
 - [x] crates.io publish metadata (`repository`, `documentation`, `keywords`, `categories`)
 - [x] Release CI workflow (`release.yml` with cross-platform matrix build, OIDC publishing)
@@ -17,60 +18,70 @@ releasable and trustworthy for public consumption.
 - [x] `CHANGELOG.md` — generated via `git-cliff` and updated each release in CI
 - [x] `SECURITY.md` — GitHub Security Advisories disclosure policy
 - [x] Repository public on GitHub
-- [x] All GitHub issues resolved through v0.1.3
-
-### Remaining before v1.0
-
-**Node.js — napi-rs platform packages**
-
-napi-rs multi-platform distribution requires one small package per platform
-(e.g. `@momics/iroh-http-node-darwin-arm64`) listed as
-`optionalDependencies` in the main package. Without this, a user installing
-on a different platform gets no `.node` binary. napi-rs has a
-[`@napi-rs/cli artifacts`](https://napi.rs/docs/cross-build/summary)
-command that generates these packages.
+- [x] All GitHub issues resolved through v0.2.x
+- [x] Node.js — napi-rs platform packages + `optionalDependencies` wiring (all 5 targets)
+- [x] `node.stats()` — node-wide `EndpointStats` (active connections, requests, handles, pool size)
+- [x] Transport events — `pool:hit`, `pool:miss`, `pool:evict`, `path:change`, `handle:sweep`
+- [x] `node.peerStats(nodeId)` — per-peer QUIC stats (RTT, bytes, path info)
+- [x] `node.pathChanges(nodeId)` — `AsyncIterable<PathInfo>` path-change stream
+- [x] Per-peer rate limiting (`maxConnectionsPerPeer`) at the QUIC layer
+- [x] Connection pool with moka-backed single-flight establishment
+- [x] QPACK header compression (zstd, feature-gated)
+- [x] WebTransport-compatible `IrohSession` (bidirectional streams, datagrams, close info)
+- [x] Node tickets — compact shareable `NodeAddr` strings
+- [x] mDNS peer discovery (`browse` / `advertise`)
+- [x] Graceful shutdown with drain semantics
+- [x] `fetch()` accepts `httpi://` URLs with peer ID in hostname
 
 ### Distribution channels
 
 | Package | Platform | Status |
 |---------|----------|--------|
 | `@momics/iroh-http-shared` | npm + JSR | ✅ Published |
-| `@momics/iroh-http-node` | npm | ⚠️ Platform packages not configured |
+| `@momics/iroh-http-node` | npm (5 platform packages) | ✅ Published |
 | `@momics/iroh-http-deno` | JSR + GitHub releases | ✅ Published, runtime binary download |
-| `@momics/iroh-http-tauri` | npm | ✅ Config correct |
+| `@momics/iroh-http-tauri` | npm | ✅ Published |
 | `iroh-http-core` | crates.io | ✅ Metadata complete |
 | `iroh-http-discovery` | crates.io | ✅ Metadata complete |
 
 ---
 
-## Horizon 2 — Embedded and HTTP/3
+## Near-term — stabilisation and polish
 
-These are long-term goals that influence architectural decisions today but are
-not on the near-term roadmap.
+These are the most valuable things to work on while the testing phase runs.
 
-### Embedded / `no_std`
+### Runnable examples
 
-Iroh's embedded QUIC support is still evolving. The current host-platform
-implementation uses hyper v1 (not `no_std`-compatible). The path to embedded
-requires a transport-agnostic `iroh-http-framing` crate — pure
-parse/serialize logic with no tokio, no socket concerns, no Iroh coupling.
+The `examples/` folder exists but is sparse. Each runtime needs at least one
+self-contained, runnable example demonstrating `fetch` + `serve` + `session`
+in a realistic scenario:
 
-**Architectural constraints to preserve today:**
+- `examples/deno/` — basic request/response, then session with datagrams
+- `examples/node/` — same, plus a mDNS discovery demo
+- `examples/tauri/` — minimal Tauri app showing the Rust ↔ TS bridge in action
 
-- Wire-level parsing/serialization must remain isolated from
-  runtime/transport concerns. Never couple protocol logic to tokio or Iroh
-  internals.
-- Protocol semantics must be specified by conformance tests and test vectors,
-  not by implicit host runtime behaviour.
-- Platform adapters must not define protocol behaviour; they only map APIs.
-- Error codes and failure semantics must be canonical and cross-platform.
+Good examples are the fastest path from "curious" to "shipping".
 
-A host-only dependency is acceptable today when:
-1. It significantly improves correctness, safety, or maintainability now.
-2. It does not erase protocol boundaries needed for embedded.
-3. Protocol behaviour remains expressible through conformance tests.
+### `iroh-path-type` response header
 
-### HTTP/3
+The observability spec documents a planned `iroh-path-type` response header
+(indicating direct vs relay path for each request). It is not yet injected by
+the server layer. The blocker is that iroh does not yet expose stable
+per-connection path metadata in its public API. Track upstream; add the header
+once the API stabilises.
+
+### Documentation accuracy pass
+
+Several feature docs were written ahead of implementation and now lag behind.
+Specifically:
+- [observability.md](features/observability.md) still says `stats()` is
+  "planned but not yet implemented" — it is implemented.
+- [architecture.md](architecture.md) should reflect the finalized hyper v1
+  decision and the current file layout.
+
+---
+
+## Horizon 2 — HTTP/3
 
 Nothing in the current architecture closes the door to HTTP/3. The
 `tower::Service` application layer and all business logic would be unchanged
@@ -81,5 +92,16 @@ The blocker is upstream: there is no `h3-noq` crate yet (analogous to
 `noq::Connection` publicly, the swap is straightforward. Track this via
 the open question in [architecture.md](architecture.md).
 
-**Python support is a future goal** once the core and JS adapters are stable
-and the release pipeline is solid.
+---
+
+## Design constraints to maintain
+
+These govern future work and must not be violated even for expedient changes:
+
+- Wire-level protocol behaviour must remain expressible as conformance tests —
+  it must not be implicitly defined by runtime behaviour.
+- Platform adapters must not define protocol behaviour; they only map APIs.
+- Error codes and failure semantics must be canonical and cross-platform.
+- The architecture must not close the door to future language bindings (e.g.
+  Python). This means keeping the Rust core's public API clean and
+  self-contained — no tokio or hyper types leaking into the FFI boundary.
