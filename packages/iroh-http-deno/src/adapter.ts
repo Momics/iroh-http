@@ -14,7 +14,6 @@ import type {
   PeerConnectionEvent,
   PeerDiscoveryEvent,
   PeerStats,
-  TransportEventPayload,
 } from "@momics/iroh-http-shared";
 import { IrohAdapter } from "@momics/iroh-http-shared/adapter";
 import type {
@@ -27,6 +26,7 @@ import type {
   RawServeFn,
   RawSessionFns,
   RequestPayload,
+  TransportEventPayload,
 } from "@momics/iroh-http-shared/adapter";
 import {
   classifyBindError,

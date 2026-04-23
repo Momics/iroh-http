@@ -59,6 +59,7 @@ import {
   IrohAdapter,
   type PeerConnectionEvent,
   type RequestPayload,
+  type TransportEventPayload,
 } from "@momics/iroh-http-shared/adapter";
 import type { RawSessionFns } from "@momics/iroh-http-shared/adapter";
 import type {
@@ -66,7 +67,6 @@ import type {
   PathInfo,
   PeerDiscoveryEvent,
   PeerStats,
-  TransportEventPayload,
 } from "@momics/iroh-http-shared";
 
 // ── Graceful shutdown tracking ─────────────────────────────────────────────────

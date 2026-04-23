@@ -149,17 +149,6 @@ export interface NodeOptions {
    */
   disableNetworking?: boolean;
 
-  /** Observability and diagnostics options. */
-  observability?: {
-    /**
-     * Start the background transport-event loop, which delivers `pool:hit`,
-     * `pool:miss`, `pool:evict`, `path:change`, and `handle:sweep` events via
-     * the `"transport"` CustomEvent on `IrohNode`.
-     * @default false
-     */
-    transportEvents?: boolean;
-  };
-
   /** Debugging tools. Never enable these in production. */
   debug?: {
     /**

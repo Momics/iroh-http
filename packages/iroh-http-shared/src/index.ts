@@ -11,10 +11,13 @@ export { IrohAdapter } from "./IrohAdapter.js";
 export { IrohNode } from "./IrohNode.js";
 export type { NodeOptions, RelayMode } from "./options/NodeOptions.js";
 export type {
+  DiagnosticsEventDetail,
   EndpointStats,
+  PathChangeEventDetail,
   PathInfo,
+  PeerConnectEventDetail,
+  PeerDisconnectEventDetail,
   PeerStats,
-  TransportEventPayload,
 } from "./observability.js";
 export type {
   AdvertiseOptions,

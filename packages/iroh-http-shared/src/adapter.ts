@@ -13,3 +13,4 @@ export type {
   RequestPayload,
 } from "./IrohAdapter.js";
 export type { RawSessionFns } from "./session.js";
+export type { TransportEventPayload } from "./observability.js";

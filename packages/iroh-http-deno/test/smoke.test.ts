@@ -954,16 +954,12 @@ Deno.test("IrohNode — extends EventTarget", async () => {
 });
 
 Deno.test({
-  name:
-    "transport events — pool:miss fires on first fetch when observability.transportEvents: true",
+  name: "diagnostics — pool:miss fires on first fetch",
   sanitizeOps: false,
 }, () =>
   withTimeout(20_000, async () => {
     const server = await createNode({ bindAddr: "127.0.0.1:0" });
-    const client = await createNode({
-      bindAddr: "127.0.0.1:0",
-      observability: { transportEvents: true },
-    });
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
     const ac = new AbortController();
     let handle: { finished: Promise<void> } | undefined;
 
@@ -973,7 +969,7 @@ Deno.test({
         new Response("ok"));
 
       const received: unknown[] = [];
-      client.addEventListener("transport", (ev: Event) => {
+      client.addEventListener("diagnostics", (ev: Event) => {
         received.push((ev as CustomEvent).detail);
       });
 
@@ -982,18 +978,16 @@ Deno.test({
       });
 
       // The transport event loop runs concurrently; yield to let it flush.
-      await new Promise<void>((r) =>
-        setTimeout(r, 10)
-      );
+      await new Promise<void>((r) => setTimeout(r, 10));
       await new Promise<void>((r) => setTimeout(r, 10));
 
       const miss = (received as Array<
-        { type: string; peerId?: string; timestamp?: number }
+        { kind: string; peerId?: string; timestamp?: number }
       >)
-        .find((e) => e.type === "pool:miss");
+        .find((e) => e.kind === "pool:miss");
       assert(
         miss !== undefined,
-        `Expected a pool:miss event, got: ${JSON.stringify(received)}`,
+        `Expected a pool:miss diagnostics event, got: ${JSON.stringify(received)}`,
       );
       assertEquals(typeof miss.peerId, "string", "pool:miss must have peerId");
       assertEquals(
@@ -1010,37 +1004,44 @@ Deno.test({
   }));
 
 Deno.test({
-  name:
-    "transport events — not emitted when observability.transportEvents is not set",
+  name: "peerconnect / peerdisconnect — events fire on serve node when peer connects",
   sanitizeOps: false,
 }, () =>
   withTimeout(20_000, async () => {
     const server = await createNode({ bindAddr: "127.0.0.1:0" });
-    const client = await createNode({ bindAddr: "127.0.0.1:0" }); // no observability
+    const client = await createNode({ bindAddr: "127.0.0.1:0" });
     const ac = new AbortController();
     let handle: { finished: Promise<void> } | undefined;
 
     try {
       const { id: serverId, addrs: serverAddrs } = await server.addr();
+      const { id: clientId } = await client.addr();
+
+      const connects: string[] = [];
+      const disconnects: string[] = [];
+
+      server.addEventListener("peerconnect", (ev: Event) => {
+        connects.push((ev as CustomEvent<{ nodeId: string }>).detail.nodeId);
+      });
+      server.addEventListener("peerdisconnect", (ev: Event) => {
+        disconnects.push(
+          (ev as CustomEvent<{ nodeId: string }>).detail.nodeId,
+        );
+      });
+
       handle = server.serve({ signal: ac.signal }, (_req: Request) =>
         new Response("ok"));
-
-      const received: unknown[] = [];
-      client.addEventListener("transport", (ev: Event) => {
-        received.push((ev as CustomEvent).detail);
-      });
 
       await client.fetch(serverId, "httpi://example.com/", {
         directAddrs: serverAddrs,
       });
-      await new Promise<void>((r) =>
-        setTimeout(r, 10)
-      );
 
-      assertEquals(
-        received.length,
-        0,
-        `Expected no events, got: ${JSON.stringify(received)}`,
+      // Yield to let the connection event loop flush.
+      await new Promise<void>((r) => setTimeout(r, 30));
+
+      assert(
+        connects.some((id) => id === clientId),
+        `Expected peerconnect for ${clientId}, got: ${JSON.stringify(connects)}`,
       );
     } finally {
       ac.abort();

@@ -70,22 +70,6 @@ export interface ServeOptions {
    */
   signal?: AbortSignal;
 
-  /**
-   * Called when a peer establishes its first QUIC connection to this node
-   * (0 → 1 connection count transition).
-   *
-   * @param peerId Base32-encoded public key of the peer.
-   */
-  onPeerConnect?: (peerId: string) => void;
-
-  /**
-   * Called when a peer's last QUIC connection to this node closes
-   * (1 → 0 connection count transition).
-   *
-   * @param peerId Base32-encoded public key of the peer.
-   */
-  onPeerDisconnect?: (peerId: string) => void;
-
 }
 
 /**
@@ -142,6 +126,7 @@ export function makeServe(
   endpointHandle: number,
   nodeId: string,
   onNodeClose: Promise<void>,
+  onPeerEvent?: (event: PeerConnectionEvent) => void,
 ): ServeFn {
   // #114: guard against starting two polling loops on the same endpoint.
   let serveRunning = false;
@@ -171,18 +156,11 @@ export function makeServe(
 
     const onError = options.onError ?? defaultOnError;
 
-    // Build a unified connection event callback from onPeerConnect / onPeerDisconnect.
-    const onConnectionEvent:
-      | ((event: PeerConnectionEvent) => void)
-      | undefined = (options.onPeerConnect || options.onPeerDisconnect)
-        ? (ev: PeerConnectionEvent) => {
-          if (ev.connected) {
-            options.onPeerConnect?.(ev.peerId);
-          } else {
-            options.onPeerDisconnect?.(ev.peerId);
-          }
-        }
-        : undefined;
+    // Peer connect/disconnect events are dispatched as CustomEvents on IrohNode.
+    // The dispatcher is provided by IrohNode at construction time so events fire
+    // on the node regardless of which serve() call is running.
+    const onConnectionEvent: ((event: PeerConnectionEvent) => void) | undefined =
+      onPeerEvent;
 
     // rawServe returns a Promise<void> that resolves when its internal polling
     // loop exits (i.e. after stopServe() causes nextRequest to drain to null).

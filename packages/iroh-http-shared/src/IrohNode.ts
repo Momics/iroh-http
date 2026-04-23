@@ -18,10 +18,15 @@ import {
   type IrohAdapter,
   type IrohFetchInit,
   type NodeAddrInfo,
+  type PeerConnectionEvent,
 } from "./IrohAdapter.js";
 import type {
+  DiagnosticsEventDetail,
   EndpointStats,
+  PathChangeEventDetail,
   PathInfo,
+  PeerConnectEventDetail,
+  PeerDisconnectEventDetail,
   PeerStats,
   TransportEventPayload,
 } from "./observability.js";
@@ -86,15 +91,26 @@ export class IrohNode extends EventTarget {
       info.endpointHandle,
       info.nodeId,
       this.closed.then(() => {}),
+      (ev: PeerConnectionEvent) => {
+        if (ev.connected) {
+          this.dispatchEvent(
+            new CustomEvent<PeerConnectEventDetail>("peerconnect", {
+              detail: { nodeId: ev.peerId },
+            }),
+          );
+        } else {
+          this.dispatchEvent(
+            new CustomEvent<PeerDisconnectEventDetail>("peerdisconnect", {
+              detail: { nodeId: ev.peerId },
+            }),
+          );
+        }
+      },
     );
 
-    // Only start the transport event loop when explicitly opted in.
-    // The loop calls pollTransportEvent() which blocks in Rust until an event
-    // arrives — running it unconditionally would waste a background task slot
-    // and drain events nobody is listening for.
-    if (options?.observability?.transportEvents === true) {
-      this.#startTransportEvents();
-    }
+    // Always start the transport event loop. It delivers "pathchange" and
+    // "diagnostics" CustomEvents on this node. No opt-in required.
+    this.#startTransportEvents();
   }
 
   static _create(
@@ -288,12 +304,27 @@ export class IrohNode extends EventTarget {
   #startTransportEvents(): void {
     this.#adapter.startTransportEvents(
       this.#endpointHandle,
-      (event) =>
-        this.dispatchEvent(
-          new CustomEvent<TransportEventPayload>("transport", {
-            detail: event,
-          }),
-        ),
+      (event: TransportEventPayload) => {
+        if (event.type === "path:change") {
+          this.dispatchEvent(
+            new CustomEvent<PathChangeEventDetail>("pathchange", {
+              detail: {
+                nodeId: event.peerId,
+                relay: event.relay,
+                addr: event.addr,
+                timestamp: event.timestamp,
+              },
+            }),
+          );
+        } else {
+          const { type, ...rest } = event;
+          this.dispatchEvent(
+            new CustomEvent<DiagnosticsEventDetail>("diagnostics", {
+              detail: { kind: type, ...rest } as DiagnosticsEventDetail,
+            }),
+          );
+        }
+      },
     );
   }
 
