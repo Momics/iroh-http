@@ -443,7 +443,6 @@ Deno.test({
 Deno.test({
   name:
     "serve — no pending ops remain after signal abort (regression #115)",
-  ignore: true, // Remove `ignore` when #115 is fixed.
   sanitizeOps: true,
 }, () =>
   withTimeout(10_000, async () => {

@@ -316,13 +316,22 @@ export function makeServe(
     // serve loop is immediately live after rawServe returns.
     options.onListen?.({ nodeId });
 
-    // ISS-029 / #59: finished resolves when the serve loop actually terminates.
+    // ISS-029 / #59 / #115: finished resolves when the serve loop actually terminates.
     // `loopDone` is the real loop-lifetime promise returned by rawServe():
     //  - Deno: resolves when the nextRequest polling loop exits (null sentinel).
     //  - Node / Tauri: resolves when waitServeStop() confirms the Rust task drained.
-    // We also race against onNodeClose so that closing the node unblocks callers
-    // even when stopServe() was never called explicitly.
-    const finished = Promise.race([loopDone, onNodeClose]);
+    //
+    // #115: finished must NOT resolve via onNodeClose alone. When the node closes,
+    // close_endpoint() calls serve_registry::remove() which sends the shutdown signal
+    // to the pending nextRequest Tokio task — but that task is scheduled, not yet run.
+    // If finished resolved immediately on onNodeClose, the nextRequest FFI op would
+    // still be in-flight (Deno sanitizeOps / process exit timing bug).
+    //
+    // Fix: when onNodeClose fires, chain it on loopDone. loopDone is guaranteed to
+    // resolve because close_endpoint always calls serve_registry::remove first, which
+    // unblocks the pending nextRequest. If loopDone resolves first (normal path when
+    // stopServe was called explicitly), the race wins immediately.
+    const finished = Promise.race([loopDone, onNodeClose.then(() => loopDone)]);
     // Reset guard when the loop finishes so serve() can be called again.
     finished.finally(() => { serveRunning = false; });
 
