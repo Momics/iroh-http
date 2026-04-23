@@ -7,5 +7,5 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/momics/iroh-http"
 
 [dependencies]
-iroh-http-core = { path = "../iroh-http-core" }
+iroh-http-core = { path = "../iroh-http-core", version = "0.2.1" }
 serde_json = "1"
