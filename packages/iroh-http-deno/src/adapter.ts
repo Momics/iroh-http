@@ -1119,13 +1119,21 @@ export class DenoAdapter extends IrohAdapter {
 
   // ── Transport events ────────────────────────────────────────────────────────
 
+  #transportLoopDone: Promise<void> | null = null;
+
   override startTransportEvents(
     _endpointHandle: number,
     callback: (event: TransportEventPayload) => void,
   ): void {
     // Claim the receiver on the Rust side, then drain in the background.
-    (async () => {
-      await call<null>("startTransportEvents", { endpointHandle: this.#eh });
+    // Rust returns null from startTransportEvents if the endpoint is already
+    // closed, and null from nextTransportEvent when the channel closes.
+    // Both are clean shutdown signals — the loop resolves without error.
+    this.#transportLoopDone = (async () => {
+      const subscribed = await call<null | boolean>("startTransportEvents", {
+        endpointHandle: this.#eh,
+      });
+      if (subscribed === false) return; // endpoint gone before subscribe
       while (true) {
         const event = await call<TransportEventPayload | null>(
           "nextTransportEvent",
@@ -1141,9 +1149,14 @@ export class DenoAdapter extends IrohAdapter {
           );
         }
       }
-    })().catch((err: unknown) =>
+    })();
+    this.#transportLoopDone.catch((err: unknown) =>
       console.error("[iroh-http-deno] startTransportEvents error:", err)
     );
+  }
+
+  override drainTransportEvents(): Promise<void> {
+    return this.#transportLoopDone ?? Promise.resolve();
   }
 
   override async nextPathChange(
