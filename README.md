@@ -5,77 +5,111 @@
 [![JSR](https://jsr.io/badges/@momics/iroh-http-deno)](https://jsr.io/@momics/iroh-http-deno)
 [![crates.io](https://img.shields.io/crates/v/iroh-http-core)](https://crates.io/crates/iroh-http-core)
 
-> Pre-v1.0 — **DO NOT rely on this package in critical/production usecases!** Still early WIP. APIs may change between minor releases.
+> Pre-v1.0: **do not rely on this in critical or production use.** Still early WIP. APIs may change between minor releases.
 
-iroh-http lets you dial peers by Ed25519 public key and speak HTTP to them. The transport is [Iroh](https://iroh.computer) QUIC — connections are authenticated by keypair, hole-punching and relay are handled for you, and there are no intermediate servers, no DNS records to maintain, and no IP addresses to track.
+Peer-to-peer networking over [Iroh](https://iroh.computer) QUIC. Nodes are addressed by Ed25519 public key: no DNS, no TLS certificates, no intermediate servers.
 
-The API is standard WHATWG `Request`/`Response`. Handlers, routers, and middleware written for Deno, Cloudflare Workers, Hono, or anything `fetch`-shaped work without modification — you're just changing what's underneath.
+The transport uses [Iroh](https://iroh.computer) for QUIC connectivity, including NAT traversal, hole-punching, and relay fallback. HTTP/1.1 framing runs inside QUIC bidirectional streams via [hyper](https://hyper.rs). Each node's identity is an Ed25519 keypair, so the public key is the network address. Changing your IP or network does not change your address.
 
-```sh
-npm install @momics/iroh-http-node
-```
+#### Supported Runtimes
+| Runtime  | Install                               | Docs                                                                                               |
+| -------- | ------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Node.js  | `npm install @momics/iroh-http-node`  | [npmjs.com/package/@momics/iroh-http-node](https://www.npmjs.com/package/@momics/iroh-http-node)   |
+| Deno     | `deno add jsr:@momics/iroh-http-deno` | [jsr.io/@momics/iroh-http-deno](https://jsr.io/@momics/iroh-http-deno)                             |
+| Tauri v2 | `npm install @momics/iroh-http-tauri` | [npmjs.com/package/@momics/iroh-http-tauri](https://www.npmjs.com/package/@momics/iroh-http-tauri) |
 
-**Serve:**
+The API is identical across all runtimes. See the package READMEs for platform support matrices, install details, and runtime-specific options.
 
-```ts
-import { createNode } from "@momics/iroh-http-node";
+## Features
 
-const node = await createNode();
-console.log(node.publicKey.toString()); // give this to peers
+### HTTP over QUIC
 
-node.serve({}, (req) => new Response("hello"));
-```
-
-**Fetch:**
+Standard WHATWG `fetch`/`serve`, but over QUIC to a peer identified by public key. Handlers, routers, and middleware written for Deno, Cloudflare Workers, Hono, or anything `fetch`-shaped work without modification.
 
 ```ts
 import { createNode } from "@momics/iroh-http-node";
 
 const node = await createNode();
+// Share node.publicKey.toString() with peers out-of-band.
+// For a full address ticket (key + relay + direct IPs): node.addr()
+
+const ALLOWED_PEERS = new Set(["<remote-node-public-key>"]);
+node.serve({}, (req) => {
+  // Verify the connecting peer before processing anything.
+  if (!ALLOWED_PEERS.has(req.headers.get("Peer-Id")))
+    return new Response("Forbidden", { status: 403 });
+  return new Response("hello");
+});
+
+// On another machine:
 const res = await node.fetch("<peer-public-key>", "/");
 console.log(await res.text()); // "hello"
 await node.close();
 ```
 
-Each node owns a QUIC endpoint and a keypair. `createNode()` is explicit because there is no ambient socket — a node can both send and receive:
+Browsers are not supported (raw UDP required). This is not a proxy for public HTTP: peers are addressed by key, not by hostname.
+
+### Raw QUIC sessions
+
+Open a direct QUIC connection to any peer and exchange data over bidirectional streams, unidirectional streams, or datagrams. The API mirrors [WebTransport](https://developer.mozilla.org/en-US/docs/Web/API/WebTransport).
 
 ```ts
-const node = await createNode();        // ephemeral keypair
-const node = await createNode({ key }); // stable identity across restarts
+// Initiating side:
+const session = await node.connect("<peer-public-key>");
+const { readable, writable } = await session.createBidirectionalStream();
+
+// Receiving side:
+for await (const session of node.sessions()) {
+  const stream = await session.incomingBidirectionalStreams.getReader().read();
+  // ...handle stream
+}
 ```
 
-Iroh authenticates *who* is connecting, not *whether they should*. If you need access control, gate on the injected `Peer-Id` header:
+### Cryptographic utilities
+
+Every node has an Ed25519 keypair. Key generation, signing, and verification are available as standalone functions without needing a live node.
 
 ```ts
-node.serve({}, (req) => {
-  if (req.headers.get("Peer-Id") !== TRUSTED_KEY)
-    return new Response("Forbidden", { status: 403 });
-  return new Response("ok");
-});
+import { generateSecretKey, secretKeySign, publicKeyVerify } from "@momics/iroh-http-node";
+
+const sk  = generateSecretKey();                      // 32-byte key
+const sig = secretKeySign(sk, data);                  // 64-byte signature
+const ok  = publicKeyVerify(publicKey, data, sig);    // boolean
 ```
 
-Browsers are not supported (raw UDP required). This is not a proxy for public HTTP — peers are addressed by key, not by hostname.
+The class API on a live node runs through Rust and is async:
 
-## Deno / Tauri
-
-```sh
-deno add jsr:@momics/iroh-http-deno
-npm install @momics/iroh-http-tauri   # Tauri v2 plugin
+```ts
+const sig = await node.secretKey.sign(data);
+const ok  = await node.publicKey.verify(data, sig);
 ```
 
-The API is identical across runtimes.
+### mDNS peer discovery
+
+Advertise and discover peers on the local network without out-of-band coordination.
+
+```ts
+await node.advertise("my-app.iroh-http");
+
+for await (const event of node.browse("my-app.iroh-http")) {
+  if (event.type === "discovered") {
+    const res = await node.fetch(event.nodeId, "/api");
+  }
+}
+```
+
 
 ## Architecture
 
-```
-iroh-http-core (Rust)       — QUIC transport, HTTP framing (hyper)
-iroh-http-discovery (Rust)  — optional mDNS (feature = "mdns")
-iroh-http-adapter (Rust)    — shared FFI adapter layer
-iroh-http-shared (TS)       — Bridge interface + error types
-iroh-http-node (napi-rs)    — Node.js native addon
-iroh-http-tauri (Tauri v2)  — Tauri plugin
-iroh-http-deno (FFI)        — Deno native library
-```
+| Package | Role |
+|---------|------|
+| `iroh-http-core` (Rust) | QUIC transport, HTTP/1.1 framing via [hyper](https://hyper.rs) |
+| `iroh-http-discovery` (Rust) | mDNS peer discovery (`feature = "mdns"`) |
+| `iroh-http-adapter` (Rust) | Shared FFI adapter layer |
+| `iroh-http-shared` (TS) | Node class, key types, session types, error hierarchy |
+| `iroh-http-node` | Node.js native addon (napi-rs) |
+| `iroh-http-deno` | Deno native library (FFI) |
+| `iroh-http-tauri` | Tauri v2 plugin |
 
 See [docs/](docs/) and [examples/](examples/).
 
@@ -101,7 +135,7 @@ Built on [Iroh](https://iroh.computer) by [n0](https://n0.computer).
 
 ## License
 
-Apache-2.0 or MIT — see [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT).
+Apache-2.0 or MIT. See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT).
 
 ## Contributing
 

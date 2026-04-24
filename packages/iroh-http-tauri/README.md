@@ -2,13 +2,9 @@
 
 [![npm](https://img.shields.io/npm/v/@momics/iroh-http-tauri)](https://www.npmjs.com/package/@momics/iroh-http-tauri)
 
-> Pre-v1.0 — APIs may change between minor releases.
+> Pre-v1.0. APIs may change between minor releases.
 
-Tauri v2 plugin for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer HTTP over [Iroh](https://iroh.computer) QUIC transport.
-
-## How is this different from regular HTTP?
-
-iroh-http replaces DNS and TLS with public keys. Each node has a cryptographic identity — you `fetch()` and `serve()` using standard `Request`/`Response` objects, but connections go directly between devices over QUIC, with no server in between. You create a node because each one has its own identity and UDP socket. See the [root README](https://github.com/momics/iroh-http#how-is-this-different-from-regular-http) for a full comparison.
+Tauri v2 plugin for [iroh-http](https://github.com/momics/iroh-http): peer-to-peer networking over [Iroh](https://iroh.computer) QUIC. Nodes are addressed by Ed25519 public key, with no DNS, no TLS certificates, and no intermediate servers.
 
 ## Install
 
@@ -34,37 +30,99 @@ fn main() {
 }
 ```
 
-## Usage (guest JS)
+## HTTP: serve and fetch
+
+Send and receive HTTP requests over QUIC using the standard WHATWG `Request`/`Response` interface.
 
 ```ts
 import { createNode } from "@momics/iroh-http-tauri";
 
-const node = await createNode({
-  reconnect: { auto: true, maxRetries: 3 },
-});
+const node = await createNode();
+console.log("Node ID:", node.publicKey.toString()); // share out-of-band
 
-// serve() opens a public endpoint — any peer that knows your public key can connect.
-// Always check Peer-Id to restrict access to known peers.
 const ALLOWED_PEERS = new Set(["<remote-node-public-key>"]);
 node.serve({}, (req) => {
   const peerId = req.headers.get("Peer-Id");
   if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
-  return new Response("hello from Tauri!");
+  return new Response("Hello from Tauri!");
 });
-// Node ID is the peer address — share it out-of-band with the remote node
-const remoteNodeId = "<paste the other node's publicKey.toString() here>";
-const res = await node.fetch(remoteNodeId, "/hello");
+
+const res = await node.fetch("<remote-node-public-key>", "/");
+console.log(await res.text());
 ```
+
+## Raw QUIC sessions
+
+Open a raw QUIC connection to any peer and exchange data over bidirectional streams, unidirectional streams, or datagrams. The API mirrors [WebTransport](https://developer.mozilla.org/en-US/docs/Web/API/WebTransport).
+
+```ts
+// Connect to a peer:
+const session = await node.connect("<peer-public-key>");
+await session.ready;
+
+const { readable, writable } = await session.createBidirectionalStream();
+const writer = writable.getWriter();
+await writer.write(new TextEncoder().encode("hello"));
+await writer.close();
+
+// Accept incoming sessions:
+for await (const session of node.sessions()) {
+  console.log("peer connected:", session.remoteId.toString());
+  for await (const { readable, writable } of session.incomingBidirectionalStreams) {
+    // handle stream
+  }
+}
+```
+
+Requires the `iroh-http:connect` permission (see [Permissions](#permissions) below).
+
+## Cryptographic utilities
+
+Every node has an Ed25519 keypair. Key generation, signing, and verification are also available as standalone functions.
+
+```ts
+import { generateSecretKey, secretKeySign, publicKeyVerify } from "@momics/iroh-http-tauri";
+
+const sk = generateSecretKey();                              // 32-byte Uint8Array
+const data = new TextEncoder().encode("hello");
+const sig = await secretKeySign(sk, data);                   // 64-byte Uint8Array
+const ok  = await publicKeyVerify(node.publicKey.bytes, data, sig); // boolean
+```
+
+Class API on a live node:
+
+```ts
+const sig = await node.secretKey.sign(data);
+const ok  = await node.publicKey.verify(data, sig);
+const saved = node.secretKey.toBytes(); // persist and restore identity
+const restored = await createNode({ key: saved });
+```
+
+Requires the `iroh-http:crypto` permission.
+
+## mDNS peer discovery
+
+```ts
+await node.advertise("my-app.iroh-http");
+
+for await (const event of node.browse({ serviceName: "my-app.iroh-http" })) {
+  if (event.type === "discovered") {
+    const res = await node.fetch(event.nodeId, "/api");
+  }
+}
+```
+
+Requires the `iroh-http:mdns` permission.
 
 ## Security
 
-Any peer that knows your node's public key can connect and send requests. Iroh QUIC authenticates peer *identity* cryptographically, but not *authorization*. Use `req.headers.get('Peer-Id')` in your handler to implement allowlists or other access control:
+Any peer that knows your node's public key can connect and send requests. Iroh QUIC authenticates peer *identity* cryptographically, but not *authorization*. Use `req.headers.get('Peer-Id')` in your HTTP handler, and `session.remoteId` for raw sessions, to implement allowlists:
 
 ```ts
 node.serve({}, (req) => {
-  const peerId = req.headers.get('Peer-Id');
-  if (!ALLOWED_PEERS.has(peerId)) return new Response('Forbidden', { status: 403 });
-  return new Response('ok');
+  const peerId = req.headers.get("Peer-Id");
+  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
+  return new Response("ok");
 });
 ```
 
@@ -77,7 +135,7 @@ Permissions are declared in your app's `capabilities/default.json`. They are spl
 | `iroh-http:default` | `createNode()`, `close()`, node introspection (`publicKey`, `nodeAddr`, etc.) |
 | `iroh-http:fetch` | `node.fetch()` and all internal body-streaming required for it |
 | `iroh-http:serve` | `node.serve()` and all internal body-streaming required for it |
-| `iroh-http:connect` | Raw QUIC sessions — bidirectional streams and datagrams |
+| `iroh-http:connect` | Raw QUIC sessions: bidirectional streams and datagrams |
 | `iroh-http:mdns` | Local peer discovery via mDNS |
 | `iroh-http:crypto` | Key generation, signing, and verification |
 
@@ -93,10 +151,22 @@ A typical app using fetch and serve:
 }
 ```
 
+## Supported Platforms
+
+| Platform | Architecture | Status |
+|----------|:----------:|:------:|
+| macOS | x86_64 | ✅ |
+| macOS | aarch64 (Apple Silicon) | ✅ |
+| Linux | x86_64 | ✅ |
+| Linux | aarch64 | ✅ |
+| Windows | x86_64 | ✅ |
+
 ## Other runtimes
 
-- **Node.js** → [`@momics/iroh-http-node`](https://www.npmjs.com/package/@momics/iroh-http-node) on npm
-- **Deno** → [`@momics/iroh-http-deno`](https://jsr.io/@momics/iroh-http-deno) on JSR
+| Runtime | Package | Docs |
+|---------|---------|------|
+| Node.js | `@momics/iroh-http-node` | [npmjs.com/package/@momics/iroh-http-node](https://www.npmjs.com/package/@momics/iroh-http-node) |
+| Deno | `@momics/iroh-http-deno` | [jsr.io/@momics/iroh-http-deno](https://jsr.io/@momics/iroh-http-deno) |
 
 ## License
 
