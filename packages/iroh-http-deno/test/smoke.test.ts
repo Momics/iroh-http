@@ -1220,7 +1220,6 @@ Deno.test("pathChanges — returns an AsyncIterable", async () => {
 Deno.test({
   name:
     "regression #119 — 32-stream burst × 5 iterations: no stale-handle errors after finished",
-  ignore: true, // #122 — requires UnsafeCallback-based serve to dispatch promptly under load
   sanitizeOps: false,
 }, () =>
   withTimeout(120_000, async () => {

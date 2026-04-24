@@ -135,11 +135,36 @@ const lib = Deno.dlopen(
     iroh_http_send_chunk: {
       parameters: ["u32", "u64", "buffer", "usize"],
       result: "i32",
-      nonblocking: true,
+      // #122: sync — mpsc send is usually O(1). Running inline avoids
+      // spawn_blocking contention that starves nextRequest under load.
+      nonblocking: false,
+    },
+    // #122: Sync symbols — execute inline on JS thread, no spawn_blocking.
+    iroh_http_respond: {
+      parameters: ["u32", "u64", "u32", "buffer", "usize"],
+      result: "i32",
+      nonblocking: false,
+    },
+    iroh_http_finish_body: {
+      parameters: ["u32", "u64"],
+      result: "i32",
+      nonblocking: false,
+    },
+    iroh_http_cancel_reader: {
+      parameters: ["u32", "u64"],
+      result: "i32",
+      nonblocking: false,
     },
     iroh_http_close_all: {
       parameters: [],
       result: "void",
+      nonblocking: false,
+    },
+    // #122: Sync non-blocking poll for next queued request.
+    // Returns immediately — never blocks the JS thread.
+    iroh_http_try_next_request: {
+      parameters: ["u32", "buffer", "usize"],
+      result: "i32",
       nonblocking: false,
     },
   } as const,
@@ -303,29 +328,30 @@ export function makeBridge(endpointHandle: number) {
       return buf.slice(0, n);
     },
     async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
-      // Direct binary FFI — avoids base64 encode / decode round-trip on hot path.
+      // #122: sync FFI — mpsc send is O(1), runs inline to reduce
+      // spawn_blocking contention that starves nextRequest under load.
       const buf = chunk as Uint8Array<ArrayBuffer>;
-      const result = (await lib.symbols.iroh_http_send_chunk(
+      const result = lib.symbols.iroh_http_send_chunk(
         endpointHandle,
         handle,
         buf,
         BigInt(buf.byteLength),
-      )) as number;
+      ) as number;
       if (result < 0) {
         throw new Error(`sendChunk failed: handle ${handle}`);
       }
     },
     async finishBody(handle: bigint): Promise<void> {
-      await call<Record<never, never>>("finishBody", {
+      // #122: sync FFI — no spawn_blocking contention.
+      const rc = lib.symbols.iroh_http_finish_body(
         endpointHandle,
         handle,
-      });
+      ) as number;
+      if (rc < 0) throw new Error(`finishBody failed: handle ${handle}`);
     },
     async cancelRequest(handle: bigint): Promise<void> {
-      await call<Record<never, never>>("cancelRequest", {
-        endpointHandle,
-        handle,
-      });
+      // #122: sync FFI — no spawn_blocking contention.
+      lib.symbols.iroh_http_cancel_reader(endpointHandle, handle);
     },
     async allocFetchToken(_endpointHandle: number): Promise<bigint> {
       const res = await call<{ token: number }>("allocFetchToken", {
@@ -379,16 +405,47 @@ export const rawFetch: RawFetchFn = async (
 };
 
 /**
- * Polling serve loop.
+ * Synchronous respond — send the response head for a pending request via
+ * the dedicated sync FFI symbol.  Never enters the async `iroh_http_call`
+ * pool, so it cannot be starved by long-blocking ops like `nextChunk`.
+ */
+function syncRespond(
+  endpointHandle: number,
+  reqHandle: bigint,
+  status: number,
+  headers: [string, string][],
+): void {
+  const headersJson = enc.encode(JSON.stringify(headers));
+  const rc = lib.symbols.iroh_http_respond(
+    endpointHandle,
+    reqHandle,
+    status,
+    headersJson,
+    BigInt(headersJson.byteLength),
+  ) as number;
+  if (rc < 0) {
+    // Best-effort — don't throw, the handle may already be gone.
+    // This mirrors the catch-and-ignore pattern in the old polling code.
+  }
+}
+
+/**
+ * Sync-poll serve loop (#122).
  *
- * 1. `serveStart` tells Rust to begin accepting connections and feeding them
- *    into the per-endpoint mpsc queue.
- * 2. `nextRequest` blocks (nonblocking: true → Promise) until the next item
- *    is queued.  Returns `null` when the endpoint closes.
- * 3. Each request is dispatched to the user callback in the background.
+ * Root cause of #122: `nextRequest` and `rawFetch` both go through
+ * `iroh_http_call` with `nonblocking: true`, sharing Deno's fixed-size
+ * `spawn_blocking` thread pool.  When 32+ `rawFetch` calls occupy all
+ * threads, `nextRequest` can't get a thread → circular deadlock → 60s
+ * timeout fires.
  *
- * If `options.onConnectionEvent` is provided, a parallel polling loop reads
- * peer connect/disconnect events via `nextConnectionEvent`.
+ * Fix: `iroh_http_try_next_request` is a sync FFI symbol (`nonblocking: false`)
+ * that does `try_recv()` on the serve queue — O(1), runs on the JS thread,
+ * NEVER enters the thread pool.  JS polls with `setTimeout(0)` yield when
+ * the queue is empty.  Under load the queue always has items so there's no
+ * latency penalty.
+ *
+ * The serve lifecycle still uses `serveStart` / `stopServe` through the
+ * dispatch path (they're one-shot calls, no concurrency concern).
  */
 export const rawServe: RawServeFn = (
   endpointHandle: number,
@@ -416,22 +473,50 @@ export const rawServe: RawServeFn = (
         })();
       }
 
-      // #119: Track in-flight handler tasks so the loop drains them before resolving.
+      // Track in-flight handler tasks so the loop drains them before resolving.
       const pending = new Set<Promise<void>>();
+
+      // Per-call output buffer for try_next_request (reused across polls).
+      let pollBuf = new Uint8Array(4096) as Uint8Array<ArrayBuffer>;
+
       return (async () => {
+        let pollCount = 0;
         while (true) {
-          const raw = await call<
-            {
-              reqHandle: number;
-              reqBodyHandle: number;
-              resBodyHandle: number;
-              method: string;
-              url: string;
-              headers: [string, string][];
-              remoteNodeId: string;
-            } | null
-          >("nextRequest", { endpointHandle });
-          if (raw === null) break;
+          // Sync poll — runs on JS thread, never enters spawn_blocking pool.
+          let n = lib.symbols.iroh_http_try_next_request(
+            endpointHandle,
+            pollBuf,
+            BigInt(pollBuf.byteLength),
+          ) as number;
+
+          pollCount++;
+
+          if (n < -1) {
+            // Buffer too small — grow and retry immediately.
+            pollBuf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
+            n = lib.symbols.iroh_http_try_next_request(
+              endpointHandle,
+              pollBuf,
+              BigInt(pollBuf.byteLength),
+            ) as number;
+          }
+
+          if (n === -1) {
+            // Serve stopped or queue removed.
+            break;
+          }
+
+          if (n === 0) {
+            // Queue empty — yield to the event loop so rawFetch results
+            // and I/O can be processed, then poll again.
+            await new Promise<void>((r) => setTimeout(r, 0));
+            continue;
+          }
+
+          // Got a request — parse and dispatch.
+          const raw = JSON.parse(
+            dec.decode(pollBuf.subarray(0, n)),
+          );
           const payload: RequestPayload = {
             reqHandle: BigInt(raw.reqHandle),
             reqBodyHandle: BigInt(raw.reqBodyHandle),
@@ -446,24 +531,15 @@ export const rawServe: RawServeFn = (
           const task: Promise<void> = (async () => {
             try {
               const head = await callback(payload);
-              await call<Record<never, never>>("respond", {
+              syncRespond(
                 endpointHandle,
-                reqHandle: payload.reqHandle,
-                status: head.status,
-                headers: head.headers,
-              });
+                payload.reqHandle,
+                head.status,
+                head.headers,
+              );
             } catch (err) {
               console.error("[iroh-http-deno] handler error:", err);
-              try {
-                await call<Record<never, never>>("respond", {
-                  endpointHandle,
-                  reqHandle: payload.reqHandle,
-                  status: 500,
-                  headers: [],
-                });
-              } catch {
-                /* respond itself failed — nothing more to do */
-              }
+              syncRespond(endpointHandle, payload.reqHandle, 500, []);
             }
           })();
           pending.add(task);
@@ -858,28 +934,27 @@ export class DenoAdapter extends IrohAdapter {
   }
 
   async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
+    // #122: sync FFI — mpsc send is O(1), runs inline to reduce
+    // spawn_blocking contention that starves nextRequest under load.
     const buf = chunk as Uint8Array<ArrayBuffer>;
-    const result = (await lib.symbols.iroh_http_send_chunk(
+    const result = lib.symbols.iroh_http_send_chunk(
       this.#eh,
       handle,
       buf,
       BigInt(buf.byteLength),
-    )) as number;
+    ) as number;
     if (result < 0) throw new Error(`sendChunk failed: handle ${handle}`);
   }
 
   async finishBody(handle: bigint): Promise<void> {
-    await call<Record<never, never>>("finishBody", {
-      endpointHandle: this.#eh,
-      handle,
-    });
+    // #122: sync FFI — no spawn_blocking contention.
+    const rc = lib.symbols.iroh_http_finish_body(this.#eh, handle) as number;
+    if (rc < 0) throw new Error(`finishBody failed: handle ${handle}`);
   }
 
   async cancelRequest(handle: bigint): Promise<void> {
-    await call<Record<never, never>>("cancelRequest", {
-      endpointHandle: this.#eh,
-      handle,
-    });
+    // #122: sync FFI — no spawn_blocking contention.
+    lib.symbols.iroh_http_cancel_reader(this.#eh, handle);
   }
 
   async allocFetchToken(_endpointHandle: number): Promise<bigint> {

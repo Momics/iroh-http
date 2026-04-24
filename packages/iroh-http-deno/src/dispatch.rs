@@ -660,23 +660,25 @@ async fn serve_start(p: Value) -> Value {
         ep.clone(),
         ep.serve_options(),
         move |payload: RequestPayload| {
-            // #122: enqueue synchronously from the on_request closure — no
-            // detached `tokio::spawn`.
-            //
-            // Previously this spawned a tokio task to call `try_send`, which
-            // created a race window: the RequestService future could await
-            // `head_rx` (and, with TimeoutLayer, be cancelled after 60s,
-            // dropping the `ReqHeadCleanup` RAII guard that removes the
-            // `req_handle` slab entry) before the spawned task actually
-            // delivered the event to the JS polling loop.  JS then polled
-            // the event, ran the handler, and called `respond()` on a slab
-            // entry that no longer existed → `unknown handle`.
-            //
-            // `try_send` is non-blocking (mpsc buffer push) and the 503
-            // fallback `respond()` is also synchronous (slab lookup +
-            // oneshot send), so both are safe to call from the callback.
-            let q = std::sync::Arc::clone(&queue);
+            // #122: Look up the CURRENT queue from the registry instead of a
+            // captured Arc.  When serve is restarted (stopServe → serveStart),
+            // old QUIC connections may still be alive (connection pool reuse).
+            // Requests on those old connections must be delivered to the NEW
+            // queue, not the old (removed) one.
             let req_handle = payload.req_handle;
+            let q = match serve_registry::get(handle) {
+                Some(q) => q,
+                None => {
+                    // Queue removed (serve stopped) — respond with 503.
+                    let _ = respond(
+                        ep_clone.handles(),
+                        req_handle,
+                        503,
+                        vec![("content-length".to_string(), "0".to_string())],
+                    );
+                    return;
+                }
+            };
             let headers: Vec<Vec<String>> = payload
                 .headers
                 .into_iter()

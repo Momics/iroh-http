@@ -5,7 +5,15 @@
 //! - `iroh_http_next_chunk` — read a body chunk directly into a caller buffer
 //! - `iroh_http_send_chunk` — write a body chunk directly from a caller buffer
 //!
-//! All three symbols are `nonblocking: true` in the Deno `dlopen` call.
+//! Request/response critical-path operations use synchronous symbols so they
+//! execute inline on the JS thread (like Node's `#[napi]`), avoiding contention
+//! with long-blocking ops on Deno's single-threaded tokio runtime (#122):
+//! - `iroh_http_respond`      — send response head for a pending request
+//! - `iroh_http_finish_body`  — signal body-complete (drop writer)
+//! - `iroh_http_cancel_reader`— cancel a body reader
+//!
+//! All async symbols are `nonblocking: true` in the Deno `dlopen` call.
+//! Sync symbols are `nonblocking: false`.
 
 mod dispatch;
 mod serve_registry;
@@ -316,6 +324,170 @@ pub unsafe extern "C" fn iroh_http_send_chunk(
     match runtime().map(|rt| rt.block_on(ep.handles().send_chunk(handle, bytes))) {
         Some(Ok(())) => 0,
         _ => -1,
+    }
+}
+
+// ── Synchronous FFI symbols ───────────────────────────────────────────────────
+//
+// #122: operations that are O(1) slab lookups must NOT go through the async
+// `iroh_http_call` path.  Deno's `nonblocking: true` runs each call through
+// `spawn_blocking` → `JoinHandle` → tokio poll.  Under concurrent load the
+// futures compete for the single-threaded tokio runtime, and long-blocking ops
+// (like `nextRequest` awaiting mpsc recv) starve short ops (like `respond`).
+//
+// By declaring these symbols `nonblocking: false` in the Deno `dlopen` call,
+// they execute inline on the JS thread — exactly like Node's `#[napi]` calls.
+// This eliminates contention on the request-response critical path.
+
+/// Synchronous respond — send the response head for a pending request.
+///
+/// `headers_ptr`/`headers_len` encode a JSON array of `[name, value]` pairs.
+///
+/// Returns `0` on success, `-1` on error.
+///
+/// # Safety
+/// `headers_ptr` must be valid for `headers_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iroh_http_respond(
+    endpoint_handle: u32,
+    req_handle: u64,
+    status: u32,
+    headers_ptr: *const u8,
+    headers_len: usize,
+) -> i32 {
+    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+        Some(ep) => ep,
+        None => return -1,
+    };
+
+    let header_pairs: Vec<(String, String)> = if headers_len == 0 {
+        Vec::new()
+    } else {
+        if headers_ptr.is_null() {
+            return -1;
+        }
+        let slice = unsafe { std::slice::from_raw_parts(headers_ptr, headers_len) };
+        match serde_json::from_slice::<Vec<Vec<String>>>(slice) {
+            Ok(rows) => rows
+                .into_iter()
+                .filter_map(|p| {
+                    if p.len() == 2 {
+                        Some((p[0].clone(), p[1].clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            Err(_) => return -1,
+        }
+    };
+
+    match iroh_http_core::server::respond(ep.handles(), req_handle, status as u16, header_pairs) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Synchronous finish_body — drop the writer, signalling body-complete.
+///
+/// Returns `0` on success, `-1` on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn iroh_http_finish_body(endpoint_handle: u32, handle: u64) -> i32 {
+    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+        Some(ep) => ep,
+        None => return -1,
+    };
+    match ep.handles().finish_body(handle) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Synchronous cancel_reader — drop a body reader so pending reads return None.
+///
+/// Returns `0` on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn iroh_http_cancel_reader(endpoint_handle: u32, handle: u64) -> i32 {
+    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+        Some(ep) => ep,
+        None => return -1,
+    };
+    ep.handles().cancel_reader(handle);
+    0
+}
+
+// ── Non-blocking serve request polling ────────────────────────────────────────
+//
+// #122: The dispatch-based `nextRequest` (via `iroh_http_call` nonblocking:true)
+// deadlocks under concurrent load because it competes for Deno's
+// `spawn_blocking` thread pool with `rawFetch`.
+//
+// Fix: `iroh_http_try_next_request` is a sync FFI symbol (`nonblocking: false`)
+// that calls `try_recv()` on the serve queue — O(1), never blocks.
+// JS polls it in a tight loop with `setTimeout(0)` yield when empty.
+// This keeps request delivery on the JS thread, completely bypassing the
+// thread pool that `rawFetch` uses.
+
+/// Try to receive the next queued request without blocking.
+///
+/// Writes a JSON-encoded request payload to `out_ptr[0..out_cap]`.
+///
+/// Return value:
+/// - `n > 0` — bytes written; a request is available.
+/// - `0`     — queue empty; call again after yielding.
+/// - `-1`    — serve stopped or queue removed; exit the loop.
+/// - `n < -1`— buffer too small; `|n|` bytes required.
+///
+/// # Safety
+/// `out_ptr` must be valid for `out_cap` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iroh_http_try_next_request(
+    endpoint_handle: u32,
+    out_ptr: *mut u8,
+    out_cap: usize,
+) -> i32 {
+    if out_cap > 0 && out_ptr.is_null() {
+        return -1;
+    }
+
+    let queue = match serve_registry::get(endpoint_handle) {
+        Some(q) => q,
+        None => return -1, // serve not started or already stopped
+    };
+
+    // Check shutdown first.
+    if *queue.shutdown_rx.borrow() {
+        return -1;
+    }
+
+    // Non-blocking receive from the mpsc queue.
+    // We need the mutex to access the receiver.  Use std blocking lock since
+    // this runs on the JS thread (not inside a tokio context).
+    let mut rx_guard = match queue.rx.try_lock() {
+        Ok(g) => g,
+        Err(_) => return 0, // another call has the lock; treat as empty
+    };
+
+    match rx_guard.try_recv() {
+        Ok(event) => {
+            drop(rx_guard);
+            let encoded = match serde_json::to_vec(&event) {
+                Ok(v) => v,
+                Err(_) => return -1,
+            };
+            let len = encoded.len();
+            if len > out_cap {
+                return i32::try_from(len)
+                    .map(|n| 0i32.wrapping_sub(n))
+                    .unwrap_or(i32::MIN);
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(encoded.as_ptr(), out_ptr, len);
+            }
+            len as i32
+        }
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => 0,
+        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => -1,
     }
 }
 
