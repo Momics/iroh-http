@@ -40,16 +40,6 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  # ── Fast PR-only dependency scan (free, no build needed) ─────────────────────
-  dependency-review:
-    name: Dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high
-
   # ── Format · lint · unit tests · typecheck · audit — one runner ──────────────
   verify:
     name: Verify
