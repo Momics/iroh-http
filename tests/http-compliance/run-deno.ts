@@ -111,6 +111,8 @@ const failedCases: string[] = [];
 const startTime = Date.now();
 
 for (const tc of cases) {
+  if (!tc.id) continue; // skip comment entries
+  if (tc.skip) { skipped++; console.log(`  skip  [${tc.id}]: ${tc.skip}`); continue; }
   // Sequential multi-request test
   if (tc.requests) {
     const label = `[${tc.id}] ${tc.description ?? ""}`;

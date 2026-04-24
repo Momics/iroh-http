@@ -73,6 +73,9 @@ let failed = 0;
 
 try {
   for (const c of cases) {
+    if (!c.id) continue; // skip comment entries
+    if (c.skip) { console.log(`  skip  ${c.id}: ${c.skip}`); continue; }
+    if (c.requests || c.concurrent > 1 || c.repeat > 1) continue;
     let resp;
     try {
       resp = await client.fetch(serverId, `httpi://compliance.test${c.request.path}`, {

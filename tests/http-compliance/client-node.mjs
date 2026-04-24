@@ -85,6 +85,8 @@ const failedCases = [];
 const startTime = Date.now();
 
 for (const tc of cases) {
+  if (!tc.id) continue; // skip comment entries
+  if (tc.skip) { console.log(`  skip  [${tc.id}]: ${tc.skip}`); continue; }
   if (tc.requests || tc.sequential || tc.concurrent > 1 || tc.repeat > 1) {
     // Skip complex tests in cross-runtime mode for now
     continue;
