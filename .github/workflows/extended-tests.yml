@@ -28,12 +28,8 @@ env:
 
 jobs:
   test-node:
-    name: "Node.js — ${{ matrix.category }}"
+    name: "Node.js"
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        category: [lifecycle, errors, stress, events, sessions]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -56,16 +52,12 @@ jobs:
           npx napi build --platform --profile ci
           npx tsc --skipLibCheck
 
-      - name: Run ${{ matrix.category }} tests
-        run: node tests/${{ matrix.category }}/test-node.mjs
+      - name: Run tests
+        run: node --test tests/runners/node.mjs
 
   test-deno:
-    name: "Deno — ${{ matrix.category }}"
+    name: "Deno"
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        category: [lifecycle, errors, stress, events, sessions]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -83,5 +75,5 @@ jobs:
           cp target/ci/libiroh_http_deno.so \
              packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
 
-      - name: Run ${{ matrix.category }} tests
-        run: deno run -A tests/${{ matrix.category }}/test-deno.ts
+      - name: Run tests
+        run: deno test -A tests/runners/deno.ts

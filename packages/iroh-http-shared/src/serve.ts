@@ -193,7 +193,13 @@ export function makeServe(
         // Invoke the user handler with onError fallback.
         let res: Response;
         try {
-          res = await Promise.resolve(handler(req));
+          const returned = await Promise.resolve(handler(req));
+          if (!(returned instanceof Response)) {
+            throw new TypeError(
+              `serve handler must return a Response, got ${typeof returned}`,
+            );
+          }
+          res = returned;
         } catch (err) {
           try {
             res = await Promise.resolve(onError(err));
