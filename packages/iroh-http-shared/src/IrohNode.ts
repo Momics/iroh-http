@@ -1,4 +1,5 @@
-import { PublicKey, resolveNodeId, SecretKey } from "./keys.js";
+import { PublicKey, resolveNodeId } from "./PublicKey.js";
+import { SecretKey } from "./SecretKey.js";
 import { type FetchFn, makeFetch } from "./fetch.js";
 import {
   makeServe,
@@ -89,7 +90,6 @@ export class IrohNode extends EventTarget {
     this.#serveFn = makeServe(
       adapter,
       info.endpointHandle,
-      info.nodeId,
       this.closed.then(() => {}),
       (ev: PeerConnectionEvent) => {
         if (ev.connected) {

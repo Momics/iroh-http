@@ -13,8 +13,8 @@ import type {
   IrohFetchInit,
 } from "./IrohAdapter.js";
 import { bodyInitToStream, makeReadable, pipeToWriter } from "./streams.js";
-import type { PublicKey } from "./keys.js";
-import { resolveNodeId } from "./keys.js";
+import type { PublicKey } from "./PublicKey.js";
+import { resolveNodeId } from "./PublicKey.js";
 import { classifyError } from "./errors.js";
 
 export type FetchFn = {

@@ -1,4 +1,4 @@
-import type { SecretKey } from "../keys.js";
+import type { SecretKey } from "../SecretKey.js";
 
 /**
  * Named relay mode for the Iroh relay network.

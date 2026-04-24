@@ -7,7 +7,7 @@
  */
 
 import type { FfiDuplexStream, IrohAdapter } from "./IrohAdapter.js";
-import type { PublicKey } from "./keys.js";
+import type { PublicKey } from "./PublicKey.js";
 import { makeReadable } from "./streams.js";
 
 /** WebTransport-compatible bidirectional stream. */

@@ -2,7 +2,7 @@
  * `makeServe` — wraps the raw platform serve in a Deno-compatible signature.
  *
  * ```ts
- * const serve = makeServe(bridge, handle, rawServe, nodeId, finished, stopServe);
+ * const serve = makeServe(adapter, handle, onNodeClose);
  * const server = serve(async (req) => Response.json({ ok: true }));
  * await server.finished;
  * ```
@@ -102,12 +102,10 @@ const METHODS_WITHOUT_BODY = new Set(["GET", "HEAD", "CONNECT", "TRACE"]);
 /**
  * Construct a Deno-compatible `serve` function bound to a specific endpoint.
  *
- * @param bridge          Platform bridge implementation (sendChunk, finishBody, etc.).
+ * @param adapter         Platform adapter implementation (sendChunk, finishBody, etc.).
  * @param endpointHandle  Slab handle returned by the low-level bind.
- * @param rawServe        Platform-specific raw serve function.
- * @param nodeId          The node's base32 public key string.
- * @param finished        Promise that resolves when the serve loop terminates.
- * @param stopServe       Calls the platform's stopServe FFI to gracefully shut down.
+ * @param onNodeClose     Promise that resolves when the node shuts down.
+ * @param onPeerEvent     Optional callback for peer connect/disconnect events.
  * @returns A `serve` function with three overloaded call signatures.
  *
  * @example
@@ -122,7 +120,6 @@ const METHODS_WITHOUT_BODY = new Set(["GET", "HEAD", "CONNECT", "TRACE"]);
 export function makeServe(
   adapter: IrohAdapter,
   endpointHandle: number,
-  nodeId: string,
   onNodeClose: Promise<void>,
   onPeerEvent?: (event: PeerConnectionEvent) => void,
 ): ServeFn {
