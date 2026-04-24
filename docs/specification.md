@@ -245,6 +245,9 @@ class PublicKey {
   /** Lowercase base32 string (the "node ID"). */
   toString(): string;
 
+  /** Construct an `httpi://` URL for this peer. Defaults path to `"/"`. */
+  toURL(path?: string): string;
+
   /** Constant-time equality check. */
   equals(other: PublicKey): boolean;
 
@@ -253,6 +256,9 @@ class PublicKey {
 
   /** Parse from base32 string (case-insensitive). */
   static fromString(s: string): PublicKey;
+
+  /** Parse a `Peer-Id` header value into a PublicKey. */
+  static fromPeerId(id: string): PublicKey;
 
   /** Construct from 32 raw bytes. Copies the input. */
   static fromBytes(bytes: Uint8Array): PublicKey;

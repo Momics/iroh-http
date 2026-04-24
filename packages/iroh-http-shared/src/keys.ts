@@ -140,9 +140,48 @@ export class PublicKey {
     return new PublicKey(base32Decode(s));
   }
 
+  /**
+   * Parse a peer ID string (as found in the `Peer-Id` request header) into
+   * a `PublicKey`.
+   *
+   * Semantically equivalent to `fromString()` but makes intent explicit
+   * when working with incoming request headers.
+   *
+   * @example
+   * ```ts
+   * const peer = PublicKey.fromPeerId(req.headers.get("Peer-Id")!);
+   * await node.fetch(peer.toURL("/ping"));
+   * ```
+   */
+  static fromPeerId(id: string): PublicKey {
+    return new PublicKey(base32Decode(id));
+  }
+
   /** Construct from 32 raw bytes. Copies the input. */
   static fromBytes(bytes: Uint8Array): PublicKey {
     return new PublicKey(bytes);
+  }
+
+  /**
+   * Construct an `httpi://` URL string for this peer.
+   *
+   * @param path Optional path to append (e.g. `"/ping"`). Defaults to `"/"`.
+   * @returns A full `httpi://` URL suitable for `node.fetch()` or the WHATWG
+   *          `URL` constructor.
+   *
+   * @example
+   * ```ts
+   * peer.toURL("/ping")   // → "httpi://tvtswinq.../ping"
+   * peer.toURL()          // → "httpi://tvtswinq.../"
+   * new URL("/api", peer.toURL()) // works with WHATWG URL
+   * ```
+   */
+  toURL(path?: string): string {
+    const base = `httpi://${this.toString()}`;
+    if (path == null || path === "") return `${base}/`;
+    // Ensure exactly one slash between host and path.
+    if (path.startsWith("/")) return `${base}${path}`;
+    return `${base}/${path}`;
   }
 
   /**
