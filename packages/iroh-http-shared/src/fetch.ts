@@ -111,13 +111,13 @@ export function makeFetch(
 
     const headers: [string, string][] = normaliseHeaders(init?.headers);
 
-    // Allocate request body writer if needed.
+    // Allocate request body writer if needed.  The pipe is started AFTER
+    // rawFetch is dispatched — see below.
     let reqBodyHandle: bigint | null = null;
     let bodyPipePromise: Promise<void> | null = null;
     const bodyStream = init?.body ? bodyInitToStream(init.body) : null;
     if (bodyStream) {
       reqBodyHandle = await adapter.allocBodyWriter(endpointHandle);
-      bodyPipePromise = pipeToWriter(adapter, bodyStream, reqBodyHandle);
     }
 
     // Allocate a Rust-side cancellation token so that AbortSignal can cancel
@@ -147,32 +147,34 @@ export function makeFetch(
       })
       : null;
 
+    // Dispatch rawFetch to the Rust runtime FIRST (non-blocking — it runs on
+    // spawn_blocking / tokio worker threads).  This ensures the Rust side
+    // claims the body reader and begins the QUIC handshake before JS starts
+    // pushing body chunks.  Without this ordering, a sync sendChunk call on a
+    // large body blocks the JS thread before rawFetch is dispatched, starving
+    // the body reader and causing a drain timeout (#122 follow-up).
+    const fetchPromise = adapter.rawFetch(
+      endpointHandle,
+      nodeId,
+      url,
+      method,
+      headers,
+      reqBodyHandle,
+      fetchToken,
+      directAddrs,
+    );
+
+    // NOW start the body pipe — rawFetch has been dispatched to Rust, so the
+    // body reader will have a consumer by the time the channel fills up.
+    if (bodyStream && reqBodyHandle !== null) {
+      bodyPipePromise = pipeToWriter(adapter, bodyStream, reqBodyHandle);
+    }
+
     let rawRes: FfiResponse;
     try {
       rawRes = abortPromise
-        ? await Promise.race([
-          adapter.rawFetch(
-            endpointHandle,
-            nodeId,
-            url,
-            method,
-            headers,
-            reqBodyHandle,
-            fetchToken,
-            directAddrs,
-          ),
-          abortPromise,
-        ])
-        : await adapter.rawFetch(
-          endpointHandle,
-          nodeId,
-          url,
-          method,
-          headers,
-          reqBodyHandle,
-          fetchToken,
-          directAddrs,
-        );
+        ? await Promise.race([fetchPromise, abortPromise])
+        : await fetchPromise;
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       throw classifyError(err);
