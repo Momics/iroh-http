@@ -162,7 +162,10 @@ if [[ -f "$ROOT/packages/iroh-http-tauri/Cargo.lock" ]]; then
 fi
 
 echo "Regenerating package-lock.json …"
-(cd "$ROOT" && npm install --package-lock-only --ignore-scripts)
+# --omit=optional: prevent empty-version stubs for platform-specific native
+# addon packages (e.g. @momics/iroh-http-node-darwin-arm64) that crash
+# npm ci on other platforms with "Invalid Version: ".
+(cd "$ROOT" && rm -f package-lock.json && npm install --package-lock-only --ignore-scripts --omit=optional)
 echo "  ✓ package-lock.json"
 
 echo "Regenerating deno.lock …"
@@ -171,5 +174,64 @@ echo "  ✓ deno.lock"
 
 echo ""
 echo "Done. All manifests and lock files updated to $NEW."
+
+# ── Self-check: catch version drift before it reaches CI ──────────────────────
+echo ""
+echo "Verifying …"
+ERRORS=0
+
+# Every publishable Cargo.toml with a version field must say $NEW
+CARGO_FILES=(
+  "$ROOT/Cargo.toml"
+  "$ROOT/packages/iroh-http-tauri/Cargo.toml"
+)
+for file in "${CARGO_FILES[@]}"; do
+  ver=$(grep '^version = ' "$file" | head -1 | sed 's/version = "\(.*\)"/\1/')
+  if [[ "$ver" != "$NEW" ]]; then
+    echo "  ✗ $file has version $ver (expected $NEW)"
+    ERRORS=$((ERRORS + 1))
+  fi
+done
+
+# Every path dep must carry a version = "$NEW"
+for cargo_file in \
+  "$ROOT/crates/iroh-http-adapter/Cargo.toml" \
+  "$ROOT/packages/iroh-http-deno/Cargo.toml" \
+  "$ROOT/packages/iroh-http-node/Cargo.toml" \
+  "$ROOT/packages/iroh-http-tauri/Cargo.toml"; do
+  while IFS= read -r line; do
+    if ! echo "$line" | grep -q "version = \"$NEW\""; then
+      echo "  ✗ $cargo_file: path dep without version $NEW: $line"
+      ERRORS=$((ERRORS + 1))
+    fi
+  done < <(grep 'iroh-http.*path *= *"' "$cargo_file" 2>/dev/null || true)
+done
+
+# Every package.json (except root) must say $NEW
+for f in packages/iroh-http-shared/package.json \
+         packages/iroh-http-node/package.json \
+         packages/iroh-http-tauri/package.json; do
+  pv=$(grep '"version"' "$ROOT/$f" | head -1 | sed 's/.*"\([0-9][^"]*\)".*/\1/')
+  if [[ "$pv" != "$NEW" ]]; then
+    echo "  ✗ $f has version $pv (expected $NEW)"
+    ERRORS=$((ERRORS + 1))
+  fi
+done
+
+# npm lockfile must parse cleanly
+if ! (cd "$ROOT" && npm ci --omit=optional --dry-run --ignore-scripts) >/dev/null 2>&1; then
+  echo "  ✗ package-lock.json fails npm ci --dry-run"
+  ERRORS=$((ERRORS + 1))
+fi
+
+if [[ "$ERRORS" -gt 0 ]]; then
+  echo ""
+  echo "  ✗ $ERRORS problem(s) found. Fix before committing."
+  exit 1
+fi
+
+echo "  ✓ All versions consistent at $NEW"
+echo "  ✓ All lockfiles valid"
+
+echo ""
 echo "Review:  git diff --stat"
-echo "Next:    npm run release:tag -- $NEW"

@@ -59,6 +59,8 @@ jobs:
           npm run typecheck --workspace=packages/iroh-http-tauri
 
   # ── 1. Publish Rust crates ────────────────────────────────────────────────────
+  # cargo publish already polls for index availability after upload (built-in).
+  # No manual wait steps needed between crates.
 
   publish-crates:
     name: Publish Rust crates
@@ -84,18 +86,6 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Wait for iroh-http-core to be indexed on crates.io
-        run: |
-          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          for i in $(seq 1 24); do
-            if cargo search iroh-http-core 2>/dev/null | grep -q "\"$VERSION\""; then
-              echo "iroh-http-core $VERSION indexed"
-              break
-            fi
-            echo "Waiting for iroh-http-core $VERSION to be indexed... ($i/24)"
-            sleep 10
-          done
-
       - name: Publish iroh-http-adapter
         run: |
           output=$(cargo publish -p iroh-http-adapter 2>&1) && exit 0
@@ -108,18 +98,6 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Wait for iroh-http-adapter to be indexed on crates.io
-        run: |
-          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          for i in $(seq 1 24); do
-            if cargo search iroh-http-adapter 2>/dev/null | grep -q "\"$VERSION\""; then
-              echo "iroh-http-adapter $VERSION indexed"
-              break
-            fi
-            echo "Waiting for iroh-http-adapter $VERSION to be indexed... ($i/24)"
-            sleep 10
-          done
-
       - name: Publish iroh-http-discovery
         run: |
           output=$(cargo publish -p iroh-http-discovery 2>&1) && exit 0
@@ -131,18 +109,6 @@ jobs:
           fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Wait for iroh-http-discovery to be indexed on crates.io
-        run: |
-          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          for i in $(seq 1 24); do
-            if cargo search iroh-http-discovery 2>/dev/null | grep -q "\"$VERSION\""; then
-              echo "iroh-http-discovery $VERSION indexed"
-              break
-            fi
-            echo "Waiting for iroh-http-discovery $VERSION to be indexed... ($i/24)"
-            sleep 10
-          done
 
       - name: Publish tauri-plugin-iroh-http
         # --no-verify: Tauri depends on system libraries (glib, gtk, webkit)
