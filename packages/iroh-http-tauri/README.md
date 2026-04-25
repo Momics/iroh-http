@@ -16,7 +16,7 @@ Add the Rust plugin to your Tauri app's `Cargo.toml`:
 
 ```toml
 [dependencies]
-tauri-plugin-iroh-http = "0.2"
+tauri-plugin-iroh-http = "0.3"
 ```
 
 Register in `src-tauri/src/lib.rs`:
