@@ -15,9 +15,9 @@ discovery = ["iroh-http-discovery/mdns", "iroh"]
 compression = ["iroh-http-core/compression"]
 
 [dependencies]
-iroh-http-core = { path = "../../crates/iroh-http-core" }
-iroh-http-adapter = { path = "../../crates/iroh-http-adapter" }
-iroh-http-discovery = { path = "../../crates/iroh-http-discovery", optional = true }
+iroh-http-core = { path = "../../crates/iroh-http-core", version = "0.3.1" }
+iroh-http-adapter = { path = "../../crates/iroh-http-adapter", version = "0.3.1" }
+iroh-http-discovery = { path = "../../crates/iroh-http-discovery", version = "0.3.1", optional = true }
 iroh = { workspace = true, optional = true }
 napi = { version = "2", features = ["async", "napi9"] }
 napi-derive = "2"

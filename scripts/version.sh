@@ -37,6 +37,22 @@ echo "Bumping $OLD → $NEW"
 sed -i '' "s/^version = \"$OLD\"/version = \"$NEW\"/" "$ROOT/Cargo.toml"
 echo "  ✓ Cargo.toml (workspace.package)"
 
+# ── Internal path-dep version constraints ─────────────────────────────────────
+# Every path dep with a version field must be updated. Replace ANY version
+# (not just $OLD) to catch deps that drifted in prior releases.
+for cargo_file in \
+  crates/iroh-http-adapter/Cargo.toml \
+  packages/iroh-http-deno/Cargo.toml \
+  packages/iroh-http-node/Cargo.toml; do
+  filepath="$ROOT/$cargo_file"
+  if [[ -f "$filepath" ]]; then
+    sed -i '' "s/\(iroh-http-core.*version = \"\)[^\"]*\"/\1$NEW\"/" "$filepath"
+    sed -i '' "s/\(iroh-http-adapter.*version = \"\)[^\"]*\"/\1$NEW\"/" "$filepath"
+    sed -i '' "s/\(iroh-http-discovery.*version = \"\)[^\"]*\"/\1$NEW\"/" "$filepath"
+    echo "  ✓ $cargo_file"
+  fi
+done
+
 # ── iroh-http-tauri (standalone [workspace] — must be updated explicitly) ────
 TAURI_CARGO="$ROOT/packages/iroh-http-tauri/Cargo.toml"
 if [[ -f "$TAURI_CARGO" ]]; then
