@@ -1,9 +1,10 @@
 [package]
 name = "iroh-http-deno"
-version = "0.3.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Deno FFI native library for iroh-http"
-license = "MIT OR Apache-2.0"
+license.workspace = true
+repository.workspace = true
 
 [lib]
 name = "iroh_http_deno"

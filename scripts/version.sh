@@ -4,12 +4,12 @@ set -euo pipefail
 # Usage: ./scripts/version.sh 0.2.0
 #
 # Bumps the version across ALL package manifests:
-#   - 5 Cargo.toml  (2 crates + 3 packages, excluding examples)
+#   - Root Cargo.toml [workspace.package] (covers all 5 workspace members via inheritance)
+#   - packages/iroh-http-tauri/Cargo.toml (standalone workspace — updated explicitly)
 #   - 3 package.json (node, tauri, shared)
 #   - 1 deno.jsonc
-#   - 1 jsr.jsonc
+#   - 1 deno.json (shared JSR)
 #
-# Also updates inter-crate dependency versions and the Deno import map.
 # Does NOT touch lockfiles or examples — those follow naturally.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,32 +28,24 @@ if ! [[ "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
   exit 1
 fi
 
-# Detect current version from the source of truth (iroh-http-core)
-OLD=$(grep '^version = ' "$ROOT/crates/iroh-http-core/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
+# Detect current version from the source of truth ([workspace.package] in root)
+OLD=$(grep '^version = ' "$ROOT/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
 echo "Bumping $OLD → $NEW"
 
-# ── Cargo.toml files ──────────────────────────────────────────────────────────
-CARGO_FILES=(
-  crates/iroh-http-core/Cargo.toml
-  crates/iroh-http-adapter/Cargo.toml
-  crates/iroh-http-discovery/Cargo.toml
-  packages/iroh-http-node/Cargo.toml
-  packages/iroh-http-deno/Cargo.toml
-  packages/iroh-http-tauri/Cargo.toml
-)
+# ── Root Cargo.toml [workspace.package] ──────────────────────────────────────
+# All 5 workspace members inherit from here; one edit covers them all.
+sed -i '' "s/^version = \"$OLD\"/version = \"$NEW\"/" "$ROOT/Cargo.toml"
+echo "  ✓ Cargo.toml (workspace.package)"
 
-for f in "${CARGO_FILES[@]}"; do
-  filepath="$ROOT/$f"
-  if [[ ! -f "$filepath" ]]; then
-    echo "  SKIP (not found): $f"
-    continue
-  fi
-  # Replace the package version line
-  sed -i '' "s/^version = \"$OLD\"/version = \"$NEW\"/" "$filepath"
-  # Replace internal dependency versions (e.g. iroh-http-framing = { path = "...", version = "0.1.0" })
-  sed -i '' "s/\(iroh-http-[a-z]*.*version = \"\)$OLD\"/\1$NEW\"/" "$filepath"
-  echo "  ✓ $f"
-done
+# ── iroh-http-tauri (standalone [workspace] — must be updated explicitly) ────
+TAURI_CARGO="$ROOT/packages/iroh-http-tauri/Cargo.toml"
+if [[ -f "$TAURI_CARGO" ]]; then
+  # Package version
+  sed -i '' "s/^version = \"$OLD\"/version = \"$NEW\"/" "$TAURI_CARGO"
+  # Internal path-dep version constraints (iroh-http-core, iroh-http-adapter, iroh-http-discovery)
+  sed -i '' "s/\(iroh-http-[a-z]*.*version = \"\)$OLD\"/\1$NEW\"/" "$TAURI_CARGO"
+  echo "  ✓ packages/iroh-http-tauri/Cargo.toml"
+fi
 
 # ── package.json files ────────────────────────────────────────────────────────
 JSON_FILES=(

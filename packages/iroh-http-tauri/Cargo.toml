@@ -22,7 +22,7 @@ compression = ["iroh-http-core/compression"]
 
 [dependencies]
 iroh-http-core = { path = "../../crates/iroh-http-core", version = "0.3.0" }
-iroh-http-adapter = { path = "../../crates/iroh-http-adapter", version = "0.1.0" }
+iroh-http-adapter = { path = "../../crates/iroh-http-adapter", version = "0.3.0" }
 slab = "0.4"
 bytes = "1"
 base64 = "0.22"

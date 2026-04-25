@@ -1,9 +1,10 @@
 [package]
 name = "iroh-http-node"
-version = "0.3.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Node.js native addon for iroh-http (napi-rs)"
-license = "MIT OR Apache-2.0"
+license.workspace = true
+repository.workspace = true
 
 [lib]
 crate-type = ["cdylib"]

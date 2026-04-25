@@ -77,7 +77,7 @@
       },
       "packages/iroh-http-deno": {
         "dependencies": [
-          "jsr:@momics/iroh-http-shared@0.2",
+          "jsr:@momics/iroh-http-shared@0.3",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]
@@ -85,7 +85,7 @@
       "packages/iroh-http-node": {
         "packageJson": {
           "dependencies": [
-            "npm:@momics/iroh-http-shared@0.2",
+            "npm:@momics/iroh-http-shared@0.3",
             "npm:@napi-rs/cli@2",
             "npm:@types/node@^25.6.0",
             "npm:typescript@5"
@@ -102,7 +102,7 @@
       "packages/iroh-http-tauri": {
         "packageJson": {
           "dependencies": [
-            "npm:@momics/iroh-http-shared@0.2",
+            "npm:@momics/iroh-http-shared@0.3",
             "npm:@tauri-apps/api@2",
             "npm:typescript@5"
           ]

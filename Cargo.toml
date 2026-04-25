@@ -8,6 +8,12 @@ members = [
     "packages/iroh-http-deno",
 ]
 
+[workspace.package]
+version = "0.3.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Momics/iroh-http"
+
 [workspace.dependencies]
 iroh = { version = "0.96.1" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util"] }
