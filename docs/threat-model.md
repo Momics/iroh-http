@@ -59,7 +59,7 @@ allowlists to remove it.
 
 **Mitigation:** maintain out-of-band allowlists that can be updated in real
 time. The in-progress capability-token system (see
-[`explorations/002-capability-url-system.md`](explorations/002-capability-url-system.md))
+[`adr/002-capability-url-system.md`](adr/002-capability-url-system.md))
 will provide finer-grained, time-bounded, revocable authorisation tokens as a
 future mitigation.
 

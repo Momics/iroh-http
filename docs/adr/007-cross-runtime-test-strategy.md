@@ -4,15 +4,15 @@ title: "Cross-runtime HTTP compliance test strategy"
 status: open
 date: 2026-04-13
 area: testing
-tags: [testing, compliance, ffi, node, deno, python, tauri, ci]
+tags: [testing, compliance, ffi, node, deno, tauri, ci]
 ---
 
 # [007] Cross-runtime HTTP compliance test strategy
 
 ## Context
 
-iroh-http aims to expose a consistent `fetch` / `serve` interface across four
-runtimes: Node.js, Deno, Tauri, and Python. The Rust core provides the
+iroh-http aims to expose a consistent `fetch` / `serve` interface across three
+runtimes: Node.js, Deno, and Tauri. The Rust core provides the
 underlying implementation, but each FFI adapter translates the interface into
 its own idioms. Without a shared compliance test suite, divergence between
 adapters will creep in silently — a behaviour that works in Node may fail in
@@ -36,17 +36,22 @@ itself.
 ## What we know
 
 - A shared compliance harness now exists at `tests/http-compliance/`: a JSON
-  corpus of 40 cases and TypeScript runners for Node and Deno, exercised in CI
+  corpus of 102 cases and TypeScript runners for Node and Deno, exercised in CI
   on every PR (`ci.yml` e2e job: `bash tests/http-compliance/run.sh`).
 - Per-adapter compliance tests also exist: `packages/iroh-http-node/test/compliance.mjs`
   and `packages/iroh-http-deno/test/compliance.ts`, both now in CI.
+- Seven shared test suites exist in `tests/suites/`: lifecycle, errors, stress,
+  events, sessions, keys, and discovery. These are consumed by runners for
+  Node (`tests/runners/node.mjs`), Deno (`tests/runners/deno.ts`), and Tauri
+  (`tests/runners/tauri.ts`).
+- The `extended-tests.yml` CI workflow runs the deep test suites for Node and
+  Deno on push to main and on PRs.
 - Iroh requires a real QUIC transport for meaningful integration tests; testing
   over a mock transport risks missing real connectivity bugs.
-- The Web Platform Tests (WPT) project provides a precedent: a shared test
-  corpus run against multiple browser engines to verify spec compliance.
-- **Remaining gap:** Tauri and Python adapters are not covered by the current
-  harness. Tauri presents the hardest testing challenge because it requires a
-  running Tauri application context.
+- **Remaining gap:** The Tauri runner exists and supports all 7 shared suites,
+  but requires a running Tauri application context and is not automated in CI.
+  It supports a `?ci=true` query param for headless execution but this is not
+  yet wired into `run-all.sh` or any CI workflow.
 
 ## Options considered
 
@@ -60,19 +65,16 @@ itself.
 ## Implications
 
 - A cross-runtime test gap means the guarantee "iroh-http behaves the same
-  everywhere" is unverified.
-- CI must support four different language runtimes; matrix jobs will need
-  careful caching to remain fast.
-- Tauri E2E tests may need to be gated separately or run on a schedule rather
-  than on every PR.
+  everywhere" is unverified for Tauri in CI.
+- CI supports Node and Deno runtimes with good coverage. Tauri CI integration
+  requires a running app context, which is harder to automate.
 
 ## Next steps
 
 - [x] Enumerate the HTTP behaviours that must be consistent across runtimes
   (status codes, streaming, headers, errors, timeouts).
-- [x] Design a minimal shared test fixture format that all four adapters can
+- [x] Design a minimal shared test fixture format that all adapters can
   consume.
 - [x] Prototype a two-node Iroh integration test that runs the same scenario
   in Node and Deno.
-- [ ] Extend the harness to cover the Tauri adapter (requires running Tauri app context).
-- [ ] Extend the harness to cover the Python adapter once it ships.
+- [ ] Automate the Tauri runner in CI (requires headless Tauri app context).

@@ -1,8 +1,9 @@
 ---
 id: "004"
 title: "Offline and intermittent connectivity resilience"
-status: open
+status: accepted
 date: 2026-04-13
+resolved: 2026-04-25
 area: transport | api
 tags: [offline, resilience, retry, queuing, tauri, desktop]
 ---
@@ -22,6 +23,10 @@ expected condition. The transport layer could, in principle, queue outbound
 requests or retry connections in ways that are invisible to the JS caller.
 
 Whether that is desirable — or dangerous — is an open question.
+
+> **Resolved.** Offline resilience (queuing, retry) is explicitly out of scope
+> for iroh-http. Connection-level recovery exists in the pool. Application-level
+> patterns belong in recipes. See [Decisions](#decisions).
 
 ## Questions
 
@@ -45,6 +50,14 @@ Whether that is desirable — or dangerous — is an open question.
   that expects a time-bound response may be surprised by delayed delivery.
 - HTTP is a request-response protocol; queueing without acknowledgement
   risks duplicate delivery.
+- **Connection-level recovery exists:** The connection pool in `pool.rs`
+  performs a single transparent reconnect when a cached QUIC connection is
+  found to be dead. This handles transient network blips without caller
+  awareness. It is not a configurable retry mechanism — it is connection
+  liveness recovery.
+- **No request-level retry middleware:** The tower stack
+  (`LoadShed → ConcurrencyLimit → Timeout → RequestService`) does not
+  include a retry layer. This is intentional.
 
 ## Options considered
 
@@ -55,17 +68,34 @@ Whether that is desirable — or dangerous — is an open question.
 | Node-level outbox queue with delivery events | Enables richer offline-first patterns | Large scope; hard delivery guarantees required |
 | Document as out-of-scope; recommend recipe patterns | Keeps core simple | Users rebuild the same logic repeatedly |
 
+## Decisions
+
+**Q1 — Should the transport silently retry?** No, not at the HTTP request
+level. Connection-level recovery (one reconnect attempt on a dead pooled
+connection) is built-in and transparent. Request-level retry is the caller's
+responsibility.
+
+**Q2 — Should there be a request queue?** No. Queuing is an application-level
+concern with complex delivery guarantees (at-most-once, ordering, persistence).
+iroh-http should not take opinions on this.
+
+**Q3 — Delivery guarantees?** Not applicable — no built-in queue.
+
+**Q4 — In scope or higher-level?** Higher-level. The offline-first recipe
+documents patterns for building resilience on top of iroh-http. The library
+provides the transport; the application provides the retry/queue strategy.
+
 ## Implications
 
-- Directly relevant to the Tauri adapter and desktop-app use cases.
-- Any retry or queueing behaviour must be clearly documented — silent retry
-  violates the principle of least surprise.
-- Interacts with the hole-punching connectivity exploration (003).
-- Would affect the offline-first and peer-fallback recipes.
+- Directly relevant to the Tauri adapter and desktop-app use cases. Tauri
+  developers should implement retry/queue in their application logic.
+- The offline-first recipe covers the recommended patterns.
+- Connection-level recovery is transparent and undocumented to callers — it
+  just works. This could be noted in the troubleshooting docs.
 
 ## Next steps
 
-- [ ] Survey what Tauri app developers currently do for offline HTTP resilience.
-- [ ] Decide whether any retry behaviour belongs in the core or only in
-  higher-level wrappers.
-- [ ] Check whether the offline-first recipe already covers enough ground.
+- [x] Survey what Tauri app developers do for offline resilience — answered:
+  application-level retry, not transport-level.
+- [x] Decide whether retry belongs in core — no.
+- [x] Check whether the offline-first recipe covers enough — yes.

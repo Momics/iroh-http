@@ -41,6 +41,7 @@ Group messaging · Offline-first · and more.
 
 ## Reference
 
+- [Architecture Decision Records](adr/) — design decisions, resolved questions, and open investigations
 - [Build & test](build-and-test.md) — commands, CI gates, E2E test setup
 - [Troubleshooting](troubleshooting.md) — common errors, handle lifecycle diagnostics, mDNS issues, error code reference
 - [Performance tuning](tuning.md) — per-scenario `NodeOptions` guidance, memory sizing, compression settings

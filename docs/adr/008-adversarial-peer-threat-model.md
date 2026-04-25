@@ -44,12 +44,26 @@ differences.
   infinite bodies) are a real concern.
 - The server-limits feature doc describes connection limits, body size caps,
   and timeout configuration — these cover the most common DoS vectors.
-- The rate-limiting feature doc describes per-connection rate limiting; it is
-  unclear whether limits can be applied per peer key rather than per
-  connection.
+- The rate-limiting feature doc describes per-connection rate limiting; per-peer
+  rate limiting is also implemented (`maxConnectionsPerPeer`, default 8).
 - Because peers have stable identities, per-key blocking and reputation-based
   access control are technically feasible and have no equivalent in traditional
   HTTP servers.
+- **Shipped:** `docs/threat-model.md` documents what the transport provides
+  (mutual authentication, confidentiality, integrity, replay protection) and
+  what it does not (authorization, Sybil resistance).
+- **Shipped:** Per-peer connection limits are enforced in `server.rs`
+  (`max_connections_per_peer`, default 8). Exposed as
+  `connections.maxPerPeer` in `NodeOptions`.
+- **Shipped:** The tower stack includes `LoadShed`, `ConcurrencyLimit`, and
+  `Timeout` middleware for resource protection.
+- **Key insight:** The threat model is fundamentally similar to traditional
+  HTTP with one addition: peers are cryptographically identified. This means
+  you can *trust a specific peer* if you choose to, but an unknown peer with
+  a valid key is no more trustworthy than an anonymous TCP client. An attacker
+  can generate unlimited Ed25519 keys trivially, so per-peer rate limiting
+  does not prevent Sybil-style attacks (many identities, 8 connections each).
+  The threat model explicitly documents this as out of scope.
 
 ## Options considered
 
@@ -62,17 +76,22 @@ differences.
 
 ## Implications
 
-- Relevant to the rate-limiting and server-limits feature specs.
-- Per-key blocking would be a meaningful capability that traditional HTTP
-  servers cannot offer — worth considering as a differentiator.
-- A documented threat model is required before promoting iroh-http for
-  security-sensitive use cases.
+- The core threat model is documented and the most important server-side
+  defences (connection limits, per-peer limits, timeouts, body size caps)
+  are implemented.
+- Per-key blocking (allowlist/denylist) would be a meaningful capability
+  for closed or semi-open networks. This is an application-level concern
+  that could be documented as a recipe.
+- Sybil resistance (defending against many identities) is explicitly out
+  of scope. Defending against it requires mechanisms outside the transport
+  layer (proof-of-work, external identity, trust networks).
+- The documented threat model is honest about what iroh-http does and does
+  not protect against. This is the right approach for a library.
 
 ## Next steps
 
-- [ ] List the peer-specific attack vectors not addressed by the current
-  server-limits feature.
-- [ ] Evaluate whether per-peer-key rate limiting is feasible with the
-  current connection pool architecture.
-- [ ] Draft a threat model section for inclusion in `docs/principles.md` or
-  as a standalone security doc.
+- [x] List peer-specific attack vectors — documented in `threat-model.md`.
+- [x] Evaluate per-peer-key rate limiting — implemented (`maxConnectionsPerPeer`).
+- [x] Draft a threat model document — shipped as `docs/threat-model.md`.
+- [ ] Consider a recipe for peer allowlist/denylist patterns at the
+  application level.

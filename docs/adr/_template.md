@@ -1,6 +1,6 @@
 ---
 id: "000"
-title: "Short title for the exploration"
+title: "Short title for the decision"
 status: open
 # status options: open | proposed | accepted | rejected | superseded
 date: YYYY-MM-DD
@@ -12,11 +12,11 @@ tags: []
 
 ## Context
 
-What problem, observation, or question prompted this exploration? Give enough background that someone unfamiliar with the issue can understand why it matters for iroh-http.
+What problem, observation, or question prompted this decision record? Give enough background that someone unfamiliar with the issue can understand why it matters for iroh-http.
 
 ## Questions
 
-A numbered list of the specific open questions this exploration is trying to answer. Keep each question focused and answerable.
+A numbered list of the specific open questions this record is trying to answer. Keep each question focused and answerable.
 
 1. ...
 2. ...
@@ -35,13 +35,19 @@ trade-offs. This section is optional when the space is still being defined.
 | ------ | ------ | -------- |
 | ...    | ...    | ...      |
 
-## Implications
+## Decisions
 
-What does this question touch? What other parts of the system would be affected by the answer? Who would need to be involved in the decision?
+When resolved, record the decision and rationale here.
+
+## Consequences
+
+What does this decision affect? What other parts of the system are impacted?
 
 ## Next steps
 
 Concrete actions that would move this forward, or a note that this is
 currently parked.
+
+- [ ] ...
 
 - [ ] ...

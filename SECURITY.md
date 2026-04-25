@@ -91,7 +91,7 @@ certificate authority, revocation list, or key-rotation protocol to push a
 **Future mitigation (roadmap):**
 
 The capability-token system described in
-[`docs/explorations/002-capability-url-system.md`](docs/explorations/002-capability-url-system.md)
+[`docs/adr/002-capability-url-system.md`](docs/adr/002-capability-url-system.md)
 will provide short-lived, revocable, scoped tokens that can be invalidated
 without rotating the underlying node identity.  Until that system is available,
 operators must manage revocation out-of-band via allowlist updates.

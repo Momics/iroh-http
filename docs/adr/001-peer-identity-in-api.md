@@ -1,8 +1,9 @@
 ---
 id: "001"
 title: "Peer identity exposure in the fetch API"
-status: open
+status: accepted
 date: 2026-04-13
+resolved: 2026-04-25
 area: api | identity
 tags: [identity, fetch, public-key, verification]
 ---
@@ -21,6 +22,9 @@ Currently the JS/Python caller addresses a peer by node key in the URL
 (`httpi://<node-key>/path`), but the response object returned by `fetch` does
 not surface any identity information. The verified peer key lives only inside
 the Rust core.
+
+> **Resolved.** All three questions below have been answered through
+> implementation and architectural analysis. See [Decisions](#decisions).
 
 ## Questions
 
@@ -42,6 +46,15 @@ the Rust core.
 - The `httpi://` URL scheme already encodes the target node key; the request
   therefore implicitly pins identity. The question is whether that pinning is
   *visible* and *assertable* from the caller side.
+- **Shipped:** The server injects a `Peer-Id` header on every incoming request,
+  containing the authenticated peer's base32-encoded public key.
+- **Shipped:** `PublicKey.fromPeerId(id)` parses a peer ID string (from the
+  header) into a `PublicKey` instance. `PublicKey.prototype.toURL(path?)` builds
+  an `httpi://` URL. Together they provide ergonomic round-tripping (#118).
+- **Verified:** Iroh's QUIC TLS 1.3 handshake cryptographically enforces that
+  the remote peer's Ed25519 public key matches the `node_id` decoded from the
+  `httpi://` URL. A mismatch causes the connection to fail before any HTTP
+  traffic flows. This is not opt-in — it is always enforced by the transport.
 
 ## Options considered
 
@@ -52,20 +65,35 @@ the Rust core.
 | Pass an `expectedPeer` option to `fetch` | Explicit pinning at the call site | Adds coupling; how to handle mismatch — reject or error? |
 | Do nothing / document that URL already pins | Zero API complexity | Invisible to callers; easy to misuse |
 
+## Decisions
+
+**Q1 — Surfacing peer identity:** Resolved via `Peer-Id` request header. The
+server side injects the authenticated peer's public key on every inbound
+request. The caller (fetch side) already knows the peer key — it's in the
+URL they called — so a response-side header is unnecessary.
+
+**Q2 — Identity assertion on fetch:** Not needed as a separate option. Iroh's
+QUIC TLS 1.3 handshake enforces identity pinning at the transport layer.
+`endpoint.connect(node_id, ...)` will reject any peer whose key does not match
+the `node_id` from the URL. This is always-on and cryptographically enforced.
+
+**Q3 — First-class vs. middleware:** First-class, baked into the transport.
+Identity pinning is not a wrapper or opt-in feature — it is an inherent
+property of every `httpi://` connection.
+
 ## Implications
 
-- Affects all four FFI surfaces (Node, Deno, Tauri, Python) and their type
-  definitions.
-- Touches the wire boundary: if peer key is surfaced as a response property it
-  must cross the FFI serialization layer.
-- Has security implications: a caller that doesn't check identity may assume
-  they have verified provenance when they don't.
+- Affects all FFI surfaces (Node, Deno, Tauri) and their type definitions.
+  `Peer-Id` header and `PublicKey.fromPeerId()` are in `iroh-http-shared`,
+  so all adapters get them automatically.
+- No wire-boundary changes were needed — the peer key flows as a standard
+  HTTP header, not a custom FFI type.
+- Identity verification is invisible to the caller (a strength, not a
+  weakness): it is impossible to accidentally skip it.
 
 ## Next steps
 
-- [ ] Survey how other identity-aware transports (e.g. SSH, Noise Protocol
-  libraries) surface peer identity to application code.
-- [ ] Prototype a `peerKey` property on the response object and evaluate
-  ergonomics against the four runtimes.
-- [ ] Decide whether identity assertion belongs in the core or in a
-  higher-level wrapper.
+- [x] Survey how other identity-aware transports surface peer identity.
+- [x] Prototype identity exposure — shipped as `Peer-Id` header + `PublicKey.fromPeerId()`.
+- [x] Decide whether identity assertion belongs in core — yes, at the
+  transport layer (QUIC handshake), not as an application-level option.
