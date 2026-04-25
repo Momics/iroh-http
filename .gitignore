@@ -41,6 +41,8 @@ Thumbs.db
 workspace/old_references
 .obsidian
 temp/
+.agents
+skills-lock.json
 
 # Environment & secrets (defense-in-depth — none should exist, but block accidental commits)
 .env
