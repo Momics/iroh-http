@@ -73,46 +73,86 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Publish iroh-http-core
-        run: cargo publish -p iroh-http-core || echo "already published, skipping"
+        run: |
+          output=$(cargo publish -p iroh-http-core 2>&1) && exit 0
+          if echo "$output" | grep -q 'already uploaded'; then
+            echo "Already published, skipping"
+          else
+            echo "$output" >&2
+            exit 1
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Wait for iroh-http-core to be indexed on crates.io
         run: |
-          for i in $(seq 1 12); do
-            cargo search iroh-http-core 2>/dev/null | grep -q '^iroh-http-core' && break
-            echo "Waiting for crates.io indexing... ($i/12)"
-            sleep 15
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          for i in $(seq 1 24); do
+            if cargo search iroh-http-core 2>/dev/null | grep -q "\"$VERSION\""; then
+              echo "iroh-http-core $VERSION indexed"
+              break
+            fi
+            echo "Waiting for iroh-http-core $VERSION to be indexed... ($i/24)"
+            sleep 10
           done
 
       - name: Publish iroh-http-adapter
-        run: cargo publish -p iroh-http-adapter || echo "already published, skipping"
+        run: |
+          output=$(cargo publish -p iroh-http-adapter 2>&1) && exit 0
+          if echo "$output" | grep -q 'already uploaded'; then
+            echo "Already published, skipping"
+          else
+            echo "$output" >&2
+            exit 1
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Wait for iroh-http-adapter to be indexed on crates.io
         run: |
-          for i in $(seq 1 12); do
-            cargo search iroh-http-adapter 2>/dev/null | grep -q '^iroh-http-adapter' && break
-            echo "Waiting for crates.io indexing... ($i/12)"
-            sleep 15
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          for i in $(seq 1 24); do
+            if cargo search iroh-http-adapter 2>/dev/null | grep -q "\"$VERSION\""; then
+              echo "iroh-http-adapter $VERSION indexed"
+              break
+            fi
+            echo "Waiting for iroh-http-adapter $VERSION to be indexed... ($i/24)"
+            sleep 10
           done
 
       - name: Publish iroh-http-discovery
-        run: cargo publish -p iroh-http-discovery || echo "already published, skipping"
+        run: |
+          output=$(cargo publish -p iroh-http-discovery 2>&1) && exit 0
+          if echo "$output" | grep -q 'already uploaded'; then
+            echo "Already published, skipping"
+          else
+            echo "$output" >&2
+            exit 1
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Wait for iroh-http-discovery to be indexed on crates.io
         run: |
-          for i in $(seq 1 12); do
-            cargo search iroh-http-discovery 2>/dev/null | grep -q '^iroh-http-discovery' && break
-            echo "Waiting for crates.io indexing... ($i/12)"
-            sleep 15
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          for i in $(seq 1 24); do
+            if cargo search iroh-http-discovery 2>/dev/null | grep -q "\"$VERSION\""; then
+              echo "iroh-http-discovery $VERSION indexed"
+              break
+            fi
+            echo "Waiting for iroh-http-discovery $VERSION to be indexed... ($i/24)"
+            sleep 10
           done
 
       - name: Publish tauri-plugin-iroh-http
-        run: cargo publish --manifest-path packages/iroh-http-tauri/Cargo.toml || echo "already published, skipping"
+        run: |
+          output=$(cargo publish --manifest-path packages/iroh-http-tauri/Cargo.toml 2>&1) && exit 0
+          if echo "$output" | grep -q 'already uploaded'; then
+            echo "Already published, skipping"
+          else
+            echo "$output" >&2
+            exit 1
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -156,7 +196,13 @@ jobs:
       - name: Publish platform packages
         run: |
           for pkg_dir in packages/iroh-http-node/npm/*/; do
-            npm publish "$pkg_dir" --access public --provenance || echo "already published, skipping $pkg_dir"
+            output=$(npm publish "$pkg_dir" --access public --provenance 2>&1) && continue
+            if echo "$output" | grep -qi 'previously published\|cannot publish over'; then
+              echo "Already published, skipping $pkg_dir"
+            else
+              echo "$output" >&2
+              exit 1
+            fi
           done
 
       - name: Build TypeScript
@@ -166,13 +212,34 @@ jobs:
           (cd packages/iroh-http-tauri && npx tsc --project tsconfig.json)
 
       - name: Publish iroh-http-shared
-        run: npm publish --workspace packages/iroh-http-shared --access public --provenance || echo "already published, skipping"
+        run: |
+          output=$(npm publish --workspace packages/iroh-http-shared --access public --provenance 2>&1) && exit 0
+          if echo "$output" | grep -qi 'previously published\|cannot publish over'; then
+            echo "Already published, skipping"
+          else
+            echo "$output" >&2
+            exit 1
+          fi
 
       - name: Publish iroh-http-node
-        run: npm publish --workspace packages/iroh-http-node --access public --provenance || echo "already published, skipping"
+        run: |
+          output=$(npm publish --workspace packages/iroh-http-node --access public --provenance 2>&1) && exit 0
+          if echo "$output" | grep -qi 'previously published\|cannot publish over'; then
+            echo "Already published, skipping"
+          else
+            echo "$output" >&2
+            exit 1
+          fi
 
       - name: Publish iroh-http-tauri
-        run: npm publish --workspace packages/iroh-http-tauri --access public --provenance || echo "already published, skipping"
+        run: |
+          output=$(npm publish --workspace packages/iroh-http-tauri --access public --provenance 2>&1) && exit 0
+          if echo "$output" | grep -qi 'previously published\|cannot publish over'; then
+            echo "Already published, skipping"
+          else
+            echo "$output" >&2
+            exit 1
+          fi
 
   # ── 3. Publish JSR packages ────────────────────────────────────────────────────
   # Uses JSR OIDC — no DENO_AUTH_TOKENS needed.
@@ -195,8 +262,22 @@ jobs:
 
       - name: Publish iroh-http-shared to JSR
         working-directory: packages/iroh-http-shared
-        run: deno publish || echo "already published, skipping"
+        run: |
+          output=$(deno publish 2>&1) && exit 0
+          if echo "$output" | grep -qi 'already exists\|already published'; then
+            echo "Already published, skipping"
+          else
+            echo "$output" >&2
+            exit 1
+          fi
 
       - name: Publish iroh-http-deno to JSR
         working-directory: packages/iroh-http-deno
-        run: deno publish || echo "already published, skipping"
+        run: |
+          output=$(deno publish 2>&1) && exit 0
+          if echo "$output" | grep -qi 'already exists\|already published'; then
+            echo "Already published, skipping"
+          else
+            echo "$output" >&2
+            exit 1
+          fi
