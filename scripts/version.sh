@@ -155,6 +155,12 @@ echo "Regenerating Cargo.lock …"
 cargo generate-lockfile --manifest-path "$ROOT/Cargo.toml"
 echo "  ✓ Cargo.lock"
 
+# Tauri has its own workspace with a separate Cargo.lock
+if [[ -f "$ROOT/packages/iroh-http-tauri/Cargo.lock" ]]; then
+  cargo generate-lockfile --manifest-path "$ROOT/packages/iroh-http-tauri/Cargo.toml"
+  echo "  ✓ packages/iroh-http-tauri/Cargo.lock"
+fi
+
 echo "Regenerating package-lock.json …"
 (cd "$ROOT" && npm install --package-lock-only --ignore-scripts)
 echo "  ✓ package-lock.json"
