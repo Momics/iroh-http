@@ -42,8 +42,12 @@ TAURI_CARGO="$ROOT/packages/iroh-http-tauri/Cargo.toml"
 if [[ -f "$TAURI_CARGO" ]]; then
   # Package version
   sed -i '' "s/^version = \"$OLD\"/version = \"$NEW\"/" "$TAURI_CARGO"
-  # Internal path-dep version constraints (iroh-http-core, iroh-http-adapter, iroh-http-discovery)
-  sed -i '' "s/\(iroh-http-[a-z]*.*version = \"\)$OLD\"/\1$NEW\"/" "$TAURI_CARGO"
+  # Internal path-dep version constraints (iroh-http-core, iroh-http-adapter, iroh-http-discovery).
+  # Replace ANY version in these deps, not just $OLD, to catch deps that were
+  # out of sync from prior releases (e.g. iroh-http-adapter stuck at 0.1.0).
+  sed -i '' "s/\(iroh-http-core.*version = \"\)[^\"]*\"/\1$NEW\"/" "$TAURI_CARGO"
+  sed -i '' "s/\(iroh-http-adapter.*version = \"\)[^\"]*\"/\1$NEW\"/" "$TAURI_CARGO"
+  sed -i '' "s/\(iroh-http-discovery.*version = \"\)[^\"]*\"/\1$NEW\"/" "$TAURI_CARGO"
   echo "  ✓ packages/iroh-http-tauri/Cargo.toml"
 fi
 
