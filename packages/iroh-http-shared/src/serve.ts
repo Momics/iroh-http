@@ -192,6 +192,7 @@ export function makeServe(
 
         // Invoke the user handler with onError fallback.
         let res: Response;
+        let handlerFailed = false;
         try {
           const returned = await Promise.resolve(handler(req));
           if (!(returned instanceof Response)) {
@@ -201,6 +202,7 @@ export function makeServe(
           }
           res = returned;
         } catch (err) {
+          handlerFailed = true;
           try {
             res = await Promise.resolve(onError(err));
           } catch {
@@ -212,14 +214,34 @@ export function makeServe(
         const doPipe = async () => {
           await pipeToWriter(adapter, bodyStream, payload.resBodyHandle);
         };
-        const p = doPipe().catch((err) =>
-          console.error(
-            "[iroh-http] response body pipe error:",
-            classifyError(err),
-          )
-        );
-        activePipes.add(p);
-        p.finally(() => activePipes.delete(p));
+
+        // #123: When the handler failed, the error-recovery body is short
+        // (typically empty or a small string).  Await the pipe before returning
+        // the response head so that rawRespond fires only after the body
+        // handles are fully consumed.  Without this, rawRespond wakes the core
+        // handler task which may complete and clean up handles before
+        // pipeToWriter calls finishBody, producing spurious "unknown handle"
+        // errors.
+        //
+        // For the normal (non-error) path the pipe runs concurrently — required
+        // for streaming responses where the body may be large or unbounded.
+        if (handlerFailed) {
+          await doPipe().catch((err) =>
+            console.error(
+              "[iroh-http] response body pipe error:",
+              classifyError(err),
+            )
+          );
+        } else {
+          const p = doPipe().catch((err) =>
+            console.error(
+              "[iroh-http] response body pipe error:",
+              classifyError(err),
+            )
+          );
+          activePipes.add(p);
+          p.finally(() => activePipes.delete(p));
+        }
 
         return {
           status: res.status,
