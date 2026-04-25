@@ -726,9 +726,28 @@ async fn stop_serve(p: Value) -> Value {
         }
     };
     ep.stop_serve();
+    // Signal shutdown immediately so the JS polling loop stops dequeuing.
+    // The watch channel persists its value — any in-flight or future
+    // `try_next_request` call sees shutdown and returns -1.
+    serve_registry::signal_shutdown(handle);
+    // Drain any queued-but-undelivered requests and respond 503 so the
+    // core handler tasks wake up and decrement in-flight immediately,
+    // instead of stalling until the 60s tower timeout fires.
+    if let Some(queue) = serve_registry::get(handle) {
+        if let Ok(mut rx) = queue.rx.try_lock() {
+            while let Ok(payload) = rx.try_recv() {
+                if let Some(h) = payload.get("reqHandle").and_then(|v| v.as_u64()) {
+                    let _ = respond(
+                        ep.handles(),
+                        h,
+                        503,
+                        vec![("content-length".into(), "0".into())],
+                    );
+                }
+            }
+        }
+    }
     // DENO-002: drop the registry entry so the tx inside ServeQueue is freed.
-    // Once the serve closure also drops its cloned tx, the channel closes and
-    // nextRequest's recv() returns None, allowing the polling loop to exit.
     serve_registry::remove(handle);
     // #122: wait for the previous serve loop to fully terminate before returning.
     // Without this, a subsequent `serve_start` on the same endpoint would

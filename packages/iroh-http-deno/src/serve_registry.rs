@@ -87,3 +87,14 @@ pub fn remove(endpoint_handle: u32) {
         let _ = queue.shutdown_tx.send(true);
     }
 }
+
+/// Signal shutdown without removing the queue from the registry.
+///
+/// This allows the JS polling loop to observe shutdown immediately via the
+/// watch channel, while the caller can still drain queued items before the
+/// queue is removed.
+pub fn signal_shutdown(endpoint_handle: u32) {
+    if let Some(queue) = get(endpoint_handle) {
+        let _ = queue.shutdown_tx.send(true);
+    }
+}
