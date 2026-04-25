@@ -1,6 +1,6 @@
 {
   "name": "@momics/iroh-http-tauri",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Tauri plugin for iroh-http peer-to-peer HTTP",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -22,7 +22,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@momics/iroh-http-shared": "^0.2"
+    "@momics/iroh-http-shared": "^0.3"
   },
   "files": ["dist", "guest-js"],
   "publishConfig": { "access": "public" },

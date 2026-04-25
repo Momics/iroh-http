@@ -35,6 +35,7 @@ echo "Bumping $OLD → $NEW"
 # ── Cargo.toml files ──────────────────────────────────────────────────────────
 CARGO_FILES=(
   crates/iroh-http-core/Cargo.toml
+  crates/iroh-http-adapter/Cargo.toml
   crates/iroh-http-discovery/Cargo.toml
   packages/iroh-http-node/Cargo.toml
   packages/iroh-http-deno/Cargo.toml

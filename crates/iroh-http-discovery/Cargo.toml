@@ -1,6 +1,6 @@
 [package]
 name = "iroh-http-discovery"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 description = "Optional mDNS peer discovery for iroh-http (desktop platforms)"
 license = "MIT OR Apache-2.0"

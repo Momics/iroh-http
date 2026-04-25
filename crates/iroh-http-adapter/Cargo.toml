@@ -1,11 +1,11 @@
 [package]
 name = "iroh-http-adapter"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 description = "Shared adapter utilities for iroh-http (error serialization for the FFI boundary)"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/momics/iroh-http"
 
 [dependencies]
-iroh-http-core = { path = "../iroh-http-core", version = "0.2.1" }
+iroh-http-core = { path = "../iroh-http-core", version = "0.3.0" }
 serde_json = "1"
