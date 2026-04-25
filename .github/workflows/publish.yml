@@ -145,8 +145,11 @@ jobs:
           done
 
       - name: Publish tauri-plugin-iroh-http
+        # --no-verify: Tauri depends on system libraries (glib, gtk, webkit)
+        # not present on the publish runner. Compilation is already verified
+        # by the CI workflow (cargo test/clippy on the full workspace).
         run: |
-          output=$(cargo publish --manifest-path packages/iroh-http-tauri/Cargo.toml 2>&1) && exit 0
+          output=$(cargo publish --manifest-path packages/iroh-http-tauri/Cargo.toml --no-verify 2>&1) && exit 0
           if echo "$output" | grep -q 'already uploaded'; then
             echo "Already published, skipping"
           else
