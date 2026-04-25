@@ -77,7 +77,7 @@ jobs:
       - name: Publish iroh-http-core
         run: |
           output=$(cargo publish -p iroh-http-core 2>&1) && exit 0
-          if echo "$output" | grep -q 'already uploaded'; then
+          if echo "$output" | grep -qi 'already uploaded\|already exists'; then
             echo "Already published, skipping"
           else
             echo "$output" >&2
@@ -89,7 +89,7 @@ jobs:
       - name: Publish iroh-http-adapter
         run: |
           output=$(cargo publish -p iroh-http-adapter 2>&1) && exit 0
-          if echo "$output" | grep -q 'already uploaded'; then
+          if echo "$output" | grep -qi 'already uploaded\|already exists'; then
             echo "Already published, skipping"
           else
             echo "$output" >&2
@@ -101,7 +101,7 @@ jobs:
       - name: Publish iroh-http-discovery
         run: |
           output=$(cargo publish -p iroh-http-discovery 2>&1) && exit 0
-          if echo "$output" | grep -q 'already uploaded'; then
+          if echo "$output" | grep -qi 'already uploaded\|already exists'; then
             echo "Already published, skipping"
           else
             echo "$output" >&2
@@ -116,7 +116,7 @@ jobs:
         # by the CI workflow (cargo test/clippy on the full workspace).
         run: |
           output=$(cargo publish --manifest-path packages/iroh-http-tauri/Cargo.toml --no-verify 2>&1) && exit 0
-          if echo "$output" | grep -q 'already uploaded'; then
+          if echo "$output" | grep -qi 'already uploaded\|already exists'; then
             echo "Already published, skipping"
           else
             echo "$output" >&2
