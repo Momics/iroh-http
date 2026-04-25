@@ -1370,15 +1370,9 @@ async fn start_transport_events_dispatch(p: Value) -> Value {
     };
     let ep = match get_endpoint(payload.endpoint_handle) {
         Some(ep) => ep,
-        None => {
-            return err_code(
-                "INVALID_HANDLE",
-                format!(
-                    "node closed or not found (handle {})",
-                    payload.endpoint_handle
-                ),
-            )
-        }
+        // Endpoint already closed — nothing to subscribe to.
+        // Return false so the JS polling loop exits cleanly.
+        None => return ok(serde_json::Value::Bool(false)),
     };
     let rx = match ep.subscribe_events() {
         Some(rx) => rx,

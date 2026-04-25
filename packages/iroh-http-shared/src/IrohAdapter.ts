@@ -174,6 +174,14 @@ export abstract class IrohAdapter {
     _callback: (event: TransportEventPayload) => void,
   ): void {/* no-op */}
 
+  /**
+   * Wait for the transport-event polling loop to finish.
+   * Called by `IrohNode.close()` after `waitEndpointClosed` to ensure all
+   * async FFI ops are settled before the close promise resolves.
+   * Override in adapters that run a background polling loop (Deno).
+   */
+  drainTransportEvents(): Promise<void> { return Promise.resolve(); }
+
   /** Subscribe to path changes for a specific peer. Blocks until a change occurs or the subscription ends. */
   nextPathChange(
     _endpointHandle: number,

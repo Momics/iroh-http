@@ -1,0 +1,276 @@
+[
+  {
+    "id": "get-200",
+    "description": "Basic GET returns 200",
+    "request": { "method": "GET", "path": "/status/200", "headers": {}, "body": null },
+    "response": { "status": 200 }
+  },
+  {
+    "id": "get-404",
+    "description": "GET /status/404 returns 404",
+    "request": { "method": "GET", "path": "/status/404", "headers": {}, "body": null },
+    "response": { "status": 404 }
+  },
+  {
+    "id": "status-201",
+    "description": "Status 201 Created is forwarded correctly",
+    "request": { "method": "POST", "path": "/status/201", "headers": {}, "body": null },
+    "response": { "status": 201 }
+  },
+  {
+    "id": "status-204",
+    "description": "Status 204 No Content is forwarded correctly",
+    "request": { "method": "DELETE", "path": "/status/204", "headers": {}, "body": null },
+    "response": { "status": 204 }
+  },
+  {
+    "id": "status-400",
+    "description": "Status 400 Bad Request is forwarded correctly",
+    "request": { "method": "GET", "path": "/status/400", "headers": {}, "body": null },
+    "response": { "status": 400 }
+  },
+  {
+    "id": "status-500",
+    "description": "Status 500 Internal Server Error is forwarded correctly",
+    "request": { "method": "GET", "path": "/status/500", "headers": {}, "body": null },
+    "response": { "status": 500 }
+  },
+  {
+    "id": "post-echo-body",
+    "description": "POST body is echoed back",
+    "request": { "method": "POST", "path": "/echo", "headers": {}, "body": "hello iroh" },
+    "response": { "status": 200, "bodyExact": "hello iroh" }
+  },
+  {
+    "id": "patch-with-body",
+    "description": "PATCH request body is echoed back",
+    "request": { "method": "PATCH", "path": "/echo", "headers": {}, "body": "patch payload" },
+    "response": { "status": 200, "bodyExact": "patch payload" }
+  },
+  {
+    "id": "delete-with-body",
+    "description": "DELETE request body is echoed back",
+    "request": { "method": "DELETE", "path": "/echo", "headers": {}, "body": "delete payload" },
+    "response": { "status": 200, "bodyExact": "delete payload" }
+  },
+  {
+    "id": "options-method",
+    "description": "OPTIONS method reaches handler and returns 200",
+    "request": { "method": "OPTIONS", "path": "/echo-method", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "OPTIONS" }
+  },
+  {
+    "id": "options-with-body",
+    "description": "OPTIONS request body is forwarded to handler (issue-58: serve body fix)",
+    "request": { "method": "OPTIONS", "path": "/echo", "headers": {}, "body": "options body" },
+    "response": { "status": 200, "bodyExact": "options body" }
+  },
+  {
+    "id": "custom-verb-method",
+    "description": "Custom HTTP verb (SEARCH) reaches handler",
+    "request": { "method": "SEARCH", "path": "/echo-method", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "SEARCH" }
+  },
+  {
+    "id": "custom-verb-with-body",
+    "description": "Custom verb request body is forwarded to handler (issue-58: serve body fix)",
+    "request": { "method": "SEARCH", "path": "/echo", "headers": {}, "body": "custom verb body" },
+    "response": { "status": 200, "bodyExact": "custom verb body" }
+  },
+  {
+    "id": "custom-request-header-forwarded",
+    "description": "Custom request header arrives at handler",
+    "request": {
+      "method": "GET",
+      "path": "/header/x-test",
+      "headers": { "x-test": "ping" },
+      "body": null
+    },
+    "response": { "status": 200, "bodyExact": "ping" }
+  },
+  {
+    "id": "custom-response-header",
+    "description": "Handler can set custom response headers",
+    "request": { "method": "GET", "path": "/set-header/x-reply/pong", "headers": {}, "body": null },
+    "response": { "status": 200, "headers": { "x-reply": "pong" } }
+  },
+  {
+    "id": "multiple-response-headers",
+    "description": "Multiple custom response headers are all delivered to the client",
+    "request": { "method": "GET", "path": "/set-headers/3", "headers": {}, "body": null },
+    "response": { "status": 200, "headers": { "x-h-0": "v0", "x-h-1": "v1", "x-h-2": "v2" } }
+  },
+  {
+    "id": "peer-id-present",
+    "description": "peer-id header is injected and non-empty",
+    "request": { "method": "GET", "path": "/header/peer-id", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyNotEmpty": true }
+  },
+  {
+    "id": "peer-id-not-spoofable",
+    "description": "Client-supplied peer-id is stripped; the value reflects the real peer identity",
+    "request": {
+      "method": "GET",
+      "path": "/header/peer-id",
+      "headers": { "peer-id": "SPOOFED" },
+      "body": null
+    },
+    "response": { "status": 200, "bodyNot": "SPOOFED" }
+  },
+  {
+    "id": "path-preserved",
+    "description": "Request path is preserved verbatim at the handler",
+    "request": { "method": "GET", "path": "/echo-path", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "/echo-path" }
+  },
+  {
+    "id": "path-with-query-string",
+    "description": "Query string is preserved and accessible at the handler",
+    "request": { "method": "GET", "path": "/echo-query?foo=bar&baz=1", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "?foo=bar&baz=1" }
+  },
+  {
+    "id": "path-with-trailing-slash",
+    "description": "Path with trailing slash is preserved",
+    "request": { "method": "GET", "path": "/echo-path/", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "/echo-path/" }
+  },
+  {
+    "id": "put-method",
+    "description": "PUT method reaches handler correctly",
+    "request": { "method": "PUT", "path": "/echo-method", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "PUT" }
+  },
+  {
+    "id": "patch-method",
+    "description": "PATCH method reaches handler correctly",
+    "request": { "method": "PATCH", "path": "/echo-method", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "PATCH" }
+  },
+  {
+    "id": "delete-method",
+    "description": "DELETE method reaches handler correctly",
+    "request": { "method": "DELETE", "path": "/echo-method", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "DELETE" }
+  },
+  {
+    "id": "empty-response-body",
+    "description": "Zero-byte response body is handled correctly",
+    "request": { "method": "GET", "path": "/stream/0", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyLengthExact": 0 }
+  },
+  {
+    "id": "empty-post-body",
+    "description": "POST with null body results in 0-byte echo",
+    "request": { "method": "POST", "path": "/echo-length", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "0" }
+  },
+  {
+    "id": "large-response-body",
+    "description": "Streaming a 64 KiB response body",
+    "request": { "method": "GET", "path": "/stream/65536", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyLengthExact": 65536 }
+  },
+  {
+    "id": "large-request-body",
+    "description": "Uploading a 64 KiB request body",
+    "request": {
+      "method": "POST",
+      "path": "/echo-length",
+      "headers": {},
+      "body": { "fill": 65536 }
+    },
+    "response": { "status": 200, "bodyExact": "65536" }
+  },
+  {
+    "id": "large-response-body-1mb",
+    "description": "Streaming a 1 MiB response body",
+    "request": { "method": "GET", "path": "/stream/1048576", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyLengthExact": 1048576 }
+  },
+  {
+    "id": "large-request-body-1mb",
+    "description": "Uploading a 1 MiB request body",
+    "request": {
+      "method": "POST",
+      "path": "/echo-length",
+      "headers": {},
+      "body": { "fill": 1048576 }
+    },
+    "response": { "status": 200, "bodyExact": "1048576" }
+  },
+  {
+    "id": "binary-body-roundtrip",
+    "description": "Binary (zero-filled) POST body round-trips with correct byte count",
+    "request": {
+      "method": "POST",
+      "path": "/echo-length",
+      "headers": {},
+      "body": { "fill": 4096 }
+    },
+    "response": { "status": 200, "bodyExact": "4096" }
+  },
+  {
+    "id": "deeply-nested-path",
+    "description": "Deeply-nested path segments are preserved",
+    "request": { "method": "GET", "path": "/echo-path/a/b/c/d/e", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyExact": "/echo-path/a/b/c/d/e" }
+  },
+  {
+    "id": "head-status-200",
+    "description": "HEAD /status/200 returns 200 with no body",
+    "request": { "method": "HEAD", "path": "/status/200", "headers": {}, "body": null },
+    "response": { "status": 200 }
+  },
+  {
+    "id": "status-302",
+    "description": "Status 302 Found is forwarded correctly",
+    "request": { "method": "GET", "path": "/status/302", "headers": {}, "body": null },
+    "response": { "status": 302 }
+  },
+  {
+    "id": "status-503",
+    "description": "Status 503 Service Unavailable is forwarded correctly",
+    "request": { "method": "GET", "path": "/status/503", "headers": {}, "body": null },
+    "response": { "status": 503 }
+  },
+  {
+    "id": "query-string-multiple-params",
+    "description": "Query string with multiple parameters is forwarded verbatim",
+    "request": {
+      "method": "GET",
+      "path": "/echo-query?a=1&b=2&c=hello",
+      "headers": {},
+      "body": null
+    },
+    "response": { "status": 200, "bodyExact": "?a=1&b=2&c=hello" }
+  },
+  {
+    "id": "echo-body-utf8",
+    "description": "UTF-8 multibyte body round-trips correctly",
+    "request": {
+      "method": "POST",
+      "path": "/echo",
+      "headers": { "content-type": "text/plain; charset=utf-8" },
+      "body": "こんにちは世界"
+    },
+    "response": { "status": 200, "bodyExact": "こんにちは世界" }
+  },
+  {
+    "id": "stream-64kb",
+    "description": "Server streams a 64 KiB response body",
+    "request": { "method": "GET", "path": "/stream/65536", "headers": {}, "body": null },
+    "response": { "status": 200, "bodyLengthExact": 65536 }
+  },
+  {
+    "id": "multiple-custom-request-headers",
+    "description": "Multiple custom request headers all arrive at the handler",
+    "request": {
+      "method": "GET",
+      "path": "/header/x-first",
+      "headers": { "x-first": "alpha", "x-second": "beta" },
+      "body": null
+    },
+    "response": { "status": 200, "bodyExact": "alpha" }
+  }
+]

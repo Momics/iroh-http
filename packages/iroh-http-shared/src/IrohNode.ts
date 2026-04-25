@@ -387,6 +387,7 @@ export class IrohNode extends EventTarget {
     await this.#adapter.closeEndpoint(this.#endpointHandle, options?.force);
     this.#resolveClose({ closeCode: 0, reason: "" });
     await this.#nativeClosed;
+    await this.#adapter.drainTransportEvents();
   }
 
   [Symbol.asyncDispose](): Promise<void> {

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>iroh-http Compliance Tests — Tauri</title>
+    <script type="module" src="/tests/http-compliance/run-tauri.ts" defer></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      body {
+        font-family: ui-monospace, "Cascadia Code", "Fira Code", Menlo, Monaco, monospace;
+        background: #1a1a2e;
+        color: #e0e0e0;
+        padding: 16px;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      h1 {
+        font-size: 18px;
+        color: #7c93c3;
+        margin-bottom: 8px;
+        font-weight: 600;
+      }
+
+      .controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+
+      .controls label {
+        color: #888;
+        font-size: 12px;
+      }
+
+      #filter-input {
+        background: #16213e;
+        border: 1px solid #334;
+        color: #e0e0e0;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-family: inherit;
+        font-size: 13px;
+        width: 200px;
+      }
+
+      #filter-input:focus {
+        outline: none;
+        border-color: #7c93c3;
+      }
+
+      #rerun-btn {
+        background: #0f3460;
+        color: #e0e0e0;
+        border: 1px solid #334;
+        padding: 4px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 13px;
+      }
+
+      #rerun-btn:hover {
+        background: #1a4a8a;
+      }
+
+      #test-status {
+        padding: 6px 12px;
+        background: #16213e;
+        border-radius: 4px;
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 12px;
+        color: #7c93c3;
+      }
+
+      .status-pass { color: #4ade80 !important; background: #0a2e1a !important; }
+      .status-fail { color: #f87171 !important; background: #2e0a0a !important; }
+
+      #test-output {
+        background: #0f0f23;
+        border: 1px solid #222;
+        border-radius: 6px;
+        padding: 12px;
+        height: calc(100vh - 140px);
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+
+      .log-line {
+        white-space: pre-wrap;
+        word-break: break-all;
+        padding: 1px 0;
+      }
+
+      .pass { color: #4ade80; }
+      .fail { color: #f87171; }
+      .fail-detail { color: #fb923c; padding-left: 24px; }
+      .info { color: #60a5fa; }
+
+      /* scrollbar */
+      #test-output::-webkit-scrollbar { width: 8px; }
+      #test-output::-webkit-scrollbar-track { background: #0f0f23; }
+      #test-output::-webkit-scrollbar-thumb { background: #334; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>iroh-http Compliance Tests</h1>
+    <div class="controls">
+      <label for="filter-input">Filter:</label>
+      <input id="filter-input" type="text" placeholder="e.g. status, peer-id, body" />
+      <button id="rerun-btn">Run</button>
+    </div>
+    <div id="test-status">Initializing…</div>
+    <div id="test-output"></div>
+  </body>
+</html>

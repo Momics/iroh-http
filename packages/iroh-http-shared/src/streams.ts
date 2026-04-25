@@ -46,6 +46,12 @@ export function makeReadable(
  * Calls `sendChunk` for each chunk, then `finishBody` when the stream ends.
  * Errors from either side are propagated to the returned `Promise`.
  *
+ * Large chunks are split into 64 KB pieces to keep each sync FFI call short.
+ * This prevents blocking the JS thread when a ReadableStream enqueues an
+ * entire body as one chunk (e.g. `singleChunkStream` for Uint8Array bodies).
+ * Each piece is `await`-ed so the event loop can process other work (such as
+ * the rawFetch dispatch that claims the body reader) between sends.
+ *
  * @param adapter  Platform adapter implementation.
  * @param stream   The `ReadableStream` to consume.
  * @param handle   Slab handle for the `BodyWriter` to write to.
@@ -56,18 +62,28 @@ export async function pipeToWriter(
   stream: ReadableStream<Uint8Array>,
   handle: bigint,
 ): Promise<void> {
+  // Match the Rust-side max chunk size so each sendChunk is a single
+  // channel push (O(1) when the channel has capacity).
+  const MAX_CHUNK = 64 * 1024;
   const reader = stream.getReader();
   try {
-    let pending: Promise<void> | null = null;
     while (true) {
       const { value, done } = await reader.read();
-      if (pending) await pending;
       if (done) break;
-      if (value && value.byteLength > 0) {
-        pending = adapter.sendChunk(handle, value);
+      if (!value || value.byteLength === 0) continue;
+      if (value.byteLength <= MAX_CHUNK) {
+        await adapter.sendChunk(handle, value);
+      } else {
+        // Split into MAX_CHUNK-sized pieces and yield between each send so
+        // the event loop stays responsive and rawFetch can make progress.
+        let offset = 0;
+        while (offset < value.byteLength) {
+          const end = Math.min(offset + MAX_CHUNK, value.byteLength);
+          await adapter.sendChunk(handle, value.subarray(offset, end));
+          offset = end;
+        }
       }
     }
-    if (pending) await pending;
   } finally {
     reader.releaseLock();
     await adapter.finishBody(handle);

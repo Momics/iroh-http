@@ -321,9 +321,12 @@ pub unsafe extern "C" fn iroh_http_send_chunk(
     };
     let bytes = bytes::Bytes::copy_from_slice(slice);
 
-    match runtime().map(|rt| rt.block_on(ep.handles().send_chunk(handle, bytes))) {
-        Some(Ok(())) => 0,
-        _ => -1,
+    match runtime() {
+        None => -1,
+        Some(rt) => match rt.block_on(ep.handles().send_chunk(handle, bytes)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        },
     }
 }
 

@@ -135,9 +135,12 @@ const lib = Deno.dlopen(
     iroh_http_send_chunk: {
       parameters: ["u32", "u64", "buffer", "usize"],
       result: "i32",
-      // #122: sync — mpsc send is usually O(1). Running inline avoids
-      // spawn_blocking contention that starves nextRequest under load.
-      nonblocking: false,
+      // Must be async (nonblocking:true) — sync blocks the JS thread, which
+      // deadlocks when client and server share the same event loop and the
+      // bounded channel fills up (server can't read → QUIC stalls → channel
+      // stays full → JS thread stays blocked).  Chunk splitting in pipeToWriter
+      // keeps each send O(1) so spawn_blocking overhead is minimal.
+      nonblocking: true,
     },
     // #122: Sync symbols — execute inline on JS thread, no spawn_blocking.
     iroh_http_respond: {
@@ -328,15 +331,14 @@ export function makeBridge(endpointHandle: number) {
       return buf.slice(0, n);
     },
     async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
-      // #122: sync FFI — mpsc send is O(1), runs inline to reduce
-      // spawn_blocking contention that starves nextRequest under load.
+      // Async FFI — same deadlock concern as the class method.
       const buf = chunk as Uint8Array<ArrayBuffer>;
-      const result = lib.symbols.iroh_http_send_chunk(
+      const result = (await lib.symbols.iroh_http_send_chunk(
         endpointHandle,
         handle,
         buf,
         BigInt(buf.byteLength),
-      ) as number;
+      )) as number;
       if (result < 0) {
         throw new Error(`sendChunk failed: handle ${handle}`);
       }
@@ -934,15 +936,16 @@ export class DenoAdapter extends IrohAdapter {
   }
 
   async sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
-    // #122: sync FFI — mpsc send is O(1), runs inline to reduce
-    // spawn_blocking contention that starves nextRequest under load.
+    // Async FFI (nonblocking:true) — avoids blocking the JS event loop when
+    // the bounded channel is full.  Sync would deadlock same-process
+    // client+server on large bodies.
     const buf = chunk as Uint8Array<ArrayBuffer>;
-    const result = lib.symbols.iroh_http_send_chunk(
+    const result = (await lib.symbols.iroh_http_send_chunk(
       this.#eh,
       handle,
       buf,
       BigInt(buf.byteLength),
-    ) as number;
+    )) as number;
     if (result < 0) throw new Error(`sendChunk failed: handle ${handle}`);
   }
 
@@ -1116,13 +1119,21 @@ export class DenoAdapter extends IrohAdapter {
 
   // ── Transport events ────────────────────────────────────────────────────────
 
+  #transportLoopDone: Promise<void> | null = null;
+
   override startTransportEvents(
     _endpointHandle: number,
     callback: (event: TransportEventPayload) => void,
   ): void {
     // Claim the receiver on the Rust side, then drain in the background.
-    (async () => {
-      await call<null>("startTransportEvents", { endpointHandle: this.#eh });
+    // Rust returns null from startTransportEvents if the endpoint is already
+    // closed, and null from nextTransportEvent when the channel closes.
+    // Both are clean shutdown signals — the loop resolves without error.
+    this.#transportLoopDone = (async () => {
+      const subscribed = await call<null | boolean>("startTransportEvents", {
+        endpointHandle: this.#eh,
+      });
+      if (subscribed === false) return; // endpoint gone before subscribe
       while (true) {
         const event = await call<TransportEventPayload | null>(
           "nextTransportEvent",
@@ -1138,9 +1149,14 @@ export class DenoAdapter extends IrohAdapter {
           );
         }
       }
-    })().catch((err: unknown) =>
+    })();
+    this.#transportLoopDone.catch((err: unknown) =>
       console.error("[iroh-http-deno] startTransportEvents error:", err)
     );
+  }
+
+  override drainTransportEvents(): Promise<void> {
+    return this.#transportLoopDone ?? Promise.resolve();
   }
 
   override async nextPathChange(
