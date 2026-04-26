@@ -84,6 +84,9 @@ try {
   await client.fetch(serverId, "httpi://bench.local/warmup", { directAddrs: serverAddrs });
 
   // ── 1. Cold connect ─────────────────────────────────────────────────────────
+  // NOTE: close() is deferred — QUIC connection drain (~80ms) is not part of
+  // connect latency.  Nodes are collected and cleaned up after `run()`.
+  const coldClients = [];
 
   group("cold-connect", () => {
     bench("cold-connect/iroh", async () => {
@@ -91,14 +94,11 @@ try {
         disableNetworking: true,
         bindAddr: "127.0.0.1:0",
       });
-      try {
-        const res = await freshClient.fetch(serverId, "httpi://bench.local/cold", {
-          directAddrs: serverAddrs,
-        });
-        await res.arrayBuffer();
-      } finally {
-        await freshClient.close();
-      }
+      const res = await freshClient.fetch(serverId, "httpi://bench.local/cold", {
+        directAddrs: serverAddrs,
+      });
+      await res.arrayBuffer();
+      coldClients.push(freshClient);
     });
 
     bench("cold-connect/native", async () => {
@@ -206,6 +206,8 @@ try {
   });
 
   await run();
+  // Clean up cold-connect clients deferred from the benchmark loop.
+  await Promise.all(coldClients.map((c) => c.close({ force: true })));
 } finally {
   serveAbort.abort();
   await serveHandle.finished.catch(() => {});

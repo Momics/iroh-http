@@ -103,22 +103,22 @@ await client.fetch(serverId, "httpi://bench.local/warmup", {
 });
 
 // ── 1. Cold connect ───────────────────────────────────────────────────────────
+// NOTE: close() is deferred — QUIC connection drain (~80ms) is not part of
+// connect latency.  Nodes are collected and cleaned up at process exit.
+const coldClients: Array<typeof server> = [];
 
 Deno.bench("cold-connect/iroh", { group: "cold-connect", n: 5 }, async () => {
   const freshClient = await createNode({
     disableNetworking: true,
     bindAddr: "127.0.0.1:0",
   });
-  try {
-    const res = await freshClient.fetch(
-      serverId,
-      "httpi://bench.local/cold",
-      { directAddrs: serverAddrs },
-    );
-    await res.arrayBuffer();
-  } finally {
-    await freshClient.close().catch(() => {});
-  }
+  const res = await freshClient.fetch(
+    serverId,
+    "httpi://bench.local/cold",
+    { directAddrs: serverAddrs },
+  );
+  await res.arrayBuffer();
+  coldClients.push(freshClient);
 });
 
 Deno.bench(
@@ -257,6 +257,7 @@ Deno.bench(
 globalThis.addEventListener("unload", () => {
   serveAbort.abort();
   void serveHandle.finished.catch(() => {});
+  for (const c of coldClients) void c.close({ force: true }).catch(() => {});
   void server.close().catch(() => {});
   void client.close().catch(() => {});
   void tcpServer.shutdown().catch(() => {});
