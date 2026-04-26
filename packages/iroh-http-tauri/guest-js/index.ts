@@ -5,7 +5,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   classifyBindError,
-  decodeBase64,
   encodeBase64,
   IrohNode,
   type NodeOptions,
@@ -56,25 +55,33 @@ class TauriAdapter extends IrohAdapter {
 
   nextChunk(handle: bigint): Promise<Uint8Array | null> {
     // Sync fast path: if data is already buffered, skip async IPC overhead.
-    return invoke<string | null>(`${PLUGIN}|try_next_chunk`, {
+    // Protocol: first byte is 0x01 (data follows) or 0x00 (EOF).
+    return invoke<ArrayBuffer>(`${PLUGIN}|try_next_chunk`, {
       endpointHandle: this.#epHandle,
       handle: Number(handle),
     }).then(
-      (b64) => (b64 ? decodeBase64(b64) : null),
+      (buf) => {
+        const v = new Uint8Array(buf);
+        return v.length > 0 && v[0] !== 0 ? v.subarray(1) : null;
+      },
       // Channel empty or lock contended — fall back to async.
       () =>
-        invoke<string | null>(`${PLUGIN}|next_chunk`, {
+        invoke<ArrayBuffer>(`${PLUGIN}|next_chunk`, {
           endpointHandle: this.#epHandle,
           handle: Number(handle),
-        }).then((b64) => (b64 ? decodeBase64(b64) : null)),
+        }).then((buf) => {
+          const v = new Uint8Array(buf);
+          return v.length > 0 && v[0] !== 0 ? v.subarray(1) : null;
+        }),
     );
   }
 
   sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
-    return invoke(`${PLUGIN}|send_chunk`, {
-      endpointHandle: this.#epHandle,
-      handle: Number(handle),
-      chunk: encodeBase64(chunk),
+    return invoke(`${PLUGIN}|send_chunk`, chunk, {
+      headers: {
+        "iroh-ep": String(this.#epHandle),
+        "iroh-handle": String(Number(handle)),
+      },
     });
   }
 

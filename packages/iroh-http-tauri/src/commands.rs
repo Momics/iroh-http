@@ -7,7 +7,7 @@ use iroh_http_core::{
     NetworkingOptions, PoolOptions, RequestPayload, StreamingOptions,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{command, ipc::Channel};
+use tauri::{command, ipc::Channel, ipc::Response};
 
 use crate::state;
 
@@ -286,9 +286,11 @@ pub fn endpoint_stats(endpoint_handle: u64) -> Result<iroh_http_core::EndpointSt
 
 // ── Bridge methods ────────────────────────────────────────────────────────────
 
-/// Read the next chunk from a body reader handle (base64-encoded).
+/// Read the next chunk from a body reader handle (raw binary).
+///
+/// Returns an `ArrayBuffer` on the JS side. A `null` response signals EOF.
 #[command]
-pub async fn next_chunk(endpoint_handle: u64, handle: u64) -> Result<Option<String>, String> {
+pub async fn next_chunk(endpoint_handle: u64, handle: u64) -> Result<Response, String> {
     let ep = state::get_endpoint(endpoint_handle).ok_or_else(|| {
         format_error_json(
             "INVALID_HANDLE",
@@ -300,17 +302,25 @@ pub async fn next_chunk(endpoint_handle: u64, handle: u64) -> Result<Option<Stri
         .next_chunk(handle)
         .await
         .map_err(|e| core_error_to_json(&e))?;
-    Ok(chunk.map(|b| B64.encode(&b[..])))
+    match chunk {
+        Some(bytes) => {
+            let mut buf = Vec::with_capacity(bytes.len().saturating_add(1));
+            buf.push(1u8);
+            buf.extend_from_slice(&bytes);
+            Ok(Response::new(buf))
+        }
+        None => Ok(Response::new(vec![0u8])),
+    }
 }
 
-/// Non-blocking body read fast path (base64-encoded).
+/// Non-blocking body read fast path (raw binary).
 ///
 /// Returns:
-/// - `Ok(Some(chunk))` — data was available synchronously.
-/// - `Ok(None)` — EOF, handle cleaned up.
+/// - `Ok(ArrayBuffer)` — data was available synchronously.
+/// - `Ok(null)` — EOF, handle cleaned up.
 /// - `Err(_)` — channel empty or lock contended, caller should fall back to async `nextChunk`.
 #[command]
-pub fn try_next_chunk(endpoint_handle: u64, handle: u64) -> Result<Option<String>, String> {
+pub fn try_next_chunk(endpoint_handle: u64, handle: u64) -> Result<Response, String> {
     let ep = state::get_endpoint(endpoint_handle).ok_or_else(|| {
         format_error_json(
             "INVALID_HANDLE",
@@ -321,23 +331,66 @@ pub fn try_next_chunk(endpoint_handle: u64, handle: u64) -> Result<Option<String
         .handles()
         .try_next_chunk(handle)
         .map_err(|e| core_error_to_json(&e))?;
-    Ok(chunk.map(|b| B64.encode(&b[..])))
+    match chunk {
+        Some(bytes) => {
+            let mut buf = Vec::with_capacity(bytes.len().saturating_add(1));
+            buf.push(1u8);
+            buf.extend_from_slice(&bytes);
+            Ok(Response::new(buf))
+        }
+        None => Ok(Response::new(vec![0u8])),
+    }
 }
 
-/// Push a base64-encoded chunk into a body writer handle.
+/// Push a binary chunk into a body writer handle.
+///
+/// Accepts raw binary data via `tauri::ipc::Request`. The endpoint handle and
+/// body handle are passed as IPC headers (`iroh-ep` and `iroh-handle`).
 #[command]
-pub async fn send_chunk(endpoint_handle: u64, handle: u64, chunk: String) -> Result<(), String> {
+pub async fn send_chunk(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let headers = request.headers();
+    let endpoint_handle: u64 = headers
+        .get("iroh-ep")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| {
+            format_error_json("INVALID_INPUT", "missing or invalid iroh-ep header")
+        })?;
+    let handle: u64 = headers
+        .get("iroh-handle")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| {
+            format_error_json("INVALID_INPUT", "missing or invalid iroh-handle header")
+        })?;
+
     let ep = state::get_endpoint(endpoint_handle).ok_or_else(|| {
         format_error_json(
             "INVALID_HANDLE",
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
-    let bytes = B64
-        .decode(&chunk)
-        .map_err(|e| format_error_json("INVALID_INPUT", format!("base64 decode: {e}")))?;
+
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(data) => Bytes::from(data.clone()),
+        tauri::ipc::InvokeBody::Json(val) => {
+            // Fallback: accept a base64-encoded string for backward compat.
+            if let Some(b64) = val.as_str() {
+                let decoded = B64.decode(b64).map_err(|e| {
+                    format_error_json("INVALID_INPUT", format!("base64 decode: {e}"))
+                })?;
+                Bytes::from(decoded)
+            } else {
+                return Err(format_error_json(
+                    "INVALID_INPUT",
+                    "expected raw binary body or base64 string",
+                ));
+            }
+        }
+    };
+
     ep.handles()
-        .send_chunk(handle, Bytes::from(bytes))
+        .send_chunk(handle, bytes)
         .await
         .map_err(|e| core_error_to_json(&e))
 }

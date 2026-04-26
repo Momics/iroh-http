@@ -29,7 +29,7 @@ The guest JS implements the `Bridge` interface using Tauri invoke calls. The res
 
 **Errors:** all commands return `Result<T, String>`. Errors are stringified before crossing the invoke boundary. The guest JS wraps them in the shared error classification system (`classifyError`).
 
-**Binary data:** body chunks cross the invoke boundary as base64-encoded strings. This is a Tauri limitation — invoke does not support raw binary payloads efficiently. Encode on send, decode on receive. Code above the bridge never sees base64.
+**Binary data:** body chunks cross the invoke boundary as raw binary using `tauri::ipc::Response` (Rust → JS) and `tauri::ipc::Request` (JS → Rust). The `next_chunk` / `try_next_chunk` commands return `ArrayBuffer` directly; `send_chunk` accepts raw `Uint8Array` via IPC headers for metadata. Code above the bridge never sees encoding details.
 
 ---
 
