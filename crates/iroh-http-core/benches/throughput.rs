@@ -126,7 +126,7 @@ fn bench_post_body_throughput(c: &mut Criterion) {
     let _guard = rt.enter();
     start_echo_server(server_ep);
 
-    let mut group = c.benchmark_group("post_body_throughput_bytes");
+    let mut group = c.benchmark_group("throughput/post_body");
     for size in [1_024usize, 64 * 1_024, 1_024 * 1_024, 10 * 1_024 * 1_024] {
         group.throughput(Throughput::Bytes(size as u64));
         if size >= 10 * 1_024 * 1_024 {
@@ -226,7 +226,7 @@ fn bench_response_body_streaming(c: &mut Criterion) {
         },
     );
 
-    let mut group = c.benchmark_group("response_body_streaming_bytes");
+    let mut group = c.benchmark_group("throughput/response_body");
     for size in [1_024usize, 64 * 1_024, 1_024 * 1_024, 10 * 1_024 * 1_024] {
         group.throughput(Throughput::Bytes(size as u64));
         if size >= 10 * 1_024 * 1_024 {
