@@ -32,11 +32,6 @@ multiple-versions = "warn"
 # When any of these upstream crates align their windows-sys dependency the
 # skip entries below can be removed.
 
-# reqwest — iroh uses 0.12, pkarr (via iroh) requires 0.13
-[[bans.skip]]
-name = "reqwest"
-reason = "iroh uses 0.12 directly; pkarr (iroh transitive) requires 0.13 — upstream split"
-
 # windows-sys — three generations pulled by jni (0.45), ring (0.52), netdev (0.59/0.61)
 [[bans.skip]]
 name = "windows-sys"

@@ -1,7 +1,7 @@
 //! Iroh endpoint lifecycle — create, share, and close.
 
 use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
-use iroh::endpoint::{IdleTimeout, QuicTransportConfig, TransportAddrUsage};
+use iroh::endpoint::{Builder, IdleTimeout, QuicTransportConfig, TransportAddrUsage};
 use iroh::{Endpoint, RelayMode, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -232,7 +232,9 @@ impl IrohEndpoint {
             list
         };
 
-        let mut builder = Endpoint::empty_builder(relay_mode).alpns(alpns);
+        let mut builder = Builder::new(iroh::endpoint::presets::Minimal)
+            .relay_mode(relay_mode)
+            .alpns(alpns);
 
         // DNS discovery (enabled by default unless networking.disabled).
         if !opts.networking.disabled && opts.discovery.enabled {

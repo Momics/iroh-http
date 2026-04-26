@@ -2,7 +2,7 @@
 
 #[test]
 fn sign_verify_round_trip() {
-    let key = iroh::SecretKey::generate(&mut rand::rng());
+    let key = iroh::SecretKey::generate();
     let data = b"hello world";
     let sig = key.sign(data);
     assert!(key.public().verify(data, &sig).is_ok());
@@ -10,7 +10,7 @@ fn sign_verify_round_trip() {
 
 #[test]
 fn verify_rejects_bad_signature() {
-    let key = iroh::SecretKey::generate(&mut rand::rng());
+    let key = iroh::SecretKey::generate();
     let data = b"hello world";
     let mut sig_bytes = key.sign(data).to_bytes();
     sig_bytes[0] ^= 0xFF; // corrupt
@@ -20,7 +20,7 @@ fn verify_rejects_bad_signature() {
 
 #[test]
 fn generate_produces_unique_keys() {
-    let k1 = iroh::SecretKey::generate(&mut rand::rng());
-    let k2 = iroh::SecretKey::generate(&mut rand::rng());
+    let k1 = iroh::SecretKey::generate();
+    let k2 = iroh::SecretKey::generate();
     assert_ne!(k1.to_bytes(), k2.to_bytes());
 }

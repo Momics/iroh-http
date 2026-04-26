@@ -4,7 +4,7 @@ use iroh_http_core::{parse_node_addr, NodeAddrInfo};
 
 #[test]
 fn parse_node_addr_accepts_bare_node_id() {
-    let key = iroh::SecretKey::generate(&mut rand::rng());
+    let key = iroh::SecretKey::generate();
     let b32 = iroh_http_core::base32_encode(key.public().as_bytes());
     let parsed = parse_node_addr(&b32).unwrap();
     assert_eq!(parsed.node_id, key.public());
@@ -13,7 +13,7 @@ fn parse_node_addr_accepts_bare_node_id() {
 
 #[test]
 fn parse_node_addr_accepts_ticket_json() {
-    let key = iroh::SecretKey::generate(&mut rand::rng());
+    let key = iroh::SecretKey::generate();
     let b32 = iroh_http_core::base32_encode(key.public().as_bytes());
     let info = NodeAddrInfo {
         id: b32.clone(),

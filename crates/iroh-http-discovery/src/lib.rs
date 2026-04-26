@@ -100,6 +100,7 @@ impl BrowseSession {
                 node_id: endpoint_id.to_string(),
                 addrs: Vec::new(),
             },
+            _ => return None,
         })
     }
 }
@@ -120,7 +121,9 @@ pub async fn start_browse(
             .build(ep.id())
             .map_err(|e| DiscoveryError::Setup(e.to_string()))?,
     );
-    ep.address_lookup().add(Arc::clone(&mdns));
+    ep.address_lookup()
+        .map_err(|e| DiscoveryError::Setup(e.to_string()))?
+        .add(Arc::clone(&mdns));
 
     // subscribe() returns impl Stream — we manually drive it into an mpsc channel
     // so BrowseSession has a concrete Receiver type.
@@ -164,7 +167,9 @@ pub fn start_advertise(
             .build(ep.id())
             .map_err(|e| DiscoveryError::Setup(e.to_string()))?,
     );
-    ep.address_lookup().add(Arc::clone(&mdns));
+    ep.address_lookup()
+        .map_err(|e| DiscoveryError::Setup(e.to_string()))?
+        .add(Arc::clone(&mdns));
     Ok(AdvertiseSession { _mdns: mdns })
 }
 

@@ -182,7 +182,7 @@ pub fn public_key_verify(public_key_bytes: &[u8; 32], data: &[u8], sig_bytes: &[
 /// Generate a fresh Ed25519 secret key. Returns 32 raw bytes, or `Err` if the RNG panics.
 pub fn generate_secret_key() -> Result<[u8; 32], CoreError> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        iroh::SecretKey::generate(&mut rand::rng()).to_bytes()
+        iroh::SecretKey::generate().to_bytes()
     }))
     .map_err(|_| CoreError::internal("generate_secret_key panicked"))
 }
