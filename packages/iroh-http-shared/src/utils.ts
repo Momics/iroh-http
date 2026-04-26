@@ -52,10 +52,20 @@ export function encodeBase64(u8: Uint8Array): string {
   return btoa(parts.join(""));
 }
 
-/** Decode a base64 string to a `Uint8Array`. */
-export function decodeBase64(s: string): Uint8Array {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
+/**
+ * Decode a base64 string to a `Uint8Array`.
+ *
+ * Uses the platform-native `Buffer.from` when available (Node.js, Deno) for
+ * ~7× faster decoding on typical response bodies (#129 profiling).
+ */
+export const decodeBase64: (s: string) => Uint8Array =
+  typeof (globalThis as Record<string, unknown>).Buffer === "function"
+    ? (s) =>
+        (globalThis as unknown as { Buffer: { from(s: string, e: string): Uint8Array } })
+          .Buffer.from(s, "base64")
+    : (s) => {
+        const bin = atob(s);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      };

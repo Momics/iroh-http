@@ -226,15 +226,19 @@ export function makeFetch(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Shared empty tuple — avoids allocating `[]` on every no-header request. */
+const EMPTY_HEADERS: [string, string][] = [];
+
 function normaliseHeaders(
   h: HeadersInit | undefined | null,
 ): [string, string][] {
-  if (!h) return [];
+  if (!h) return EMPTY_HEADERS;
+  // Array is the most common shape from adapters — check first.
+  if (Array.isArray(h)) return h as [string, string][];
   if (h instanceof Headers) {
     const pairs: [string, string][] = [];
     h.forEach((v, k) => pairs.push([k, v]));
     return pairs;
   }
-  if (Array.isArray(h)) return h as [string, string][];
   return Object.entries(h) as [string, string][];
 }
