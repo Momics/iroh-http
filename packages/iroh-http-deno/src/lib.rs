@@ -36,6 +36,30 @@ pub(crate) fn runtime() -> Option<&'static tokio::runtime::Runtime> {
     .as_ref()
 }
 
+// ── Split-fetch registry (#126) ───────────────────────────────────────────────
+//
+// `iroh_http_start_fetch` spawns the async fetch on the tokio runtime and
+// stores the `JoinHandle` in this registry.  `iroh_http_poll_fetch` checks
+// whether the task has completed.  Both are `nonblocking: false` (sync on
+// JS thread), eliminating the ~100–200µs spawn_blocking scheduling overhead
+// that `iroh_http_call` incurs on every async FFI call.
+
+static FETCH_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Result of a completed async fetch — either JSON bytes or an error.
+type FetchResult = Result<Vec<u8>, Vec<u8>>;
+
+fn fetch_registry() -> &'static Mutex<HashMap<u64, tokio::task::JoinHandle<FetchResult>>> {
+    static R: OnceLock<Mutex<HashMap<u64, tokio::task::JoinHandle<FetchResult>>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Completed fetch results waiting to be picked up by poll_fetch.
+fn fetch_results() -> &'static Mutex<HashMap<u64, FetchResult>> {
+    static R: OnceLock<Mutex<HashMap<u64, FetchResult>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 // ── Overflow response cache ───────────────────────────────────────────────────
 //
 // When dispatch produces a response larger than the caller-provided output
@@ -283,6 +307,64 @@ pub unsafe extern "C" fn iroh_http_next_chunk(
     }
 }
 
+/// Synchronous non-blocking `tryNextChunk` — attempt to read a body chunk
+/// without entering the `spawn_blocking` thread pool.
+///
+/// #126: By running on the JS thread (`nonblocking: false`), this skips the
+/// ~100–200µs `spawn_blocking` scheduling overhead per call.  When data is
+/// already buffered in the channel (typical for small responses that arrive
+/// before JS processes the rawFetch result), this returns it instantly.
+///
+/// Return value:
+/// - `n > 0`  — `n` bytes written into the output buffer.
+/// - `0`      — end of stream (EOF).
+/// - `-1`     — hard error (endpoint gone, handle invalid).
+/// - `-2`     — no data available yet; fall back to async `nextChunk`.
+/// - `n < -2` — `|n|` bytes required; retry with a larger buffer.
+///
+/// # Safety
+/// `out_ptr` must be valid for `out_cap` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iroh_http_try_next_chunk(
+    endpoint_handle: u32,
+    handle: u64,
+    out_ptr: *mut u8,
+    out_cap: usize,
+) -> i32 {
+    if out_cap > 0 && out_ptr.is_null() {
+        return -1;
+    }
+
+    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+        Some(ep) => ep,
+        None => return -1,
+    };
+
+    match ep.handles().try_next_chunk(handle) {
+        Ok(None) => 0, // EOF
+        Ok(Some(b)) => {
+            let len = b.len();
+            if len > out_cap {
+                return i32::try_from(len)
+                    .map(|n| 0i32.wrapping_sub(n))
+                    .unwrap_or(i32::MIN);
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(b.as_ptr(), out_ptr, len);
+            }
+            len as i32
+        }
+        Err(e) => {
+            // Distinguish "channel empty / lock contended" from hard errors.
+            if e.message.starts_with("try_next_chunk:") {
+                -2 // Transient — no data yet.
+            } else {
+                -1 // Hard error (invalid handle, etc.)
+            }
+        }
+    }
+}
+
 /// Raw-buffer `sendChunk` — bypasses JSON dispatch for streaming throughput.
 ///
 /// Copies `len` bytes from `ptr` into a new chunk and sends it to the body
@@ -500,4 +582,228 @@ pub unsafe extern "C" fn iroh_http_try_next_request(
 #[unsafe(no_mangle)]
 pub extern "C" fn iroh_http_close_all() {
     registry::close_all_endpoints();
+}
+
+// ── Split-fetch: start + poll (#126) ──────────────────────────────────────────
+//
+// The JSON dispatch path (`iroh_http_call` with `nonblocking: true`) adds
+// ~100–200µs of `spawn_blocking` scheduling overhead PER call.  For `rawFetch`
+// this is the dominant cost on warm connections.
+//
+// The split-fetch pattern eliminates this:
+//   1. `iroh_http_start_fetch` (sync, `nonblocking: false`) — parses the
+//      request JSON, spawns the async fetch as a tokio task, returns a token.
+//      Runs on the JS thread; no spawn_blocking overhead.
+//   2. `iroh_http_poll_fetch` (sync, `nonblocking: false`) — checks if the
+//      tokio task completed.  If done, writes the JSON result to the output
+//      buffer.  If still pending, returns 0.
+//
+// The JS side calls `startFetch`, then polls with `setTimeout(0)` yield
+// between iterations.  On warm connections the QUIC round-trip is ~100–200µs,
+// so the poll loop typically completes in 1–2 iterations.
+
+/// Start an async fetch on the tokio runtime.
+///
+/// `request_ptr`/`request_len` — JSON-encoded `RawFetchPayload` (same as the
+/// `rawFetch` payload passed to `iroh_http_call`).
+///
+/// Returns a non-zero token on success, or 0 on error.
+///
+/// # Safety
+/// `request_ptr` must be valid for `request_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iroh_http_start_fetch(request_ptr: *const u8, request_len: usize) -> u64 {
+    if request_len > 0 && request_ptr.is_null() {
+        return 0;
+    }
+
+    let payload: &[u8] = if request_len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(request_ptr, request_len) }
+    };
+
+    let rt = match runtime() {
+        Some(rt) => rt,
+        None => return 0,
+    };
+
+    // Parse the request payload eagerly on the JS thread (fast: ~5µs).
+    let p: serde_json::Value = match serde_json::from_slice(payload) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+
+    let token = FETCH_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    // Spawn the fetch as a tokio task — runs on worker threads, no
+    // spawn_blocking overhead.
+    let handle = rt.spawn(async move {
+        let response =
+            dispatch::dispatch("rawFetch", &serde_json::to_vec(&p).unwrap_or_default()).await;
+        let encoded = serde_json::to_vec(&response).unwrap_or_else(|e| {
+            serde_json::to_vec(&serde_json::json!({ "err": e.to_string() }))
+                .expect("static error JSON is always valid")
+        });
+        Ok(encoded) as FetchResult
+    });
+
+    fetch_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(token, handle);
+
+    token
+}
+
+/// Start a fetch with callback notification.
+///
+/// Like `iroh_http_start_fetch`, but instead of requiring JS to poll, the
+/// provided callback is invoked (from the tokio worker thread) when the fetch
+/// completes.  Deno's `UnsafeCallback` posts the call to the JS event loop,
+/// giving µs-precision notification without spin-polling or setTimeout.
+///
+/// The callback signature is `fn(token: u64)`.  After receiving the callback,
+/// call `iroh_http_poll_fetch` once to retrieve the result.
+///
+/// # Safety
+/// - `request_ptr` must be valid for `request_len` bytes.
+/// - `callback` must be a valid function pointer that remains valid until called.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iroh_http_start_fetch_cb(
+    request_ptr: *const u8,
+    request_len: usize,
+    callback: extern "C" fn(u64),
+) -> u64 {
+    if request_len > 0 && request_ptr.is_null() {
+        return 0;
+    }
+
+    let payload: &[u8] = if request_len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(request_ptr, request_len) }
+    };
+
+    let rt = match runtime() {
+        Some(rt) => rt,
+        None => return 0,
+    };
+
+    let p: serde_json::Value = match serde_json::from_slice(payload) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+
+    let token = FETCH_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    let cb = callback;
+    rt.spawn(async move {
+        let response =
+            dispatch::dispatch("rawFetch", &serde_json::to_vec(&p).unwrap_or_default()).await;
+        let encoded = serde_json::to_vec(&response).unwrap_or_else(|e| {
+            serde_json::to_vec(&serde_json::json!({ "err": e.to_string() }))
+                .expect("static error JSON is always valid")
+        });
+        // Store result before signalling — JS will call poll_fetch to read it.
+        fetch_results()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(token, Ok(encoded));
+        // Signal JS event loop.
+        cb(token);
+    });
+
+    token
+}
+
+/// Poll for the result of a `start_fetch` call.
+///
+/// If the fetch is complete, writes the JSON result to `out_ptr[0..out_cap]`.
+///
+/// Return value:
+/// - `n > 0`  — fetch complete; `n` bytes written to output buffer.
+/// - `0`      — still pending; call again after yielding.
+/// - `-1`     — error (unknown token, task panicked).
+/// - `n < -1` — buffer too small; `|n|` bytes required.
+///
+/// # Safety
+/// `out_ptr` must be valid for `out_cap` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iroh_http_poll_fetch(token: u64, out_ptr: *mut u8, out_cap: usize) -> i32 {
+    if out_cap > 0 && out_ptr.is_null() {
+        return -1;
+    }
+
+    // First check if we already have a result cached from a previous poll.
+    {
+        let mut results = fetch_results().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(result) = results.remove(&token) {
+            match result {
+                Ok(encoded) | Err(encoded) => {
+                    let len = encoded.len();
+                    if len > out_cap {
+                        // Put it back — caller needs a bigger buffer.
+                        results.insert(token, Ok(encoded));
+                        return i32::try_from(len)
+                            .map(|n| 0i32.wrapping_sub(n))
+                            .unwrap_or(i32::MIN);
+                    }
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(encoded.as_ptr(), out_ptr, len);
+                    }
+                    return len as i32;
+                }
+            }
+        }
+    }
+
+    // Check if the task has finished.
+    let mut registry = fetch_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let handle = match registry.get(&token) {
+        Some(h) => h,
+        None => return -1, // Unknown token.
+    };
+
+    if !handle.is_finished() {
+        return 0; // Still pending.
+    }
+
+    // Task finished — remove from registry and get the result.
+    let handle = match registry.remove(&token) {
+        Some(h) => h,
+        None => return -1,
+    };
+    drop(registry); // Release lock before blocking on result.
+
+    let rt = match runtime() {
+        Some(rt) => rt,
+        None => return -1,
+    };
+
+    // The task is finished, so block_on is instant.
+    let result = match rt.block_on(handle) {
+        Ok(r) => r,
+        Err(_) => return -1, // Task panicked.
+    };
+
+    match result {
+        Ok(encoded) | Err(encoded) => {
+            let len = encoded.len();
+            if len > out_cap {
+                // Cache for retry with bigger buffer.
+                fetch_results()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(token, Ok(encoded));
+                return i32::try_from(len)
+                    .map(|n| 0i32.wrapping_sub(n))
+                    .unwrap_or(i32::MIN);
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(encoded.as_ptr(), out_ptr, len);
+            }
+            len as i32
+        }
+    }
 }

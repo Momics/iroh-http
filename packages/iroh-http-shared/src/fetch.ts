@@ -16,6 +16,7 @@ import { bodyInitToStream, makeReadable, pipeToWriter } from "./streams.js";
 import type { PublicKey } from "./PublicKey.js";
 import { resolveNodeId } from "./PublicKey.js";
 import { classifyError } from "./errors.js";
+import { decodeBase64 } from "./utils.js";
 
 export type FetchFn = {
   /** Web-standard form: peer identity is embedded in the `httpi://` URL hostname. */
@@ -120,9 +121,14 @@ export function makeFetch(
       reqBodyHandle = await adapter.allocBodyWriter(endpointHandle);
     }
 
-    // Allocate a Rust-side cancellation token so that AbortSignal can cancel
-    // the transport even before the response head arrives (§3 enhanced).
-    const fetchToken = await adapter.allocFetchToken(endpointHandle);
+    // #126: Only allocate a fetch cancellation token when an AbortSignal is
+    // provided.  Without a signal the token is unused overhead — one FFI
+    // round-trip saved on the hot path.  When skipped, rawFetch passes 0n
+    // and the Rust dispatch allocates an internal token automatically.
+    let fetchToken: bigint = 0n;
+    if (signal) {
+      fetchToken = await adapter.allocFetchToken(endpointHandle);
+    }
 
     // Wire AbortSignal → cancelFetch as early as possible (fire-and-forget).
     // This fires even if the signal is already aborted.
@@ -197,7 +203,20 @@ export function makeFetch(
     // status codes (RFC 9110 §6.3: 204, 205, 304).  No channel was allocated
     // on the Rust side, so there is nothing to wire up here.
     let responseBody: ReadableStream<Uint8Array> | null = null;
-    if (rawRes.bodyHandle !== 0n) {
+
+    if (rawRes.inlineBody != null) {
+      // #126: Body was eagerly read on the Rust side and returned inline
+      // (base64-encoded) to avoid extra nextChunk FFI round-trips.
+      const decoded = decodeBase64(rawRes.inlineBody);
+      responseBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (decoded.byteLength > 0) {
+            controller.enqueue(decoded);
+          }
+          controller.close();
+        },
+      });
+    } else if (rawRes.bodyHandle !== 0n) {
       // Wire AbortSignal to cancel the body reader (§3).
       // Uses `once: true` so the listener auto-removes after firing — prevents
       // leaks when the response body is never consumed by the caller.

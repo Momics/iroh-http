@@ -132,6 +132,14 @@ const lib = Deno.dlopen(
       result: "i32",
       nonblocking: true,
     },
+    // #126: Sync non-blocking variant — returns immediately without
+    // entering the spawn_blocking pool.  Returns -2 when no data is
+    // available yet (fall back to async nextChunk).
+    iroh_http_try_next_chunk: {
+      parameters: ["u32", "u64", "buffer", "usize"],
+      result: "i32",
+      nonblocking: false,
+    },
     iroh_http_send_chunk: {
       parameters: ["u32", "u64", "buffer", "usize"],
       result: "i32",
@@ -170,8 +178,49 @@ const lib = Deno.dlopen(
       result: "i32",
       nonblocking: false,
     },
+    // #126: Split-fetch — sync start + sync poll, bypasses spawn_blocking.
+    iroh_http_start_fetch: {
+      parameters: ["buffer", "usize"],
+      result: "u64",
+      nonblocking: false,
+    },
+    // #126: Callback-based fetch — Rust calls the callback when done.
+    iroh_http_start_fetch_cb: {
+      parameters: ["buffer", "usize", "pointer"],
+      result: "u64",
+      nonblocking: false,
+    },
+    iroh_http_poll_fetch: {
+      parameters: ["u64", "buffer", "usize"],
+      result: "i32",
+      nonblocking: false,
+    },
   } as const,
 );
+
+// ── Fast event-loop yield ─────────────────────────────────────────────────────
+//
+// #126: MessageChannel.postMessage gives ~0.017ms yields vs setTimeout(0)'s
+// ~2.5ms in Deno.  This is critical for same-process client+server latency
+// where the serve loop and fetch completion both need the event loop.
+//
+// Creates a fresh channel per call to avoid keeping the event loop alive
+// when all serve loops have stopped.
+
+function createYieldFn(): { yield: () => Promise<void>; close: () => void } {
+  const ch = new MessageChannel();
+  return {
+    yield: () =>
+      new Promise<void>((resolve) => {
+        ch.port2.onmessage = () => resolve();
+        ch.port1.postMessage(undefined);
+      }),
+    close: () => {
+      ch.port1.close();
+      ch.port2.close();
+    },
+  };
+}
 
 // ── JSON dispatch helper ──────────────────────────────────────────────────────
 
@@ -299,6 +348,44 @@ let chunkBufHint = 65536;
 export function makeBridge(endpointHandle: number) {
   return {
     async nextChunk(handle: bigint): Promise<Uint8Array | null> {
+      // #126: Try sync non-blocking read first — avoids ~100–200µs of
+      // spawn_blocking scheduling overhead when data is already buffered.
+      const syncBuf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
+      const syncN = lib.symbols.iroh_http_try_next_chunk(
+        endpointHandle,
+        handle,
+        syncBuf,
+        BigInt(syncBuf.byteLength),
+      ) as number;
+
+      if (syncN > 0) {
+        // Data available — return it without entering the async FFI pool.
+        chunkBufHint = Math.min(Math.max(chunkBufHint, syncN), MAX_CHUNK_BUF);
+        return syncBuf.slice(0, syncN);
+      }
+      if (syncN === 0) return null; // EOF
+      if (syncN < -2) {
+        // Buffer too small — grow and retry sync.
+        const bigBuf = new Uint8Array(-syncN) as Uint8Array<ArrayBuffer>;
+        const retryN = lib.symbols.iroh_http_try_next_chunk(
+          endpointHandle,
+          handle,
+          bigBuf,
+          BigInt(bigBuf.byteLength),
+        ) as number;
+        if (retryN > 0) {
+          chunkBufHint = Math.min(Math.max(chunkBufHint, retryN), MAX_CHUNK_BUF);
+          return bigBuf.slice(0, retryN);
+        }
+        if (retryN === 0) return null;
+        // Fall through to async if sync retry also fails.
+      }
+      // syncN === -1 (hard error) or -2 (no data yet) — fall back to async.
+      if (syncN === -1) {
+        throw new Error(`nextChunk: stream error on handle ${handle}`);
+      }
+
+      // -2: No data available yet — use the async path.
       // DENO-001: allocate a per-call buffer so concurrent reads on different
       // handles do not share memory and corrupt each other's data.
       let buf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
@@ -373,6 +460,22 @@ export function makeBridge(endpointHandle: number) {
 
 // ── Platform functions ────────────────────────────────────────────────────────
 
+// #126: Callback-based fetch notification — Rust calls this when a fetch
+// task completes, which Deno posts to the JS event loop with µs precision
+// (equivalent to Node's ThreadsafeFunction).
+const fetchResolvers = new Map<bigint, () => void>();
+const fetchCallback = new Deno.UnsafeCallback(
+  { parameters: ["u64"], result: "void" } as const,
+  (token: bigint | number) => {
+    const key = BigInt(token);
+    const resolve = fetchResolvers.get(key);
+    if (resolve) {
+      fetchResolvers.delete(key);
+      resolve();
+    }
+  },
+);
+
 export const rawFetch: RawFetchFn = async (
   endpointHandle: number,
   nodeId: string,
@@ -383,26 +486,79 @@ export const rawFetch: RawFetchFn = async (
   fetchToken: bigint,
   directAddrs: string[] | null,
 ) => {
-  const res = await call<{
-    status: number;
-    headers: [string, string][];
-    bodyHandle: number;
-    url: string;
-  }>("rawFetch", {
-    endpointHandle,
-    nodeId,
-    url,
-    method,
-    headers,
-    reqBodyHandle: reqBodyHandle ?? null,
-    fetchToken,
-    directAddrs: directAddrs ?? null,
+  // #126: Callback-based fetch — Rust notifies via UnsafeCallback when done,
+  // then we call poll_fetch once to retrieve the result.  This avoids both
+  // spin-polling (which blocks the JS event loop, starving same-process
+  // servers) and setTimeout-based yielding (~1ms overhead per yield).
+  const payloadStr = JSON.stringify(
+    {
+      endpointHandle,
+      nodeId,
+      url,
+      method,
+      headers,
+      reqBodyHandle: reqBodyHandle != null ? Number(reqBodyHandle) : null,
+      fetchToken: fetchToken !== 0n ? Number(fetchToken) : null,
+      directAddrs: directAddrs ?? null,
+    },
+    (_k, v) => (typeof v === "bigint" ? Number(v) : v),
+  );
+  const payloadBuf = enc.encode(payloadStr) as Uint8Array<ArrayBuffer>;
+
+  const token = lib.symbols.iroh_http_start_fetch_cb(
+    payloadBuf,
+    BigInt(payloadBuf.byteLength),
+    fetchCallback.pointer,
+  ) as unknown as bigint;
+
+  if (token === 0n) {
+    throw classifyError("RUNTIME_INIT_FAILED: could not start fetch");
+  }
+
+  // Wait for Rust to signal completion via the callback.
+  await new Promise<void>((resolve) => {
+    fetchResolvers.set(token, resolve);
   });
+
+  // Result is ready — retrieve it with a single sync poll.
+  let buf = new Uint8Array(outBufHint) as Uint8Array<ArrayBuffer>;
+  let n = lib.symbols.iroh_http_poll_fetch(
+    token,
+    buf,
+    BigInt(buf.byteLength),
+  ) as number;
+
+  if (n < -1) {
+    // Buffer too small — grow and retry.
+    buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
+    if (buf.byteLength > outBufHint) {
+      outBufHint = Math.min(buf.byteLength, MAX_OUT_BUF);
+    }
+    n = lib.symbols.iroh_http_poll_fetch(
+      token,
+      buf,
+      BigInt(buf.byteLength),
+    ) as number;
+  }
+
+  if (n <= 0) {
+    throw classifyError("FETCH_FAILED: poll_fetch returned no data after callback");
+  }
+
+  const result = JSON.parse(dec.decode(buf.subarray(0, n))) as
+    | { ok: { status: number; headers: [string, string][]; bodyHandle: number; url: string; inlineBody?: string } }
+    | { err: string };
+
+  if ("err" in result) {
+    throw classifyError(result.err);
+  }
+  const res = result.ok;
   return {
     status: res.status,
     headers: res.headers,
     bodyHandle: BigInt(res.bodyHandle),
     url: res.url,
+    inlineBody: res.inlineBody ?? null,
   } satisfies FfiResponse;
 };
 
@@ -482,7 +638,9 @@ export const rawServe: RawServeFn = (
       let pollBuf = new Uint8Array(4096) as Uint8Array<ArrayBuffer>;
 
       return (async () => {
+        const yielder = createYieldFn();
         let pollCount = 0;
+        try {
         while (true) {
           // Sync poll — runs on JS thread, never enters spawn_blocking pool.
           let n = lib.symbols.iroh_http_try_next_request(
@@ -511,7 +669,9 @@ export const rawServe: RawServeFn = (
           if (n === 0) {
             // Queue empty — yield to the event loop so rawFetch results
             // and I/O can be processed, then poll again.
-            await new Promise<void>((r) => setTimeout(r, 0));
+            // #126: MessageChannel gives ~0.017ms yields vs setTimeout(0)'s
+            // ~2.5ms — critical for same-process client+server latency.
+            await yielder.yield();
             continue;
           }
 
@@ -548,6 +708,9 @@ export const rawServe: RawServeFn = (
           task.finally(() => pending.delete(task));
         }
         await Promise.allSettled([...pending]);
+        } finally {
+          yielder.close();
+        }
       })();
     },
   );
@@ -911,6 +1074,41 @@ export class DenoAdapter extends IrohAdapter {
 
   async nextChunk(handle: bigint): Promise<Uint8Array | null> {
     const endpointHandle = this.#eh;
+    // #126: Try sync non-blocking read first — avoids ~100–200µs of
+    // spawn_blocking scheduling overhead when data is already buffered.
+    const syncBuf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
+    const syncN = lib.symbols.iroh_http_try_next_chunk(
+      endpointHandle,
+      handle,
+      syncBuf,
+      BigInt(syncBuf.byteLength),
+    ) as number;
+
+    if (syncN > 0) {
+      chunkBufHint = Math.min(Math.max(chunkBufHint, syncN), MAX_CHUNK_BUF);
+      return syncBuf.slice(0, syncN);
+    }
+    if (syncN === 0) return null; // EOF
+    if (syncN < -2) {
+      // Buffer too small — grow and retry sync.
+      const bigBuf = new Uint8Array(-syncN) as Uint8Array<ArrayBuffer>;
+      const retryN = lib.symbols.iroh_http_try_next_chunk(
+        endpointHandle,
+        handle,
+        bigBuf,
+        BigInt(bigBuf.byteLength),
+      ) as number;
+      if (retryN > 0) {
+        chunkBufHint = Math.min(Math.max(chunkBufHint, retryN), MAX_CHUNK_BUF);
+        return bigBuf.slice(0, retryN);
+      }
+      if (retryN === 0) return null;
+    }
+    if (syncN === -1) {
+      throw new Error(`nextChunk: stream error on handle ${handle}`);
+    }
+
+    // -2: No data yet — fall back to async path.
     let buf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
     let n = (await lib.symbols.iroh_http_next_chunk(
       endpointHandle,
@@ -982,7 +1180,7 @@ export class DenoAdapter extends IrohAdapter {
 
   // ── Raw transport ───────────────────────────────────────────────────────────
 
-  async rawFetch(
+  rawFetch(
     endpointHandle: number,
     nodeId: string,
     url: string,
@@ -992,27 +1190,18 @@ export class DenoAdapter extends IrohAdapter {
     fetchToken: bigint,
     directAddrs: string[] | null,
   ): Promise<FfiResponse> {
-    const res = await call<{
-      status: number;
-      headers: [string, string][];
-      bodyHandle: number;
-      url: string;
-    }>("rawFetch", {
+    // Delegate to the module-level rawFetch which uses the split-fetch
+    // pattern (#126) — sync start + sync poll — bypassing spawn_blocking.
+    return rawFetch(
       endpointHandle,
       nodeId,
       url,
       method,
       headers,
-      reqBodyHandle: reqBodyHandle ?? null,
+      reqBodyHandle,
       fetchToken,
-      directAddrs: directAddrs ?? null,
-    });
-    return {
-      status: res.status,
-      headers: res.headers,
-      bodyHandle: BigInt(res.bodyHandle),
-      url: res.url,
-    };
+      directAddrs,
+    );
   }
 
   rawServe(

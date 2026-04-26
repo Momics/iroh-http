@@ -602,6 +602,14 @@ async fn raw_fetch(p: Value) -> Value {
         Ok(a) => a,
         Err(e) => return err(e),
     };
+
+    // #126: If the caller didn't supply a fetch token, allocate one
+    // internally so the JS side doesn't need a separate FFI round-trip.
+    let fetch_token = match args.fetch_token {
+        Some(t) => Some(t),
+        None => ep.handles().alloc_fetch_token().ok(),
+    };
+
     match iroh_http_core::fetch(
         &ep,
         &args.node_id,
@@ -609,7 +617,7 @@ async fn raw_fetch(p: Value) -> Value {
         &args.method,
         &pairs,
         reader,
-        args.fetch_token,
+        fetch_token,
         addrs.as_deref(),
     )
     .await

@@ -477,6 +477,50 @@ impl HandleStore {
         Ok(chunk)
     }
 
+    /// Non-blocking variant of [`next_chunk`](Self::next_chunk).
+    ///
+    /// Returns:
+    /// - `Ok(Some(bytes))` — a chunk was immediately available.
+    /// - `Ok(None)` — EOF; the reader is cleaned up.
+    /// - `Err(_)` — no data available yet (channel empty or lock contended),
+    ///   or invalid handle. Caller should retry after yielding.
+    ///
+    /// #126: Used by the Deno adapter to avoid `spawn_blocking` overhead on
+    /// the body-read hot path.  When data is already buffered in the channel,
+    /// this returns it synchronously on the JS thread.
+    pub fn try_next_chunk(&self, handle: u64) -> Result<Option<Bytes>, CoreError> {
+        let rx_arc = {
+            let mut reg = self.readers.lock().unwrap_or_else(|e| e.into_inner());
+            let entry = reg
+                .get_mut(handle_to_reader_key(handle))
+                .ok_or_else(|| CoreError::invalid_handle(handle))?;
+            entry.touch();
+            entry.value.rx.clone()
+        };
+
+        // Try to acquire the tokio mutex without blocking.
+        let mut rx_guard = match rx_arc.try_lock() {
+            Ok(g) => g,
+            Err(_) => return Err(CoreError::internal("try_next_chunk: lock contended")),
+        };
+
+        match rx_guard.try_recv() {
+            Ok(chunk) => Ok(Some(chunk)),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                Err(CoreError::internal("try_next_chunk: channel empty"))
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                // EOF — clean up the reader.
+                drop(rx_guard);
+                self.readers
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(handle_to_reader_key(handle));
+                Ok(None)
+            }
+        }
+    }
+
     /// Push a chunk into a writer handle.
     ///
     /// Chunks larger than the configured `max_chunk_size` are split

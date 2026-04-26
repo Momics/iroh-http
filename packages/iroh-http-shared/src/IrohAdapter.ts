@@ -18,6 +18,8 @@ export interface FfiResponseHead {
 export interface FfiResponse extends FfiResponseHead {
   bodyHandle: bigint;
   url: string;
+  /** Base64-encoded response body returned inline to avoid extra FFI round-trips (#126). */
+  inlineBody?: string | null;
 }
 
 export interface RequestPayload extends FfiRequest {
