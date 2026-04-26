@@ -245,9 +245,7 @@ export async function runCompliance(
       const reqBody = buildRequestBody(c.request.body);
       let resp: Response;
       try {
-        resp = await client.fetch(
-          serverId,
-          `httpi://compliance.test${c.request.path}`,
+        resp = await client.fetch(`httpi://${serverId}${c.request.path}`,
           {
             method: c.request.method,
             headers: c.request.headers,

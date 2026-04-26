@@ -99,8 +99,7 @@ async function main() {
       let resp;
       try {
         resp = await client.fetch(
-          serverId,
-          `httpi://compliance.test${c.request.path}`,
+          `httpi://${serverId}${c.request.path}`,
           {
             method: c.request.method,
             headers: c.request.headers,

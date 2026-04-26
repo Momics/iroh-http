@@ -18,7 +18,7 @@ The mapping:
 |---|---|---|
 | Local endpoint | `IrohNode` | Browser's QUIC stack |
 | Session to one peer | `IrohSession` | `WebTransport` instance |
-| HTTP request | `node.fetch(peer, url)` | `fetch(url)` over H3 |
+| HTTP request | `node.fetch(peer.toURL(url))` | `fetch(url)` over H3 |
 | HTTP server | `node.serve(handler)` | Server-side WT handler |
 
 ## Opening a session
@@ -49,7 +49,7 @@ full interface definition.
 
 ## `node.fetch` and `node.serve`
 
-`node.fetch(peer, url, init)` is a convenience method that internally calls
+`node.fetch(peer.toURL(url), init)` is a convenience method that internally calls
 `node.connect(peer)`, opens a bidirectional stream, sends an HTTP request over
 it, and returns a standard `Response`. Sessions are managed transparently by
 the connection pool — the caller sees no difference.

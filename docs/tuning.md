@@ -101,9 +101,9 @@ Then, add a single-retry wrapper (see [troubleshooting.md](troubleshooting.md#ne
 ```ts
 async function fetchWithRetry(node, peer, url, init) {
   try {
-    return await node.fetch(peer, url, init);
+    return await node.fetch(peer.toURL(url), init);
   } catch (e) {
-    if (e.name === 'NetworkError') return node.fetch(peer, url, init);
+    if (e.name === 'NetworkError') return node.fetch(peer.toURL(url), init);
     throw e;
   }
 }

@@ -15,7 +15,7 @@ async function fetchWithFallback(
   let lastError: unknown;
   for (const peer of peers) {
     try {
-      const res = await node.fetch(peer, path, init);
+      const res = await node.fetch(peer.toURL(path), init);
       if (res.ok) return res;
     } catch (err) {
       lastError = err;
@@ -41,7 +41,7 @@ async function fetchFastest(
   const controller = new AbortController();
 
   const attempts = peers.map((peer) =>
-    node.fetch(peer, path, { signal: controller.signal })
+    node.fetch(peer.toURL(path), { signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error(`${res.status}`);
         controller.abort();  // cancel the rest
@@ -67,7 +67,7 @@ async function fetchWithRetry(
 ): Promise<Response> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const res = await node.fetch(peer, path);
+      const res = await node.fetch(peer.toURL(path));
       if (res.status !== 503 && res.status !== 429) return res;
 
       const retryAfter = res.headers.get('Retry-After');

@@ -35,7 +35,7 @@ test("serve + fetch — basic GET round-trip", async () => {
       (_req) => new Response("hello from node", { status: 200 }),
     );
 
-    const resp = await client.fetch(serverId, "httpi://example.com/", {
+    const resp = await client.fetch(`httpi://${serverId}/`, {
       directAddrs: serverAddrs,
     });
     assert.equal(resp.status, 200);
@@ -58,7 +58,7 @@ test("serve + fetch — POST with body round-trip", async () => {
       return new Response(body.toUpperCase(), { status: 201 });
     });
 
-    const resp = await client.fetch(serverId, "httpi://example.com/echo", {
+    const resp = await client.fetch(`httpi://${serverId}/echo`, {
       method: "POST",
       body: "ping",
       directAddrs: serverAddrs,
@@ -84,11 +84,8 @@ test("serve + fetch — path is reflected correctly", async () => {
     });
 
     const resp = await client.fetch(
-      serverId,
-      "httpi://example.com/some/deep/path",
-      {
-        directAddrs: serverAddrs,
-      },
+      `httpi://${serverId}/some/deep/path`,
+      { directAddrs: serverAddrs },
     );
     assert.equal(await resp.text(), "path=/some/deep/path");
     ac.abort();
@@ -119,7 +116,7 @@ test("serve + fetch — 10 concurrent requests return correct bodies", async () 
     const texts = await Promise.all(
       paths.map((path) =>
         client
-          .fetch(serverId, `httpi://example.com${path}`, {
+          .fetch(`httpi://${serverId}${path}`, {
             directAddrs: serverAddrs,
           })
           .then((r) => r.text())
@@ -166,7 +163,7 @@ test("serve + fetch — plain response logs no internal pipe errors", async () =
       (_req) => new Response("hello", { status: 200 }),
     );
 
-    const resp = await client.fetch(serverId, "httpi://example.com/", {
+    const resp = await client.fetch(`httpi://${serverId}/`, {
       directAddrs: serverAddrs,
     });
     assert.equal(resp.status, 200);
@@ -195,7 +192,7 @@ test("fetch — rejects https:// URL with TypeError", async () => {
   const node = await createNode({ disableNetworking: true });
   try {
     await assert.rejects(
-      () => node.fetch(node.publicKey, "https://example.com/"),
+      () => node.fetch("https://example.com/"),
       (err) => {
         assert.ok(
           err instanceof TypeError,
@@ -217,7 +214,7 @@ test("fetch — rejects http:// URL with TypeError", async () => {
   const node = await createNode({ disableNetworking: true });
   try {
     await assert.rejects(
-      () => node.fetch(node.publicKey, "http://example.com/"),
+      () => node.fetch("http://example.com/"),
       (err) => {
         assert.ok(
           err instanceof TypeError,
@@ -253,7 +250,7 @@ test("serve — handler throws synchronously → client gets 500", async () => {
       throw new Error("handler blow-up");
     });
 
-    const resp = await client.fetch(serverId, "httpi://example.com/", {
+    const resp = await client.fetch(`httpi://${serverId}/`, {
       directAddrs: serverAddrs,
     });
     assert.equal(resp.status, 500);
@@ -288,7 +285,7 @@ test("serve — handler rejects async → client gets 500", async () => {
       throw new Error("async handler blow-up");
     });
 
-    const resp = await client.fetch(serverId, "httpi://example.com/", {
+    const resp = await client.fetch(`httpi://${serverId}/`, {
       directAddrs: serverAddrs,
     });
     assert.equal(resp.status, 500);
@@ -358,9 +355,9 @@ test("peer-id header — present, valid base32, consistent", async () => {
     });
 
     const fetchOpts = { directAddrs: serverAddrs };
-    const r1 = await client.fetch(serverId, "httpi://example.com/1", fetchOpts);
+    const r1 = await client.fetch(`httpi://${serverId}/1`, fetchOpts);
     const id1 = await r1.text();
-    const r2 = await client.fetch(serverId, "httpi://example.com/2", fetchOpts);
+    const r2 = await client.fetch(`httpi://${serverId}/2`, fetchOpts);
     const id2 = await r2.text();
 
     // Present and non-empty.
@@ -405,7 +402,7 @@ test("serve + fetch — 1 MiB body round-trip", async () => {
 
     const bigBody = new Uint8Array(1024 * 1024); // 1 MiB
     bigBody.fill(0x42);
-    const resp = await client.fetch(serverId, "httpi://example.com/upload", {
+    const resp = await client.fetch(`httpi://${serverId}/upload`, {
       method: "POST",
       body: bigBody,
       directAddrs: serverAddrs,
@@ -437,7 +434,7 @@ test("serve + fetch — 100 concurrent requests return correct bodies", async ()
     const texts = await Promise.all(
       paths.map((path) =>
         client
-          .fetch(serverId, path, { directAddrs: serverAddrs })
+          .fetch(`httpi://${serverId}${path}`, { directAddrs: serverAddrs })
           .then((r) => r.text())
       ),
     );
@@ -671,7 +668,7 @@ test("diagnostics — pool:miss event fires on first fetch", async () => {
     });
 
     // First fetch → pool miss (no cached connection yet).
-    await client.fetch(serverId, "httpi://example.com/", {
+    await client.fetch(`httpi://${serverId}/`, {
       directAddrs: serverAddrs,
     });
 
@@ -711,7 +708,7 @@ test("diagnostics — emitted by default (no opt-in required)", async () => {
       received.push(ev.detail);
     });
 
-    await client.fetch(serverId, "httpi://example.com/", {
+    await client.fetch(`httpi://${serverId}/`, {
       directAddrs: serverAddrs,
     });
     await new Promise((r) => setImmediate(r));
@@ -884,7 +881,7 @@ test(
         const bodies = await Promise.all(
           Array.from({ length: STREAMS }, () =>
             client
-              .fetch(serverId, "httpi://test.local/data", {
+              .fetch(`httpi://${serverId}/data`, {
                 directAddrs: serverAddrs,
               })
               .then((r) => r.text()),

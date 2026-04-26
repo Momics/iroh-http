@@ -122,14 +122,8 @@ export class IrohNode extends EventTarget {
     return new IrohNode(_INTERNAL, adapter, info, options, nativeClosed);
   }
 
-  fetch(input: string | URL, init?: IrohFetchInit): Promise<Response>;
-  fetch(
-    peer: PublicKey | string,
-    input: string | URL,
-    init?: IrohFetchInit,
-  ): Promise<Response>;
-  fetch(...args: unknown[]): Promise<Response> {
-    return (this.#fetchFn as (...a: unknown[]) => Promise<Response>)(...args);
+  fetch(input: string | URL, init?: IrohFetchInit): Promise<Response> {
+    return this.#fetchFn(input, init);
   }
 
   serve(handler: ServeHandler): ServeHandle;

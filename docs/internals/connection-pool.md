@@ -105,9 +105,9 @@ consider:
    ```ts
    async function fetchWithRetry(node, peer, url) {
      try {
-       return await node.fetch(peer, url);
+       return await node.fetch(peer.toURL(url));
      } catch (e) {
-       if (e.name === 'NetworkError') return node.fetch(peer, url);
+       if (e.name === 'NetworkError') return node.fetch(peer.toURL(url));
        throw e;
      }
    }

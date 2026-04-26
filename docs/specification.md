@@ -46,7 +46,6 @@ interface IrohNode {
 
   /** Send an HTTP request to a peer. */
   fetch(
-    peer: PublicKey | string,
     input: string | URL,
     init?: IrohFetchInit,
   ): Promise<Response>;

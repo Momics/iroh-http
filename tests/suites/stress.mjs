@@ -17,7 +17,7 @@ export function stressTests({ createNode, test, assert, assertEqual }) {
 
     const results = await Promise.all(
       Array.from({ length: 50 }, (_, i) =>
-        client.fetch(serverId, `/concurrent-${i}`, { directAddrs: serverAddrs }).then(async (res) => {
+        client.fetch(`httpi://${serverId}/concurrent-${i}`, { directAddrs: serverAddrs }).then(async (res) => {
           const body = await res.text();
           return { status: res.status, body };
         })
@@ -45,7 +45,7 @@ export function stressTests({ createNode, test, assert, assertEqual }) {
 
     const results = await Promise.all(
       Array.from({ length: 20 }, (_, i) =>
-        client.fetch(serverId, "/echo", {
+        client.fetch(`httpi://${serverId}/echo`, {
           method: "POST",
           body: `message-${i}`,
           directAddrs: serverAddrs,
@@ -79,7 +79,7 @@ export function stressTests({ createNode, test, assert, assertEqual }) {
     });
 
     for (let i = 0; i < 100; i++) {
-      const res = await client.fetch(serverId, `/seq-${i}`, { directAddrs: serverAddrs });
+      const res = await client.fetch(`httpi://${serverId}/seq-${i}`, { directAddrs: serverAddrs });
       assertEqual(res.status, 200, `seq ${i} status`);
       const body = await res.text();
       assert(body.startsWith("req-"), `seq ${i} body prefix`);
@@ -107,7 +107,7 @@ export function stressTests({ createNode, test, assert, assertEqual }) {
     const payload = new Uint8Array(MB);
     for (let i = 0; i < MB; i++) payload[i] = i & 0xff;
 
-    const res = await client.fetch(serverId, "/echo", {
+    const res = await client.fetch(`httpi://${serverId}/echo`, {
       method: "POST",
       body: payload,
       directAddrs: serverAddrs,
@@ -139,7 +139,7 @@ export function stressTests({ createNode, test, assert, assertEqual }) {
     const SIZE = 256 * 1024;
     const results = await Promise.all(
       Array.from({ length: 5 }, () =>
-        client.fetch(serverId, "/echo-length", {
+        client.fetch(`httpi://${serverId}/echo-length`, {
           method: "POST",
           body: new Uint8Array(SIZE),
           directAddrs: serverAddrs,
@@ -169,7 +169,7 @@ export function stressTests({ createNode, test, assert, assertEqual }) {
 
       server.serve({}, () => new Response(`cycle-${i}`));
 
-      const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+      const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
       assertEqual(res.status, 200, `cycle ${i} status`);
       const body = await res.text();
       assertEqual(body, `cycle-${i}`, `cycle ${i} body`);
@@ -194,7 +194,7 @@ export function stressTests({ createNode, test, assert, assertEqual }) {
 
     const results = await Promise.all(
       pairs.map(async ({ client, serverId, serverAddrs, index }) => {
-        const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+        const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
         const body = await res.text();
         return { index, status: res.status, body };
       })
@@ -223,7 +223,7 @@ export function stressTests({ createNode, test, assert, assertEqual }) {
     const results = await Promise.all(
       Array.from({ length: 30 }, (_, i) => {
         const method = methods[i % methods.length];
-        return client.fetch(serverId, `/method-${i}`, { method, directAddrs: serverAddrs }).then(async (res) => {
+        return client.fetch(`httpi://${serverId}/method-${i}`, { method, directAddrs: serverAddrs }).then(async (res) => {
           const body = await res.text();
           return { method, body, status: res.status };
         });

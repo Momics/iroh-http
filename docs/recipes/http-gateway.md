@@ -36,7 +36,7 @@ That's the whole recipe. The caller:
 const node = await createNode();
 const ticket = 'nodeXXXX...';  // from the gateway
 
-const res = await node.fetch(ticket, '/api/sensors/temperature');
+const res = await node.fetch(ticket.toURL('/api/sensors/temperature'));
 console.log(await res.json());
 ```
 

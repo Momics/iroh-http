@@ -103,7 +103,7 @@ export function lifecycleTests({ createNode, test, assert, assertEqual, assertNo
       return new Response("hello");
     });
 
-    const res = await client.fetch(serverId, "/test", { directAddrs: serverAddrs });
+    const res = await client.fetch(`httpi://${serverId}/test`, { directAddrs: serverAddrs });
     assert(handlerCalled, "handler was not called");
     assertEqual(res.status, 200, "status must be 200");
     const body = await res.text();
@@ -126,7 +126,7 @@ export function lifecycleTests({ createNode, test, assert, assertEqual, assertNo
       return new Response("ok");
     });
 
-    await client.fetch(serverId, "/hello", { method: "POST", directAddrs: serverAddrs });
+    await client.fetch(`httpi://${serverId}/hello`, { method: "POST", directAddrs: serverAddrs });
 
     assertEqual(receivedMethod, "POST", "method must be POST");
     assertEqual(receivedPath, "/hello", "path must match");
@@ -143,7 +143,7 @@ export function lifecycleTests({ createNode, test, assert, assertEqual, assertNo
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     server.serve({}, () => new Response("works"));
-    const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+    const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
     assert(res instanceof Response, "not a Response");
     assert(typeof res.status === "number", "status not a number");
     assert(res.headers instanceof Headers, "headers not Headers");
@@ -158,7 +158,7 @@ export function lifecycleTests({ createNode, test, assert, assertEqual, assertNo
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     server.serve({}, () => new Response("text-body"));
-    const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+    const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
     const text = await res.text();
     assertEqual(text, "text-body", "body text must match");
 
@@ -172,7 +172,7 @@ export function lifecycleTests({ createNode, test, assert, assertEqual, assertNo
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     server.serve({}, () => new Response("buf"));
-    const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+    const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
     const buf = await res.arrayBuffer();
     assert(buf instanceof ArrayBuffer, "not an ArrayBuffer");
     assertEqual(buf.byteLength, 3, "byteLength must be 3");

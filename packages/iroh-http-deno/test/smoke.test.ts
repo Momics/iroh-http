@@ -162,7 +162,7 @@ Deno.test("fetch — rejects https:// URL with TypeError", async () => {
     let threw = false;
     try {
       // Should throw before any network activity.
-      await node.fetch(node.publicKey.toString(), "https://example.com/");
+      await node.fetch("https://example.com/");
     } catch (e) {
       threw = true;
       assert(
@@ -187,7 +187,7 @@ Deno.test("fetch — rejects http:// URL with TypeError", async () => {
   try {
     let threw = false;
     try {
-      await node.fetch(node.publicKey.toString(), "http://example.com/");
+      await node.fetch("http://example.com/");
     } catch (e) {
       threw = true;
       assert(
@@ -239,7 +239,7 @@ Deno.test(
           (_req: Request) => new Response("hello from deno", { status: 200 }),
         );
 
-        const resp = await client.fetch(serverId, "httpi://example.com/", {
+        const resp = await client.fetch(`httpi://${serverId}/`, {
           directAddrs: serverAddrs,
         });
         assertEquals(resp.status, 200);
@@ -273,7 +273,7 @@ Deno.test(
           return new Response(body.toUpperCase(), { status: 201 });
         });
 
-        const resp = await client.fetch(serverId, "httpi://example.com/echo", {
+        const resp = await client.fetch(`httpi://${serverId}/echo`, {
           method: "POST",
           body: "ping",
           directAddrs: serverAddrs,
@@ -320,7 +320,7 @@ Deno.test({
       const texts = await Promise.all(
         paths.map((path) =>
           client
-            .fetch(serverId, path, { directAddrs: serverAddrs })
+            .fetch(`httpi://${serverId}${path}`, { directAddrs: serverAddrs })
             .then((r) => r.text())
         ),
       );
@@ -367,7 +367,7 @@ Deno.test({
         throw new Error("handler blow-up");
       });
 
-      const resp = await client.fetch(serverId, "httpi://example.com/", {
+      const resp = await client.fetch(`httpi://${serverId}/`, {
         directAddrs: serverAddrs,
       });
       assertEquals(resp.status, 500);
@@ -408,7 +408,7 @@ Deno.test({
         throw new Error("async blow-up");
       });
 
-      const resp = await client.fetch(serverId, "httpi://example.com/", {
+      const resp = await client.fetch(`httpi://${serverId}/`, {
         directAddrs: serverAddrs,
       });
       assertEquals(resp.status, 500);
@@ -611,14 +611,12 @@ Deno.test({
 
       const fetchOpts = { directAddrs: serverAddrs };
       const r1 = await client.fetch(
-        serverId,
-        "httpi://example.com/1",
+        `httpi://${serverId}/1`,
         fetchOpts,
       );
       const id1 = await r1.text();
       const r2 = await client.fetch(
-        serverId,
-        "httpi://example.com/2",
+        `httpi://${serverId}/2`,
         fetchOpts,
       );
       const id2 = await r2.text();
@@ -654,8 +652,7 @@ Deno.test(
         const bigBody = new Uint8Array(1024 * 1024);
         bigBody.fill(0x42);
         const resp = await client.fetch(
-          serverId,
-          "httpi://example.com/upload",
+          `httpi://${serverId}/upload`,
           {
             method: "POST",
             body: bigBody,
@@ -729,7 +726,7 @@ Deno.test({
       const paths = Array.from({ length: N }, (_, i) => `/r${i}`);
       const texts = await Promise.all(
         paths.map((path) =>
-          client.fetch(serverId, path, { directAddrs: serverAddrs }).then((r) =>
+          client.fetch(`httpi://${serverId}${path}`, { directAddrs: serverAddrs }).then((r) =>
             r.text()
           )
         ),
@@ -973,7 +970,7 @@ Deno.test({
         received.push((ev as CustomEvent).detail);
       });
 
-      await client.fetch(serverId, "httpi://example.com/", {
+      await client.fetch(`httpi://${serverId}/`, {
         directAddrs: serverAddrs,
       });
 
@@ -1032,7 +1029,7 @@ Deno.test({
       handle = server.serve({ signal: ac.signal }, (_req: Request) =>
         new Response("ok"));
 
-      await client.fetch(serverId, "httpi://example.com/", {
+      await client.fetch(`httpi://${serverId}/`, {
         directAddrs: serverAddrs,
       });
 
@@ -1257,7 +1254,7 @@ Deno.test({
         const bodies = await Promise.all(
           Array.from({ length: STREAMS }, () =>
             client
-              .fetch(serverId, "httpi://test.local/data", {
+              .fetch(`httpi://${serverId}/data`, {
                 directAddrs: serverAddrs,
               })
               .then((r) => r.text())

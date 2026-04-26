@@ -98,7 +98,7 @@ const serveHandle = server.serve({ signal: serveAbort.signal }, (req) => {
 });
 
 // Warm the connection so scenarios 2–9 don't pay cold-connect cost.
-await client.fetch(serverId, "httpi://bench.local/warmup", {
+await client.fetch(`httpi://${serverId}/warmup`, {
   directAddrs: serverAddrs,
 });
 
@@ -112,9 +112,7 @@ Deno.bench("cold-connect/iroh", { group: "cold-connect", n: 5 }, async () => {
     disableNetworking: true,
     bindAddr: "127.0.0.1:0",
   });
-  const res = await freshClient.fetch(
-    serverId,
-    "httpi://bench.local/cold",
+  const res = await freshClient.fetch(`httpi://${serverId}/cold`,
     { directAddrs: serverAddrs },
   );
   await res.arrayBuffer();
@@ -133,7 +131,7 @@ Deno.bench(
 // ── 2. Warm request (small body) ──────────────────────────────────────────────
 
 Deno.bench("warm-request/iroh", { group: "warm-request" }, async () => {
-  const res = await client.fetch(serverId, "httpi://bench.local/ping", {
+  const res = await client.fetch(`httpi://${serverId}/ping`, {
     directAddrs: serverAddrs,
   });
   await res.arrayBuffer();
@@ -184,9 +182,7 @@ Deno.bench(
   "throughput-10mb/iroh",
   { group: "throughput-10mb", n: 10 },
   async () => {
-    const res = await client.fetch(
-      serverId,
-      "httpi://bench.local/data?size=10485760",
+    const res = await client.fetch(`httpi://${serverId}/data?size=10485760`,
       { directAddrs: serverAddrs },
     );
     await res.arrayBuffer();
@@ -212,7 +208,7 @@ for (const n of [8, 32]) {
       await Promise.all(
         Array.from({ length: n }, () =>
           client
-            .fetch(serverId, "httpi://bench.local/ping", {
+            .fetch(`httpi://${serverId}/ping`, {
               directAddrs: serverAddrs,
             })
             .then((res) => res.arrayBuffer()),
@@ -237,7 +233,7 @@ for (const n of [8, 32]) {
 // ── 9. Serve req/s ────────────────────────────────────────────────────────────
 
 Deno.bench("serve-rps/iroh", { group: "serve-rps" }, async () => {
-  const res = await client.fetch(serverId, "httpi://bench.local/ping", {
+  const res = await client.fetch(`httpi://${serverId}/ping`, {
     directAddrs: serverAddrs,
   });
   await res.arrayBuffer();

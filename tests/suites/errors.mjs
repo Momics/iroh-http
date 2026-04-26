@@ -18,7 +18,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
     });
 
     try {
-      const res = await client.fetch(serverId, "/boom", { directAddrs: serverAddrs });
+      const res = await client.fetch(`httpi://${serverId}/boom`, { directAddrs: serverAddrs });
       assert(res.status >= 500 || res.status === 0, `expected 5xx or connection error, got ${res.status}`);
       await res.body?.cancel();
     } catch (err) {
@@ -39,7 +39,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
     });
 
     try {
-      const res = await client.fetch(serverId, "/fail", { directAddrs: serverAddrs });
+      const res = await client.fetch(`httpi://${serverId}/fail`, { directAddrs: serverAddrs });
       assert(res.status >= 500 || res.status === 0, `expected error status, got ${res.status}`);
       await res.body?.cancel();
     } catch (err) {
@@ -63,13 +63,13 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
     });
 
     try {
-      const res1 = await client.fetch(serverId, "/first", { directAddrs: serverAddrs });
+      const res1 = await client.fetch(`httpi://${serverId}/first`, { directAddrs: serverAddrs });
       await res1.body?.cancel();
     } catch {
       // expected
     }
 
-    const res2 = await client.fetch(serverId, "/second", { directAddrs: serverAddrs });
+    const res2 = await client.fetch(`httpi://${serverId}/second`, { directAddrs: serverAddrs });
     assertEqual(res2.status, 200, "second request status must be 200");
     const body = await res2.text();
     assertEqual(body, "recovered", "second request body must match");
@@ -89,7 +89,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5000);
       try {
-        await client.fetch(fakePeer, "/hello", { signal: controller.signal });
+        await client.fetch(`httpi://${fakePeer}/hello`, { signal: controller.signal });
       } finally {
         clearTimeout(timer);
       }
@@ -109,7 +109,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
     controller.abort();
 
     await assertThrows(async () => {
-      await client.fetch(serverId, "/", { signal: controller.signal, directAddrs: serverAddrs });
+      await client.fetch(`httpi://${serverId}/`, { signal: controller.signal, directAddrs: serverAddrs });
     });
 
     await server.close();
@@ -130,7 +130,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
     setTimeout(() => controller.abort(), 100);
 
     await assertThrows(async () => {
-      await client.fetch(serverId, "/slow", { signal: controller.signal, directAddrs: serverAddrs });
+      await client.fetch(`httpi://${serverId}/slow`, { signal: controller.signal, directAddrs: serverAddrs });
     });
 
     await server.close();
@@ -153,7 +153,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
 
     // First request with bad return — should produce error response
     try {
-      const res = await client.fetch(serverId, "/bad", { directAddrs: serverAddrs });
+      const res = await client.fetch(`httpi://${serverId}/bad`, { directAddrs: serverAddrs });
       await res.body?.cancel();
     } catch {
       // expected
@@ -161,7 +161,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
 
     // Server should still be alive for second request
     try {
-      const res2 = await client.fetch(serverId, "/good", { directAddrs: serverAddrs });
+      const res2 = await client.fetch(`httpi://${serverId}/good`, { directAddrs: serverAddrs });
       if (res2.status === 200) {
         const body = await res2.text();
         assertEqual(body, "ok", "recovery body must match");
@@ -183,7 +183,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
 
     server.serve({}, () => new Response(null, { status: 200 }));
 
-    const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+    const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
     assertEqual(res.status, 200, "status must be 200");
     const body = await res.text();
     assertEqual(body, "", "empty body expected");
@@ -197,7 +197,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
   test("fetch rejects https:// URL with TypeError", async () => {
     const node = await createNode({ disableNetworking: true });
     await assertThrows(async () => {
-      await node.fetch(node.publicKey, "https://example.com/");
+      await node.fetch("https://example.com/");
     });
     await node.close();
   });
@@ -205,7 +205,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
   test("fetch rejects http:// URL with TypeError", async () => {
     const node = await createNode({ disableNetworking: true });
     await assertThrows(async () => {
-      await node.fetch(node.publicKey, "http://example.com/");
+      await node.fetch("http://example.com/");
     });
     await node.close();
   });
@@ -223,7 +223,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
       return new Response("ok");
     });
 
-    await client.fetch(serverId, "/", {
+    await client.fetch(`httpi://${serverId}/`, {
       headers: { "Peer-Id": "spoofed-value" },
       directAddrs: serverAddrs,
     });
@@ -246,9 +246,9 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
     });
 
     const fetchOpts = { directAddrs: serverAddrs };
-    const r1 = await client.fetch(serverId, "/1", fetchOpts);
+    const r1 = await client.fetch(`httpi://${serverId}/1`, fetchOpts);
     const id1 = await r1.text();
-    const r2 = await client.fetch(serverId, "/2", fetchOpts);
+    const r2 = await client.fetch(`httpi://${serverId}/2`, fetchOpts);
     const id2 = await r2.text();
 
     assert(id1.length >= 52, `peer-id too short: ${id1.length}`);
@@ -279,7 +279,7 @@ export function errorTests({ createNode, test, assert, assertEqual, assertThrows
 
     try {
       const handle = server.serve({}, () => new Response("hello", { status: 200 }));
-      const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+      const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
       assertEqual(res.status, 200, "status must be 200");
       assertEqual(await res.text(), "hello", "body must match");
 

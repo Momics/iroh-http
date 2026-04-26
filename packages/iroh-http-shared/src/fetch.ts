@@ -3,7 +3,7 @@
  *
  * ```ts
  * const nodeFetch = makeFetch(adapter, endpointHandle);
- * const res = await nodeFetch(remotePeerId, '/api/data');
+ * const res = await nodeFetch(peer.toURL('/api/data'));
  * ```
  */
 
@@ -13,20 +13,12 @@ import type {
   IrohFetchInit,
 } from "./IrohAdapter.js";
 import { bodyInitToStream, makeReadable, pipeToWriter } from "./streams.js";
-import type { PublicKey } from "./PublicKey.js";
-import { resolveNodeId } from "./PublicKey.js";
 import { classifyError } from "./errors.js";
 import { decodeBase64 } from "./utils.js";
 
 export type FetchFn = {
   /** Web-standard form: peer identity is embedded in the `httpi://` URL hostname. */
   (input: string | URL, init?: IrohFetchInit): Promise<Response>;
-  /** Legacy two-argument form: peer and path supplied separately. */
-  (
-    peer: PublicKey | string,
-    input: string | URL,
-    init?: IrohFetchInit,
-  ): Promise<Response>;
 };
 
 /**
@@ -36,12 +28,12 @@ export type FetchFn = {
  *
  * @param adapter         Platform adapter implementation (nextChunk, sendChunk, etc.).
  * @param endpointHandle  Slab handle returned by the low-level bind.
- * @returns A `fetch`-like function: `(peer, url, init?) => Promise<Response>`.
+ * @returns A `fetch`-like function: `(url, init?) => Promise<Response>`.
  *
  * @example
  * ```ts
  * const doFetch = makeFetch(adapter, handle);
- * const res = await doFetch(peerId, '/api/data', { method: 'POST', body: 'hi' });
+ * const res = await doFetch(peer.toURL('/api/data'), { method: 'POST', body: 'hi' });
  * console.log(await res.text());
  * ```
  */
@@ -50,44 +42,23 @@ export function makeFetch(
   endpointHandle: number,
 ): FetchFn {
   return async function irohFetch(
-    peerOrInput: PublicKey | string | URL,
-    inputOrInit?: string | URL | IrohFetchInit,
-    maybeInit?: IrohFetchInit,
+    input: string | URL,
+    init?: IrohFetchInit,
   ): Promise<Response> {
     let nodeId: string;
     let url: string;
-    let init: IrohFetchInit | undefined;
 
-    if (typeof inputOrInit === "string" || inputOrInit instanceof URL) {
-      // Old form: fetch(peer, path, init?)
-      nodeId = resolveNodeId(peerOrInput as PublicKey | string);
-      url = typeof inputOrInit === "string" ? inputOrInit : inputOrInit.href;
-      init = maybeInit;
-    } else {
-      // New form: fetch("httpi://peerId/path", init?)
-      const raw = peerOrInput instanceof URL
-        ? peerOrInput.href
-        : String(peerOrInput);
-      if (!/^httpi:\/\//i.test(raw)) {
-        throw new TypeError(
-          `iroh-http fetch() requires either an httpi:// URL or (peer, path) arguments. ` +
-            `Got: "${raw.slice(0, 80)}"`,
-        );
-      }
-      const parsed = new URL(raw);
-      nodeId = parsed.hostname;
-      url = raw;
-      init = inputOrInit as IrohFetchInit | undefined;
-    }
-
-    // Reject standard web schemes — iroh-http uses httpi://, not https:// or http://.
-    if (/^https?:\/\//i.test(url)) {
-      const scheme = url.slice(0, url.indexOf("://") + 3);
+    const raw = input instanceof URL ? input.href : String(input);
+    if (!/^httpi:\/\//i.test(raw)) {
       throw new TypeError(
-        `iroh-http URLs must use the "httpi://" scheme, not "${scheme}". ` +
-          `Example: httpi://nodeId/path — or pass a bare path like "/api/data".`,
+        `iroh-http fetch() requires an httpi:// URL. ` +
+          `Got: "${raw.slice(0, 80)}". ` +
+          `Use peer.toURL("/path") to build the URL, e.g. node.fetch(peer.toURL("/ping")).`,
       );
     }
+    const parsed = new URL(raw);
+    nodeId = parsed.hostname;
+    url = raw;
 
     const method = init?.method ?? "GET";
     const signal = init?.signal ?? null;

@@ -205,7 +205,7 @@ fetchForm.addEventListener("submit", async (e) => {
   responseBody.textContent = "";
 
   try {
-    const res = await node.fetch(peer, path, { method: methodSelect.value });
+    const res = await node.fetch(`httpi://${peer}${path}`, { method: methodSelect.value });
     setStatus(responseStatus, `HTTP ${res.status}`, res.ok ? "ok" : "error");
     responseBody.textContent = await res.text();
   } catch (e) {

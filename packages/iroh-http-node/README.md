@@ -155,7 +155,7 @@ const ac = new AbortController();
 for await (const event of node.browse({ serviceName: "my-app.iroh-http", signal: ac.signal })) {
   if (event.type === "discovered") {
     console.log("found peer:", event.nodeId, event.addrs);
-    const res = await node.fetch(event.nodeId, "/api");
+    const res = await node.fetch(`httpi://${event.nodeId}/api`);
   } else {
     console.log("peer expired:", event.nodeId);
   }

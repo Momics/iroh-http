@@ -30,7 +30,7 @@
  * @example
  * ```ts
  * try {
- *   await node.fetch(peer, '/api');
+ *   await node.fetch(peer.toURL('/api'));
  * } catch (e) {
  *   if (e instanceof IrohError) {
  *     console.error(`[${e.code}] ${e.message}`);
@@ -89,7 +89,7 @@ export class IrohBindError extends IrohError {
  * @example
  * ```ts
  * try {
- *   const res = await node.fetch(peerId, '/api');
+ *   const res = await node.fetch(peerId.toURL('/api'));
  * } catch (e) {
  *   if (e instanceof IrohConnectError && e.code === 'TIMEOUT') {
  *     console.error('Peer unreachable — try again later');

@@ -62,7 +62,7 @@ To opt out of compression on a per-request basis from the fetch side:
 ```ts
 // Pass Accept-Encoding: identity — the Rust layer will not inject its own
 // Accept-Encoding header when the caller has already provided one.
-const res = await node.fetch(peerId, "/file", {
+const res = await node.fetch(peerId.toURL("/file"), {
   headers: { "accept-encoding": "identity" },
 });
 ```

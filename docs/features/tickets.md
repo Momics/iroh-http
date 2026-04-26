@@ -19,7 +19,7 @@ import { ticketNodeId } from 'iroh-http-shared';
 const peerId = ticketNodeId(ticket);
 
 // Fetch using a ticket — routing hints are used automatically:
-await node.fetch(ticket, '/api/data');
+await node.fetch(ticket.toURL('/api/data'));
 ```
 
 `node.fetch` accepts any `NodeAddr`-compatible value wherever a peer is

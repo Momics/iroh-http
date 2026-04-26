@@ -78,7 +78,7 @@ try {
     if (c.requests || c.concurrent > 1 || c.repeat > 1) continue;
     let resp;
     try {
-      resp = await client.fetch(serverId, `httpi://compliance.test${c.request.path}`, {
+      resp = await client.fetch(`httpi://${serverId}${c.request.path}`, {
         method: c.request.method,
         headers: c.request.headers,
         body: buildBody(c.request.body),

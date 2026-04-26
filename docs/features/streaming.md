@@ -16,7 +16,7 @@ const stream = new ReadableStream<Uint8Array>({
   },
 });
 
-const res = await node.fetch(peer, '/upload', {
+const res = await node.fetch(peer.toURL('/upload'), {
   method: 'POST',
   body: stream,
   // Required by the Fetch spec when body is a stream and the response
@@ -33,7 +33,7 @@ Any `BodyInit` accepted by the standard `fetch` API works: `string`, `Uint8Array
 ## Receiving a streaming response body
 
 ```ts
-const res = await node.fetch(peer, '/download');
+const res = await node.fetch(peer.toURL('/download'));
 
 // Standard streaming consumption:
 for await (const chunk of res.body!) {
@@ -90,7 +90,7 @@ Pass `AbortSignal` in the fetch init to cancel an in-flight request:
 const controller = new AbortController();
 setTimeout(() => controller.abort(), 5000);
 
-const res = await node.fetch(peer, '/slow', { signal: controller.signal });
+const res = await node.fetch(peer.toURL('/slow'), { signal: controller.signal });
 ```
 
 Cancellation propagates to the Rust layer: the in-flight fetch token is released, and the underlying QUIC stream is reset. Both read and write sides are cancelled.

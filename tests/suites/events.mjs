@@ -44,7 +44,7 @@ export function eventTests({ createNode, test, assert, assertEqual }) {
     });
 
     server.serve({}, () => new Response("hello"));
-    const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+    const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
     await res.text();
 
     await new Promise((r) => setTimeout(r, 200));
@@ -70,7 +70,7 @@ export function eventTests({ createNode, test, assert, assertEqual }) {
     });
 
     server.serve({}, () => new Response("hello"));
-    const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+    const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
     await res.text();
 
     await client.close();
@@ -95,7 +95,7 @@ export function eventTests({ createNode, test, assert, assertEqual }) {
     });
 
     server.serve({}, () => new Response("ok"));
-    const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+    const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
     await res.text();
 
     await new Promise((r) => setTimeout(r, 500));
@@ -124,7 +124,7 @@ export function eventTests({ createNode, test, assert, assertEqual }) {
     });
 
     server.serve({}, () => new Response("ok"));
-    const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+    const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
     await res.text();
 
     await new Promise((r) => setTimeout(r, 500));
@@ -148,7 +148,7 @@ export function eventTests({ createNode, test, assert, assertEqual }) {
     });
 
     server.serve({}, () => new Response("ok"));
-    const res = await client.fetch(serverId, "/", { directAddrs: serverAddrs });
+    const res = await client.fetch(`httpi://${serverId}/`, { directAddrs: serverAddrs });
     await res.text();
 
     // pathchange may or may not fire depending on network conditions

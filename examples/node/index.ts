@@ -23,7 +23,7 @@ if (mode === "server") {
   });
   console.log("Serving. Share your node ID with the client.");
 } else if (mode === "client" && peerId) {
-  const res = await node.fetch(peerId, "/hello");
+  const res = await node.fetch(`httpi://${peerId}/hello`);
   console.log("Response status:", res.status);
   console.log("Body:", await res.text());
   await node.close();

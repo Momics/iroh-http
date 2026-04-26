@@ -156,7 +156,7 @@ await node.advertise("my-app.iroh-http");
 const ac = new AbortController();
 for await (const event of node.browse({ serviceName: "my-app.iroh-http", signal: ac.signal })) {
   if (event.type === "discovered") {
-    const res = await node.fetch(event.nodeId, "/api");
+    const res = await node.fetch(`httpi://${event.nodeId}/api`);
   }
 }
 ```

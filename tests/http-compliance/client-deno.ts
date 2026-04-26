@@ -63,7 +63,7 @@ async function runSingleRequest(req: any) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const res = await client.fetch(serverAddr, req.path, {
+    const res = await client.fetch(`httpi://${serverAddr}${req.path}`, {
       method: req.method,
       headers,
       body,

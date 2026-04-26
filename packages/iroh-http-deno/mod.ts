@@ -7,7 +7,7 @@
  * const node = await createNode({ key: savedKey });
  * const server = node.serve(req => new Response("hello"));
  * await server.finished;
- * const res = await node.fetch(peerId, "/api");
+ * const res = await node.fetch(peerId.toURL("/api"));
  * ```
  */
 

@@ -81,7 +81,7 @@ const serveHandle = server.serve({ signal: serveAbort.signal }, (req) => {
 
 try {
   // Warm the connection
-  await client.fetch(serverId, "httpi://bench.local/warmup", { directAddrs: serverAddrs });
+  await client.fetch(`httpi://${serverId}/warmup`, { directAddrs: serverAddrs });
 
   // ── 1. Cold connect ─────────────────────────────────────────────────────────
   // NOTE: close() is deferred — QUIC connection drain (~80ms) is not part of
@@ -94,7 +94,7 @@ try {
         disableNetworking: true,
         bindAddr: "127.0.0.1:0",
       });
-      const res = await freshClient.fetch(serverId, "httpi://bench.local/cold", {
+      const res = await freshClient.fetch(`httpi://${serverId}/cold`, {
         directAddrs: serverAddrs,
       });
       await res.arrayBuffer();
@@ -111,7 +111,7 @@ try {
 
   group("warm-request", () => {
     bench("warm-request/iroh", async () => {
-      const res = await client.fetch(serverId, "httpi://bench.local/ping", {
+      const res = await client.fetch(`httpi://${serverId}/ping`, {
         directAddrs: serverAddrs,
       });
       await res.arrayBuffer();
@@ -151,9 +151,7 @@ try {
 
   group("throughput-10mb", () => {
     bench("throughput-10mb/iroh", async () => {
-      const res = await client.fetch(
-        serverId,
-        "httpi://bench.local/data?size=10485760",
+      const res = await client.fetch(`httpi://${serverId}/data?size=10485760`,
         { directAddrs: serverAddrs },
       );
       await res.arrayBuffer();
@@ -173,7 +171,7 @@ try {
         await Promise.all(
           Array.from({ length: n }, () =>
             client
-              .fetch(serverId, "httpi://bench.local/ping", { directAddrs: serverAddrs })
+              .fetch(`httpi://${serverId}/ping`, { directAddrs: serverAddrs })
               .then((res) => res.arrayBuffer()),
           ),
         );
@@ -193,7 +191,7 @@ try {
 
   group("serve-rps", () => {
     bench("serve-rps/iroh", async () => {
-      const res = await client.fetch(serverId, "httpi://bench.local/ping", {
+      const res = await client.fetch(`httpi://${serverId}/ping`, {
         directAddrs: serverAddrs,
       });
       await res.arrayBuffer();

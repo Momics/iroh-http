@@ -102,7 +102,7 @@ const serveHandle = server.serve({ signal: serveAbort.signal }, (req) => {
 });
 
 // Warm the connection
-await client.fetch(serverId, "httpi://bench.local/warmup", {
+await client.fetch(`httpi://${serverId}/warmup`, {
   directAddrs: serverAddrs,
 });
 
@@ -125,7 +125,7 @@ const results: Result[] = [];
       bindAddr: "127.0.0.1:0",
     });
     try {
-      const res = await fresh.fetch(serverId, "httpi://bench.local/cold", {
+      const res = await fresh.fetch(`httpi://${serverId}/cold`, {
         directAddrs: serverAddrs,
       });
       await res.arrayBuffer();
@@ -145,7 +145,7 @@ const results: Result[] = [];
 // 2. Warm request
 {
   const iroh = await measure(async () => {
-    const res = await client.fetch(serverId, "httpi://bench.local/ping", {
+    const res = await client.fetch(`httpi://${serverId}/ping`, {
       directAddrs: serverAddrs,
     });
     await res.arrayBuffer();
@@ -189,7 +189,7 @@ for (const n of [8, 32]) {
     await Promise.all(
       Array.from({ length: n }, () =>
         client
-          .fetch(serverId, "httpi://bench.local/ping", {
+          .fetch(`httpi://${serverId}/ping`, {
             directAddrs: serverAddrs,
           })
           .then((res) => res.arrayBuffer()),
@@ -211,7 +211,7 @@ for (const n of [8, 32]) {
 // 9. Serve req/s (same as warm request — measures single-request serve throughput)
 {
   const iroh = await measure(async () => {
-    const res = await client.fetch(serverId, "httpi://bench.local/ping", {
+    const res = await client.fetch(`httpi://${serverId}/ping`, {
       directAddrs: serverAddrs,
     });
     await res.arrayBuffer();
