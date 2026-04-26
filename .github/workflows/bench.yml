@@ -25,6 +25,10 @@ concurrency:
   group: bench-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+  deployments: write
+
 jobs:
   bench-node:
     name: Node benchmarks
@@ -71,6 +75,8 @@ jobs:
           fail-on-alert: true
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench/node-latency
+          skip-fetch-gh-pages: true
+          auto-push: true
       - uses: actions/upload-artifact@v7
         with:
           name: node-bench-results
@@ -130,6 +136,8 @@ jobs:
           fail-on-alert: true
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench/deno-latency
+          skip-fetch-gh-pages: true
+          auto-push: true
       - uses: actions/upload-artifact@v7
         with:
           name: deno-bench-results
@@ -174,6 +182,8 @@ jobs:
           fail-on-alert: true
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench/rust-latency
+          skip-fetch-gh-pages: true
+          auto-push: true
       - uses: actions/upload-artifact@v7
         with:
           name: rust-bench-results
