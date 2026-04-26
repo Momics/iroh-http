@@ -165,6 +165,15 @@ export declare function nextPathChange(endpointHandle: number, nodeId: string): 
  */
 export declare function jsNextChunk(endpointHandle: number, handle: bigint): Promise<Buffer | null>
 /**
+ * Non-blocking body read fast path.
+ *
+ * Returns:
+ * - `Ok(Some(chunk))` — data was available synchronously.
+ * - `Ok(None)` — EOF, handle cleaned up.
+ * - `Err(_)` — channel empty or lock contended, caller should fall back to async `nextChunk`.
+ */
+export declare function jsTryNextChunk(endpointHandle: number, handle: bigint): Buffer | null
+/**
  * Push a chunk into a body writer handle.
  *
  * Large chunks are automatically split to stay within backpressure limits.

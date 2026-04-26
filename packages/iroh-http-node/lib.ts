@@ -14,6 +14,7 @@ import {
   jsFinishBody,
   jsNextChunk,
   jsSendChunk,
+  jsTryNextChunk,
   mdnsAdvertise as napiMdnsAdvertise,
   mdnsAdvertiseClose as napiMdnsAdvertiseClose,
   mdnsBrowse as napiMdnsBrowse,
@@ -159,7 +160,14 @@ class NodeAdapter extends IrohAdapter {
 
   // ── Body streaming ──────────────────────────────────────────────────────────
   nextChunk(handle: bigint): Promise<Uint8Array | null> {
-    return jsNextChunk(this.#eh, handle);
+    // Sync fast path: if data is already buffered, skip async overhead.
+    try {
+      const chunk = jsTryNextChunk(this.#eh, handle);
+      return Promise.resolve(chunk ? new Uint8Array(chunk) : null);
+    } catch {
+      // Channel empty or lock contended — fall back to async.
+      return jsNextChunk(this.#eh, handle);
+    }
   }
   sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
     return jsSendChunk(this.#eh, handle, chunk);

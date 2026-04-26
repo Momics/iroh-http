@@ -24,6 +24,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::peer_stats,
             commands::endpoint_stats,
             commands::next_chunk,
+            commands::try_next_chunk,
             commands::send_chunk,
             commands::finish_body,
             commands::cancel_request,

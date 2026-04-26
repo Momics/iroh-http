@@ -303,6 +303,27 @@ pub async fn next_chunk(endpoint_handle: u64, handle: u64) -> Result<Option<Stri
     Ok(chunk.map(|b| B64.encode(&b[..])))
 }
 
+/// Non-blocking body read fast path (base64-encoded).
+///
+/// Returns:
+/// - `Ok(Some(chunk))` — data was available synchronously.
+/// - `Ok(None)` — EOF, handle cleaned up.
+/// - `Err(_)` — channel empty or lock contended, caller should fall back to async `nextChunk`.
+#[command]
+pub fn try_next_chunk(endpoint_handle: u64, handle: u64) -> Result<Option<String>, String> {
+    let ep = state::get_endpoint(endpoint_handle).ok_or_else(|| {
+        format_error_json(
+            "INVALID_HANDLE",
+            format!("invalid endpoint handle: {endpoint_handle}"),
+        )
+    })?;
+    let chunk = ep
+        .handles()
+        .try_next_chunk(handle)
+        .map_err(|e| core_error_to_json(&e))?;
+    Ok(chunk.map(|b| B64.encode(&b[..])))
+}
+
 /// Push a base64-encoded chunk into a body writer handle.
 #[command]
 pub async fn send_chunk(endpoint_handle: u64, handle: u64, chunk: String) -> Result<(), String> {

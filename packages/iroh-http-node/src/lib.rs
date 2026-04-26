@@ -860,6 +860,22 @@ pub async fn js_next_chunk(endpoint_handle: u32, handle: BigInt) -> napi::Result
     Ok(chunk.map(|b| Buffer::from(b.to_vec())))
 }
 
+/// Non-blocking body read fast path.
+///
+/// Returns:
+/// - `Ok(Some(chunk))` — data was available synchronously.
+/// - `Ok(None)` — EOF, handle cleaned up.
+/// - `Err(_)` — channel empty or lock contended, caller should fall back to async `nextChunk`.
+#[napi]
+pub fn js_try_next_chunk(endpoint_handle: u32, handle: BigInt) -> napi::Result<Option<Buffer>> {
+    let ep = get_endpoint(endpoint_handle)?;
+    let chunk = ep
+        .handles()
+        .try_next_chunk(get_handle(handle)?)
+        .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
+    Ok(chunk.map(|b| Buffer::from(b.to_vec())))
+}
+
 /// Push a chunk into a body writer handle.
 ///
 /// Large chunks are automatically split to stay within backpressure limits.

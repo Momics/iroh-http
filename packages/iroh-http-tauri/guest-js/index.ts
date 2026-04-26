@@ -55,10 +55,19 @@ class TauriAdapter extends IrohAdapter {
   }
 
   nextChunk(handle: bigint): Promise<Uint8Array | null> {
-    return invoke<string | null>(`${PLUGIN}|next_chunk`, {
+    // Sync fast path: if data is already buffered, skip async IPC overhead.
+    return invoke<string | null>(`${PLUGIN}|try_next_chunk`, {
       endpointHandle: this.#epHandle,
       handle: Number(handle),
-    }).then((b64) => (b64 ? decodeBase64(b64) : null));
+    }).then(
+      (b64) => (b64 ? decodeBase64(b64) : null),
+      // Channel empty or lock contended — fall back to async.
+      () =>
+        invoke<string | null>(`${PLUGIN}|next_chunk`, {
+          endpointHandle: this.#epHandle,
+          handle: Number(handle),
+        }).then((b64) => (b64 ? decodeBase64(b64) : null)),
+    );
   }
 
   sendChunk(handle: bigint, chunk: Uint8Array): Promise<void> {
