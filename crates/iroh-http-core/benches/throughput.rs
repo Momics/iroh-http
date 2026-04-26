@@ -127,8 +127,11 @@ fn bench_post_body_throughput(c: &mut Criterion) {
     start_echo_server(server_ep);
 
     let mut group = c.benchmark_group("post_body_throughput_bytes");
-    for size in [1_024usize, 64 * 1_024, 1_024 * 1_024] {
+    for size in [1_024usize, 64 * 1_024, 1_024 * 1_024, 10 * 1_024 * 1_024] {
         group.throughput(Throughput::Bytes(size as u64));
+        if size >= 10 * 1_024 * 1_024 {
+            group.sample_size(10);
+        }
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &sz| {
             let chunk = Bytes::from(vec![0x42u8; sz]);
             let client = client_ep.clone();
@@ -224,8 +227,11 @@ fn bench_response_body_streaming(c: &mut Criterion) {
     );
 
     let mut group = c.benchmark_group("response_body_streaming_bytes");
-    for size in [1_024usize, 64 * 1_024, 1_024 * 1_024] {
+    for size in [1_024usize, 64 * 1_024, 1_024 * 1_024, 10 * 1_024 * 1_024] {
         group.throughput(Throughput::Bytes(size as u64));
+        if size >= 10 * 1_024 * 1_024 {
+            group.sample_size(10);
+        }
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &sz| {
             let client = client_ep.clone();
             let id = server_id.clone();
@@ -254,7 +260,67 @@ fn bench_response_body_streaming(c: &mut Criterion) {
     group.finish();
 }
 
-// ── bench 5: handle allocation (alloc_body_writer) ───────────────────────────
+// ── bench 5: multiplexing (concurrent fetches) ──────────────────────────────
+
+fn bench_multiplex(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    let (server_ep, client_ep, server_id, server_addrs) = rt.block_on(async {
+        let (server_ep, client_ep) = make_pair().await;
+        let id = server_ep.node_id().to_string();
+        let a = direct_addrs(&server_ep);
+        (server_ep, client_ep, id, a)
+    });
+
+    let _guard = rt.enter();
+    start_echo_server(server_ep);
+
+    let mut group = c.benchmark_group("multiplex");
+    for concurrency in [8usize, 32] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(concurrency),
+            &concurrency,
+            |b, &n| {
+                let client = client_ep.clone();
+                let id = server_id.clone();
+                let addrs = server_addrs.clone();
+                b.to_async(&rt).iter(|| {
+                    let client = client.clone();
+                    let id = id.clone();
+                    let addrs = addrs.clone();
+                    async move {
+                        let futs: Vec<_> = (0..n)
+                            .map(|_| {
+                                let client = client.clone();
+                                let id = id.clone();
+                                let addrs = addrs.clone();
+                                async move {
+                                    let res = fetch(
+                                        &client,
+                                        &id,
+                                        "/bench",
+                                        "GET",
+                                        &[],
+                                        None,
+                                        None,
+                                        Some(&addrs),
+                                    )
+                                    .await
+                                    .unwrap();
+                                    client.handles().next_chunk(res.body_handle).await.unwrap();
+                                }
+                            })
+                            .collect();
+                        futures::future::join_all(futs).await;
+                    }
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+// ── bench 6: handle allocation (alloc_body_writer) ───────────────────────────
 
 fn bench_handle_allocation(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -291,6 +357,7 @@ criterion_group!(
     bench_fetch_get_latency,
     bench_post_body_throughput,
     bench_response_body_streaming,
+    bench_multiplex,
     bench_handle_allocation,
 );
 criterion_main!(benches);

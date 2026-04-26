@@ -1,7 +1,7 @@
 ---
 id: "012"
 title: "Benchmark infrastructure"
-status: open
+status: resolved
 date: 2026-04-25
 area: testing
 tags: [benchmarks, performance, deno, node, rust, criterion, ci]
@@ -12,93 +12,88 @@ tags: [benchmarks, performance, deno, node, rust, criterion, ci]
 ## Context
 
 Performance benchmarks exist for all three layers (Rust/Criterion,
-Node/Mitata, Deno/`Deno.bench`) and a CI workflow (`bench.yml`) is set up to
-run them and post results to GitHub Pages. However, the workflow is currently
-disabled — it hangs during Deno bench runs. The benchmarks are also the tool
-that originally surfaced the concurrency bugs in #119.
+Node/Mitata, Deno/`Deno.bench`) and a CI workflow (`bench.yml`) publishes
+results to GitHub Pages. The benchmarks serve two purposes:
 
-Benchmarks serve two purposes: regression detection (automated, CI) and
-characterisation (manual, exploratory). Both are currently broken. Without
-them, performance regressions ship silently and concurrency bugs hide until
-they hit production.
+1. **Regression tracking** — per-release tag runs detect >20% regressions.
+2. **Overhead comparison** — side-by-side iroh vs native HTTP numbers show
+   users the cost of peer-to-peer transport.
 
-## Questions
+## Decision
 
-1. Can the Deno benchmarks run reliably once the FFI bridge issues from
-   [009](009-ffi-bridge-reliability.md) are resolved, or do they need their
-   own architectural changes (e.g. isolated processes, lower concurrency)?
-2. Should bench CI run on every PR (expensive), only on tags (delayed signal),
-   or on a nightly schedule (compromise)?
-3. What is the right baseline: fixed hardware (self-hosted runner), or
-   normalised relative numbers (ratio to a known-good commit)?
-4. Should the three bench layers (Rust, Node, Deno) be independent or
-   unified into a single report?
+Redesigned the benchmark suite with 9 consistent scenarios across all three
+layers. Each scenario measures both iroh and a native HTTP baseline.
 
-## What we know
+### Scenarios
 
-### Current benchmark inventory
+| # | Scenario | Body | Iterations | Measures |
+|---|----------|------|------------|----------|
+| 1 | Cold connect | ~100B | 10 | QUIC handshake + first response |
+| 2 | Warm request | ~100B | 25 | Hot-path fetch/serve latency |
+| 3 | Throughput 1KB | 1KB | 25 | Small payload round-trip |
+| 4 | Throughput 64KB | 64KB | 25 | Medium payload |
+| 5 | Throughput 1MB | 1MB | 25 | Large payload |
+| 6 | Throughput 10MB | 10MB | 10 | Blob transfer |
+| 7 | Multiplex ×8 | ~100B | 25 | QUIC stream multiplexing |
+| 8 | Multiplex ×32 | ~100B | 25 | High-concurrency multiplexing |
+| 9 | Serve req/s | ~100B | 25 | Server handler throughput |
 
-| Layer | Tool | Suites | Status |
-|-------|------|--------|--------|
-| Rust | Criterion | `throughput`, `latency` | Working locally; smoke-tested in CI |
-| Node | Mitata | `throughput.mjs`, `latency.mjs` | Working locally |
-| Deno | `Deno.bench` | `throughput.bench.ts`, `latency.bench.ts` | Hangs under load |
+### File structure
 
-### CI workflow (`bench.yml`)
+```
+bench/
+  deno/
+    bench.ts          # Deno.bench — all 9 scenarios
+    report.ts         # terminal table + JSON for CI
+  node/
+    bench.mjs         # mitata — all 9 scenarios
+    report.mjs        # terminal table + JSON for CI
+  scripts/
+    normalize-criterion-json.mjs   # Criterion → benchmark-action JSON
+  results/
+    .gitkeep
+```
 
-- Trigger: `workflow_dispatch` only (tag trigger disabled).
-- Three parallel jobs: `bench-node`, `bench-deno`, `bench-rust`.
-- Each normalises output and posts to `gh-pages` via `benchmark-action`.
-- The Deno job hangs, which is why the workflow was disabled.
+### Report output
 
-### The Deno hang
+Terminal table (from `report.ts` / `report.mjs`):
 
-The benchmarks drive 32 concurrent fetch/serve cycles at high iteration rate.
-This is exactly the load pattern that triggers the race conditions documented
-in #119 and #122. The hang is not a benchmark bug — it's the adapter bug
-manifesting under benchmark load.
+```
+iroh-http benchmark results (vX.Y.Z, Deno 2.7.12, aarch64)
 
-### What the benchmarks measure
+  Scenario                    iroh       native     overhead      p50        p95        p99
+  ─────────────────────────────────────────────────────────────────────────────────────────
+  cold-connect            92.63 ms     237.9 µs      389.4x   93.22 ms   96.71 ms   96.71 ms
+  warm-request             2.29 ms     150.8 µs       15.2x    2.08 ms    2.89 ms    2.92 ms
+  ...
+```
 
-- **Throughput:** requests/second at various concurrency levels (1, 8, 32).
-- **Latency:** p50/p95/p99 round-trip time for single requests.
-- **Body sizes:** small (JSON), medium (64 KB), large (1 MB).
-- A `report.ts` / `report.mjs` normaliser produces JSON compatible with
-  `github/benchmark-action`.
+JSON output (for benchmark-action): `[{name, unit, value}]` with names like
+`deno/iroh/warm-request`, `node/native/throughput-1mb`.
 
-## Options considered
+### CI triggers
 
-| Option | Upside | Downside |
-|--------|--------|----------|
-| Wait for #009, then re-enable bench.yml as-is | No new work; benches already written | Blocked on #009; no signal until then |
-| Run Rust and Node benches now; add Deno later | Partial signal immediately | Incomplete picture; Deno is the problematic adapter |
-| Lower Deno bench concurrency to avoid the race | Quick unblock | Doesn't test the interesting (high-concurrency) path |
-| Run benches in isolated subprocess per iteration | Avoids accumulated state bugs | Slower; may not reproduce real-world patterns |
-| Nightly schedule instead of per-PR | Manageable cost; catches regressions within 24h | Delayed signal; harder to bisect |
+- `push` to `v*.*.*` tags — per-release snapshot published to gh-pages
+- `workflow_dispatch` — manual run at any time
+
+### Rust Criterion additions
+
+- 10MB body size added to `post_body_throughput_bytes` and
+  `response_body_streaming_bytes` groups (sample_size=10).
+- New `multiplex` benchmark group (×8, ×32 concurrent fetches).
 
 ## Implications
 
-- Directly blocked by [009 — FFI bridge reliability](009-ffi-bridge-reliability.md).
-  The Deno benchmarks will not run cleanly until the adapter is stable.
-- Interacts with [010 — CI stabilisation](010-ci-pipeline-stabilisation.md):
-  re-enabling the bench workflow adds another CI job that must be reliable.
-- Benchmark results are public (gh-pages). Unreliable results are worse than
-  no results — they mislead consumers about performance characteristics.
-- Self-hosted runner (`vars.BENCHMARK_RUNNER`) is already configured but not
-  verified. If it's unavailable, benches fall back to `ubuntu-latest` which
-  produces noisy numbers.
+- Deno benchmarks now run cleanly (FFI bridge issues from #009 resolved).
+- All three jobs (Rust, Node, Deno) are active in `bench.yml`.
+- Self-hosted runner (`vars.BENCHMARK_RUNNER`) falls back to `ubuntu-latest`.
+- Alert threshold is 120% (>20% regression fails the job and comments).
 
 ## Next steps
 
-- [ ] Re-enable Rust and Node bench jobs immediately (they work; Deno can be
-      added later). Update `bench.yml` to skip the Deno job with a clear
-      comment linking to #009.
 - [ ] Verify the self-hosted benchmark runner is operational. If not, decide
       whether to use `ubuntu-latest` with statistical smoothing or defer
       until the runner is available.
-- [ ] Once #009 lands: re-enable Deno bench job and run a full characterisation
-      pass (baseline numbers for v0.3.x).
-- [ ] Decide on CI frequency: nightly schedule as default, with manual
-      `workflow_dispatch` for ad-hoc runs.
-- [ ] Add a benchmark regression threshold (e.g. >10% regression fails the
-      job) to catch performance regressions automatically.
+- [ ] Consider publishing overhead comparison tables to the README or a
+      dedicated gh-pages benchmark dashboard.
+- [ ] Add raw session benchmarks once WebTransport API stabilises.

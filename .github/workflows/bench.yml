@@ -1,29 +1,25 @@
 name: Benchmarks
 
-# Benchmarks are temporarily disabled because the workflow hangs on
-# the current runner configuration. Re-enable once the bench setup is
-# revisited (tracked in: TODO — re-enable bench.yml).
-# To run manually in the meantime: comment out the `if: false` below
-# and trigger via workflow_dispatch from the Actions tab.
+# Runs benchmarks for Rust (Criterion), Node.js (mitata), and Deno.
+# Results are published to gh-pages for per-release regression tracking.
+#
+# Triggers:
+#   - push to tags (v*.*.*): per-release benchmark snapshot
+#   - workflow_dispatch: manual run at any time
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/skills/**'
+      - '.vscode/**'
+      - 'CHANGELOG.md'
+      - 'LICENSE*'
   workflow_dispatch:
-
-# Disabled: tag-triggered runs hang. Re-enable with the push trigger
-# once the benchmark runner and smoke-test timeout issues are resolved.
-# on:
-#   push:
-#     tags:
-#       - 'v*.*.*'
-#     paths-ignore:
-#       - 'docs/**'
-#       - '**.md'
-#       - '.github/ISSUE_TEMPLATE/**'
-#       - '.github/skills/**'
-#       - '.vscode/**'
-#       - 'CHANGELOG.md'
-#       - 'LICENSE*'
-#   workflow_dispatch:
 
 concurrency:
   group: bench-${{ github.workflow }}-${{ github.ref }}
@@ -50,13 +46,11 @@ jobs:
           npx napi build --platform --release
           npx tsc --skipLibCheck
       - name: Run mitata suites
-        run: |
-          node bench/node/throughput.mjs
-          node bench/node/latency.mjs
+        run: node bench/node/bench.mjs
       - name: Emit normalized Node benchmark JSON
         run: |
-          node bench/node/report.mjs throughput > bench/results/node-throughput.json
-          node bench/node/report.mjs latency > bench/results/node-latency.json
+          node bench/node/report.mjs --json throughput > bench/results/node-throughput.json
+          node bench/node/report.mjs --json latency > bench/results/node-latency.json
       - uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: customBiggerIsBetter
@@ -111,11 +105,11 @@ jobs:
               ;;
           esac
       - name: Run Deno bench suites
-        run: deno bench --allow-net --allow-ffi --allow-env --allow-read --allow-write bench/deno/throughput.bench.ts bench/deno/latency.bench.ts
+        run: deno bench --allow-net --allow-ffi --allow-env --allow-read --allow-write --allow-sys bench/deno/bench.ts
       - name: Emit normalized Deno benchmark JSON
         run: |
-          deno run --allow-net --allow-ffi --allow-env --allow-read --allow-write bench/deno/report.ts throughput > bench/results/deno-throughput.json
-          deno run --allow-net --allow-ffi --allow-env --allow-read --allow-write bench/deno/report.ts latency > bench/results/deno-latency.json
+          deno run --allow-net --allow-ffi --allow-env --allow-read --allow-write --allow-sys bench/deno/report.ts --json throughput > bench/results/deno-throughput.json
+          deno run --allow-net --allow-ffi --allow-env --allow-read --allow-write --allow-sys bench/deno/report.ts --json latency > bench/results/deno-latency.json
       - uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: customBiggerIsBetter
