@@ -2,17 +2,7 @@ name: Extended tests
 
 on:
   push:
-    branches: [main, test-suite-expansion]
-    paths:
-      - 'tests/**'
-      - 'packages/**'
-      - 'crates/**'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/**'
-      - 'packages/**'
-      - 'crates/**'
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
