@@ -22,9 +22,11 @@ httpi://b5ea4f3c2a7b9d1e8f6c0a3b5d7e9f1a2c4b6d8e0f1a3c5b7d9e1f3a5c7d9e/api/data?
 |---------|-----------|---------|
 | **Server side** (`req.url`) | `httpi://<own-public-key>/path` | `httpi://b5ea.../api/data` |
 | **Client side** (`res.url`) | `httpi://<remote-public-key>/path` | `httpi://b5ea.../api/data` |
-| **fetch() input** | Just the path | `"/api/data"` |
+| **fetch() input** | Full `httpi://` URL | `"httpi://b5ea.../api/data"` |
 
-When you call `node.fetch(peer, "/api/data")`, you pass just the path — the library handles connecting to the peer by public key. The response's `.url` property contains the full `httpi://` URL reflecting the remote peer's identity.
+When you call `node.fetch("httpi://<peer-public-key>/api/data")`, the peer identity and path are encoded together in one URL — just like regular `fetch`. The response's `.url` property contains the same `httpi://` URL reflecting the remote peer's identity.
+
+A legacy two-argument form `node.fetch(peer, "/path")` is also accepted for backwards compatibility, but the URL form is preferred.
 
 On the server side, `req.url` is a full `httpi://` URL with the server's own public key. You can route by pathname using `new URL(req.url).pathname`.
 

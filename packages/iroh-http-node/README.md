@@ -29,7 +29,7 @@ node.serve({}, (req) => {
   return new Response("Hello, world!");
 });
 
-const res = await node.fetch("<remote-node-public-key>", "/");
+const res = await node.fetch("httpi://<remote-node-public-key>/");
 console.log(await res.text());
 await node.close();
 ```

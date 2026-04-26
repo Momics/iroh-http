@@ -42,7 +42,7 @@ node.serve({}, (req) => {
 });
 
 // On another machine:
-const res = await node.fetch("<peer-public-key>", "/");
+const res = await node.fetch("httpi://<peer-public-key>/");
 console.log(await res.text()); // "hello"
 await node.close();
 ```
@@ -93,7 +93,7 @@ await node.advertise("my-app.iroh-http");
 
 for await (const event of node.browse("my-app.iroh-http")) {
   if (event.type === "discovered") {
-    const res = await node.fetch(event.nodeId, "/api");
+    const res = await node.fetch(`httpi://${event.nodeId}/api`);
   }
 }
 ```

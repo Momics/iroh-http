@@ -47,7 +47,7 @@ node.serve({}, (req) => {
   return new Response("Hello from Tauri!");
 });
 
-const res = await node.fetch("<remote-node-public-key>", "/");
+const res = await node.fetch("httpi://<remote-node-public-key>/");
 console.log(await res.text());
 ```
 
@@ -107,7 +107,7 @@ await node.advertise("my-app.iroh-http");
 
 for await (const event of node.browse({ serviceName: "my-app.iroh-http" })) {
   if (event.type === "discovered") {
-    const res = await node.fetch(event.nodeId, "/api");
+    const res = await node.fetch(`httpi://${event.nodeId}/api`);
   }
 }
 ```

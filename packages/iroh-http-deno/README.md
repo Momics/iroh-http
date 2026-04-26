@@ -35,7 +35,7 @@ node.serve({}, (req) => {
   return new Response("Hello from Deno iroh-http!");
 });
 
-const res = await node.fetch("<remote-node-public-key>", "/");
+const res = await node.fetch("httpi://<remote-node-public-key>/");
 console.log(await res.text());
 await node.close();
 ```
