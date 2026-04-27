@@ -67,32 +67,14 @@ export interface NodeOptions {
     fromEnv?: boolean;
   };
 
-  /** Connection pool and concurrency limits. */
+  /** Connection pool tuning. */
   connections?: {
-    /**
-     * Maximum total active QUIC connections across all peers. New connections
-     * are rejected when the limit is reached.
-     * @default unlimited
-     */
-    maxTotal?: number;
-    /**
-     * Maximum simultaneous QUIC connections from a single peer. Additional
-     * connection attempts from that peer are rejected.
-     * @default unlimited
-     */
-    maxPerPeer?: number;
     /**
      * Maximum QUIC connections kept alive in the pool. Older idle connections
      * are evicted when the limit is hit.
      * @default 64
      */
     maxPooled?: number;
-    /**
-     * Maximum requests processed concurrently across the endpoint. Requests
-     * beyond this limit receive `503 Service Unavailable`.
-     * @default unlimited
-     */
-    maxConcurrency?: number;
     /**
      * QUIC idle timeout in milliseconds. Connections with no activity for this
      * duration are closed. Set to `0` to disable.
@@ -106,25 +88,14 @@ export interface NodeOptions {
     poolIdleTimeoutMs?: number;
   };
 
-  /** Request size and timeout limits. */
+  /** Request header limits. */
   limits?: {
-    /**
-     * Maximum request body size in bytes. Requests with larger bodies receive
-     * `413 Content Too Large`.
-     * @default 10_485_760 (10 MB)
-     */
-    maxRequestBodyBytes?: number;
     /**
      * Maximum total size of all request headers in bytes. Requests that exceed
      * this limit receive `431 Request Header Fields Too Large`.
      * @default 65_536 (64 KB)
      */
     maxHeaderBytes?: number;
-    /**
-     * Milliseconds before an outbound request is aborted with a timeout error.
-     * @default 30_000
-     */
-    requestTimeoutMs?: number;
   };
 
   /**
@@ -177,21 +148,10 @@ export interface NodeOptions {
      */
     maxChunkSizeBytes?: number;
     /**
-     * Milliseconds to wait for in-flight requests to complete during graceful
-     * shutdown before forcibly closing connections.
-     * @default 5_000
-     */
-    drainTimeout?: number;
-    /**
      * Milliseconds before an idle body or request handle is evicted from the
      * slab. Prevents handle leaks when callers fail to consume or cancel a body.
      * @default 60_000
      */
     handleTtl?: number;
-    /**
-     * Maximum consecutive accept-loop errors before the serve loop terminates.
-     * @default 10
-     */
-    maxServeErrors?: number;
   };
 }

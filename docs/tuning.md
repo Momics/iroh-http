@@ -1,8 +1,8 @@
 # Performance Tuning
 
-`NodeOptions` exposes ~21 tunables. Most workloads work fine with the
-defaults — tune only when you have a specific bottleneck. Profile or measure
-before adjusting.
+`NodeOptions` and `ServeOptions` expose ~21 tunables. Most workloads work fine
+with the defaults — tune only when you have a specific bottleneck. Profile or
+measure before adjusting.
 
 ---
 
@@ -14,19 +14,24 @@ Goal: minimise end-to-end latency on small payloads; keep connections alive.
 
 ```ts
 const node = await createNode({
-  idleTimeout: 120_000,          // 2 min — QUIC idle timeout
-  poolIdleTimeoutMs: 60_000,     // 1 min — keep pooled connections warm
-  maxPooledConnections: 16,      // small fleet; generous pool
-  requestTimeout: 10_000,        // 10 s — fail fast on stale connections
-  advanced: {
-    channelCapacity: 64,         // larger queue for burst messages
-    drainTimeout: 5_000,         // 5 s — fail fast when reader stalls
+  connections: {
+    idleTimeoutMs: 120_000,        // 2 min — QUIC idle timeout
+    poolIdleTimeoutMs: 60_000,     // 1 min — keep pooled connections warm
+    maxPooled: 16,                 // small fleet; generous pool
+  },
+  internals: {
+    channelCapacity: 64,           // larger queue for burst messages
   },
 });
+
+node.serve({
+  requestTimeout: 10_000,         // 10 s — fail fast on stale connections
+  drainTimeout: 5_000,            // 5 s — fail fast when reader stalls
+}, handler);
 ```
 
 **Key trade-offs:**
-- `idleTimeout` high → long QUIC idle connections stay alive; saves reconnect latency
+- `idleTimeoutMs` high → long QUIC idle connections stay alive; saves reconnect latency
 - `requestTimeout` low → fast failure detection; surface network problems quickly
 - `drainTimeout` low → readers that stall more than 5 s get dropped; prevents head-of-line blocking
 
@@ -38,16 +43,21 @@ Goal: maximise throughput on large streaming bodies; tolerate slow readers.
 
 ```ts
 const node = await createNode({
-  idleTimeout: 300_000,          // 5 min — transfers take time
-  requestTimeout: 600_000,       // 10 min — large files take time
+  connections: {
+    idleTimeoutMs: 300_000,        // 5 min — transfers take time
+  },
   compression: { level: 1, minBodyBytes: 4096 },   // fast compression only
-  advanced: {
-    channelCapacity: 128,        // deep queue prevents producer stalls
-    maxChunkSizeBytes: 256_000,  // 256 KB chunks — fewer round-trips
-    drainTimeout: 60_000,        // 60 s — tolerate slow readers
-    handleTtl: 600_000,          // 10 min — handles must outlive the transfer
+  internals: {
+    channelCapacity: 128,          // deep queue prevents producer stalls
+    maxChunkSizeBytes: 256_000,    // 256 KB chunks — fewer round-trips
+    handleTtl: 600_000,            // 10 min — handles must outlive the transfer
   },
 });
+
+node.serve({
+  requestTimeout: 600_000,        // 10 min — large files take time
+  drainTimeout: 60_000,           // 60 s — tolerate slow readers
+}, handler);
 ```
 
 **Key trade-offs:**
@@ -63,16 +73,21 @@ Goal: support many idle connections; conserve memory; evict stale connections qu
 
 ```ts
 const node = await createNode({
-  maxPooledConnections: 512,     // many devices
-  poolIdleTimeoutMs: 30_000,     // 30 s — evict idle connections quickly
-  idleTimeout: 60_000,           // 1 min — QUIC layer idle timeout
-  maxConnectionsPerPeer: 2,      // IoT devices send few concurrent requests
-  advanced: {
-    channelCapacity: 8,          // small queue saves memory × (n devices)
-    maxChunkSizeBytes: 16_000,   // 16 KB — small payloads from sensors
-    handleTtl: 60_000,           // 1 min — handles expire with idle connections
+  connections: {
+    maxPooled: 512,                // many devices
+    poolIdleTimeoutMs: 30_000,     // 30 s — evict idle connections quickly
+    idleTimeoutMs: 60_000,         // 1 min — QUIC layer idle timeout
+  },
+  internals: {
+    channelCapacity: 8,            // small queue saves memory × (n devices)
+    maxChunkSizeBytes: 16_000,     // 16 KB — small payloads from sensors
+    handleTtl: 60_000,             // 1 min — handles expire with idle connections
   },
 });
+
+node.serve({
+  maxConnectionsPerPeer: 2,       // IoT devices send few concurrent requests
+}, handler);
 ```
 
 **Key trade-offs:**
@@ -87,13 +102,16 @@ Goal: recover quickly from network changes; minimise stale-connection delays.
 
 ```ts
 const node = await createNode({
-  idleTimeout: 30_000,           // 30 s — QUIC idles out quickly; reduces stale impact
-  poolIdleTimeoutMs: 15_000,     // 15 s — evict pooled connections often
-  requestTimeout: 20_000,        // 20 s — fail fast; mobile app should retry
-  advanced: {
-    drainTimeout: 10_000,        // 10 s — don't wait long for stalled reads
+  connections: {
+    idleTimeoutMs: 30_000,         // 30 s — QUIC idles out quickly
+    poolIdleTimeoutMs: 15_000,     // 15 s — evict pooled connections often
   },
 });
+
+node.serve({
+  requestTimeout: 20_000,         // 20 s — fail fast; mobile app should retry
+  drainTimeout: 10_000,           // 10 s — don't wait long for stalled reads
+}, handler);
 ```
 
 Then, add a single-retry wrapper (see [troubleshooting.md](troubleshooting.md#networkerror-on-fetch--timeout)):
@@ -119,21 +137,26 @@ cannot distinguish a migrating connection from a dead one. Lower
 
 | Option | Default | Tune when |
 |--------|---------|-----------|
-| `idleTimeout` | 30 000 ms | Peers are far away / high-latency relay; increase to keep connections warm |
-| `requestTimeout` | 60 000 ms | Transfers large files (increase) or want fast failure detection (decrease) |
-| `maxPooledConnections` | 512 | Many peers (increase) or memory-constrained (decrease); see [Connection pool sizing](#connection-pool-sizing) |
-| `poolIdleTimeoutMs` | 60 000 ms | Mobile / frequent network changes (decrease); LAN (increase) |
-| `maxConcurrency` | 64 | Serving many concurrent requests (increase); or throttling (decrease) |
-| `maxConnectionsPerPeer` | 8 | IoT with few connections/peer (decrease); busy API clients (increase) |
-| `maxRequestBodyBytes` | unlimited | Prevent large upload attacks (set a limit) |
-| `maxHeaderBytes` | 65 536 | Prevent header-flood attacks or accept large cookies (adjust) |
+| `connections.idleTimeoutMs` | 30 000 ms | Peers are far away / high-latency relay; increase to keep connections warm |
+| `connections.poolIdleTimeoutMs` | 60 000 ms | Mobile / frequent network changes (decrease); LAN (increase) |
+| `connections.maxPooled` | 512 | Many peers (increase) or memory-constrained (decrease); see [Connection pool sizing](#connection-pool-sizing) |
+| `limits.maxHeaderBytes` | 65 536 | Prevent header-flood attacks or accept large cookies (adjust) |
 | `compression.level` | 3 | Slow CPUs (reduce to 1); compression ratio priority (increase to 5) |
 | `compression.minBodyBytes` | (server default) | Skip compression for small payloads (increase threshold) |
-| `advanced.channelCapacity` | 32 | High-throughput streaming (increase); memory-constrained (decrease) |
-| `advanced.maxChunkSizeBytes` | 65 536 (64 KB) | Fewer FFI calls (increase); lower per-call latency (decrease) |
-| `advanced.drainTimeout` | 30 000 ms | Slow readers expected (increase); tight latency SLA (decrease) |
-| `advanced.handleTtl` | 300 000 ms (5 min) | Transfers > 5 min (increase proportionally); short-lived nodes (decrease) |
-| `advanced.maxServeErrors` | 5 | Noisy channels (increase); fail-fast desired (decrease) |
+| `internals.channelCapacity` | 32 | High-throughput streaming (increase); memory-constrained (decrease) |
+| `internals.maxChunkSizeBytes` | 65 536 (64 KB) | Fewer FFI calls (increase); lower per-call latency (decrease) |
+| `internals.handleTtl` | 300 000 ms (5 min) | Transfers > 5 min (increase proportionally); short-lived nodes (decrease) |
+
+**`ServeOptions` (passed at `serve()` time):**
+
+| Option | Default | Tune when |
+|--------|---------|-----------|
+| `requestTimeout` | 60 000 ms | Transfers large files (increase) or want fast failure detection (decrease) |
+| `maxConcurrency` | 1 024 | Serving many concurrent requests (increase); or throttling (decrease) |
+| `maxConnectionsPerPeer` | 8 | IoT with few connections/peer (decrease); busy API clients (increase) |
+| `maxRequestBodyBytes` | unlimited | Prevent large upload attacks (set a limit) |
+| `drainTimeout` | 5 000 ms | Slow readers expected (increase); tight latency SLA (decrease) |
+| `maxServeErrors` | 5 | Noisy channels (increase); fail-fast desired (decrease) |
 
 ---
 

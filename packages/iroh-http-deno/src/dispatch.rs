@@ -199,8 +199,6 @@ struct CreateEndpointPayload {
     dns_discovery_enabled: Option<bool>,
     channel_capacity: Option<usize>,
     max_chunk_size_bytes: Option<usize>,
-    max_serve_errors: Option<usize>,
-    drain_timeout: Option<u64>,
     handle_ttl: Option<u64>,
     sweep_interval: Option<u64>,
     max_pooled_connections: Option<usize>,
@@ -213,12 +211,7 @@ struct CreateEndpointPayload {
     compression_level: Option<i32>,
     #[allow(dead_code)] // only read when `compression` feature is enabled
     compression_min_body_bytes: Option<usize>,
-    max_concurrency: Option<usize>,
-    max_connections_per_peer: Option<usize>,
-    request_timeout: Option<u64>,
-    max_request_body_bytes: Option<usize>,
     max_header_bytes: Option<usize>,
-    max_total_connections: Option<usize>,
 }
 
 async fn create_endpoint(p: Value) -> Value {
@@ -268,24 +261,14 @@ async fn create_endpoint(p: Value) -> Value {
         streaming: StreamingOptions {
             channel_capacity: args.channel_capacity,
             max_chunk_size_bytes: args.max_chunk_size_bytes,
-            drain_timeout_ms: args.drain_timeout,
+            drain_timeout_ms: None,
             handle_ttl_ms: args.handle_ttl,
             sweep_interval_ms: args.sweep_interval,
         },
         capabilities: Vec::new(),
         keylog: args.keylog.unwrap_or(false),
         max_header_size: args.max_header_bytes,
-        server_limits: iroh_http_core::server::ServerLimits {
-            max_concurrency: args.max_concurrency,
-            max_connections_per_peer: args.max_connections_per_peer,
-            request_timeout_ms: args.request_timeout,
-            max_request_body_bytes: args.max_request_body_bytes,
-            max_response_body_bytes: None,
-            max_serve_errors: args.max_serve_errors,
-            drain_timeout_ms: None,
-            max_total_connections: args.max_total_connections,
-            load_shed: None,
-        },
+        max_response_body_bytes: None,
         #[cfg(feature = "compression")]
         compression: if args.compression_min_body_bytes.is_some()
             || args.compression_level.is_some()
@@ -653,6 +636,18 @@ async fn serve_start(p: Value) -> Value {
         }
     };
 
+    // Parse optional serve options from payload.
+    let serve_opts = iroh_http_core::ServeOptions {
+        max_concurrency: p["maxConcurrency"].as_u64().map(|v| v as usize),
+        max_connections_per_peer: p["maxConnectionsPerPeer"].as_u64().map(|v| v as usize),
+        request_timeout_ms: p["requestTimeout"].as_u64(),
+        max_request_body_bytes: p["maxRequestBodyBytes"].as_u64().map(|v| v as usize),
+        max_total_connections: p["maxTotalConnections"].as_u64().map(|v| v as usize),
+        max_serve_errors: p["maxServeErrors"].as_u64().map(|v| v as usize),
+        drain_timeout_ms: p["drainTimeout"].as_u64(),
+        load_shed: p["loadShed"].as_bool(),
+    };
+
     let queue = serve_registry::register(handle);
 
     let ep_clone = ep.clone();
@@ -666,7 +661,7 @@ async fn serve_start(p: Value) -> Value {
         }));
     let serve_handle = iroh_http_core::serve_with_events(
         ep.clone(),
-        ep.serve_options(),
+        serve_opts,
         move |payload: RequestPayload| {
             // #122: Look up the CURRENT queue from the registry instead of a
             // captured Arc.  When serve is restarted (stopServe → serveStart),

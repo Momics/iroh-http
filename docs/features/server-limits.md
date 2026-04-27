@@ -1,13 +1,13 @@
 # Server Limits
 
-All resource limits are configured at **`createNode(options)`** and enforced
+All resource limits are configured at **`serve(options, handler)`** and enforced
 in Rust before any JavaScript handler runs. They protect the serve loop
 against misbehaving or hostile peers at the transport level.
 
 ## Options
 
 ```ts
-const node = await createNode({
+node.serve({
   /** Maximum simultaneous in-flight requests across all peers. Default: 1024. */
   maxConcurrency: 1024,
 
@@ -21,9 +21,19 @@ const node = await createNode({
    *  rejected with 413 before the body is read. Default: 16 MiB. */
   maxRequestBodyBytes: 10 * 1024 * 1024,  // 10 MB example
 
-  /** Maximum request header block size in bytes. Requests with larger headers
-   *  are rejected with 431. Default: 64 KB. */
-  maxHeaderBytes: 64 * 1024,
+  /** Maximum consecutive accept-loop errors before shutdown. Default: 5. */
+  maxServeErrors: 5,
+
+  /** Drain timeout in ms after shutdown signal. Default: 5 000. */
+  drainTimeout: 5_000,
+}, handler);
+
+// Header size is configured at node level:
+const node = await createNode({
+  limits: {
+    /** Maximum request header block size in bytes. Default: 64 KB. */
+    maxHeaderBytes: 64 * 1024,
+  },
 });
 ```
 

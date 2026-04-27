@@ -235,17 +235,22 @@ class NodeAdapter extends IrohAdapter {
 
   rawServe(
     endpointHandle: number,
-    options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
+    options: {
+      onConnectionEvent?: (event: PeerConnectionEvent) => void;
+      serveOptions?: Record<string, unknown>;
+    },
     callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
   ): Promise<void> {
     // #119: Track in-flight handler tasks so waitServeStop drains them before resolving.
     const pending = new Set<Promise<void>>();
-    (napiRawServe as (
+    (napiRawServe as unknown as (
       handle: number,
+      serveOpts: Record<string, unknown> | null,
       cb: (payload: Record<string, unknown>) => void,
       onConnEv: ((ev: { peerId: string; connected: boolean }) => void) | null,
     ) => void)(
       endpointHandle,
+      options.serveOptions ?? null,
       (payload: Record<string, unknown>) => {
         const typed = payload as unknown as RequestPayload;
         const task = callback(typed)
@@ -439,8 +444,6 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         dnsDiscoveryEnabled: discovery.dnsEnabled,
         channelCapacity: options.internals?.channelCapacity,
         maxChunkSizeBytes: options.internals?.maxChunkSizeBytes,
-        maxServeErrors: options.internals?.maxServeErrors,
-        drainTimeout: options.internals?.drainTimeout,
         handleTtl: options.internals?.handleTtl,
         maxPooledConnections: options.connections?.maxPooled,
         poolIdleTimeoutMs: options.connections?.poolIdleTimeoutMs,
@@ -456,12 +459,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         compressionMinBodyBytes: typeof options.compression === "object"
           ? options.compression.minBodyBytes
           : undefined,
-        maxConcurrency: options.connections?.maxConcurrency,
-        maxConnectionsPerPeer: options.connections?.maxPerPeer,
-        requestTimeout: options.limits?.requestTimeoutMs,
-        maxRequestBodyBytes: options.limits?.maxRequestBodyBytes,
         maxHeaderBytes: options.limits?.maxHeaderBytes,
-        maxTotalConnections: options.connections?.maxTotal,
       }
       : undefined,
   ).catch((e: unknown) => {

@@ -10,6 +10,7 @@
 
 import type {
   FfiResponseHead,
+  FfiServeOptions,
   IrohAdapter,
   PeerConnectionEvent,
   RequestPayload,
@@ -67,6 +68,54 @@ export interface ServeOptions {
    * This only stops the serve loop — the node itself stays alive.
    */
   signal?: AbortSignal;
+
+  /**
+   * Maximum simultaneous in-flight requests.
+   * @default 1024
+   */
+  maxConcurrency?: number;
+
+  /**
+   * Maximum connections from a single peer.
+   * @default 8
+   */
+  maxConnectionsPerPeer?: number;
+
+  /**
+   * Per-request timeout in milliseconds.  0 = disabled.
+   * @default 60_000
+   */
+  requestTimeout?: number;
+
+  /**
+   * Reject request bodies larger than this many bytes.
+   * @default unlimited
+   */
+  maxRequestBodyBytes?: number;
+
+  /**
+   * Maximum total QUIC connections the server will accept.
+   * @default unlimited
+   */
+  maxTotalConnections?: number;
+
+  /**
+   * Maximum consecutive accept-loop errors before the serve loop terminates.
+   * @default 5
+   */
+  maxServeErrors?: number;
+
+  /**
+   * Milliseconds to wait for in-flight requests to drain after shutdown.
+   * @default 5_000
+   */
+  drainTimeout?: number;
+
+  /**
+   * When `true`, reject requests with 503 when at capacity instead of queuing.
+   * @default false
+   */
+  loadShed?: boolean;
 
 }
 
@@ -160,11 +209,23 @@ export function makeServe(
     // #119: Track active body pipes so `finished` drains them before resolving.
     const activePipes = new Set<Promise<void>>();
 
+    // Build FFI-level serve options from the user-facing ServeOptions.
+    const ffiServeOpts: FfiServeOptions = {
+      maxConcurrency: options.maxConcurrency,
+      maxConnectionsPerPeer: options.maxConnectionsPerPeer,
+      requestTimeout: options.requestTimeout,
+      maxRequestBodyBytes: options.maxRequestBodyBytes,
+      maxTotalConnections: options.maxTotalConnections,
+      maxServeErrors: options.maxServeErrors,
+      drainTimeout: options.drainTimeout,
+      loadShed: options.loadShed,
+    };
+
     // rawServe returns a Promise<void> that resolves when its internal polling
     // loop exits (i.e. after stopServe() causes nextRequest to drain to null).
     const loopDone = adapter.rawServe(
       endpointHandle,
-      { onConnectionEvent },
+      { onConnectionEvent, serveOptions: ffiServeOpts },
       async (payload: RequestPayload): Promise<FfiResponseHead> => {
         const peerId = headerValue(payload.headers, "peer-id");
 

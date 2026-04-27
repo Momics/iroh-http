@@ -103,10 +103,13 @@ pub struct NodeOptions {
     pub capabilities: Vec<String>,
     /// Write TLS session keys to $SSLKEYLOGFILE. Dev/debug only.
     pub keylog: bool,
-    /// Maximum byte size of the HTTP/1.1 request or response head. `None` or `0` = 65536.
+    /// Maximum byte size of the HTTP/1.1 request or response head.
+    /// `None` = 65536.  `Some(0)` is rejected.
     pub max_header_size: Option<usize>,
-    /// Server-side limits forwarded to the serve loop.
-    pub server_limits: crate::server::ServerLimits,
+    /// Maximum decompressed response body bytes the client will accept per
+    /// outgoing `fetch()`.  Default: 256 MiB.  Protects against compression
+    /// bombs from malicious peers.
+    pub max_response_body_bytes: Option<usize>,
     #[cfg(feature = "compression")]
     pub compression: Option<CompressionOptions>,
 }
@@ -139,8 +142,8 @@ pub(crate) struct EndpointInner {
     pub pool: ConnectionPool,
     /// Maximum byte size of an HTTP/1.1 head (request or response).
     pub max_header_size: usize,
-    /// Server-side limits forwarded to the serve loop.
-    pub server_limits: crate::server::ServerLimits,
+    /// Maximum decompressed response body bytes per fetch.  Default: 256 MiB.
+    pub max_response_body_bytes: usize,
     /// Per-endpoint handle store — owns all body readers, writers,
     /// sessions, request-head channels, and fetch-cancel tokens.
     pub handles: HandleStore,
@@ -386,13 +389,9 @@ impl IrohEndpoint {
                 None => 64 * 1024,
                 Some(n) => n,
             },
-            server_limits: {
-                let mut sl = opts.server_limits.clone();
-                if sl.max_serve_errors.is_none() {
-                    sl.max_serve_errors = Some(5);
-                }
-                sl
-            },
+            max_response_body_bytes: opts
+                .max_response_body_bytes
+                .unwrap_or(crate::server::DEFAULT_MAX_RESPONSE_BODY_BYTES),
             handles: HandleStore::new(store_config),
             serve_handle: std::sync::Mutex::new(None),
             serve_done_rx: std::sync::Mutex::new(None),
@@ -431,11 +430,6 @@ impl IrohEndpoint {
         &self.inner.node_id_str
     }
 
-    /// The configured serve-error limit for the serve loop.
-    pub fn max_serve_errors(&self) -> usize {
-        self.inner.server_limits.max_serve_errors.unwrap_or(5)
-    }
-
     /// Immediately run a TTL sweep on all handle registries, evicting any
     /// entries whose TTL has expired.
     ///
@@ -450,14 +444,6 @@ impl IrohEndpoint {
         if !ttl.is_zero() {
             self.inner.handles.sweep(ttl);
         }
-    }
-
-    /// Build a [`ServeOptions`] from the endpoint's stored configuration.
-    ///
-    /// Platform adapters should call this instead of constructing `ServeOptions`
-    /// manually so that all server-limit fields are forwarded consistently.
-    pub fn serve_options(&self) -> crate::server::ServeOptions {
-        self.inner.server_limits.clone()
     }
 
     /// The node's raw secret key bytes (32 bytes).
@@ -595,10 +581,7 @@ impl IrohEndpoint {
 
     /// Maximum decompressed response-body bytes accepted per outgoing fetch.
     pub fn max_response_body_bytes(&self) -> usize {
-        self.inner
-            .server_limits
-            .max_response_body_bytes
-            .unwrap_or(crate::server::DEFAULT_MAX_RESPONSE_BODY_BYTES)
+        self.inner.max_response_body_bytes
     }
 
     /// Access the connection pool.

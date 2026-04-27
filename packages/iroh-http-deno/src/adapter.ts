@@ -607,10 +607,16 @@ function syncRespond(
  */
 export const rawServe: RawServeFn = (
   endpointHandle: number,
-  options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
+  options: {
+    onConnectionEvent?: (event: PeerConnectionEvent) => void;
+    serveOptions?: import("@momics/iroh-http-shared").FfiServeOptions;
+  },
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ): Promise<void> => {
-  return call<Record<never, never>>("serveStart", { endpointHandle }).then(
+  return call<Record<never, never>>("serveStart", {
+    endpointHandle,
+    ...options.serveOptions,
+  }).then(
     () => {
       // Start connection event polling loop if a callback was supplied.
       if (options.onConnectionEvent) {
@@ -783,8 +789,6 @@ export async function createEndpointInfo(
     dnsDiscoveryEnabled: discovery.dnsEnabled,
     channelCapacity: options?.internals?.channelCapacity ?? null,
     maxChunkSizeBytes: options?.internals?.maxChunkSizeBytes ?? null,
-    maxServeErrors: options?.internals?.maxServeErrors ?? null,
-    drainTimeout: options?.internals?.drainTimeout ?? null,
     handleTtl: options?.internals?.handleTtl ?? null,
     maxPooledConnections: options?.connections?.maxPooled ?? null,
     poolIdleTimeoutMs: options?.connections?.poolIdleTimeoutMs ?? null,
@@ -800,12 +804,7 @@ export async function createEndpointInfo(
     compressionMinBodyBytes: typeof options?.compression === "object"
       ? (options.compression.minBodyBytes ?? null)
       : null,
-    maxConcurrency: options?.connections?.maxConcurrency ?? null,
-    maxConnectionsPerPeer: options?.connections?.maxPerPeer ?? null,
-    requestTimeout: options?.limits?.requestTimeoutMs ?? null,
-    maxRequestBodyBytes: options?.limits?.maxRequestBodyBytes ?? null,
     maxHeaderBytes: options?.limits?.maxHeaderBytes ?? null,
-    maxTotalConnections: options?.connections?.maxTotal ?? null,
   }).catch((e: unknown) => {
     throw classifyBindError(e);
   });
@@ -1206,7 +1205,10 @@ export class DenoAdapter extends IrohAdapter {
 
   rawServe(
     endpointHandle: number,
-    options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
+    options: {
+      onConnectionEvent?: (event: PeerConnectionEvent) => void;
+      serveOptions?: import("@momics/iroh-http-shared").FfiServeOptions;
+    },
     callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
   ): Promise<void> {
     // Delegate to the module-level rawServe which owns the polling loop.

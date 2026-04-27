@@ -154,7 +154,10 @@ class TauriAdapter extends IrohAdapter {
 
   rawServe(
     endpointHandle: number,
-    options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
+    options: {
+      onConnectionEvent?: (event: PeerConnectionEvent) => void;
+      serveOptions?: import("@momics/iroh-http-shared").FfiServeOptions;
+    },
     callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
   ): Promise<void> {
     const channel = new Channel<TauriRequestPayload>();
@@ -204,6 +207,14 @@ class TauriAdapter extends IrohAdapter {
 
     invoke(`${PLUGIN}|serve`, {
       endpointHandle: Number(endpointHandle),
+      maxConcurrency: options.serveOptions?.maxConcurrency ?? null,
+      maxConnectionsPerPeer: options.serveOptions?.maxConnectionsPerPeer ?? null,
+      requestTimeout: options.serveOptions?.requestTimeout ?? null,
+      maxRequestBodyBytes: options.serveOptions?.maxRequestBodyBytes ?? null,
+      maxTotalConnections: options.serveOptions?.maxTotalConnections ?? null,
+      maxServeErrors: options.serveOptions?.maxServeErrors ?? null,
+      drainTimeout: options.serveOptions?.drainTimeout ?? null,
+      loadShed: options.serveOptions?.loadShed ?? null,
       channel,
       connChannel,
     }).catch((err: unknown) =>
@@ -513,8 +524,6 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         dnsDiscoveryEnabled: discovery.dnsEnabled,
         channelCapacity: options.internals?.channelCapacity ?? null,
         maxChunkSizeBytes: options.internals?.maxChunkSizeBytes ?? null,
-        maxServeErrors: options.internals?.maxServeErrors ?? null,
-        drainTimeout: options.internals?.drainTimeout ?? null,
         handleTtl: options.internals?.handleTtl ?? null,
         maxPooledConnections: options.connections?.maxPooled ?? null,
         poolIdleTimeoutMs: options.connections?.poolIdleTimeoutMs ?? null,
@@ -530,12 +539,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         compressionMinBodyBytes: typeof options.compression === "object"
           ? options.compression.minBodyBytes ?? null
           : null,
-        maxConcurrency: options.connections?.maxConcurrency ?? null,
-        maxConnectionsPerPeer: options.connections?.maxPerPeer ?? null,
-        requestTimeout: options.limits?.requestTimeoutMs ?? null,
-        maxRequestBodyBytes: options.limits?.maxRequestBodyBytes ?? null,
         maxHeaderBytes: options.limits?.maxHeaderBytes ?? null,
-        maxTotalConnections: options.connections?.maxTotal ?? null,
       }
       : null,
   }).catch((e: unknown) => {

@@ -3,6 +3,7 @@ export type {
   CloseOptions,
   EndpointInfo,
   FfiDuplexStream,
+  FfiServeOptions,
   IrohFetchInit,
   NodeAddrInfo,
   PeerConnectionEvent,

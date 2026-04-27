@@ -737,33 +737,12 @@ async fn endpoint_close() {
 }
 
 #[tokio::test]
-async fn endpoint_max_serve_errors_default() {
-    let opts = NodeOptions {
-        networking: NetworkingOptions {
-            disabled: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let ep = IrohEndpoint::bind(opts).await.unwrap();
-    assert_eq!(ep.max_serve_errors(), 5);
-}
-
-#[tokio::test]
-async fn endpoint_max_serve_errors_custom() {
-    let opts = NodeOptions {
-        networking: NetworkingOptions {
-            disabled: true,
-            ..Default::default()
-        },
-        server_limits: iroh_http_core::server::ServerLimits {
-            max_serve_errors: Some(10),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let ep = IrohEndpoint::bind(opts).await.unwrap();
-    assert_eq!(ep.max_serve_errors(), 10);
+async fn serve_options_defaults() {
+    let opts = ServeOptions::default();
+    // max_serve_errors defaults to None (resolved to 5 at serve time).
+    assert_eq!(opts.max_serve_errors, None);
+    assert_eq!(opts.max_concurrency, None);
+    assert_eq!(opts.drain_timeout_ms, None);
 }
 
 // -- URL with query params and fragments --------------------------------------

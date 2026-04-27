@@ -36,35 +36,34 @@ use crate::{
 type BoxBody = crate::BoxBody;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-// ── ServerLimits ──────────────────────────────────────────────────────────────
+// ── ServeOptions ──────────────────────────────────────────────────────────────
 
-/// Server-side limits shared between [`NodeOptions`](crate::NodeOptions) and
-/// the serve path.
+/// Options for the HTTP serve loop.
 ///
-/// Embedding this struct in both `NodeOptions` and `EndpointInner` guarantees
-/// that adding a new limit field produces a compile error if only one side is
-/// updated.
+/// Passed directly to [`serve()`] or [`serve_with_events()`].  These govern
+/// per-request middleware (Tower layers), inbound connection caps, and
+/// serve-loop lifecycle — they do **not** affect outgoing fetch calls.
 #[derive(Debug, Clone, Default)]
-pub struct ServerLimits {
+pub struct ServeOptions {
+    /// Maximum simultaneous in-flight requests.  Default: 1024.
     pub max_concurrency: Option<usize>,
+    /// Consecutive accept-loop errors before the serve loop terminates.  Default: 5.
     pub max_serve_errors: Option<usize>,
+    /// Per-request timeout in milliseconds.  Default: 60 000.
     pub request_timeout_ms: Option<u64>,
+    /// Maximum connections from a single peer.  Default: 8.
     pub max_connections_per_peer: Option<usize>,
+    /// Reject request bodies larger than this many bytes.  Default: 16 MiB.
     pub max_request_body_bytes: Option<usize>,
-    /// Maximum decompressed response body bytes the client will accept per fetch.
-    /// Applies to the *client* side (outgoing fetch calls).  Default: 256 MiB.
-    pub max_response_body_bytes: Option<usize>,
+    /// Graceful shutdown drain window in milliseconds.  Default: 30 000.
     pub drain_timeout_ms: Option<u64>,
+    /// Maximum total QUIC connections the server will accept.  Default: unlimited.
     pub max_total_connections: Option<usize>,
     /// When `true` (the default), reject new requests immediately with `503
     /// Service Unavailable` when `max_concurrency` is already reached rather
     /// than queuing them.  Prevents thundering-herd on recovery.
     pub load_shed: Option<bool>,
 }
-
-/// Backward-compatible alias — existing code that names `ServeOptions` keeps
-/// compiling without changes.
-pub type ServeOptions = ServerLimits;
 
 const DEFAULT_CONCURRENCY: usize = 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;

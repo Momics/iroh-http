@@ -115,10 +115,10 @@ The Node.js adapter uses a `ThreadsafeFunction` queue between the Rust serve
 loop and the JS handler. When the queue is full, new requests are dropped with
 503.
 
-**Queue capacity** is controlled by `NodeOptions.advanced.channelCapacity`
+**Queue capacity** is controlled by `NodeOptions.internals.channelCapacity`
 (default 32). Increase this if your handler is slower than the incoming rate.
 
-**Concurrency limit** is `NodeOptions.maxConcurrency` (default 64). Requests
+**Concurrency limit** is `ServeOptions.maxConcurrency` (default 1024). Requests
 above this limit time out with 408.
 
 ---

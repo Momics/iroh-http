@@ -33,8 +33,6 @@ mod tests {
             dns_discovery_enabled: Some(false),
             channel_capacity: None,
             max_chunk_size_bytes: None,
-            max_serve_errors: None,
-            drain_timeout: None,
             handle_ttl: None,
             sweep_interval: None,
             disable_networking: Some(true),
@@ -45,14 +43,9 @@ mod tests {
             compression_min_body_bytes: None,
             #[cfg(feature = "compression")]
             compression_level: None,
-            max_concurrency: None,
-            max_connections_per_peer: None,
-            request_timeout: None,
-            max_request_body_bytes: None,
             max_header_bytes: None,
             max_pooled_connections: None,
             pool_idle_timeout_ms: None,
-            max_total_connections: None,
         }))
         .await
         .expect("create_endpoint should succeed");
@@ -268,8 +261,6 @@ mod tests {
             dns_discovery_enabled: Some(false),
             channel_capacity: None,
             max_chunk_size_bytes: None,
-            max_serve_errors: None,
-            drain_timeout: None,
             handle_ttl: None,
             sweep_interval: None,
             disable_networking: Some(true),
@@ -280,14 +271,9 @@ mod tests {
             compression_min_body_bytes: None,
             #[cfg(feature = "compression")]
             compression_level: None,
-            max_concurrency: None,
-            max_connections_per_peer: None,
-            request_timeout: None,
-            max_request_body_bytes: None,
             max_header_bytes: None,
             max_pooled_connections: None,
             pool_idle_timeout_ms: None,
-            max_total_connections: None,
         }))
         .await
         .expect("create_endpoint");

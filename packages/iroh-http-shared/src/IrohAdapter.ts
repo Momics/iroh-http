@@ -81,9 +81,23 @@ export type RawFetchFn = (
 
 export type AllocBodyWriterFn = () => bigint | Promise<bigint>;
 
+export interface FfiServeOptions {
+  maxConcurrency?: number;
+  maxConnectionsPerPeer?: number;
+  requestTimeout?: number;
+  maxRequestBodyBytes?: number;
+  maxTotalConnections?: number;
+  maxServeErrors?: number;
+  drainTimeout?: number;
+  loadShed?: boolean;
+}
+
 export type RawServeFn = (
   endpointHandle: number,
-  options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
+  options: {
+    onConnectionEvent?: (event: PeerConnectionEvent) => void;
+    serveOptions?: FfiServeOptions;
+  },
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ) => Promise<void>;
 
@@ -111,7 +125,10 @@ export abstract class IrohAdapter {
 
   abstract rawServe(
     endpointHandle: number,
-    options: { onConnectionEvent?: (event: PeerConnectionEvent) => void },
+    options: {
+      onConnectionEvent?: (event: PeerConnectionEvent) => void;
+      serveOptions?: FfiServeOptions;
+    },
     callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
   ): Promise<void>;
 

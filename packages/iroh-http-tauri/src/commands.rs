@@ -30,8 +30,6 @@ pub struct CreateEndpointArgs {
     pub dns_discovery_enabled: Option<bool>,
     pub channel_capacity: Option<usize>,
     pub max_chunk_size_bytes: Option<usize>,
-    pub max_serve_errors: Option<usize>,
-    pub drain_timeout: Option<u64>,
     pub handle_ttl: Option<u64>,
     pub sweep_interval: Option<u64>,
     pub disable_networking: Option<bool>,
@@ -42,15 +40,10 @@ pub struct CreateEndpointArgs {
     pub compression_min_body_bytes: Option<usize>,
     #[cfg(feature = "compression")]
     pub compression_level: Option<u32>,
-    pub max_concurrency: Option<usize>,
-    pub max_connections_per_peer: Option<usize>,
-    pub request_timeout: Option<u64>,
-    pub max_request_body_bytes: Option<usize>,
     pub max_header_bytes: Option<usize>,
     /// TAURI-002: pool-tuning options previously ignored.
     pub max_pooled_connections: Option<usize>,
     pub pool_idle_timeout_ms: Option<u64>,
-    pub max_total_connections: Option<usize>,
 }
 
 /// Info returned after a successful endpoint bind.
@@ -102,24 +95,14 @@ pub async fn create_endpoint(
                 streaming: StreamingOptions {
                     channel_capacity: a.channel_capacity,
                     max_chunk_size_bytes: a.max_chunk_size_bytes,
-                    drain_timeout_ms: a.drain_timeout,
+                    drain_timeout_ms: None,
                     handle_ttl_ms: a.handle_ttl,
                     sweep_interval_ms: a.sweep_interval,
                 },
                 capabilities: Vec::new(),
                 keylog: a.keylog.unwrap_or(false),
                 max_header_size: a.max_header_bytes,
-                server_limits: iroh_http_core::server::ServerLimits {
-                    max_concurrency: a.max_concurrency,
-                    max_connections_per_peer: a.max_connections_per_peer,
-                    request_timeout_ms: a.request_timeout,
-                    max_request_body_bytes: a.max_request_body_bytes,
-                    max_response_body_bytes: None,
-                    max_serve_errors: a.max_serve_errors,
-                    drain_timeout_ms: None,
-                    max_total_connections: a.max_total_connections,
-                    load_shed: None,
-                },
+                max_response_body_bytes: None,
                 #[cfg(feature = "compression")]
                 compression: if a.compression_min_body_bytes.is_some()
                     || a.compression_level.is_some()
@@ -562,6 +545,14 @@ pub struct ServeEventPayload {
 #[command]
 pub async fn serve(
     endpoint_handle: u64,
+    max_concurrency: Option<usize>,
+    max_connections_per_peer: Option<usize>,
+    request_timeout: Option<u64>,
+    max_request_body_bytes: Option<usize>,
+    max_total_connections: Option<usize>,
+    max_serve_errors: Option<usize>,
+    drain_timeout: Option<u64>,
+    load_shed: Option<bool>,
     channel: Channel<ServeEventPayload>,
     conn_channel: Channel<ConnectionEvent>,
 ) -> Result<(), String> {
@@ -571,6 +562,17 @@ pub async fn serve(
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
+
+    let serve_opts = iroh_http_core::ServeOptions {
+        max_concurrency,
+        max_connections_per_peer,
+        request_timeout_ms: request_timeout,
+        max_request_body_bytes,
+        max_total_connections,
+        max_serve_errors,
+        drain_timeout_ms: drain_timeout,
+        load_shed,
+    };
 
     let conn_event_fn: Option<std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync>> = {
         let arc: std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync> =
@@ -588,7 +590,7 @@ pub async fn serve(
 
     let handle = iroh_http_core::serve_with_events(
         ep.clone(),
-        ep.serve_options(),
+        serve_opts,
         move |payload: RequestPayload| {
             let ch = channel.clone();
             let req_handle = payload.req_handle;

@@ -135,15 +135,7 @@ interface NodeOptions {
   // ── Compression ───────────────────────────────────────────────────
   compression?: boolean | { level?: number; minBodyBytes?: number };
 
-  // ── Server limits ─────────────────────────────────────────────────
-  /** Max concurrent in-flight requests. Default: 1024. */
-  maxConcurrency?: number;
-  /** Max QUIC connections from one peer. Default: 8. */
-  maxConnectionsPerPeer?: number;
-  /** Per-request timeout in ms. Default: 60 000. */
-  requestTimeout?: number;
-  /** Max request body size in bytes. Unlimited by default. */
-  maxRequestBodyBytes?: number;
+  // ── Limits ────────────────────────────────────────────────────────
   /** Max header block size in bytes. Default: 65 536. */
   maxHeaderBytes?: number;
 
@@ -154,9 +146,7 @@ interface NodeOptions {
   advanced?: {
     channelCapacity?: number;
     maxChunkSizeBytes?: number;
-    drainTimeout?: number;
     handleTtl?: number;
-    maxServeErrors?: number;
   };
 
   // ── Testing ───────────────────────────────────────────────────────
@@ -210,21 +200,30 @@ interface ServeHandle {
 
 ### `ServeOptions`
 
-Options for `node.serve()`. Same shape as the server-limit fields from
-`NodeOptions` — allows overriding per-serve-call.
+Server-side configuration passed at `node.serve()` time.
 
 ```ts
 interface ServeOptions {
+  /** Called when a handler throws. Returns a fallback Response. */
+  onError?: (error: unknown) => Response | Promise<Response>;
+  /** Abort signal for graceful shutdown. */
+  signal?: AbortSignal;
+  /** Max concurrent in-flight requests. Default: 1024. */
   maxConcurrency?: number;
+  /** Max QUIC connections from one peer. Default: 8. */
   maxConnectionsPerPeer?: number;
+  /** Per-request timeout in ms. Default: 60 000. 0 = disabled. */
   requestTimeout?: number;
+  /** Max request body size in bytes. Unlimited by default. */
   maxRequestBodyBytes?: number;
-  drainTimeout?: number;
+  /** Max total QUIC connections. Unlimited by default. */
+  maxTotalConnections?: number;
+  /** Max consecutive accept errors before shutdown. Default: 5. */
   maxServeErrors?: number;
-  /** Called when a peer's QUIC connection count goes from 0 → 1. */
-  onPeerConnect?: (peerId: string) => void;
-  /** Called when a peer's QUIC connection count goes from 1 → 0. */
-  onPeerDisconnect?: (peerId: string) => void;
+  /** Drain timeout in ms after shutdown. Default: 5 000. */
+  drainTimeout?: number;
+  /** Reject with 503 at capacity instead of queuing. Default: false. */
+  loadShed?: boolean;
 }
 ```
 

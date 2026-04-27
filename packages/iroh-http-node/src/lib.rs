@@ -324,8 +324,6 @@ pub struct JsNodeOptions {
     pub dns_discovery_enabled: Option<bool>,
     pub channel_capacity: Option<u32>,
     pub max_chunk_size_bytes: Option<u32>,
-    pub max_serve_errors: Option<u32>,
-    pub drain_timeout: Option<f64>,
     pub handle_ttl: Option<f64>,
     pub sweep_interval: Option<f64>,
     pub max_pooled_connections: Option<u32>,
@@ -336,18 +334,8 @@ pub struct JsNodeOptions {
     pub keylog: Option<bool>,
     pub compression_level: Option<i32>,
     pub compression_min_body_bytes: Option<u32>,
-    /// Maximum simultaneous in-flight requests.  Default: 1024.
-    pub max_concurrency: Option<u32>,
-    /// Maximum connections from a single peer.  Default: 8.
-    pub max_connections_per_peer: Option<u32>,
-    /// Per-request timeout in milliseconds.  Default: 60 000.  0 = disabled.
-    pub request_timeout: Option<f64>,
-    /// Reject request bodies larger than this many bytes.  Default: unlimited.
-    pub max_request_body_bytes: Option<f64>,
     /// Maximum header block size in bytes.  Default: 65536.
     pub max_header_bytes: Option<f64>,
-    /// Maximum total QUIC connections the server will accept.  Default: unlimited.
-    pub max_total_connections: Option<f64>,
 }
 
 /// Info returned after a successful `createEndpoint` call.
@@ -403,33 +391,14 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                 streaming: StreamingOptions {
                     channel_capacity: o.channel_capacity.map(|v| v as usize),
                     max_chunk_size_bytes: o.max_chunk_size_bytes.map(|v| v as usize),
-                    drain_timeout_ms: o.drain_timeout.map(|v| safe_f64_to_u64(v, "drainTimeout", MAX_TIMEOUT_MS)).transpose()?,
+                    drain_timeout_ms: None,
                     handle_ttl_ms: o.handle_ttl.map(|v| safe_f64_to_u64(v, "handleTtl", MAX_TIMEOUT_MS)).transpose()?,
                     sweep_interval_ms: o.sweep_interval.map(|v| safe_f64_to_u64(v, "sweepInterval", MAX_TIMEOUT_MS)).transpose()?,
                 },
                 capabilities: Vec::new(),
                 keylog: o.keylog.unwrap_or(false),
                 max_header_size: o.max_header_bytes.map(|v| safe_f64_to_usize(v, "maxHeaderBytes", MAX_HEADER_BYTES)).transpose()?,
-                server_limits: iroh_http_core::server::ServerLimits {
-                    max_concurrency: o.max_concurrency.map(|v| v as usize),
-                    max_connections_per_peer: o.max_connections_per_peer.map(|v| v as usize),
-                    request_timeout_ms: o
-                        .request_timeout
-                        .map(|v| safe_f64_to_u64(v, "requestTimeout", MAX_TIMEOUT_MS))
-                        .transpose()?,
-                    max_request_body_bytes: o
-                        .max_request_body_bytes
-                        .map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes", MAX_BODY_BYTES))
-                        .transpose()?,
-                    max_response_body_bytes: None,
-                    max_serve_errors: o.max_serve_errors.map(|v| v as usize),
-                    drain_timeout_ms: None,
-                    max_total_connections: o
-                        .max_total_connections
-                        .map(|v| safe_f64_to_usize(v, "maxTotalConnections", MAX_TOTAL_CONNECTIONS))
-                        .transpose()?,
-                    load_shed: None,
-                },
+                max_response_body_bytes: None,
                 #[cfg(feature = "compression")]
                 // NODE-003: enable compression when level or minBodyBytes is provided.
                 compression: if o.compression_min_body_bytes.is_some()
@@ -1044,13 +1013,70 @@ pub fn raw_respond(
     .map_err(|e| napi::Error::new(Status::GenericFailure, e))
 }
 
+/// Server-side configuration passed at `serve()` time.
+#[napi(object)]
+pub struct JsServeOptions {
+    /// Maximum simultaneous in-flight requests.  Default: 1024.
+    pub max_concurrency: Option<u32>,
+    /// Maximum connections from a single peer.  Default: 8.
+    pub max_connections_per_peer: Option<u32>,
+    /// Per-request timeout in milliseconds.  Default: 60 000.  0 = disabled.
+    pub request_timeout: Option<f64>,
+    /// Reject request bodies larger than this many bytes.  Default: unlimited.
+    pub max_request_body_bytes: Option<f64>,
+    /// Maximum total QUIC connections the server will accept.  Default: unlimited.
+    pub max_total_connections: Option<f64>,
+    /// Maximum serve errors before shutdown.  Default: 5.
+    pub max_serve_errors: Option<u32>,
+    /// Drain timeout in milliseconds after shutdown signal.  Default: 5000.
+    pub drain_timeout: Option<f64>,
+    /// Enable load-shedding (reject with 503 when at capacity).
+    pub load_shed: Option<bool>,
+}
+
 #[napi]
 pub fn raw_serve(
     endpoint_handle: u32,
+    serve_options: Option<JsServeOptions>,
     handler: JsFunction,
     on_connection_event: Option<JsFunction>,
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
+
+    let serve_opts = {
+        let o = serve_options.unwrap_or(JsServeOptions {
+            max_concurrency: None,
+            max_connections_per_peer: None,
+            request_timeout: None,
+            max_request_body_bytes: None,
+            max_total_connections: None,
+            max_serve_errors: None,
+            drain_timeout: None,
+            load_shed: None,
+        });
+        iroh_http_core::ServeOptions {
+            max_concurrency: o.max_concurrency.map(|v| v as usize),
+            max_connections_per_peer: o.max_connections_per_peer.map(|v| v as usize),
+            request_timeout_ms: o
+                .request_timeout
+                .map(|v| safe_f64_to_u64(v, "requestTimeout", MAX_TIMEOUT_MS))
+                .transpose()?,
+            max_request_body_bytes: o
+                .max_request_body_bytes
+                .map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes", MAX_BODY_BYTES))
+                .transpose()?,
+            max_total_connections: o
+                .max_total_connections
+                .map(|v| safe_f64_to_usize(v, "maxTotalConnections", MAX_TOTAL_CONNECTIONS))
+                .transpose()?,
+            max_serve_errors: o.max_serve_errors.map(|v| v as usize),
+            drain_timeout_ms: o
+                .drain_timeout
+                .map(|v| safe_f64_to_u64(v, "drainTimeout", MAX_TIMEOUT_MS))
+                .transpose()?,
+            load_shed: o.load_shed,
+        }
+    };
 
     type CallArgs = RequestPayload;
     // Use ErrorStrategy::Fatal but do NOT rely on the return value — the JS
@@ -1114,7 +1140,7 @@ pub fn raw_serve(
     let ep_clone = ep.clone();
     let handle = iroh_http_core::serve_with_events(
         ep.clone(),
-        ep.serve_options(),
+        serve_opts,
         move |payload: RequestPayload| {
             let tsfn = Arc::clone(&tsfn);
             let ep_ref = ep_clone.clone();
