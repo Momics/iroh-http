@@ -192,6 +192,6 @@ export interface NodeOptions {
      * Maximum consecutive accept-loop errors before the serve loop terminates.
      * @default 10
      */
-    maxConsecutiveErrors?: number;
+    maxServeErrors?: number;
   };
 }

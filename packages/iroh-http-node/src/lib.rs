@@ -324,7 +324,7 @@ pub struct JsNodeOptions {
     pub dns_discovery_enabled: Option<bool>,
     pub channel_capacity: Option<u32>,
     pub max_chunk_size_bytes: Option<u32>,
-    pub max_consecutive_errors: Option<u32>,
+    pub max_serve_errors: Option<u32>,
     pub drain_timeout: Option<f64>,
     pub handle_ttl: Option<f64>,
     pub sweep_interval: Option<f64>,
@@ -422,8 +422,8 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                         .map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes", MAX_BODY_BYTES))
                         .transpose()?,
                     max_response_body_bytes: None,
-                    max_consecutive_errors: o.max_consecutive_errors.map(|v| v as usize),
-                    drain_timeout_secs: None,
+                    max_serve_errors: o.max_serve_errors.map(|v| v as usize),
+                    drain_timeout_ms: None,
                     max_total_connections: o
                         .max_total_connections
                         .map(|v| safe_f64_to_usize(v, "maxTotalConnections", MAX_TOTAL_CONNECTIONS))

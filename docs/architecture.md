@@ -188,7 +188,7 @@ Handles cross FFI as `u64`. In JavaScript: transmitted as `BigInt`, converted at
 | Per-peer connection limit | 8 | `ServeOptions::max_connections_per_peer` |
 | Max request head size | 64 KB | `NodeOptions::max_header_size` |
 | Max request body size | none | `ServeOptions::max_request_body_bytes` |
-| Drain timeout | 30s | `ServeOptions::drain_timeout_secs` |
+| Drain timeout | 30 000 ms | `ServeOptions::drain_timeout_ms` |
 
 All defaults are safe against hostile peers without opt-in. Increasing limits is always explicit.
 

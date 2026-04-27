@@ -156,7 +156,7 @@ interface NodeOptions {
     maxChunkSizeBytes?: number;
     drainTimeout?: number;
     handleTtl?: number;
-    maxConsecutiveErrors?: number;
+    maxServeErrors?: number;
   };
 
   // ── Testing ───────────────────────────────────────────────────────
@@ -220,7 +220,7 @@ interface ServeOptions {
   requestTimeout?: number;
   maxRequestBodyBytes?: number;
   drainTimeout?: number;
-  maxConsecutiveErrors?: number;
+  maxServeErrors?: number;
   /** Called when a peer's QUIC connection count goes from 0 → 1. */
   onPeerConnect?: (peerId: string) => void;
   /** Called when a peer's QUIC connection count goes from 1 → 0. */

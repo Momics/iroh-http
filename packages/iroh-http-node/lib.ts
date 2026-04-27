@@ -439,7 +439,7 @@ export async function createNode(options?: NodeOptions): Promise<IrohNode> {
         dnsDiscoveryEnabled: discovery.dnsEnabled,
         channelCapacity: options.internals?.channelCapacity,
         maxChunkSizeBytes: options.internals?.maxChunkSizeBytes,
-        maxConsecutiveErrors: options.internals?.maxConsecutiveErrors,
+        maxServeErrors: options.internals?.maxServeErrors,
         drainTimeout: options.internals?.drainTimeout,
         handleTtl: options.internals?.handleTtl,
         maxPooledConnections: options.connections?.maxPooled,

@@ -13,7 +13,7 @@ export interface JsNodeOptions {
   dnsDiscoveryEnabled?: boolean
   channelCapacity?: number
   maxChunkSizeBytes?: number
-  maxConsecutiveErrors?: number
+  maxServeErrors?: number
   drainTimeout?: number
   handleTtl?: number
   sweepInterval?: number

@@ -737,7 +737,7 @@ async fn endpoint_close() {
 }
 
 #[tokio::test]
-async fn endpoint_max_consecutive_errors_default() {
+async fn endpoint_max_serve_errors_default() {
     let opts = NodeOptions {
         networking: NetworkingOptions {
             disabled: true,
@@ -746,24 +746,24 @@ async fn endpoint_max_consecutive_errors_default() {
         ..Default::default()
     };
     let ep = IrohEndpoint::bind(opts).await.unwrap();
-    assert_eq!(ep.max_consecutive_errors(), 5);
+    assert_eq!(ep.max_serve_errors(), 5);
 }
 
 #[tokio::test]
-async fn endpoint_max_consecutive_errors_custom() {
+async fn endpoint_max_serve_errors_custom() {
     let opts = NodeOptions {
         networking: NetworkingOptions {
             disabled: true,
             ..Default::default()
         },
         server_limits: iroh_http_core::server::ServerLimits {
-            max_consecutive_errors: Some(10),
+            max_serve_errors: Some(10),
             ..Default::default()
         },
         ..Default::default()
     };
     let ep = IrohEndpoint::bind(opts).await.unwrap();
-    assert_eq!(ep.max_consecutive_errors(), 10);
+    assert_eq!(ep.max_serve_errors(), 10);
 }
 
 // -- URL with query params and fragments --------------------------------------
@@ -1418,6 +1418,28 @@ async fn max_header_size_custom() {
     assert_eq!(ep.max_header_size(), 1024);
 }
 
+/// Verify that max_header_size: Some(0) is rejected.
+#[tokio::test]
+async fn max_header_size_zero_is_rejected() {
+    let result = IrohEndpoint::bind(NodeOptions {
+        networking: NetworkingOptions {
+            disabled: true,
+            ..Default::default()
+        },
+        max_header_size: Some(0),
+        ..Default::default()
+    })
+    .await;
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("bind should reject max_header_size: Some(0)"),
+    };
+    assert!(
+        err.message.contains("max_header_size"),
+        "error should mention max_header_size, got: {err}"
+    );
+}
+
 // -- Graceful shutdown (patch 15) ---------------------------------------------
 
 /// Graceful shutdown: in-flight request completes, then drain finishes.
@@ -1437,7 +1459,7 @@ async fn graceful_shutdown_drains_in_flight() {
     let handle = serve(
         server_ep.clone(),
         ServeOptions {
-            drain_timeout_secs: Some(10),
+            drain_timeout_ms: Some(10_000),
             ..Default::default()
         },
         move |payload: RequestPayload| {
@@ -1992,7 +2014,7 @@ async fn node_close_drains_in_flight() {
     let handle = serve(
         server_ep.clone(),
         ServeOptions {
-            drain_timeout_secs: Some(5),
+            drain_timeout_ms: Some(5_000),
             ..Default::default()
         },
         move |payload: RequestPayload| {
@@ -2602,4 +2624,31 @@ async fn bind_accepts_known_alpn_capabilities() {
         .await
         .expect("valid ALPNs should be accepted");
     ep.close().await;
+}
+
+// ── Compression level validation ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn bind_rejects_out_of_range_compression_level() {
+    let opts = NodeOptions {
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
+        compression: Some(iroh_http_core::CompressionOptions {
+            min_body_bytes: 512,
+            level: Some(99),
+        }),
+        ..Default::default()
+    };
+    let result = IrohEndpoint::bind(opts).await;
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("bind should reject compression level 99"),
+    };
+    assert!(
+        err.message.contains("compression level"),
+        "error should mention compression level, got: {err}"
+    );
 }

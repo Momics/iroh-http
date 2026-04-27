@@ -234,6 +234,16 @@ impl IrohEndpoint {
             }
         }
 
+        // Validate compression level range (zstd accepts 1–22).
+        #[cfg(feature = "compression")]
+        if let Some(level) = opts.compression.as_ref().and_then(|c| c.level) {
+            if !(1..=22).contains(&level) {
+                return Err(crate::CoreError::invalid_input(format!(
+                    "compression level must be 1–22, got {level}"
+                )));
+            }
+        }
+
         let alpns: Vec<Vec<u8>> = if opts.capabilities.is_empty() {
             // Advertise both ALPN variants.
             vec![ALPN_DUPLEX.to_vec(), ALPN.to_vec()]
@@ -366,16 +376,20 @@ impl IrohEndpoint {
                     .map(std::time::Duration::from_millis),
                 Some(event_tx.clone()),
             ),
-            // ISS-020: treat 0 as "use default" — it would otherwise underflow
-            // the hyper minimum (ISS-001).  None also defaults to 64 KB.
+            // ISS-020: treat 0 as an error — callers should use `None` for the default.
             max_header_size: match opts.max_header_size {
-                None | Some(0) => 64 * 1024,
+                Some(0) => {
+                    return Err(crate::CoreError::invalid_input(
+                        "max_header_size must be > 0; use None for the default (65536)",
+                    ));
+                }
+                None => 64 * 1024,
                 Some(n) => n,
             },
             server_limits: {
                 let mut sl = opts.server_limits.clone();
-                if sl.max_consecutive_errors.is_none() {
-                    sl.max_consecutive_errors = Some(5);
+                if sl.max_serve_errors.is_none() {
+                    sl.max_serve_errors = Some(5);
                 }
                 sl
             },
@@ -417,9 +431,9 @@ impl IrohEndpoint {
         &self.inner.node_id_str
     }
 
-    /// The configured consecutive-error limit for the serve loop.
-    pub fn max_consecutive_errors(&self) -> usize {
-        self.inner.server_limits.max_consecutive_errors.unwrap_or(5)
+    /// The configured serve-error limit for the serve loop.
+    pub fn max_serve_errors(&self) -> usize {
+        self.inner.server_limits.max_serve_errors.unwrap_or(5)
     }
 
     /// Immediately run a TTL sweep on all handle registries, evicting any
@@ -598,7 +612,7 @@ impl IrohEndpoint {
     pub fn endpoint_stats(&self) -> EndpointStats {
         let (active_readers, active_writers, active_sessions, total_handles) =
             self.inner.handles.count_handles();
-        let pool_size = self.inner.pool.entry_count_approx();
+        let pool_size = self.inner.pool.entry_count_approx() as usize;
         let active_connections = self.inner.active_connections.load(Ordering::Relaxed);
         let active_requests = self.inner.active_requests.load(Ordering::Relaxed);
         EndpointStats {
@@ -856,7 +870,7 @@ pub struct EndpointStats {
     /// Total number of allocated (reader + writer + session + other) handles.
     pub total_handles: usize,
     /// Number of QUIC connections currently cached in the connection pool.
-    pub pool_size: u64,
+    pub pool_size: usize,
     /// Number of live QUIC connections accepted by the serve loop.
     pub active_connections: usize,
     /// Number of HTTP requests currently being processed.

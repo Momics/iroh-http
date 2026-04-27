@@ -133,7 +133,7 @@ cannot distinguish a migrating connection from a dead one. Lower
 | `advanced.maxChunkSizeBytes` | 65 536 (64 KB) | Fewer FFI calls (increase); lower per-call latency (decrease) |
 | `advanced.drainTimeout` | 30 000 ms | Slow readers expected (increase); tight latency SLA (decrease) |
 | `advanced.handleTtl` | 300 000 ms (5 min) | Transfers > 5 min (increase proportionally); short-lived nodes (decrease) |
-| `advanced.maxConsecutiveErrors` | 5 | Noisy channels (increase); fail-fast desired (decrease) |
+| `advanced.maxServeErrors` | 5 | Noisy channels (increase); fail-fast desired (decrease) |
 
 ---
 

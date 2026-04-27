@@ -47,14 +47,14 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Debug, Clone, Default)]
 pub struct ServerLimits {
     pub max_concurrency: Option<usize>,
-    pub max_consecutive_errors: Option<usize>,
+    pub max_serve_errors: Option<usize>,
     pub request_timeout_ms: Option<u64>,
     pub max_connections_per_peer: Option<usize>,
     pub max_request_body_bytes: Option<usize>,
     /// Maximum decompressed response body bytes the client will accept per fetch.
     /// Applies to the *client* side (outgoing fetch calls).  Default: 256 MiB.
     pub max_response_body_bytes: Option<usize>,
-    pub drain_timeout_secs: Option<u64>,
+    pub drain_timeout_ms: Option<u64>,
     pub max_total_connections: Option<usize>,
     /// When `true` (the default), reject new requests immediately with `503
     /// Service Unavailable` when `max_concurrency` is already reached rather
@@ -69,7 +69,7 @@ pub type ServeOptions = ServerLimits;
 const DEFAULT_CONCURRENCY: usize = 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
 const DEFAULT_MAX_CONNECTIONS_PER_PEER: usize = 8;
-const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_DRAIN_TIMEOUT_MS: u64 = 30_000;
 /// 16 MiB — applied when `max_request_body_bytes` is not explicitly set.
 /// Prevents memory exhaustion from unbounded request bodies.
 const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
@@ -604,7 +604,7 @@ where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
     let max = options.max_concurrency.unwrap_or(DEFAULT_CONCURRENCY);
-    let max_errors = options.max_consecutive_errors.unwrap_or(5);
+    let max_errors = options.max_serve_errors.unwrap_or(5);
     let request_timeout = options
         .request_timeout_ms
         .map(Duration::from_millis)
@@ -616,11 +616,8 @@ where
         .max_request_body_bytes
         .or(Some(DEFAULT_MAX_REQUEST_BODY_BYTES));
     let max_total_connections = options.max_total_connections;
-    let drain_timeout = Duration::from_secs(
-        options
-            .drain_timeout_secs
-            .unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS),
-    );
+    let drain_timeout =
+        Duration::from_millis(options.drain_timeout_ms.unwrap_or(DEFAULT_DRAIN_TIMEOUT_MS));
     // Load-shed is opt-out — default `true` (reject immediately when at capacity).
     let load_shed_enabled = options.load_shed.unwrap_or(true);
     let max_header_size = endpoint.max_header_size();
