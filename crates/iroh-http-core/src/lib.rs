@@ -136,6 +136,14 @@ pub const ALPN: &[u8] = b"iroh-http/2";
 /// ALPN for base + bidirectional streaming (duplex/raw_connect).
 pub const ALPN_DUPLEX: &[u8] = b"iroh-http/2-duplex";
 
+/// String form of [`ALPN`], for use in [`NodeOptions::capabilities`].
+pub const ALPN_STR: &str = "iroh-http/2";
+/// String form of [`ALPN_DUPLEX`], for use in [`NodeOptions::capabilities`].
+pub const ALPN_DUPLEX_STR: &str = "iroh-http/2-duplex";
+
+/// All recognised ALPN capability strings.
+pub const KNOWN_ALPNS: &[&str] = &[ALPN_STR, ALPN_DUPLEX_STR];
+
 // ── Shared body type alias ────────────────────────────────────────────────────
 
 /// Boxed HTTP body type used by both client and server.

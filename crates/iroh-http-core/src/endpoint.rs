@@ -91,7 +91,15 @@ pub struct NodeOptions {
     pub pool: PoolOptions,
     /// Body-streaming and handle-store configuration.
     pub streaming: StreamingOptions,
-    /// ALPN capabilities to advertise. Empty = advertise iroh-http/2 and iroh-http/2-duplex.
+    /// ALPN capabilities to advertise.
+    ///
+    /// Valid values: [`ALPN_STR`](crate::ALPN_STR) (`"iroh-http/2"`) and
+    /// [`ALPN_DUPLEX_STR`](crate::ALPN_DUPLEX_STR) (`"iroh-http/2-duplex"`).
+    ///
+    /// When empty (the default), both protocols are advertised. When non-empty,
+    /// the base protocol (`iroh-http/2`) is automatically injected if not
+    /// already present. Unknown values cause [`IrohEndpoint::bind`] to return
+    /// an error.
     pub capabilities: Vec<String>,
     /// Write TLS session keys to $SSLKEYLOGFILE. Dev/debug only.
     pub keylog: bool,
@@ -215,6 +223,16 @@ impl IrohEndpoint {
                 }
             }
         };
+
+        // Validate capabilities against known ALPN values.
+        for cap in &opts.capabilities {
+            if !crate::KNOWN_ALPNS.contains(&cap.as_str()) {
+                return Err(crate::CoreError::invalid_input(format!(
+                    "unknown ALPN capability: \"{cap}\"; valid values are {:?}",
+                    crate::KNOWN_ALPNS,
+                )));
+            }
+        }
 
         let alpns: Vec<Vec<u8>> = if opts.capabilities.is_empty() {
             // Advertise both ALPN variants.

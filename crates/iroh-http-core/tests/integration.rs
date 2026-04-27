@@ -2559,3 +2559,47 @@ async fn sweep_interval_ms_evicts_handles() {
         "leaked handle was not evicted by sweep_now() after TTL expired"
     );
 }
+
+// ── ALPN capability validation ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn bind_rejects_unknown_alpn_capability() {
+    let opts = NodeOptions {
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
+        capabilities: vec!["totally-bogus-alpn".into()],
+        ..Default::default()
+    };
+    let result = IrohEndpoint::bind(opts).await;
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("bind should reject unknown ALPN capability"),
+    };
+    assert!(
+        err.message.contains("unknown ALPN capability"),
+        "error message should mention the invalid value, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn bind_accepts_known_alpn_capabilities() {
+    let opts = NodeOptions {
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
+        capabilities: vec![
+            iroh_http_core::ALPN_STR.to_string(),
+            iroh_http_core::ALPN_DUPLEX_STR.to_string(),
+        ],
+        ..Default::default()
+    };
+    let ep = IrohEndpoint::bind(opts)
+        .await
+        .expect("valid ALPNs should be accepted");
+    ep.close().await;
+}
