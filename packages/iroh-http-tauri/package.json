@@ -12,20 +12,28 @@
   },
   "scripts": {
     "build": "cargo check && tsc --project tsconfig.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "peerDependencies": {
     "@tauri-apps/api": "^2"
   },
   "devDependencies": {
     "@tauri-apps/api": "^2",
-    "typescript": "^5"
+    "jsdom": "^29.1.0",
+    "typescript": "^5",
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "@momics/iroh-http-shared": "^0.3"
   },
-  "files": ["dist", "guest-js"],
-  "publishConfig": { "access": "public" },
+  "files": [
+    "dist",
+    "guest-js"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "(MIT OR Apache-2.0)",
   "repository": {
     "type": "git",

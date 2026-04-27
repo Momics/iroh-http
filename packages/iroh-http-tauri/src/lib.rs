@@ -3,6 +3,9 @@
 mod commands;
 mod state;
 
+#[cfg(test)]
+mod tests;
+
 #[cfg(mobile)]
 pub mod mobile_mdns;
 

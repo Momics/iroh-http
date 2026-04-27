@@ -5487,6 +5487,7 @@ dependencies = [
 name = "tauri-plugin-iroh-http"
 version = "0.3.3"
 dependencies = [
+ "base32",
  "base64 0.22.1",
  "bytes",
  "iroh-http-adapter",

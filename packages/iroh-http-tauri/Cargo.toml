@@ -37,5 +37,10 @@ tracing = "0.1"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 iroh-http-discovery = { path = "../../crates/iroh-http-discovery", version = "0.3.3", optional = true }
 
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+base32 = "0.5"
+
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }
