@@ -363,9 +363,9 @@ reason about errors.
    on the *other* side is still required.
 
 3. **Explicit close.** `finishBody(writerHandle)` drops the writer, signalling
-   EOF to the reader. `cancelRequest(bodyReaderHandle)` cancels any in-flight
-   `nextChunk` and removes the handle. `cancelFetch(token)` cancels an
-   in-progress fetch.
+   EOF to the reader. `cancelReader(bodyReaderHandle)` cancels any in-flight
+   `nextChunk` (returning `null` immediately) and removes the handle.
+   `cancelFetch(token)` cancels an in-progress fetch.
 
 4. **TTL sweep.** Any handle that is neither consumed nor explicitly freed
    within the TTL window (default **5 minutes**) is removed by a background
@@ -383,8 +383,24 @@ reason about errors.
 ```
 allocate ──► in-use ──► EOF / explicit close ──► removed
                   │
-                  └──► TTL expiry ──────────────► swept (silent)
+                  ├──► cancelReader() ──────────► removed (in-flight read returns null)
+                  │
+                  └──► TTL expiry ──────────────► swept (in-flight read returns null)
 ```
+
+### Cancellation contract
+
+`cancelReader(handle)` (Rust: `HandleStore::cancel_reader`) removes the reader
+from the handle store and fires a cancellation signal. Any in-flight
+`nextChunk()` await returns `null` immediately. Subsequent `nextChunk()` calls
+with the same handle return `INVALID_HANDLE`.
+
+TTL sweep of a reader also fires the cancellation signal, so in-flight reads
+terminate promptly rather than hanging on a dropped receiver.
+
+Drop-based EOF (when the writer is dropped without `finishBody`) closes the
+mpsc channel. The reader's next `nextChunk()` returns `null` (EOF) and
+auto-removes the handle. This is the normal completion path.
 
 After a handle transitions to "removed" or "swept", any call that references
 it returns an `IrohHandleError` (name `"IrohHandleError"`).

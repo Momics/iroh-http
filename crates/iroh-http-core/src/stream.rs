@@ -668,12 +668,40 @@ impl HandleStore {
     /// Also compacts any registry that is empty after sweeping to reclaim
     /// the backing memory from traffic bursts.
     pub fn sweep(&self, ttl: Duration) {
-        Self::sweep_registry(&self.readers, ttl);
+        Self::sweep_readers(&self.readers, ttl);
         Self::sweep_registry(&self.writers, ttl);
         Self::sweep_registry(&self.request_heads, ttl);
         Self::sweep_registry(&self.sessions, ttl);
         Self::sweep_registry(&self.fetch_cancels, ttl);
         self.sweep_pending_readers(ttl);
+    }
+
+    /// Sweep expired readers, firing the cancel signal so any in-flight
+    /// `next_chunk` awaits terminate promptly instead of hanging.
+    fn sweep_readers(registry: &Mutex<SlotMap<ReaderKey, Timed<BodyReader>>>, ttl: Duration) {
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let expired: Vec<ReaderKey> = reg
+            .iter()
+            .filter(|(_, e)| e.is_expired(ttl))
+            .map(|(k, _)| k)
+            .collect();
+
+        if expired.is_empty() {
+            return;
+        }
+
+        for key in &expired {
+            if let Some(entry) = reg.remove(*key) {
+                entry.value.cancel.notify_waiters();
+            }
+        }
+        tracing::debug!(
+            "[iroh-http] swept {} expired reader entries (ttl={ttl:?})",
+            expired.len()
+        );
+        if reg.is_empty() && reg.capacity() > 128 {
+            *reg = SlotMap::with_key();
+        }
     }
 
     fn sweep_registry<K: slotmap::Key, T>(registry: &Mutex<SlotMap<K, Timed<T>>>, ttl: Duration) {

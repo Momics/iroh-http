@@ -2652,3 +2652,56 @@ async fn bind_rejects_out_of_range_compression_level() {
         "error should mention compression level, got: {err}"
     );
 }
+
+// ── BodyReader cancellation ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn cancel_reader_terminates_in_flight_read() {
+    let ep = IrohEndpoint::bind(NodeOptions {
+        networking: NetworkingOptions {
+            disabled: true,
+            bind_addrs: vec!["127.0.0.1:0".into()],
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+
+    let (writer_handle, reader) = ep.handles().alloc_body_writer().unwrap();
+    let reader_handle = ep.handles().insert_reader(reader).unwrap();
+
+    // Write a chunk so the reader is not immediately at EOF.
+    ep.handles()
+        .send_chunk(writer_handle, Bytes::from("hello"))
+        .await
+        .unwrap();
+
+    // Read the first chunk to confirm the channel works.
+    let chunk = ep.handles().next_chunk(reader_handle).await.unwrap();
+    assert_eq!(chunk.as_deref(), Some(b"hello".as_ref()));
+
+    // Spawn a read that will block (no more data yet).
+    let ep2 = ep.clone();
+    let read_task = tokio::spawn(async move { ep2.handles().next_chunk(reader_handle).await });
+
+    // Give the read task time to start waiting.
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    // Cancel — should unblock the read.
+    ep.handles().cancel_reader(reader_handle);
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), read_task)
+        .await
+        .expect("read task should complete promptly after cancel")
+        .expect("read task should not panic");
+
+    // Cancelled reads return None (EOF).
+    assert!(
+        result.is_ok(),
+        "next_chunk should not return an error on cancel"
+    );
+    assert_eq!(result.unwrap(), None, "cancelled read should return None");
+
+    ep.close().await;
+}
