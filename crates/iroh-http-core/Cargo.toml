@@ -35,7 +35,7 @@ tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
-rand = "0.9"
+rand = "0.10"
 base32 = "0.5"
 pin-project-lite = "0.2"
 dashmap = "6"
