@@ -206,15 +206,17 @@ class TauriAdapter extends IrohAdapter {
     };
 
     invoke(`${PLUGIN}|serve`, {
-      endpointHandle: Number(endpointHandle),
-      maxConcurrency: options.serveOptions?.maxConcurrency ?? null,
-      maxConnectionsPerPeer: options.serveOptions?.maxConnectionsPerPeer ?? null,
-      requestTimeout: options.serveOptions?.requestTimeout ?? null,
-      maxRequestBodyBytes: options.serveOptions?.maxRequestBodyBytes ?? null,
-      maxTotalConnections: options.serveOptions?.maxTotalConnections ?? null,
-      maxServeErrors: options.serveOptions?.maxServeErrors ?? null,
-      drainTimeout: options.serveOptions?.drainTimeout ?? null,
-      loadShed: options.serveOptions?.loadShed ?? null,
+      args: {
+        endpointHandle: Number(endpointHandle),
+        maxConcurrency: options.serveOptions?.maxConcurrency ?? null,
+        maxConnectionsPerPeer: options.serveOptions?.maxConnectionsPerPeer ?? null,
+        requestTimeout: options.serveOptions?.requestTimeout ?? null,
+        maxRequestBodyBytes: options.serveOptions?.maxRequestBodyBytes ?? null,
+        maxTotalConnections: options.serveOptions?.maxTotalConnections ?? null,
+        maxServeErrors: options.serveOptions?.maxServeErrors ?? null,
+        drainTimeout: options.serveOptions?.drainTimeout ?? null,
+        loadShed: options.serveOptions?.loadShed ?? null,
+      },
       channel,
       connChannel,
     }).catch((err: unknown) =>

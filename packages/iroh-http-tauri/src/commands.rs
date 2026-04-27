@@ -541,37 +541,44 @@ pub struct ServeEventPayload {
     pub remote_node_id: String,
 }
 
+/// Server-side configuration passed at `serve()` time.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServeArgs {
+    pub endpoint_handle: u64,
+    pub max_concurrency: Option<usize>,
+    pub max_connections_per_peer: Option<usize>,
+    pub request_timeout: Option<u64>,
+    pub max_request_body_bytes: Option<usize>,
+    pub max_total_connections: Option<usize>,
+    pub max_serve_errors: Option<usize>,
+    pub drain_timeout: Option<u64>,
+    pub load_shed: Option<bool>,
+}
+
 /// Start the serve accept loop, streaming incoming requests via a Tauri Channel.
 #[command]
 pub async fn serve(
-    endpoint_handle: u64,
-    max_concurrency: Option<usize>,
-    max_connections_per_peer: Option<usize>,
-    request_timeout: Option<u64>,
-    max_request_body_bytes: Option<usize>,
-    max_total_connections: Option<usize>,
-    max_serve_errors: Option<usize>,
-    drain_timeout: Option<u64>,
-    load_shed: Option<bool>,
+    args: ServeArgs,
     channel: Channel<ServeEventPayload>,
     conn_channel: Channel<ConnectionEvent>,
 ) -> Result<(), String> {
-    let ep = state::get_endpoint(endpoint_handle).ok_or_else(|| {
+    let ep = state::get_endpoint(args.endpoint_handle).ok_or_else(|| {
         format_error_json(
             "INVALID_HANDLE",
-            format!("invalid endpoint handle: {endpoint_handle}"),
+            format!("invalid endpoint handle: {}", args.endpoint_handle),
         )
     })?;
 
     let serve_opts = iroh_http_core::ServeOptions {
-        max_concurrency,
-        max_connections_per_peer,
-        request_timeout_ms: request_timeout,
-        max_request_body_bytes,
-        max_total_connections,
-        max_serve_errors,
-        drain_timeout_ms: drain_timeout,
-        load_shed,
+        max_concurrency: args.max_concurrency,
+        max_connections_per_peer: args.max_connections_per_peer,
+        request_timeout_ms: args.request_timeout,
+        max_request_body_bytes: args.max_request_body_bytes,
+        max_total_connections: args.max_total_connections,
+        max_serve_errors: args.max_serve_errors,
+        drain_timeout_ms: args.drain_timeout,
+        load_shed: args.load_shed,
     };
 
     let conn_event_fn: Option<std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync>> = {
