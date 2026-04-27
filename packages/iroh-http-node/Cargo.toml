@@ -20,7 +20,7 @@ iroh-http-adapter = { path = "../../crates/iroh-http-adapter", version = "0.3.3"
 iroh-http-discovery = { path = "../../crates/iroh-http-discovery", version = "0.3.3", optional = true }
 iroh = { workspace = true, optional = true }
 napi = { version = "2", features = ["async", "napi9"] }
-napi-derive = "2"
+napi-derive = "3"
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 bytes = { workspace = true }
 slab = { workspace = true }
