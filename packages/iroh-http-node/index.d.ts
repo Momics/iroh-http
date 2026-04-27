@@ -13,8 +13,6 @@ export interface JsNodeOptions {
   dnsDiscoveryEnabled?: boolean
   channelCapacity?: number
   maxChunkSizeBytes?: number
-  maxServeErrors?: number
-  drainTimeout?: number
   handleTtl?: number
   sweepInterval?: number
   maxPooledConnections?: number
@@ -25,18 +23,8 @@ export interface JsNodeOptions {
   keylog?: boolean
   compressionLevel?: number
   compressionMinBodyBytes?: number
-  /** Maximum simultaneous in-flight requests.  Default: 1024. */
-  maxConcurrency?: number
-  /** Maximum connections from a single peer.  Default: 8. */
-  maxConnectionsPerPeer?: number
-  /** Per-request timeout in milliseconds.  Default: 60 000.  0 = disabled. */
-  requestTimeout?: number
-  /** Reject request bodies larger than this many bytes.  Default: unlimited. */
-  maxRequestBodyBytes?: number
   /** Maximum header block size in bytes.  Default: 65536. */
   maxHeaderBytes?: number
-  /** Maximum total QUIC connections the server will accept.  Default: unlimited. */
-  maxTotalConnections?: number
 }
 /** Info returned after a successful `createEndpoint` call. */
 export interface JsEndpointInfo {
@@ -236,7 +224,26 @@ export declare function rawFetch(endpointHandle: number, nodeId: string, url: st
  * so JS must call `rawRespond` explicitly after computing the response head.
  */
 export declare function rawRespond(endpointHandle: number, reqHandle: bigint, status: number, headers: Array<Array<string>>): void
-export declare function rawServe(endpointHandle: number, handler: (...args: any[]) => any, onConnectionEvent?: (...args: any[]) => any | undefined | null): void
+/** Server-side configuration passed at `serve()` time. */
+export interface JsServeOptions {
+  /** Maximum simultaneous in-flight requests.  Default: 1024. */
+  maxConcurrency?: number
+  /** Maximum connections from a single peer.  Default: 8. */
+  maxConnectionsPerPeer?: number
+  /** Per-request timeout in milliseconds.  Default: 60 000.  0 = disabled. */
+  requestTimeout?: number
+  /** Reject request bodies larger than this many bytes.  Default: unlimited. */
+  maxRequestBodyBytes?: number
+  /** Maximum total QUIC connections the server will accept.  Default: unlimited. */
+  maxTotalConnections?: number
+  /** Maximum serve errors before shutdown.  Default: 5. */
+  maxServeErrors?: number
+  /** Drain timeout in milliseconds after shutdown signal.  Default: 5000. */
+  drainTimeout?: number
+  /** Enable load-shedding (reject with 503 when at capacity). */
+  loadShed?: boolean
+}
+export declare function rawServe(endpointHandle: number, serveOptions: JsServeOptions | undefined | null, handler: (...args: any[]) => any, onConnectionEvent?: (...args: any[]) => any | undefined | null): void
 /**
  * Stop the serve loop for the given endpoint (graceful shutdown).
  *
