@@ -36,6 +36,27 @@ use crate::{
 use crate::Body;
 use crate::BoxError;
 
+// ── Inline error responses (RequestService is infallible) ───────────────
+//
+// Per ADR-014, `RequestService::Error = Infallible` — every internal failure
+// is rendered to an HTTP response inside the service. Layer-level failures
+// (timeout, load-shed) are still mapped to 408 / 503 in `TowerErrorHandler`
+// because those errors arise *outside* this service.
+
+fn internal_error(detail: &'static [u8]) -> hyper::Response<Body> {
+    hyper::Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(Body::full(Bytes::from_static(detail)))
+        .expect("static error response args are valid")
+}
+
+fn service_unavailable(detail: &'static [u8]) -> hyper::Response<Body> {
+    hyper::Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .body(Body::full(Bytes::from_static(detail)))
+        .expect("static error response args are valid")
+}
+
 // ── ServeOptions ──────────────────────────────────────────────────────────────
 
 /// Options for the HTTP serve loop.
@@ -217,7 +238,7 @@ struct RequestService {
 
 impl Service<hyper::Request<Incoming>> for RequestService {
     type Response = hyper::Response<Body>;
-    type Error = BoxError;
+    type Error = std::convert::Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -226,15 +247,12 @@ impl Service<hyper::Request<Incoming>> for RequestService {
 
     fn call(&mut self, req: hyper::Request<Incoming>) -> Self::Future {
         let svc = self.clone();
-        Box::pin(async move { svc.handle(req).await })
+        Box::pin(async move { Ok(svc.handle(req).await) })
     }
 }
 
 impl RequestService {
-    async fn handle(
-        self,
-        mut req: hyper::Request<Incoming>,
-    ) -> Result<hyper::Response<Body>, BoxError> {
+    async fn handle(self, mut req: hyper::Request<Incoming>) -> hyper::Response<Body> {
         let handles = self.endpoint.handles();
         let own_node_id = &*self.own_node_id;
         let remote_node_id = self.remote_node_id.clone().unwrap_or_default();
@@ -286,7 +304,7 @@ impl RequestService {
                     .status(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE)
                     .body(Body::empty())
                     .expect("static response args are valid");
-                return Ok(resp);
+                return resp;
             }
         }
 
@@ -303,7 +321,7 @@ impl RequestService {
                         .status(StatusCode::BAD_REQUEST)
                         .body(Body::full(Bytes::from_static(b"non-UTF8 header value")))
                         .expect("static response args are valid");
-                    return Ok(resp);
+                    return resp;
                 }
             }
         }
@@ -331,7 +349,7 @@ impl RequestService {
                         b"duplex upgrade requires CONNECT method with Connection: upgrade header",
                     )))
                     .expect("static response args are valid");
-                return Ok(resp);
+                return resp;
             }
             true
         } else {
@@ -350,22 +368,25 @@ impl RequestService {
         // Request body: writer pumped from hyper; reader given to JS.
         let mut guard = handles.insert_guard();
         let (req_body_writer, req_body_reader) = handles.make_body_channel();
-        let req_body_handle = guard
-            .insert_reader(req_body_reader)
-            .map_err(|e| -> BoxError { e.into() })?;
+        let req_body_handle = match guard.insert_reader(req_body_reader) {
+            Ok(h) => h,
+            Err(_) => return service_unavailable(b"server handle table full"),
+        };
 
         // Response body: writer given to JS (sendChunk); reader feeds hyper response.
         let (res_body_writer, res_body_reader) = handles.make_body_channel();
-        let res_body_handle = guard
-            .insert_writer(res_body_writer)
-            .map_err(|e| -> BoxError { e.into() })?;
+        let res_body_handle = match guard.insert_writer(res_body_writer) {
+            Ok(h) => h,
+            Err(_) => return service_unavailable(b"server handle table full"),
+        };
 
         // ── Allocate response-head rendezvous ────────────────────────────────
 
         let (head_tx, head_rx) = tokio::sync::oneshot::channel::<ResponseHeadEntry>();
-        let req_handle = guard
-            .allocate_req_handle(head_tx)
-            .map_err(|e| -> BoxError { e.into() })?;
+        let req_handle = match guard.allocate_req_handle(head_tx) {
+            Ok(h) => h,
+            Err(_) => return service_unavailable(b"server handle table full"),
+        };
 
         guard.commit();
 
@@ -444,16 +465,20 @@ impl RequestService {
                         .status(StatusCode::PAYLOAD_TOO_LARGE)
                         .body(Body::full(Bytes::from_static(b"request body too large")))
                         .expect("valid 413 response");
-                    return Ok(resp);
+                    return resp;
                 }
                 head = head_rx => {
-                    head.map_err(|_| -> BoxError { "JS handler dropped without responding".into() })?
+                    match head {
+                        Ok(h) => h,
+                        Err(_) => return internal_error(b"JS handler dropped without responding"),
+                    }
                 }
             }
         } else {
-            head_rx
-                .await
-                .map_err(|_| -> BoxError { "JS handler dropped without responding".into() })?
+            match head_rx.await {
+                Ok(h) => h,
+                Err(_) => return internal_error(b"JS handler dropped without responding"),
+            }
         };
 
         // ── Duplex path: honor handler status, upgrade only on 101 ──────────────
@@ -475,10 +500,11 @@ impl RequestService {
                 for (k, v) in &response_head.headers {
                     resp_builder = resp_builder.header(k.as_str(), v.as_str());
                 }
-                let resp = resp_builder
-                    .body(Body::empty())
-                    .map_err(|e| -> BoxError { e.into() })?;
-                return Ok(resp);
+                let resp = match resp_builder.body(Body::empty()) {
+                    Ok(r) => r,
+                    Err(_) => return internal_error(b"failed to build response head from JS"),
+                };
+                return resp;
             }
 
             // Spawn the upgrade pump after hyper delivers the 101.
@@ -503,7 +529,7 @@ impl RequestService {
                 .header(hyper::header::UPGRADE, "iroh-duplex")
                 .body(Body::empty())
                 .expect("static response args are valid");
-            return Ok(resp);
+            return resp;
         }
 
         // ── Regular HTTP response ─────────────────────────────────────────────
@@ -518,11 +544,10 @@ impl RequestService {
         #[cfg(feature = "compression")]
         let resp_builder = resp_builder; // CompressionLayer in ServiceBuilder handles this
 
-        let resp = resp_builder
-            .body(Body::new(body_stream))
-            .map_err(|e| -> BoxError { e.into() })?;
-
-        Ok(resp)
+        match resp_builder.body(Body::new(body_stream)) {
+            Ok(r) => r,
+            Err(_) => internal_error(b"failed to build response head from JS"),
+        }
     }
 }
 
