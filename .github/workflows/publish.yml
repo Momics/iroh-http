@@ -44,6 +44,35 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      - name: Verify extended tests passed
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          echo "Checking Extended tests status for $SHA"
+          # Poll for up to 30 minutes (extended tests can take a while)
+          for i in $(seq 1 60); do
+            STATUS=$(gh api \
+              "repos/${{ github.repository }}/actions/workflows/extended-tests.yml/runs?head_sha=$SHA&per_page=1" \
+              --jq '.workflow_runs[0] | "\(.status) \(.conclusion)"' 2>/dev/null || echo "unknown unknown")
+            RUN_STATUS=$(echo "$STATUS" | awk '{print $1}')
+            RUN_CONCLUSION=$(echo "$STATUS" | awk '{print $2}')
+            if [ "$RUN_STATUS" = "completed" ]; then
+              if [ "$RUN_CONCLUSION" = "success" ]; then
+                echo "Extended tests passed ✓"
+                exit 0
+              else
+                echo "::error::Extended tests failed ($RUN_CONCLUSION) — blocking publish"
+                exit 1
+              fi
+            fi
+            echo "Extended tests still running ($RUN_STATUS), waiting 30s... ($i/60)"
+            sleep 30
+          done
+          echo "::error::Extended tests did not complete within 30 minutes — blocking publish"
+          exit 1
+
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
