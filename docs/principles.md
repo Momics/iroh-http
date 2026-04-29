@@ -107,6 +107,13 @@ bugs and gained ecosystem-maintained correctness.
 | Handle arenas | slotmap generational keys | `HashMap<u32, T>` + counter |
 | Async I/O | tokio | Custom runtime |
 
+**Composition is part of the rule.** Using an ecosystem layer incorrectly
+(wrapping it in custom error or body adapters because the wiring does not
+fit) violates this principle just as much as re-implementing it. See
+[ADR-013](adr/013-lean-on-the-ecosystem.md) for where custom code is
+allowed inside `iroh-http-core` and the **stop signal** that tells you
+you are off-pattern.
+
 ---
 
 ## 4. Primitives, Not Policies

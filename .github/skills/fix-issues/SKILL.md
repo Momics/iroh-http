@@ -116,6 +116,7 @@ Do not push after each individual commit. The single push keeps the remote histo
 - Never combine issues whose fixes conflict — this produces a commit that is hard to revert
 - If a fix turns out to be larger than expected mid-implementation, stop, file a more detailed issue, and skip that group for this session
 - Amend the commit (not a new commit) if CI catches something in the immediately preceding fix before moving on
+- **Stop signal — ecosystem composition.** If a fix involves adding or modifying a tower / hyper / tower-http layer in `iroh-http-core` and you spend more than ~2 compile iterations fighting type or lifetime errors, you are off-pattern. Stop editing. Read [ADR-013](../../../docs/adr/013-lean-on-the-ecosystem.md), [ADR-014](../../../docs/adr/014-runtime-architecture.md), and the equivalent code in [`axum/src/serve/mod.rs`](https://github.com/tokio-rs/axum/blob/main/axum/src/serve/mod.rs). Either restructure the wiring to fit the standard layer, or file a separate issue against the wiring and skip this group.
 
 ## Related skills
 

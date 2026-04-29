@@ -32,6 +32,16 @@ Read the relevant doc before acting in that area. Don't read all docs upfront.
 - [Build & test](../docs/build-and-test.md) — Rust, TypeScript, and E2E test commands. CI pipeline gates.
 - [Documentation index](../docs/README.md) — entry point to all docs, features, internals, and recipes.
 
+## Before writing custom HTTP / middleware / body code
+
+`iroh-http-core` composes hyper + tower + tower-http. Custom primitives in this area are almost always a mistake. Before adding any layer, body adapter, error handler, or accept loop:
+
+1. Read [ADR-013 — Lean on the ecosystem](../docs/adr/013-lean-on-the-ecosystem.md) for where custom code is allowed and where it is not.
+2. Read [ADR-014 — Runtime architecture](../docs/adr/014-runtime-architecture.md) for the concrete shape (single `Body` newtype, infallible service contract, named seams).
+3. Reference implementation: [`axum/src/serve/mod.rs`](https://github.com/tokio-rs/axum/blob/main/axum/src/serve/mod.rs) — ~150 lines that do what our 1098-line `server.rs` does. If you find yourself reinventing pieces of it, stop.
+
+**Stop signal.** If you spend more than ~2 compile iterations fighting tower / hyper / tower-http type or lifetime errors, you are off-pattern. Stop editing, read the equivalent in axum / hyper-util / tower-http examples, and either restructure the wiring or file an issue against the wiring (not the layer).
+
 ## Guidelines
 
 - [Rust](../docs/guidelines/rust.md) — naming, visibility, error handling, async, testing for `iroh-http-core` and `iroh-http-discovery`.
