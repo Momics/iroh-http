@@ -673,6 +673,7 @@ async fn serve_start(p: Value) -> Value {
                 Some(q) => q,
                 None => {
                     // Queue removed (endpoint closed) — respond with 503.
+                    tracing::warn!("iroh-http-deno: serve registry miss — responding 503");
                     let _ = respond(
                         ep_clone.handles(),
                         req_handle,
@@ -689,6 +690,7 @@ async fn serve_start(p: Value) -> Value {
             // check, the request would be queued but never consumed,
             // hanging until the 60 s request timeout.
             if *q.shutdown_rx.borrow() {
+                tracing::warn!("iroh-http-deno: serve shutdown — responding 503");
                 let _ = respond(
                     ep_clone.handles(),
                     req_handle,
