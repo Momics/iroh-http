@@ -672,7 +672,7 @@ async fn serve_start(p: Value) -> Value {
             let q = match serve_registry::get(handle) {
                 Some(q) => q,
                 None => {
-                    // Queue removed (serve stopped) — respond with 503.
+                    // Queue removed (endpoint closed) — respond with 503.
                     let _ = respond(
                         ep_clone.handles(),
                         req_handle,
@@ -682,6 +682,21 @@ async fn serve_start(p: Value) -> Value {
                     return;
                 }
             };
+            // #149: Reject immediately if this queue belongs to a stopped
+            // serve cycle.  The queue stays in the registry between
+            // stopServe and the next serveStart so that the lookup above
+            // never returns None during the transition.  Without this
+            // check, the request would be queued but never consumed,
+            // hanging until the 60 s request timeout.
+            if *q.shutdown_rx.borrow() {
+                let _ = respond(
+                    ep_clone.handles(),
+                    req_handle,
+                    503,
+                    vec![("content-length".to_string(), "0".to_string())],
+                );
+                return;
+            }
             let headers: Vec<Vec<String>> = payload
                 .headers
                 .into_iter()
@@ -750,8 +765,19 @@ async fn stop_serve(p: Value) -> Value {
             }
         }
     }
-    // DENO-002: drop the registry entry so the tx inside ServeQueue is freed.
-    serve_registry::remove(handle);
+    // The registry entry is intentionally kept alive here.  Removing it
+    // would cause a race: lingering connection-handler tasks spawned by
+    // `serve_with_events` can still fire `on_request` after the serve
+    // loop exits (they are detached tokio::spawn tasks).  If the entry
+    // were absent, `serve_registry::get` would return `None` → 503,
+    // even when a new serve cycle is about to register a replacement
+    // queue.  Keeping the shutdown-flagged entry lets the `on_request`
+    // callback reject promptly without a registry miss.  The entry is
+    // replaced by the next `serve_start` or removed by `close_endpoint`.
+    //
+    // (Supersedes DENO-002 — the JS polling loop now stops via the
+    // shutdown watch channel, not channel disconnection.)
+    //
     // #122: wait for the previous serve loop to fully terminate before returning.
     // Without this, a subsequent `serve_start` on the same endpoint would
     // overwrite `serve_handle` while the old loop is still draining; new
