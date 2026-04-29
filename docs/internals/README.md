@@ -8,5 +8,6 @@ Technical documentation for contributors to iroh-http-core.
 | [resource-handles.md](resource-handles.md) | u64 slotmap handle system, registries, lifecycle, stale handle safety |
 | [connection-pool.md](connection-pool.md) | moka-backed pool, single-flight, stale connection handling, ALPN segregation |
 | [wire-format.md](wire-format.md) | Wire encoding, ALPN versioning, duplex handshake |
+| [core-assessment-2026-04.md](core-assessment-2026-04.md) | Per-file keep/replace/reshape verdicts driving the rework epic ([#156](https://github.com/Momics/iroh-http/issues/156)) |
 
 Start with [../architecture.md](../architecture.md) for the component overview before diving into these.
