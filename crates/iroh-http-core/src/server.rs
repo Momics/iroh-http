@@ -854,10 +854,41 @@ where
                                             })
                                             .unwrap_or(true)
                                     };
+                                let not_opaque_content_type =
+                                    |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
+                                        let ct = match h
+                                            .get(http::header::CONTENT_TYPE)
+                                            .and_then(|v| v.to_str().ok())
+                                        {
+                                            Some(v) => v,
+                                            None => return true, // no CT → compressible
+                                        };
+                                        // Extract the media type (before any parameters).
+                                        let media = ct.split(';').next().unwrap_or(ct).trim();
+                                        let skip = [
+                                            "application/zstd",
+                                            "application/octet-stream",
+                                        ];
+                                        if skip.iter().any(|s| media.eq_ignore_ascii_case(s)) {
+                                            return false;
+                                        }
+                                        // Skip image/*, audio/*, video/*
+                                        if let Some(top) = media.split('/').next() {
+                                            let top = top.trim();
+                                            if top.eq_ignore_ascii_case("image")
+                                                || top.eq_ignore_ascii_case("audio")
+                                                || top.eq_ignore_ascii_case("video")
+                                            {
+                                                return false;
+                                            }
+                                        }
+                                        true
+                                    };
                                 let predicate =
                                     SizeAbove::new(min_bytes.min(u16::MAX as usize) as u16)
                                         .and(not_pre_compressed)
-                                        .and(not_no_transform);
+                                        .and(not_no_transform)
+                                        .and(not_opaque_content_type);
                                 if load_shed_enabled {
                                     use tower::load_shed::LoadShedLayer;
                                     let stk = TowerErrorHandler(
