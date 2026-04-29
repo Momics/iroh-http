@@ -133,8 +133,7 @@ try {
     group(`throughput-${label}`, () => {
       bench(`throughput-${label}/iroh`, async () => {
         const res = await client.fetch(
-          serverId,
-          `httpi://bench.local/data?size=${size}`,
+          `httpi://${serverId}/data?size=${size}`,
           { directAddrs: serverAddrs },
         );
         await res.arrayBuffer();

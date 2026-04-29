@@ -158,8 +158,7 @@ for (const [label, size] of [
     { group: `throughput-${label}` },
     async () => {
       const res = await client.fetch(
-        serverId,
-        `httpi://bench.local/data?size=${size}`,
+        `httpi://${serverId}/data?size=${size}`,
         { directAddrs: serverAddrs },
       );
       await res.arrayBuffer();
