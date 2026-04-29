@@ -429,21 +429,18 @@ Deno.test({
 
 // ── Regression #115: serve loop must not hold pending ops after shutdown ──────
 //
-// Bug: stopServe() removes the serve queue while nextRequest() is still
-// in-flight, leaving a dangling FFI op. Deno treats any pending op as "process
-// not done", so the process never exits naturally after serve() without an
-// explicit node.close().
+// Bug: after the #122 rewrite to sync-poll + MessageChannel yield, stopServe()
+// could fire while the loop was suspended in `await yielder.yield()`. The loop
+// wouldn't re-poll try_next_request (which returns -1) until the MessageChannel
+// tick completed, leaving the port alive across the test boundary.
 //
-// Fix required: stopServe should resolve the pending nextRequest() (return null
-// sentinel) rather than deleting the queue while the call is in-flight.
+// Fix: stopServe() now cancels the in-flight yield immediately via a
+// per-endpoint cancel callback, so the loop re-polls and exits without delay.
 //
-// This test uses sanitizeOps: true (the Deno default) intentionally — it will
-// fail until the adapter race is fixed. It is marked `ignore` so CI is not
-// broken in the meantime.
+// This test uses sanitizeOps: true (the Deno default) intentionally.
 Deno.test({
   name:
     "serve — no pending ops remain after signal abort (regression #115)",
-  ignore: true, // #115 is not fully fixed — times out under CI load
   sanitizeOps: true,
 }, () =>
   withTimeout(10_000, async () => {
@@ -1247,7 +1244,7 @@ Deno.test({
     try {
       for (let iter = 0; iter < ITERS; iter++) {
         const ac = new AbortController();
-        const handle = server.serve({ signal: ac.signal }, () =>
+        const handle = server.serve({ signal: ac.signal, loadShed: false }, () =>
           new Response(BODY)
         );
 

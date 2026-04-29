@@ -873,7 +873,7 @@ test(
     try {
       for (let iter = 0; iter < ITERS; iter++) {
         const ac = new AbortController();
-        const handle = server.serve({ signal: ac.signal }, () =>
+        const handle = server.serve({ signal: ac.signal, loadShed: false }, () =>
           new Response(BODY),
         );
 

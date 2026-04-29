@@ -207,20 +207,44 @@ const lib = Deno.dlopen(
 // Creates a fresh channel per call to avoid keeping the event loop alive
 // when all serve loops have stopped.
 
-function createYieldFn(): { yield: () => Promise<void>; close: () => void } {
+function createYieldFn(): {
+  yield: () => Promise<void>;
+  cancel: () => void;
+  close: () => void;
+} {
   const ch = new MessageChannel();
+  let pendingResolve: (() => void) | null = null;
   return {
     yield: () =>
       new Promise<void>((resolve) => {
-        ch.port2.onmessage = () => resolve();
+        pendingResolve = resolve;
+        ch.port2.onmessage = () => {
+          pendingResolve = null;
+          resolve();
+        };
         ch.port1.postMessage(undefined);
       }),
+    // #115: Immediately resolve any in-flight yield so the polling loop
+    // can re-poll try_next_request and see the -1 shutdown sentinel
+    // without waiting for the next MessageChannel tick.
+    cancel: () => {
+      pendingResolve?.();
+      pendingResolve = null;
+    },
     close: () => {
       ch.port1.close();
       ch.port2.close();
     },
   };
 }
+
+// ── Per-endpoint serve cancellation ───────────────────────────────────────────
+//
+// #115: stopServe fires an async FFI call. The polling loop may be suspended
+// in `await yielder.yield()` when the Rust side processes the stop. This map
+// lets stopServe immediately cancel the yield so the loop re-polls and sees
+// the -1 shutdown sentinel without a timing-dependent delay.
+const serveCancellers = new Map<number, () => void>();
 
 // ── JSON dispatch helper ──────────────────────────────────────────────────────
 
@@ -645,6 +669,8 @@ export const rawServe: RawServeFn = (
 
       return (async () => {
         const yielder = createYieldFn();
+        // #115: Register cancel callback so stopServe can break the yield.
+        serveCancellers.set(endpointHandle, () => yielder.cancel());
         let pollCount = 0;
         try {
         while (true) {
@@ -715,6 +741,7 @@ export const rawServe: RawServeFn = (
         }
         await Promise.allSettled([...pending]);
         } finally {
+          serveCancellers.delete(endpointHandle);
           yielder.close();
         }
       })();
@@ -826,6 +853,9 @@ export async function closeEndpoint(
 }
 
 export function stopServe(handle: number): void {
+  // #115: Cancel the yield immediately so the polling loop re-polls and
+  // sees the -1 shutdown sentinel without waiting for the MessageChannel.
+  serveCancellers.get(handle)?.();
   call<Record<never, never>>("stopServe", { endpointHandle: handle }).catch(
     () => {},
   );
@@ -1225,6 +1255,8 @@ export class DenoAdapter extends IrohAdapter {
   }
 
   stopServe(handle: number): void {
+    // #115: Cancel the yield immediately so the polling loop re-polls.
+    serveCancellers.get(handle)?.();
     call<Record<never, never>>("stopServe", { endpointHandle: handle }).catch(
       () => {},
     );
