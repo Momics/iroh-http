@@ -26,8 +26,6 @@ fn main() {
         "stop_serve",
         "wait_serve_stop",
         "respond_to_request",
-        // Raw QUIC connect (iroh-http:connect)
-        "connect",
         // Session / duplex streams (iroh-http:connect)
         "session_connect",
         "session_create_bidi_stream",
