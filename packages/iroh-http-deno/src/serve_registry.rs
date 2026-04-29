@@ -37,14 +37,14 @@ pub struct ServeQueue {
     pub shutdown_rx: tokio::sync::watch::Receiver<bool>,
 }
 
-fn registry() -> &'static Mutex<HashMap<u32, std::sync::Arc<ServeQueue>>> {
-    static R: OnceLock<Mutex<HashMap<u32, std::sync::Arc<ServeQueue>>>> = OnceLock::new();
+fn registry() -> &'static Mutex<HashMap<u64, std::sync::Arc<ServeQueue>>> {
+    static R: OnceLock<Mutex<HashMap<u64, std::sync::Arc<ServeQueue>>>> = OnceLock::new();
     R.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Create and register a serve queue for an endpoint.
 /// Returns a clone of the `Arc` so the serve loop can hold its own `tx` reference.
-pub fn register(endpoint_handle: u32) -> std::sync::Arc<ServeQueue> {
+pub fn register(endpoint_handle: u64) -> std::sync::Arc<ServeQueue> {
     let (tx, rx) = mpsc::channel(QUEUE_CAPACITY);
     let (conn_tx, conn_rx) = mpsc::channel(QUEUE_CAPACITY);
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -64,7 +64,7 @@ pub fn register(endpoint_handle: u32) -> std::sync::Arc<ServeQueue> {
 }
 
 /// Retrieve the queue for an endpoint (used by `nextRequest` / `nextConnectionEvent`).
-pub fn get(endpoint_handle: u32) -> Option<std::sync::Arc<ServeQueue>> {
+pub fn get(endpoint_handle: u64) -> Option<std::sync::Arc<ServeQueue>> {
     registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -77,7 +77,7 @@ pub fn get(endpoint_handle: u32) -> Option<std::sync::Arc<ServeQueue>> {
 /// ISS-012 / issue-12: sending `true` on the watch channel wakes any currently
 /// blocked `recv()` in `nextRequest`, and any future callers will also observe
 /// the shutdown state immediately (watch persists its last value).
-pub fn remove(endpoint_handle: u32) {
+pub fn remove(endpoint_handle: u64) {
     if let Some(queue) = registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -93,7 +93,7 @@ pub fn remove(endpoint_handle: u32) {
 /// This allows the JS polling loop to observe shutdown immediately via the
 /// watch channel, while the caller can still drain queued items before the
 /// queue is removed.
-pub fn signal_shutdown(endpoint_handle: u32) {
+pub fn signal_shutdown(endpoint_handle: u64) {
     if let Some(queue) = get(endpoint_handle) {
         let _ = queue.shutdown_tx.send(true);
     }

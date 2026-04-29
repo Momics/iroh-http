@@ -44,16 +44,16 @@ use tokio::sync::Mutex as TokioMutex;
 
 // ── Endpoint helpers ─────────────────────────────────────────────────────────
 
-fn get_endpoint(handle: u32) -> Option<IrohEndpoint> {
-    registry::get_endpoint(handle as u64)
+fn get_endpoint(handle: u64) -> Option<IrohEndpoint> {
+    registry::get_endpoint(handle)
 }
 
-fn remove_endpoint(handle: u32) -> Option<IrohEndpoint> {
-    registry::remove_endpoint(handle as u64)
+fn remove_endpoint(handle: u64) -> Option<IrohEndpoint> {
+    registry::remove_endpoint(handle)
 }
 
-fn insert_endpoint(ep: IrohEndpoint) -> u32 {
-    registry::insert_endpoint(ep) as u32
+fn insert_endpoint(ep: IrohEndpoint) -> u64 {
+    registry::insert_endpoint(ep)
 }
 
 use iroh_http_adapter::{core_error_to_json, format_error_json};
@@ -80,7 +80,7 @@ fn err_core(e: iroh_http_core::CoreError) -> Value {
 fn require_endpoint(p: &Value) -> Result<IrohEndpoint, Value> {
     let handle = p["endpointHandle"]
         .as_u64()
-        .ok_or_else(|| err("missing endpointHandle"))? as u32;
+        .ok_or_else(|| err("missing endpointHandle"))?;
     get_endpoint(handle).ok_or_else(|| {
         err_code(
             "INVALID_HANDLE",
@@ -306,7 +306,7 @@ async fn create_endpoint(p: Value) -> Value {
 
 async fn close_endpoint(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     let force = p["force"].as_bool().unwrap_or(false);
@@ -331,7 +331,7 @@ async fn close_endpoint(p: Value) -> Value {
 
 fn node_addr_dispatch(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     match get_endpoint(handle) {
@@ -348,7 +348,7 @@ fn node_addr_dispatch(p: Value) -> Value {
 
 fn node_ticket_dispatch(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     match get_endpoint(handle) {
@@ -365,7 +365,7 @@ fn node_ticket_dispatch(p: Value) -> Value {
 
 fn home_relay_dispatch(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     match get_endpoint(handle) {
@@ -379,7 +379,7 @@ fn home_relay_dispatch(p: Value) -> Value {
 
 async fn peer_info_dispatch(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     let node_id = match p["nodeId"].as_str() {
@@ -400,7 +400,7 @@ async fn peer_info_dispatch(p: Value) -> Value {
 
 async fn peer_stats_dispatch(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     let node_id = match p["nodeId"].as_str() {
@@ -418,7 +418,7 @@ async fn peer_stats_dispatch(p: Value) -> Value {
 
 fn endpoint_stats_dispatch(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     match get_endpoint(handle) {
@@ -543,7 +543,7 @@ fn cancel_request_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawFetchPayload {
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     node_id: String,
     url: String,
     method: String,
@@ -623,7 +623,7 @@ async fn raw_fetch(p: Value) -> Value {
 
 async fn serve_start(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     let ep = match get_endpoint(handle) {
@@ -733,7 +733,7 @@ async fn serve_start(p: Value) -> Value {
 
 async fn stop_serve(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     let ep = match get_endpoint(handle) {
@@ -792,7 +792,7 @@ async fn stop_serve(p: Value) -> Value {
 
 async fn wait_endpoint_closed(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     let ep = match get_endpoint(handle) {
@@ -805,7 +805,7 @@ async fn wait_endpoint_closed(p: Value) -> Value {
 
 async fn next_request(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     let queue = match serve_registry::get(handle) {
@@ -832,7 +832,7 @@ async fn next_request(p: Value) -> Value {
 /// or `{"ok": null}` when the serve loop has stopped and no more events will arrive.
 async fn next_connection_event(p: Value) -> Value {
     let handle = match p["endpointHandle"].as_u64() {
-        Some(h) => h as u32,
+        Some(h) => h,
         None => return err("missing endpointHandle"),
     };
     let queue = match serve_registry::get(handle) {
@@ -852,7 +852,7 @@ async fn next_connection_event(p: Value) -> Value {
 #[serde(rename_all = "camelCase")]
 struct RespondPayload {
     #[allow(dead_code)]
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     req_handle: u64,
     status: u16,
     headers: Vec<Vec<String>>,
@@ -983,7 +983,7 @@ async fn mdns_browse_dispatch(_p: Value) -> Value {
     #[cfg(feature = "discovery")]
     {
         let handle = match _p["endpointHandle"].as_u64() {
-            Some(h) => h as u32,
+            Some(h) => h,
             None => return err("missing endpointHandle"),
         };
         let service_name = match _p["serviceName"].as_str() {
@@ -1018,7 +1018,7 @@ async fn mdns_next_event_dispatch(_p: Value) -> Value {
     #[cfg(feature = "discovery")]
     {
         let handle = match _p["browseHandle"].as_u64() {
-            Some(h) => h as u32,
+            Some(h) => h,
             None => return err("missing browseHandle"),
         };
         let session = match browse_slab()
@@ -1048,7 +1048,7 @@ fn mdns_browse_close_dispatch(_p: Value) -> Value {
     #[cfg(feature = "discovery")]
     {
         let handle = match _p["browseHandle"].as_u64() {
-            Some(h) => h as u32,
+            Some(h) => h,
             None => return err("missing browseHandle"),
         };
         let mut slab = browse_slab().lock().unwrap_or_else(|e| e.into_inner());
@@ -1063,7 +1063,7 @@ fn mdns_advertise_dispatch(_p: Value) -> Value {
     #[cfg(feature = "discovery")]
     {
         let handle = match _p["endpointHandle"].as_u64() {
-            Some(h) => h as u32,
+            Some(h) => h,
             None => return err("missing endpointHandle"),
         };
         let service_name = match _p["serviceName"].as_str() {
@@ -1098,7 +1098,7 @@ fn mdns_advertise_close_dispatch(_p: Value) -> Value {
     #[cfg(feature = "discovery")]
     {
         let handle = match _p["advertiseHandle"].as_u64() {
-            Some(h) => h as u32,
+            Some(h) => h,
             None => return err("missing advertiseHandle"),
         };
         let mut slab = advertise_slab().lock().unwrap_or_else(|e| e.into_inner());
@@ -1114,7 +1114,7 @@ fn mdns_advertise_close_dispatch(_p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionAcceptPayload {
-    endpoint_handle: u32,
+    endpoint_handle: u64,
 }
 
 /// Accept the next incoming raw QUIC session from a remote peer.
@@ -1152,7 +1152,7 @@ async fn session_accept_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionConnectPayload {
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     node_id: String,
     direct_addrs: Option<Vec<String>>,
 }
@@ -1184,7 +1184,7 @@ async fn session_connect_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionEndpointPayload {
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     session_handle: u64,
 }
 
@@ -1232,7 +1232,7 @@ async fn session_next_bidi_stream_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionClosePayload {
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     session_handle: u64,
     close_code: Option<u64>,
     reason: Option<String>,
@@ -1327,7 +1327,7 @@ async fn session_next_uni_stream_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionDatagramPayload {
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     session_handle: u64,
     data: String, // base64
 }
@@ -1400,7 +1400,7 @@ fn session_max_datagram_size_dispatch(p: Value) -> Value {
 // ── Transport events ──────────────────────────────────────────────────────────
 
 type TransportEventRxMap = dashmap::DashMap<
-    u32,
+    u64,
     std::sync::Arc<
         tokio::sync::Mutex<tokio::sync::mpsc::Receiver<iroh_http_core::events::TransportEvent>>,
     >,
@@ -1410,7 +1410,7 @@ static TRANSPORT_EVENT_RXS: std::sync::OnceLock<TransportEventRxMap> = std::sync
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StartTransportEventsPayload {
-    endpoint_handle: u32,
+    endpoint_handle: u64,
 }
 
 async fn start_transport_events_dispatch(p: Value) -> Value {
@@ -1444,7 +1444,7 @@ async fn start_transport_events_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NextTransportEventPayload {
-    endpoint_handle: u32,
+    endpoint_handle: u64,
 }
 
 async fn next_transport_event_dispatch(p: Value) -> Value {
@@ -1475,7 +1475,7 @@ async fn next_transport_event_dispatch(p: Value) -> Value {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NextPathChangePayload {
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     node_id: String,
 }
 
@@ -1484,7 +1484,7 @@ async fn next_path_change_dispatch(p: Value) -> Value {
     type PathRx = tokio::sync::Mutex<
         tokio::sync::mpsc::UnboundedReceiver<iroh_http_core::endpoint::PathInfo>,
     >;
-    type PathRxMap = dashmap::DashMap<(u32, String), Arc<PathRx>>;
+    type PathRxMap = dashmap::DashMap<(u64, String), Arc<PathRx>>;
     static PATH_CHANGE_RXS: std::sync::OnceLock<PathRxMap> = std::sync::OnceLock::new();
     let rxs = PATH_CHANGE_RXS.get_or_init(dashmap::DashMap::new);
 

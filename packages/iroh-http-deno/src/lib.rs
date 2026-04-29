@@ -268,7 +268,7 @@ pub unsafe extern "C" fn iroh_http_call(
 /// active reference for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iroh_http_next_chunk(
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     handle: u64,
     out_ptr: *mut u8,
     out_cap: usize,
@@ -277,7 +277,7 @@ pub unsafe extern "C" fn iroh_http_next_chunk(
         return -1;
     }
 
-    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+    let ep = match registry::get_endpoint(endpoint_handle) {
         Some(ep) => ep,
         None => return -1,
     };
@@ -326,7 +326,7 @@ pub unsafe extern "C" fn iroh_http_next_chunk(
 /// `out_ptr` must be valid for `out_cap` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iroh_http_try_next_chunk(
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     handle: u64,
     out_ptr: *mut u8,
     out_cap: usize,
@@ -335,7 +335,7 @@ pub unsafe extern "C" fn iroh_http_try_next_chunk(
         return -1;
     }
 
-    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+    let ep = match registry::get_endpoint(endpoint_handle) {
         Some(ep) => ep,
         None => return -1,
     };
@@ -380,7 +380,7 @@ pub unsafe extern "C" fn iroh_http_try_next_chunk(
 /// `ptr` must be valid for `len` bytes for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iroh_http_send_chunk(
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     handle: u64,
     ptr: *const u8,
     len: usize,
@@ -389,7 +389,7 @@ pub unsafe extern "C" fn iroh_http_send_chunk(
         return -1;
     }
 
-    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+    let ep = match registry::get_endpoint(endpoint_handle) {
         Some(ep) => ep,
         None => return -1,
     };
@@ -434,13 +434,13 @@ pub unsafe extern "C" fn iroh_http_send_chunk(
 /// `headers_ptr` must be valid for `headers_len` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iroh_http_respond(
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     req_handle: u64,
     status: u32,
     headers_ptr: *const u8,
     headers_len: usize,
 ) -> i32 {
-    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+    let ep = match registry::get_endpoint(endpoint_handle) {
         Some(ep) => ep,
         None => return -1,
     };
@@ -477,8 +477,8 @@ pub unsafe extern "C" fn iroh_http_respond(
 ///
 /// Returns `0` on success, `-1` on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn iroh_http_finish_body(endpoint_handle: u32, handle: u64) -> i32 {
-    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+pub extern "C" fn iroh_http_finish_body(endpoint_handle: u64, handle: u64) -> i32 {
+    let ep = match registry::get_endpoint(endpoint_handle) {
         Some(ep) => ep,
         None => return -1,
     };
@@ -492,8 +492,8 @@ pub extern "C" fn iroh_http_finish_body(endpoint_handle: u32, handle: u64) -> i3
 ///
 /// Returns `0` on success.
 #[unsafe(no_mangle)]
-pub extern "C" fn iroh_http_cancel_reader(endpoint_handle: u32, handle: u64) -> i32 {
-    let ep = match registry::get_endpoint(endpoint_handle as u64) {
+pub extern "C" fn iroh_http_cancel_reader(endpoint_handle: u64, handle: u64) -> i32 {
+    let ep = match registry::get_endpoint(endpoint_handle) {
         Some(ep) => ep,
         None => return -1,
     };
@@ -527,7 +527,7 @@ pub extern "C" fn iroh_http_cancel_reader(endpoint_handle: u32, handle: u64) -> 
 /// `out_ptr` must be valid for `out_cap` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iroh_http_try_next_request(
-    endpoint_handle: u32,
+    endpoint_handle: u64,
     out_ptr: *mut u8,
     out_cap: usize,
 ) -> i32 {

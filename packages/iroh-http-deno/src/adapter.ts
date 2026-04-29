@@ -128,7 +128,7 @@ const lib = Deno.dlopen(
       nonblocking: true,
     },
     iroh_http_next_chunk: {
-      parameters: ["u32", "u64", "buffer", "usize"],
+      parameters: ["u64", "u64", "buffer", "usize"],
       result: "i32",
       nonblocking: true,
     },
@@ -136,12 +136,12 @@ const lib = Deno.dlopen(
     // entering the spawn_blocking pool.  Returns -2 when no data is
     // available yet (fall back to async nextChunk).
     iroh_http_try_next_chunk: {
-      parameters: ["u32", "u64", "buffer", "usize"],
+      parameters: ["u64", "u64", "buffer", "usize"],
       result: "i32",
       nonblocking: false,
     },
     iroh_http_send_chunk: {
-      parameters: ["u32", "u64", "buffer", "usize"],
+      parameters: ["u64", "u64", "buffer", "usize"],
       result: "i32",
       // Must be async (nonblocking:true) — sync blocks the JS thread, which
       // deadlocks when client and server share the same event loop and the
@@ -152,17 +152,17 @@ const lib = Deno.dlopen(
     },
     // #122: Sync symbols — execute inline on JS thread, no spawn_blocking.
     iroh_http_respond: {
-      parameters: ["u32", "u64", "u32", "buffer", "usize"],
+      parameters: ["u64", "u64", "u32", "buffer", "usize"],
       result: "i32",
       nonblocking: false,
     },
     iroh_http_finish_body: {
-      parameters: ["u32", "u64"],
+      parameters: ["u64", "u64"],
       result: "i32",
       nonblocking: false,
     },
     iroh_http_cancel_reader: {
-      parameters: ["u32", "u64"],
+      parameters: ["u64", "u64"],
       result: "i32",
       nonblocking: false,
     },
@@ -174,7 +174,7 @@ const lib = Deno.dlopen(
     // #122: Sync non-blocking poll for next queued request.
     // Returns immediately — never blocks the JS thread.
     iroh_http_try_next_request: {
-      parameters: ["u32", "buffer", "usize"],
+      parameters: ["u64", "buffer", "usize"],
       result: "i32",
       nonblocking: false,
     },
@@ -370,13 +370,16 @@ let chunkBufHint = 65536;
 // ── Bridge implementation ─────────────────────────────────────────────────────
 
 export function makeBridge(endpointHandle: number) {
+  // FFI handle as BigInt (handles are u64 on the Rust side; slotmap encodes
+  // version bits in the upper 32 bits, so we must not truncate to u32).
+  const eh = BigInt(endpointHandle);
   return {
     async nextChunk(handle: bigint): Promise<Uint8Array | null> {
       // #126: Try sync non-blocking read first — avoids ~100–200µs of
       // spawn_blocking scheduling overhead when data is already buffered.
       const syncBuf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
       const syncN = lib.symbols.iroh_http_try_next_chunk(
-        endpointHandle,
+        eh,
         handle,
         syncBuf,
         BigInt(syncBuf.byteLength),
@@ -392,7 +395,7 @@ export function makeBridge(endpointHandle: number) {
         // Buffer too small — grow and retry sync.
         const bigBuf = new Uint8Array(-syncN) as Uint8Array<ArrayBuffer>;
         const retryN = lib.symbols.iroh_http_try_next_chunk(
-          endpointHandle,
+          eh,
           handle,
           bigBuf,
           BigInt(bigBuf.byteLength),
@@ -414,7 +417,7 @@ export function makeBridge(endpointHandle: number) {
       // handles do not share memory and corrupt each other's data.
       let buf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
       let n = (await lib.symbols.iroh_http_next_chunk(
-        endpointHandle,
+        eh,
         handle,
         buf,
         BigInt(buf.byteLength),
@@ -424,7 +427,7 @@ export function makeBridge(endpointHandle: number) {
         // Grow the buffer and retry exactly once.
         buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
         n = (await lib.symbols.iroh_http_next_chunk(
-          endpointHandle,
+          eh,
           handle,
           buf,
           BigInt(buf.byteLength),
@@ -445,7 +448,7 @@ export function makeBridge(endpointHandle: number) {
       // Async FFI — same deadlock concern as the class method.
       const buf = chunk as Uint8Array<ArrayBuffer>;
       const result = (await lib.symbols.iroh_http_send_chunk(
-        endpointHandle,
+        eh,
         handle,
         buf,
         BigInt(buf.byteLength),
@@ -457,14 +460,14 @@ export function makeBridge(endpointHandle: number) {
     async finishBody(handle: bigint): Promise<void> {
       // #122: sync FFI — no spawn_blocking contention.
       const rc = lib.symbols.iroh_http_finish_body(
-        endpointHandle,
+        eh,
         handle,
       ) as number;
       if (rc < 0) throw new Error(`finishBody failed: handle ${handle}`);
     },
     async cancelRequest(handle: bigint): Promise<void> {
       // #122: sync FFI — no spawn_blocking contention.
-      lib.symbols.iroh_http_cancel_reader(endpointHandle, handle);
+      lib.symbols.iroh_http_cancel_reader(eh, handle);
     },
     async allocFetchToken(_endpointHandle: number): Promise<bigint> {
       const res = await call<{ token: number }>("allocFetchToken", {
@@ -599,7 +602,7 @@ function syncRespond(
 ): void {
   const headersJson = enc.encode(JSON.stringify(headers));
   const rc = lib.symbols.iroh_http_respond(
-    endpointHandle,
+    BigInt(endpointHandle),
     reqHandle,
     status,
     headersJson,
@@ -637,6 +640,8 @@ export const rawServe: RawServeFn = (
   },
   callback: (payload: RequestPayload) => Promise<FfiResponseHead>,
 ): Promise<void> => {
+  // FFI handle as BigInt — endpoint handles are u64 on the Rust side.
+  const eh = BigInt(endpointHandle);
   return call<Record<never, never>>("serveStart", {
     endpointHandle,
     ...options.serveOptions,
@@ -676,7 +681,7 @@ export const rawServe: RawServeFn = (
         while (true) {
           // Sync poll — runs on JS thread, never enters spawn_blocking pool.
           let n = lib.symbols.iroh_http_try_next_request(
-            endpointHandle,
+            eh,
             pollBuf,
             BigInt(pollBuf.byteLength),
           ) as number;
@@ -687,7 +692,7 @@ export const rawServe: RawServeFn = (
             // Buffer too small — grow and retry immediately.
             pollBuf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
             n = lib.symbols.iroh_http_try_next_request(
-              endpointHandle,
+              eh,
               pollBuf,
               BigInt(pollBuf.byteLength),
             ) as number;
@@ -1111,12 +1116,12 @@ export class DenoAdapter extends IrohAdapter {
   // ── Body streaming ──────────────────────────────────────────────────────────
 
   async nextChunk(handle: bigint): Promise<Uint8Array | null> {
-    const endpointHandle = this.#eh;
+    const eh = BigInt(this.#eh);
     // #126: Try sync non-blocking read first — avoids ~100–200µs of
     // spawn_blocking scheduling overhead when data is already buffered.
     const syncBuf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
     const syncN = lib.symbols.iroh_http_try_next_chunk(
-      endpointHandle,
+      eh,
       handle,
       syncBuf,
       BigInt(syncBuf.byteLength),
@@ -1131,7 +1136,7 @@ export class DenoAdapter extends IrohAdapter {
       // Buffer too small — grow and retry sync.
       const bigBuf = new Uint8Array(-syncN) as Uint8Array<ArrayBuffer>;
       const retryN = lib.symbols.iroh_http_try_next_chunk(
-        endpointHandle,
+        eh,
         handle,
         bigBuf,
         BigInt(bigBuf.byteLength),
@@ -1149,7 +1154,7 @@ export class DenoAdapter extends IrohAdapter {
     // -2: No data yet — fall back to async path.
     let buf = new Uint8Array(chunkBufHint) as Uint8Array<ArrayBuffer>;
     let n = (await lib.symbols.iroh_http_next_chunk(
-      endpointHandle,
+      eh,
       handle,
       buf,
       BigInt(buf.byteLength),
@@ -1157,7 +1162,7 @@ export class DenoAdapter extends IrohAdapter {
     if (n < -1) {
       buf = new Uint8Array(-n) as Uint8Array<ArrayBuffer>;
       n = (await lib.symbols.iroh_http_next_chunk(
-        endpointHandle,
+        eh,
         handle,
         buf,
         BigInt(buf.byteLength),
@@ -1177,7 +1182,7 @@ export class DenoAdapter extends IrohAdapter {
     // client+server on large bodies.
     const buf = chunk as Uint8Array<ArrayBuffer>;
     const result = (await lib.symbols.iroh_http_send_chunk(
-      this.#eh,
+      BigInt(this.#eh),
       handle,
       buf,
       BigInt(buf.byteLength),
@@ -1187,13 +1192,13 @@ export class DenoAdapter extends IrohAdapter {
 
   async finishBody(handle: bigint): Promise<void> {
     // #122: sync FFI — no spawn_blocking contention.
-    const rc = lib.symbols.iroh_http_finish_body(this.#eh, handle) as number;
+    const rc = lib.symbols.iroh_http_finish_body(BigInt(this.#eh), handle) as number;
     if (rc < 0) throw new Error(`finishBody failed: handle ${handle}`);
   }
 
   async cancelRequest(handle: bigint): Promise<void> {
     // #122: sync FFI — no spawn_blocking contention.
-    lib.symbols.iroh_http_cancel_reader(this.#eh, handle);
+    lib.symbols.iroh_http_cancel_reader(BigInt(this.#eh), handle);
   }
 
   async allocFetchToken(_endpointHandle: number): Promise<bigint> {
