@@ -29,7 +29,7 @@ for (const file of files) {
   const relative = file.replace(`${criterionRoot}${path.sep}`, "");
   const benchName = relative.split(path.sep).slice(0, -2).join("/").replace(/\\/g, "/");
 
-  if (benchName.startsWith("throughput/")) {
+  if (benchName.startsWith("throughput")) {
     const sizeMatch = benchName.match(/\/(\d+)$/);
     const size = sizeMatch ? Number(sizeMatch[1]) : 1024;
     const seconds = ns / 1_000_000_000;

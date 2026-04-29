@@ -159,8 +159,7 @@ for (const [label, size, iters] of [
 ]) {
   const iroh = await measure(async () => {
     const res = await client.fetch(
-      serverId,
-      `httpi://bench.local/data?size=${size}`,
+      `httpi://${serverId}/data?size=${size}`,
       { directAddrs: serverAddrs },
     );
     await res.arrayBuffer();
