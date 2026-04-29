@@ -33,8 +33,8 @@ use crate::{
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
 
-type BoxBody = crate::BoxBody;
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
+use crate::Body;
+use crate::BoxError;
 
 // ── ServeOptions ──────────────────────────────────────────────────────────────
 
@@ -216,7 +216,7 @@ struct RequestService {
 }
 
 impl Service<hyper::Request<Incoming>> for RequestService {
-    type Response = hyper::Response<BoxBody>;
+    type Response = hyper::Response<Body>;
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -234,7 +234,7 @@ impl RequestService {
     async fn handle(
         self,
         mut req: hyper::Request<Incoming>,
-    ) -> Result<hyper::Response<BoxBody>, BoxError> {
+    ) -> Result<hyper::Response<Body>, BoxError> {
         let handles = self.endpoint.handles();
         let own_node_id = &*self.own_node_id;
         let remote_node_id = self.remote_node_id.clone().unwrap_or_default();
@@ -284,7 +284,7 @@ impl RequestService {
             if header_bytes > limit {
                 let resp = hyper::Response::builder()
                     .status(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE)
-                    .body(crate::box_body(http_body_util::Empty::new()))
+                    .body(Body::empty())
                     .expect("static response args are valid");
                 return Ok(resp);
             }
@@ -301,9 +301,7 @@ impl RequestService {
                 Err(_) => {
                     let resp = hyper::Response::builder()
                         .status(StatusCode::BAD_REQUEST)
-                        .body(crate::box_body(http_body_util::Full::new(
-                            Bytes::from_static(b"non-UTF8 header value"),
-                        )))
+                        .body(Body::full(Bytes::from_static(b"non-UTF8 header value")))
                         .expect("static response args are valid");
                     return Ok(resp);
                 }
@@ -329,9 +327,9 @@ impl RequestService {
             if !has_connection_upgrade || !is_connect {
                 let resp = hyper::Response::builder()
                     .status(StatusCode::BAD_REQUEST)
-                    .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(
+                    .body(Body::full(Bytes::from_static(
                         b"duplex upgrade requires CONNECT method with Connection: upgrade header",
-                    ))))
+                    )))
                     .expect("static response args are valid");
                 return Ok(resp);
             }
@@ -444,9 +442,7 @@ impl RequestService {
                     // entry when this function exits (issue-7 fix).
                     let resp = hyper::Response::builder()
                         .status(StatusCode::PAYLOAD_TOO_LARGE)
-                        .body(crate::box_body(http_body_util::Full::new(Bytes::from_static(
-                            b"request body too large",
-                        ))))
+                        .body(Body::full(Bytes::from_static(b"request body too large")))
                         .expect("valid 413 response");
                     return Ok(resp);
                 }
@@ -480,7 +476,7 @@ impl RequestService {
                     resp_builder = resp_builder.header(k.as_str(), v.as_str());
                 }
                 let resp = resp_builder
-                    .body(crate::box_body(http_body_util::Empty::new()))
+                    .body(Body::empty())
                     .map_err(|e| -> BoxError { e.into() })?;
                 return Ok(resp);
             }
@@ -505,7 +501,7 @@ impl RequestService {
                 .status(StatusCode::SWITCHING_PROTOCOLS)
                 .header(hyper::header::CONNECTION, "Upgrade")
                 .header(hyper::header::UPGRADE, "iroh-duplex")
-                .body(crate::box_body(http_body_util::Empty::new()))
+                .body(Body::empty())
                 .expect("static response args are valid");
             return Ok(resp);
         }
@@ -523,7 +519,7 @@ impl RequestService {
         let resp_builder = resp_builder; // CompressionLayer in ServiceBuilder handles this
 
         let resp = resp_builder
-            .body(crate::box_body(body_stream))
+            .body(Body::new(body_stream))
             .map_err(|e| -> BoxError { e.into() })?;
 
         Ok(resp)
@@ -813,7 +809,7 @@ where
                         //   [CompressionLayer →] TowerErrorHandler → LoadShed → ConcurrencyLimit → Timeout → RequestService
                         //
                         // Tower layers are applied around `RequestService` (which returns
-                        // `Response<BoxBody>`) so that `TowerErrorHandler` can convert
+                        // `Response<Body>`) so that `TowerErrorHandler` can convert
                         // `Elapsed` and `Overloaded` into 408/503 HTTP responses.
                         // CompressionLayer (if enabled) sits outside the error handler.
                         //
@@ -1049,11 +1045,11 @@ struct TowerErrorHandler<S>(S);
 
 impl<S, Req> Service<Req> for TowerErrorHandler<S>
 where
-    S: Service<Req, Response = hyper::Response<BoxBody>>,
+    S: Service<Req, Response = hyper::Response<Body>>,
     S::Error: Into<BoxError>,
     S::Future: Send + 'static,
 {
-    type Response = hyper::Response<BoxBody>;
+    type Response = hyper::Response<Body>;
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -1087,9 +1083,7 @@ where
                     };
                     Ok(hyper::Response::builder()
                         .status(status)
-                        .body(crate::box_body(http_body_util::Full::new(
-                            Bytes::from_static(body_bytes),
-                        )))
+                        .body(Body::full(Bytes::from_static(body_bytes)))
                         .expect("valid error response"))
                 }
             }

@@ -16,19 +16,19 @@ use crate::{
     CoreError, FfiResponse, IrohEndpoint, ALPN,
 };
 
-// ── BoxBody type alias ────────────────────────────────────────────────────────
+// ── Body type ────────────────────────────────────────────────────────
 
-use crate::BoxBody;
+use crate::Body;
 
 // ── Compression: thin tower service wrapper around hyper SendRequest ─────────
 
-/// Wraps `SendRequest<BoxBody>` as a `tower::Service` so compression/decompression
+/// Wraps `SendRequest<Body>` as a `tower::Service` so compression/decompression
 /// layers from `tower-http` can be composed around it.
 #[cfg(feature = "compression")]
-struct HyperClientSvc(hyper::client::conn::http1::SendRequest<BoxBody>);
+struct HyperClientSvc(hyper::client::conn::http1::SendRequest<Body>);
 
 #[cfg(feature = "compression")]
-impl tower::Service<hyper::Request<BoxBody>> for HyperClientSvc {
+impl tower::Service<hyper::Request<Body>> for HyperClientSvc {
     type Response = hyper::Response<hyper::body::Incoming>;
     type Error = hyper::Error;
     type Future = std::pin::Pin<
@@ -42,7 +42,7 @@ impl tower::Service<hyper::Request<BoxBody>> for HyperClientSvc {
         self.0.poll_ready(cx)
     }
 
-    fn call(&mut self, req: hyper::Request<BoxBody>) -> Self::Future {
+    fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
         Box::pin(self.0.send_request(req))
     }
 }
@@ -207,7 +207,7 @@ async fn do_fetch(
         // response head exceeds max_header_size bytes.
         .max_buf_size(max_header_size.max(8192))
         .max_headers(128)
-        .handshake::<_, BoxBody>(io)
+        .handshake::<_, Body>(io)
         .await
         .map_err(|e| CoreError::connection_failed(format!("hyper handshake: {e}")))?;
 
@@ -240,10 +240,10 @@ async fn do_fetch(
         req_builder = req_builder.header(k.as_str(), v.as_str());
     }
 
-    let req_body: BoxBody = if let Some(reader) = req_body_reader {
-        crate::box_body(body_from_reader(reader))
+    let req_body: Body = if let Some(reader) = req_body_reader {
+        Body::new(body_from_reader(reader))
     } else {
-        crate::box_body(http_body_util::Empty::new())
+        Body::empty()
     };
 
     let req = req_builder

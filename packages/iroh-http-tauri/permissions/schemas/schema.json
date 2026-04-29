@@ -331,18 +331,6 @@
           "markdownDescription": "Denies the close_endpoint command without any pre-configured scope."
         },
         {
-          "description": "Enables the connect command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-connect",
-          "markdownDescription": "Enables the connect command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the connect command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-connect",
-          "markdownDescription": "Denies the connect command without any pre-configured scope."
-        },
-        {
           "description": "Enables the create_body_writer command without any pre-configured scope.",
           "type": "string",
           "const": "allow-create-body-writer",

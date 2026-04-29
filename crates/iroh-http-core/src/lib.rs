@@ -4,6 +4,7 @@
 //! streams via hyper.  Nothing in here knows about JavaScript.
 #![deny(unsafe_code)]
 
+pub mod body;
 pub mod client;
 pub mod endpoint;
 pub mod events;
@@ -14,6 +15,7 @@ pub mod server;
 pub mod session;
 pub mod stream;
 
+pub use body::{Body, BoxError};
 pub use client::fetch;
 #[cfg(feature = "compression")]
 pub use endpoint::CompressionOptions;
@@ -144,23 +146,11 @@ pub const ALPN_DUPLEX_STR: &str = "iroh-http/2-duplex";
 /// All recognised ALPN capability strings.
 pub const KNOWN_ALPNS: &[&str] = &[ALPN_STR, ALPN_DUPLEX_STR];
 
-// ── Shared body type alias ────────────────────────────────────────────────────
-
-/// Boxed HTTP body type used by both client and server.
-pub(crate) type BoxBody =
-    http_body_util::combinators::BoxBody<bytes::Bytes, std::convert::Infallible>;
-
-/// Wrap any body into a `BoxBody`.
-pub(crate) fn box_body<B>(body: B) -> BoxBody
-where
-    B: http_body::Body<Data = bytes::Bytes, Error = std::convert::Infallible>
-        + Send
-        + Sync
-        + 'static,
-{
-    use http_body_util::BodyExt;
-    body.map_err(|_| unreachable!()).boxed()
-}
+// ── Shared body type ─────────────────────────────────────────────────────────
+//
+// The unified [`Body`] newtype lives in [`crate::body`]. It is re-exported
+// from the crate root above so internal modules can write `crate::Body` and
+// downstream FFI adapters can name it without reaching into a submodule.
 
 // ── Key operations ───────────────────────────────────────────────────────────
 

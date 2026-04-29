@@ -105,32 +105,6 @@ Denies the close_endpoint command without any pre-configured scope.
 <tr>
 <td>
 
-`iroh-http:allow-connect`
-
-</td>
-<td>
-
-Enables the connect command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`iroh-http:deny-connect`
-
-</td>
-<td>
-
-Denies the connect command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `iroh-http:allow-create-body-writer`
 
 </td>
