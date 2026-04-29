@@ -7,6 +7,20 @@
 //! Using `SlotMap` instead of `Slab` prevents the ABA handle-reuse problem:
 //! each key carries a generation counter, so a stale handle from a closed
 //! endpoint will never accidentally resolve to a newly inserted one.
+//!
+//! ## FFI handle invariant — DO NOT TRUNCATE TO `u32`
+//!
+//! `KeyData::as_ffi()` packs `(version << 32) | idx` into the returned
+//! `u64`.  The high 32 bits carry the generation counter; the low 32 bits
+//! are the slot index.  Truncating the handle to `u32` anywhere along the
+//! FFI path strips the version bits, defeats the slotmap's anti-ABA
+//! guarantee, and re-introduces the stale-handle bugs that motivated the
+//! switch from `Slab` (issue #161 was exactly this — a `u32` cast in the
+//! Deno dispatch reused slot index 0 across freshly-bound endpoints in
+//! consecutive tests).
+//!
+//! All FFI adapters MUST keep the endpoint handle as `u64` from the JS/TS
+//! layer through the `extern "C"` boundary into `registry::get_endpoint`.
 
 use std::sync::{Mutex, OnceLock};
 
