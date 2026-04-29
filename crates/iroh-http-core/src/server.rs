@@ -831,34 +831,31 @@ where
                         // Build the Tower reliability service stack and serve the connection.
                         //
                         // Layer ordering (outermost first):
-                        //   [CompressionLayer →] TowerErrorHandler → LoadShed → ConcurrencyLimit → Timeout → RequestService
+                        //   [CompressionLayer →] HandleLayerError → [LoadShed →] Timeout → RequestService
                         //
-                        // Tower layers are applied around `RequestService` (which returns
-                        // `Response<Body>`) so that `TowerErrorHandler` can convert
-                        // `Elapsed` and `Overloaded` into 408/503 HTTP responses.
-                        // CompressionLayer (if enabled) sits outside the error handler.
-                        //
-                        // Each `if load_shed_enabled` branch produces a concrete type;
-                        // both branches `.await` to `Result<(), hyper::Error>` so the
-                        // `if` expression is well-typed without boxing.
+                        // Both the compression layer (cfg-gated + runtime-opt) and the
+                        // load-shed layer (runtime-opt) are conditionally inserted via
+                        // `option_layer`, so the four feature × runtime combinations
+                        // collapse to a single expression. `RequestService::Error` is
+                        // `Infallible`, so the only fallible boundary in the stack is
+                        // the `TimeoutLayer` / `LoadShedLayer` pair; `HandleLayerError`
+                        // converts their `Elapsed` / `Overloaded` errors into 408 / 503
+                        // responses so hyper only ever sees `Ok(Response)`.
 
                         use tower::{timeout::TimeoutLayer, ServiceBuilder};
 
                         #[cfg(feature = "compression")]
-                        let result = {
+                        let compression_layer = {
                             use http::{Extensions, HeaderMap, Version};
                             use tower_http::compression::{
                                 predicate::{Predicate, SizeAbove},
-                                CompressionLayer,
+                                CompressionLayer, CompressionLevel,
                             };
-
-                            let compression_config = svc.get_ref().compression.clone();
-                            if let Some(comp) = &compression_config {
-                                let min_bytes = comp.min_body_bytes;
+                            svc.get_ref().compression.as_ref().map(|comp| {
                                 let mut layer = CompressionLayer::new().zstd(true);
                                 if let Some(level) = comp.level {
-                                    use tower_http::compression::CompressionLevel;
-                                    layer = layer.quality(CompressionLevel::Precise(level as i32));
+                                    layer =
+                                        layer.quality(CompressionLevel::Precise(level as i32));
                                 }
                                 let not_pre_compressed =
                                     |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
@@ -882,9 +879,8 @@ where
                                             .and_then(|v| v.to_str().ok())
                                         {
                                             Some(v) => v,
-                                            None => return true, // no CT → compressible
+                                            None => return true,
                                         };
-                                        // Extract the media type (before any parameters).
                                         let media = ct.split(';').next().unwrap_or(ct).trim();
                                         let skip = [
                                             "application/zstd",
@@ -893,7 +889,6 @@ where
                                         if skip.iter().any(|s| media.eq_ignore_ascii_case(s)) {
                                             return false;
                                         }
-                                        // Skip image/*, audio/*, video/*
                                         if let Some(top) = media.split('/').next() {
                                             let top = top.trim();
                                             if top.eq_ignore_ascii_case("image")
@@ -905,105 +900,53 @@ where
                                         }
                                         true
                                     };
-                                let predicate =
-                                    SizeAbove::new(min_bytes.min(u16::MAX as usize) as u16)
-                                        .and(not_pre_compressed)
-                                        .and(not_no_transform)
-                                        .and(not_opaque_content_type);
-                                if load_shed_enabled {
-                                    use tower::load_shed::LoadShedLayer;
-                                    let stk = TowerErrorHandler(
-                                        ServiceBuilder::new()
-                                            .layer(LoadShedLayer::new())
-                                            .layer(TimeoutLayer::new(timeout_dur))
-                                            .service(svc),
-                                    );
-                                    hyper::server::conn::http1::Builder::new()
-                                        .max_buf_size(effective_header_limit)
-                                        .max_headers(128)
-                                        .serve_connection(
-                                            io,
-                                            TowerToHyperService::new(
-                                                ServiceBuilder::new()
-                                                    .layer(layer.compress_when(predicate))
-                                                    .service(stk),
-                                            ),
-                                        )
-                                        .with_upgrades()
-                                        .await
-                                } else {
-                                    let stk = TowerErrorHandler(
-                                        ServiceBuilder::new()
-                                            .layer(TimeoutLayer::new(timeout_dur))
-                                            .service(svc),
-                                    );
-                                    hyper::server::conn::http1::Builder::new()
-                                        .max_buf_size(effective_header_limit)
-                                        .max_headers(128)
-                                        .serve_connection(
-                                            io,
-                                            TowerToHyperService::new(
-                                                ServiceBuilder::new()
-                                                    .layer(layer.compress_when(predicate))
-                                                    .service(stk),
-                                            ),
-                                        )
-                                        .with_upgrades()
-                                        .await
-                                }
-                            } else if load_shed_enabled {
-                                use tower::load_shed::LoadShedLayer;
-                                let stk = TowerErrorHandler(
-                                    ServiceBuilder::new()
-                                        .layer(LoadShedLayer::new())
-                                        .layer(TimeoutLayer::new(timeout_dur))
-                                        .service(svc),
-                                );
-                                hyper::server::conn::http1::Builder::new()
-                                    .max_buf_size(effective_header_limit)
-                                    .max_headers(128)
-                                    .serve_connection(io, TowerToHyperService::new(stk))
-                                    .with_upgrades()
-                                    .await
-                            } else {
-                                let stk = TowerErrorHandler(
-                                    ServiceBuilder::new()
-                                        .layer(TimeoutLayer::new(timeout_dur))
-                                        .service(svc),
-                                );
-                                hyper::server::conn::http1::Builder::new()
-                                    .max_buf_size(effective_header_limit)
-                                    .max_headers(128)
-                                    .serve_connection(io, TowerToHyperService::new(stk))
-                                    .with_upgrades()
-                                    .await
-                            }
+                                let predicate = SizeAbove::new(
+                                    comp.min_body_bytes.min(u16::MAX as usize) as u16,
+                                )
+                                .and(not_pre_compressed)
+                                .and(not_no_transform)
+                                .and(not_opaque_content_type);
+                                layer.compress_when(predicate)
+                            })
                         };
                         #[cfg(not(feature = "compression"))]
-                        let result = if load_shed_enabled {
-                            use tower::load_shed::LoadShedLayer;
-                            let stk = TowerErrorHandler(
-                                ServiceBuilder::new()
-                                    .layer(LoadShedLayer::new())
-                                    .layer(TimeoutLayer::new(timeout_dur))
-                                    .service(svc),
-                            );
-                            hyper::server::conn::http1::Builder::new()
-                                .max_buf_size(effective_header_limit)
-                                .max_headers(128)
-                                .serve_connection(io, TowerToHyperService::new(stk))
+                        let compression_layer: Option<tower::layer::util::Identity> = None;
+
+                        let load_shed_layer = if load_shed_enabled {
+                            Some(tower::load_shed::LoadShedLayer::new())
+                        } else {
+                            None
+                        };
+
+                        let core_stack = ServiceBuilder::new()
+                            .layer(HandleLayerErrorLayer)
+                            .option_layer(load_shed_layer)
+                            .layer(TimeoutLayer::new(timeout_dur))
+                            .service(svc);
+
+                        let mut builder = hyper::server::conn::http1::Builder::new();
+                        builder
+                            .max_buf_size(effective_header_limit)
+                            .max_headers(128);
+
+                        #[cfg(feature = "compression")]
+                        let result = if let Some(comp) = compression_layer {
+                            let stack = ServiceBuilder::new().layer(comp).service(core_stack);
+                            builder
+                                .serve_connection(io, TowerToHyperService::new(stack))
                                 .with_upgrades()
                                 .await
                         } else {
-                            let stk = TowerErrorHandler(
-                                ServiceBuilder::new()
-                                    .layer(TimeoutLayer::new(timeout_dur))
-                                    .service(svc),
-                            );
-                            hyper::server::conn::http1::Builder::new()
-                                .max_buf_size(effective_header_limit)
-                                .max_headers(128)
-                                .serve_connection(io, TowerToHyperService::new(stk))
+                            builder
+                                .serve_connection(io, TowerToHyperService::new(core_stack))
+                                .with_upgrades()
+                                .await
+                        };
+                        #[cfg(not(feature = "compression"))]
+                        let result = {
+                            let _ = compression_layer;
+                            builder
+                                .serve_connection(io, TowerToHyperService::new(core_stack))
                                 .with_upgrades()
                                 .await
                         };
@@ -1068,6 +1011,24 @@ where
 #[derive(Clone)]
 struct TowerErrorHandler<S>(S);
 
+/// `Layer` adapter that wraps a fallible inner service with [`TowerErrorHandler`].
+///
+/// Composes inside [`tower::ServiceBuilder`] so the serve-loop wiring stays
+/// a single expression. Per ADR-014 the only fallible boundary in the serve
+/// stack is the `TimeoutLayer` / `LoadShedLayer` pair; this layer converts
+/// their `Elapsed` / `Overloaded` errors into 408 / 503 responses so hyper
+/// only ever sees `Ok(Response)`.
+#[derive(Clone, Default)]
+struct HandleLayerErrorLayer;
+
+impl<S> tower::Layer<S> for HandleLayerErrorLayer {
+    type Service = TowerErrorHandler<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        TowerErrorHandler(inner)
+    }
+}
+
 impl<S, Req> Service<Req> for TowerErrorHandler<S>
 where
     S: Service<Req, Response = hyper::Response<Body>>,
@@ -1075,15 +1036,21 @@ where
     S::Future: Send + 'static,
 {
     type Response = hyper::Response<Body>;
-    type Error = BoxError;
+    type Error = std::convert::Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         // If ConcurrencyLimitLayer is saturated AND LoadShed is present, it
         // returns Pending from poll_ready — LoadShed converts that to an
-        // immediate Err(Overloaded).  If LoadShed is absent, poll_ready blocks
-        // until a slot opens.  In both cases we propagate the result here.
-        self.0.poll_ready(cx).map_err(Into::into)
+        // immediate Err(Overloaded). If LoadShed is absent, poll_ready blocks
+        // until a slot opens. In both cases the inner service signals readiness
+        // here; layer errors are handled in `call`, never surfaced via
+        // `poll_ready`.
+        match self.0.poll_ready(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(_)) => Poll::Ready(Ok(())),
+        }
     }
 
     fn call(&mut self, req: Req) -> Self::Future {
