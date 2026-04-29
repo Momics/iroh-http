@@ -4,6 +4,8 @@
 > iroh-http adapters. It is the single source of truth for what a conformant
 > adapter must expose. Coding-style guidance lives in [guidelines/](guidelines/README.md);
 > behavioural details live in [features/](features/README.md).
+>
+> **As of iroh-http-core 0.3.4.** Update this stamp when the public API changes.
 
 ---
 
@@ -54,6 +56,9 @@ interface IrohNode {
   serve(handler: ServeHandler): ServeHandle;
   serve(options: ServeOptions, handler: ServeHandler): ServeHandle;
   serve(options: ServeOptions & { handler: ServeHandler }): ServeHandle;
+  // Note: Rust exports a single serve() function. The three JS overloads
+  // are an adapter responsibility — each adapter expands the ergonomic
+  // signatures into one Rust call with the appropriate options struct.
 
   /** Open a WebTransport session to a peer. */
   connect(
@@ -453,6 +458,18 @@ interface PeerStats {
   relay: boolean;
   relayUrl: string | null;
   paths: PathInfo[];
+  /** Round-trip time in milliseconds. `null` if no active QUIC connection. */
+  rttMs: number | null;
+  /** Total UDP bytes sent to this peer. `null` if no active connection. */
+  bytesSent: number | null;
+  /** Total UDP bytes received from this peer. `null` if no active connection. */
+  bytesReceived: number | null;
+  /** Total packets lost on the QUIC path. `null` if no active connection. */
+  lostPackets: number | null;
+  /** Total packets sent on the QUIC path. `null` if no active connection. */
+  sentPackets: number | null;
+  /** Current congestion window in bytes. `null` if no active connection. */
+  congestionWindow: number | null;
 }
 
 interface PathInfo {
@@ -466,6 +483,235 @@ interface CloseOptions {
   reason?: string;
 }
 ```
+
+### `EndpointStats`
+
+Endpoint-level observability snapshot returned by `node.endpointStats()`.
+
+```ts
+interface EndpointStats {
+  /** Currently open body reader handles. */
+  activeReaders: number;
+  /** Currently open body writer handles. */
+  activeWriters: number;
+  /** Live QUIC sessions (WebTransport connections). */
+  activeSessions: number;
+  /** Total allocated handles (reader + writer + session + other). */
+  totalHandles: number;
+  /** QUIC connections currently cached in the connection pool. */
+  poolSize: number;
+  /** Live QUIC connections accepted by the serve loop. */
+  activeConnections: number;
+  /** HTTP requests currently being processed. */
+  activeRequests: number;
+}
+```
+
+### `ConnectionEvent`
+
+Fired when a QUIC peer connection opens or closes.
+
+```ts
+interface ConnectionEvent {
+  /** Base32-encoded public key of the peer. */
+  peerId: string;
+  /** `true` = first connection opened (0→1); `false` = last connection closed (1→0). */
+  connected: boolean;
+}
+```
+
+### `TransportEvent`
+
+Transport-level events emitted by the endpoint, forwarded as
+`CustomEvent('transport', { detail })` on the JS `IrohNode` instance.
+
+```ts
+type TransportEvent =
+  | { type: "pool:hit"; peerId: string; timestamp: number }
+  | { type: "pool:miss"; peerId: string; timestamp: number }
+  | { type: "pool:evict"; peerId: string; timestamp: number }
+  | { type: "path:change"; peerId: string; addr: string; relay: boolean; timestamp: number }
+  | { type: "handle:sweep"; evicted: number; timestamp: number };
+```
+
+### `CompressionOptions`
+
+Configuration for response body compression. Only available when the
+`compression` feature is enabled.
+
+```ts
+interface CompressionOptions {
+  /** Zstd compression level (1–22). Default: 3 (zstd default). */
+  level?: number;
+  /** Minimum body size in bytes before compression is applied. Default: 512. */
+  minBodyBytes?: number;
+}
+```
+
+---
+
+## Rust FFI Types
+
+> These types define the FFI boundary between `iroh-http-core` and all three
+> adapters. They are not directly visible to JS but determine the wire format
+> of every cross-boundary call. Adapter authors must map these correctly.
+
+### `FfiResponse`
+
+Returned by `fetch()` at the Rust layer.
+
+```ts
+// Rust struct — all adapters must map these fields to the JS Response.
+interface FfiResponse {
+  status: number;                   // HTTP status code
+  headers: [string, string][];      // key-value header pairs
+  bodyHandle: bigint;               // Handle to a BodyReader (0 = no body)
+  url: string;                      // Full httpi:// URL
+}
+```
+
+`bodyHandle` is `0` (the slotmap null sentinel) for null-body status codes
+(RFC 9110 §6.3: 204, 205, 304). Adapters should treat `0` as "no body".
+
+### `RequestPayload`
+
+Passed to the serve callback per incoming request.
+
+```ts
+interface RequestPayload {
+  reqHandle: bigint;        // Handle to the pending response head
+  reqBodyHandle: bigint;    // Handle to a BodyReader for the request body
+  resBodyHandle: bigint;    // Handle to a BodyWriter for the response body
+  method: string;
+  url: string;
+  headers: [string, string][];
+  remoteNodeId: string;     // Base32-encoded peer public key
+  isBidi: boolean;          // Whether this is a bidirectional stream upgrade
+}
+```
+
+### `FfiDuplexStream`
+
+Handles for the two sides of a full-duplex QUIC stream.
+
+```ts
+interface FfiDuplexStream {
+  readHandle: bigint;
+  writeHandle: bigint;
+}
+```
+
+---
+
+## Rust-Level Functions
+
+> These are the `pub` functions exported from `iroh-http-core`. Each adapter
+> wraps them through its FFI mechanism (napi-rs / Deno FFI / Tauri invoke).
+
+### Endpoint Registry
+
+```
+insert_endpoint(ep) → u64          // Register endpoint, return handle
+get_endpoint(handle: u64) → Option // Look up by handle (cheap Arc clone)
+remove_endpoint(handle: u64) → Option  // Remove and return
+close_all_endpoints()              // Drain all + force-close (Tauri hot-reload)
+```
+
+Handles are slotmap keys (generational), not plain indices.
+
+### Fetch and Connect
+
+```
+fetch(endpoint, peer, path, method, headers, body_reader?) → FfiResponse
+raw_connect(endpoint, peer, addrs?) → FfiDuplexStream
+```
+
+### Serve
+
+```
+serve(endpoint, options, callback) → ServeHandle
+serve_with_events(endpoint, options, request_cb, event_cb) → ServeHandle
+respond(endpoint, req_handle, status, headers) → ()
+```
+
+The JS adapters expand `serve()` into three overload signatures for
+ergonomics. The Rust layer has a single function; overload expansion is
+an adapter responsibility.
+
+### Session Functions
+
+```
+session_connect(endpoint, peer, addrs?) → u64          // Open/reuse session
+session_accept(endpoint) → Option<u64>                  // Accept incoming session
+session_remote_id(endpoint, handle) → [u8; 32]          // Remote peer's public key
+session_close(endpoint, handle, code?, reason?)         // Close session
+session_ready(endpoint, handle) → ()                    // Await session ready
+session_closed(endpoint, handle) → CloseInfo            // Await session close
+session_create_bidi_stream(endpoint, handle) → FfiDuplexStream
+session_next_bidi_stream(endpoint, handle) → Option<FfiDuplexStream>
+session_create_uni_stream(endpoint, handle) → u64       // Writer handle
+session_next_uni_stream(endpoint, handle) → Option<u64> // Reader handle
+session_send_datagram(endpoint, handle, data)
+session_recv_datagram(endpoint, handle) → Bytes
+session_max_datagram_size(endpoint, handle) → Option<usize>
+```
+
+### Crypto Utilities
+
+```
+generate_secret_key() → [u8; 32]
+secret_key_sign(key: [u8; 32], data) → [u8; 64]
+public_key_verify(key: [u8; 32], data, sig: [u8; 64]) → bool
+```
+
+JS adapters expose these via `SecretKey.sign()`, `PublicKey.verify()`, and
+`SecretKey.generate()`.
+
+### Handle Store
+
+```
+StoreConfig {
+  channel_capacity: usize,     // Body-channel depth. Default: 32.
+  max_chunk_size: usize,       // Max bytes per chunk. Default: 64 KB.
+  drain_timeout: Duration,     // Slow-reader timeout. Default: 30 s.
+  max_handles: usize,          // Max slots per registry. Default: 65 536.
+  ttl: Duration,               // Handle TTL before sweep. Default: 5 min.
+}
+```
+
+Configurable via `NodeOptions.advanced` on the JS side:
+`channelCapacity`, `maxChunkSizeBytes`, `handleTtl`.
+
+### `ServeHandle`
+
+Returned by `serve()` / `serve_with_events()` at the Rust layer.
+
+| Method | Description |
+|---|---|
+| `shutdown()` | Notify the serve loop to stop accepting new connections |
+| `drain(self)` | Shutdown + await completion (respects `drainTimeout`) |
+| `abort()` | Forcefully cancel the serve task |
+| `done()` | Resolves when the serve task has fully exited |
+
+The default drain timeout is **30 seconds** (`DEFAULT_DRAIN_TIMEOUT_MS`).
+`close()` on the JS side maps to `drain()`. `close_force()` maps to `abort()`.
+
+### Parsed Node Address
+
+```
+ParsedNodeAddr {
+  node_id: PublicKey,
+  direct_addrs: Vec<SocketAddr>,
+}
+
+parse_node_addr(s: &str) → ParsedNodeAddr
+node_ticket(ep) → String
+```
+
+`parse_node_addr` accepts bare node IDs (base32), JSON-encoded
+`NodeAddrInfo`, or ticket strings. Relay URLs in `addrs` are silently
+skipped (handled by the relay subsystem). Malformed socket addresses
+cause a deterministic error.
 
 ---
 
