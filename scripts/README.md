@@ -6,10 +6,15 @@
 npm run ci
 ```
 
-Runs: `cargo fmt --check` → `cargo clippy` → `cargo test` → feature checks →
-TypeScript typecheck → builds → Node/Deno/interop tests.
+Requires dependencies to be installed with plain `npm ci` first. Do not use
+`npm ci --omit=optional` locally — the Tauri guest-JS tests need Vitest's
+native rolldown binding.
 
-Mirrors the GitHub CI `verify` job exactly. Run this before pushing to `main`.
+Runs: `cargo fmt --check` → `cargo clippy` → `cargo test` → feature checks →
+Tauri guest-JS tests → TypeScript typecheck → builds → Node/Deno/interop tests.
+
+Matches the GitHub CI coverage across `verify`, `bench-smoke`, and `e2e`.
+Run this before pushing to `main`.
 
 ---
 

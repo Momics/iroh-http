@@ -73,8 +73,9 @@ section "Unreleased commits"
 
 LAST_TAG=$(git tag --sort=-version:refname | head -1)
 if [[ -n "$LAST_TAG" ]]; then
-  git log "$LAST_TAG"..HEAD --oneline | head -20
-  COUNT=$(git log "$LAST_TAG"..HEAD --oneline | wc -l | tr -d ' ')
+  COMMITS=$(git log "$LAST_TAG"..HEAD --oneline)
+  COUNT=$(echo "$COMMITS" | wc -l | tr -d ' ')
+  echo "$COMMITS" | head -20
   [[ "$COUNT" -gt 20 ]] && warn "…and $((COUNT - 20)) more"
   echo ""
   echo "  $COUNT commit(s) since $LAST_TAG"

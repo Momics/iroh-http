@@ -37,7 +37,7 @@ npm run test:tauri --silent
 ok "tests (tauri)"
 
 echo "  → test:tauri:guest"
-npx vitest run --config packages/iroh-http-tauri/vitest.config.ts --silent
+npm run test:tauri:guest --silent
 ok "tests (tauri guest-js)"
 
 echo "  → deny"

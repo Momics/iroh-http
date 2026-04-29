@@ -59,6 +59,12 @@ jobs:
 
       - run: npm ci --omit=optional
 
+      - name: Install Vitest native binding
+        # `npm ci --omit=optional` is still required here so prerelease
+        # platform packages do not block CI before publish, but Vitest/Vite
+        # needs rolldown's native binding at runtime.
+        run: npm install --no-save @rolldown/binding-linux-x64-gnu
+
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
@@ -87,6 +93,9 @@ jobs:
         # iroh-http-tauri has its own Cargo.lock and is excluded from the
         # workspace; test it explicitly so it is not silently skipped.
         run: cargo test --manifest-path packages/iroh-http-tauri/Cargo.toml
+
+      - name: guest-JS test (iroh-http-tauri)
+        run: npm run test:tauri:guest --silent
 
       - name: cargo check (no-default-features)
         run: |

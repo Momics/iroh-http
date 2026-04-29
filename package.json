@@ -21,6 +21,7 @@
     "lint": "cargo fmt --all -- --check && cargo clippy --workspace -- -D warnings -D clippy::unwrap_used -D clippy::panic -D clippy::arithmetic_side_effects && cargo clippy --manifest-path packages/iroh-http-tauri/Cargo.toml -- -D warnings -D clippy::unwrap_used -D clippy::panic -D clippy::arithmetic_side_effects",
     "test:rust": "cargo test --workspace",
     "test:tauri": "cargo test --manifest-path packages/iroh-http-tauri/Cargo.toml",
+    "test:tauri:guest": "npm test --workspace=packages/iroh-http-tauri",
     "check:tauri": "cargo check --manifest-path packages/iroh-http-tauri/Cargo.toml",
     "build:tauri:rust": "cargo build --release --manifest-path packages/iroh-http-tauri/Cargo.toml",
     "test:node": "npm test --workspace=packages/iroh-http-node",
