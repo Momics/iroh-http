@@ -108,6 +108,29 @@ above 2⁵³ safely through `Number`, so all handle values are transmitted as
 a bigint→Number replacer (safe because slotmap indices fit well within f64),
 and all returned handle values are wrapped in `BigInt()` at the boundary.
 
+### FFI handle invariant: never truncate to `u32`
+
+The generation counter lives in the **upper** 32 bits of the handle, so any
+truncation to `u32` along the FFI path silently strips it and re-introduces
+exactly the ABA bug slotmap was adopted to prevent.
+
+Issue [#161](https://github.com/Momics/iroh-http/issues/161) was a textbook
+instance: the Deno dispatch declared `endpoint_handle: u32` in several
+`extern "C"` symbols and dashmap key types. The first endpoint and a
+freshly-rebound second endpoint both occupied slot index 0; their full
+`u64` handles differed only in the upper 32 bits; the truncation collapsed
+them and the second test in a pair received the closed endpoint's state.
+
+Rules every adapter must follow:
+
+- All FFI symbols accepting an endpoint handle declare it `u64`.
+- All Rust-side maps keyed by handle use `u64` (or `(u64, …)`).
+- All JS callers wrap the handle in `BigInt()` before passing it across the
+  FFI boundary.
+- The unit test `registry::tests::handle_round_trip_changes_after_reuse`
+  documents the failure mode and asserts that truncating to `u32` would
+  alias two distinct handles.
+
 ---
 
 ## 5. Connection pool: moka + try_get_with

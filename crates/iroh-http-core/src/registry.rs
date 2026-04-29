@@ -115,4 +115,42 @@ mod tests {
         // Should not panic when there are no endpoints.
         close_all_endpoints();
     }
+
+    /// Regression test for #161.
+    ///
+    /// After a `remove`, the next `insert` reuses the same slot index but
+    /// bumps the generation counter, so the full `u64` handle is different.
+    /// If any FFI adapter truncates the handle to `u32`, the version bits
+    /// (upper 32) are stripped and the two handles collide, causing a stale
+    /// handle from a closed endpoint to resolve to the new one.
+    #[test]
+    fn handle_round_trip_changes_after_reuse() {
+        let mut map: SlotMap<EndpointKey, u8> = SlotMap::with_key();
+        let k1 = map.insert(1u8);
+        let h1 = key_to_handle(k1);
+
+        map.remove(k1);
+
+        let k2 = map.insert(2u8);
+        let h2 = key_to_handle(k2);
+
+        // Full u64 handles must differ across reuse (version bumped).
+        assert_ne!(
+            h1, h2,
+            "slotmap must bump generation on reuse; got identical handles {h1:#x}",
+        );
+
+        // Slot index alone (low 32 bits) is allowed to repeat — and is
+        // exactly what gets compared if any layer truncates to u32. This
+        // assertion documents the failure mode #161 hit.
+        assert_eq!(
+            h1 as u32, h2 as u32,
+            "slot index repeats on reuse; truncating handle to u32 would alias h1 and h2",
+        );
+
+        // Round-trip through handle_to_key must still recover the *new* key,
+        // not the stale one — i.e. the stale handle must NOT resolve.
+        assert_eq!(handle_to_key(h2), k2);
+        assert_ne!(handle_to_key(h1), k2);
+    }
 }
