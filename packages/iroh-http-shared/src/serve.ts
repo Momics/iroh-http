@@ -89,7 +89,7 @@ export interface ServeOptions {
 
   /**
    * Reject request bodies larger than this many bytes.
-   * @default unlimited
+   * @default 16_777_216 (16 MiB)
    */
   maxRequestBodyBytes?: number;
 
@@ -107,13 +107,13 @@ export interface ServeOptions {
 
   /**
    * Milliseconds to wait for in-flight requests to drain after shutdown.
-   * @default 5_000
+   * @default 30_000
    */
   drainTimeout?: number;
 
   /**
    * When `true`, reject requests with 503 when at capacity instead of queuing.
-   * @default false
+   * @default true
    */
   loadShed?: boolean;
 

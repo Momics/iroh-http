@@ -214,15 +214,15 @@ interface ServeOptions {
   maxConnectionsPerPeer?: number;
   /** Per-request timeout in ms. Default: 60 000. 0 = disabled. */
   requestTimeout?: number;
-  /** Max request body size in bytes. Unlimited by default. */
+  /** Max request body size in bytes. Default: 16 777 216 (16 MiB). */
   maxRequestBodyBytes?: number;
   /** Max total QUIC connections. Unlimited by default. */
   maxTotalConnections?: number;
   /** Max consecutive accept errors before shutdown. Default: 5. */
   maxServeErrors?: number;
-  /** Drain timeout in ms after shutdown. Default: 5 000. */
+  /** Drain timeout in ms after shutdown. Default: 30 000. */
   drainTimeout?: number;
-  /** Reject with 503 at capacity instead of queuing. Default: false. */
+  /** Reject with 503 at capacity instead of queuing. Default: true. */
   loadShed?: boolean;
 }
 ```
