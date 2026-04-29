@@ -24,7 +24,7 @@ use tower::Service;
 
 use crate::{
     base32_encode,
-    client::{body_from_reader, pump_hyper_body_to_channel_limited},
+    client::{body_from_reader, pump_hyper_body_to_channel},
     io::IrohStream,
     stream::{HandleStore, ResponseHeadEntry},
     ConnectionEvent, CoreError, IrohEndpoint, RequestPayload,
@@ -241,7 +241,6 @@ struct FfiDispatcher {
     on_request: Arc<dyn Fn(RequestPayload) + Send + Sync>,
     endpoint: IrohEndpoint,
     own_node_id: Arc<String>,
-    max_request_body_bytes: Option<usize>,
     max_header_size: Option<usize>,
     #[cfg(feature = "compression")]
     compression: Option<crate::endpoint::CompressionOptions>,
@@ -285,7 +284,6 @@ impl FfiDispatcher {
     {
         let handles = self.endpoint.handles();
         let own_node_id = &*self.own_node_id;
-        let max_request_body_bytes = self.max_request_body_bytes;
         let max_header_size = self.max_header_size;
 
         let method = req.method().to_string();
@@ -440,24 +438,17 @@ impl FfiDispatcher {
 
         // For duplex: keep req_body_writer to move into the upgrade spawn below.
         // For regular: consume it immediately into the pump task.
-        // ISS-004: create an overflow channel so the serve path can return 413.
-        let (body_overflow_tx, body_overflow_rx) = if !is_bidi && max_request_body_bytes.is_some() {
-            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
-
+        //
+        // Body-size enforcement is handled by `tower_http::limit::RequestBodyLimitLayer`
+        // in the per-connection layer stack below: the layer rejects oversized
+        // requests with `413 Payload Too Large` (immediately for known
+        // `Content-Length`, or by erroring the wrapped `Limited` body
+        // mid-stream for chunked uploads).  The pump just drains whatever
+        // body the layer hands us; on a length-limit error the body simply
+        // ends short and the JS handler sees a truncated read.
         let duplex_req_body_writer = if !is_bidi {
             let body = req.into_body();
-            let frame_timeout = handles.drain_timeout();
-            tokio::spawn(pump_hyper_body_to_channel_limited(
-                body,
-                req_body_writer,
-                max_request_body_bytes,
-                frame_timeout,
-                body_overflow_tx,
-            ));
+            tokio::spawn(pump_hyper_body_to_channel(body, req_body_writer));
             None
         } else {
             // Duplex: discard the HTTP preamble body (empty before 101).
@@ -479,35 +470,14 @@ impl FfiDispatcher {
             is_bidi,
         );
 
-        // ── Await response head from JS (race against body overflow) ─────────
+        // ── Await response head from JS ──────────────────────────────────────
         //
-        // ISS-004: if the request body exceeds maxRequestBodyBytes, return 413
-        // immediately without waiting for the JS handler to respond.
-
-        let response_head = if let Some(overflow_rx) = body_overflow_rx {
-            tokio::select! {
-                biased;
-                Ok(()) = overflow_rx => {
-                    // Body too large: ReqHeadCleanup RAII guard will remove the slab
-                    // entry when this function exits (issue-7 fix).
-                    let resp = hyper::Response::builder()
-                        .status(StatusCode::PAYLOAD_TOO_LARGE)
-                        .body(Body::full(Bytes::from_static(b"request body too large")))
-                        .expect("valid 413 response");
-                    return resp;
-                }
-                head = head_rx => {
-                    match head {
-                        Ok(h) => h,
-                        Err(_) => return internal_error(b"JS handler dropped without responding"),
-                    }
-                }
-            }
-        } else {
-            match head_rx.await {
-                Ok(h) => h,
-                Err(_) => return internal_error(b"JS handler dropped without responding"),
-            }
+        // Body-size overflow is no longer handled here — `RequestBodyLimitLayer`
+        // either rejects the request before we are called (Content-Length
+        // pre-check) or ends the body short mid-stream (chunked uploads).
+        let response_head = match head_rx.await {
+            Ok(h) => h,
+            Err(_) => return internal_error(b"JS handler dropped without responding"),
         };
 
         // ── Duplex path: honor handler status, upgrade only on 101 ──────────────
@@ -688,7 +658,6 @@ where
         on_request,
         endpoint: endpoint.clone(),
         own_node_id,
-        max_request_body_bytes,
         max_header_size: if max_header_size == 0 {
             None
         } else {
@@ -949,7 +918,23 @@ where
                             None
                         };
 
+                        // ADR-013: enforce request body size with the standard
+                        // tower-http layer rather than a hand-rolled byte
+                        // counter in the dispatcher.  The layer rejects
+                        // oversized requests with 413 (immediately for known
+                        // `Content-Length`, or by erroring the wrapped
+                        // `Limited` body mid-stream for chunked uploads).
+                        //
+                        // Applied unconditionally with `usize::MAX` when the
+                        // user opted out, because `option_layer` cannot
+                        // unify the two response-body shapes that
+                        // `RequestBodyLimit` produces vs. doesn't produce.
+                        let body_limit_layer = tower_http::limit::RequestBodyLimitLayer::new(
+                            max_request_body_bytes.unwrap_or(usize::MAX),
+                        );
+
                         let core_stack = ServiceBuilder::new()
+                            .layer(body_limit_layer)
                             .layer(HandleLayerErrorLayer)
                             .option_layer(load_shed_layer)
                             .layer(TimeoutLayer::new(timeout_dur))

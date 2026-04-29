@@ -12,7 +12,9 @@
 
 - *(bench)* Uint8Array type cast for Deno strict check, add --skipLibCheck for node tsc
 - *(ci)* Check no-default-features with compression kept on — tests discovery-off path only
+### 🚜 Refactor
 
+- *(core)* Replace hand-rolled `max_request_body_bytes` accounting in `FfiDispatcher::dispatch` with `tower_http::limit::RequestBodyLimitLayer`. Closes the last bespoke enforcement in the request path; per ADR-013, body-size enforcement now lives entirely in the standard tower-http stack. The layer rejects oversized requests with `413 Payload Too Large` (immediately for known `Content-Length`, or by erroring the wrapped `Limited` body mid-stream for chunked uploads).
 ### 📚 Documentation
 
 - *(readmes)* Fix Windows platform support, add cross-runtime links, fix SPDX license parens; ci: add Windows to Node build matrix
