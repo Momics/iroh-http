@@ -713,59 +713,6 @@ pub fn respond_to_request(args: RespondArgs) -> Result<(), String> {
         .collect();
     respond(ep.handles(), args.req_handle, args.status, headers).map_err(|e| core_error_to_json(&e))
 }
-
-// ── rawConnect ────────────────────────────────────────────────────────────────
-
-/// Arguments for opening a full-duplex stream.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RawConnectArgs {
-    pub endpoint_handle: u64,
-    pub node_id: String,
-    pub path: String,
-    pub headers: Vec<Vec<String>>,
-}
-
-/// Handles for a full-duplex QUIC stream.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FfiDuplexStreamPayload {
-    pub read_handle: u64,
-    pub write_handle: u64,
-}
-
-/// Open a full-duplex QUIC connection to a remote peer.
-#[command]
-pub async fn connect(args: RawConnectArgs) -> Result<FfiDuplexStreamPayload, String> {
-    let ep = state::get_endpoint(args.endpoint_handle).ok_or_else(|| {
-        format_error_json(
-            "INVALID_HANDLE",
-            format!("invalid endpoint handle: {}", args.endpoint_handle),
-        )
-    })?;
-
-    let pairs: Vec<(String, String)> = args
-        .headers
-        .into_iter()
-        .filter_map(|p| {
-            if p.len() == 2 {
-                Some((p[0].clone(), p[1].clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let duplex = iroh_http_core::raw_connect(&ep, &args.node_id, &args.path, &pairs)
-        .await
-        .map_err(|e| core_error_to_json(&e))?;
-
-    Ok(FfiDuplexStreamPayload {
-        read_handle: duplex.read_handle,
-        write_handle: duplex.write_handle,
-    })
-}
-
 // ── Session ───────────────────────────────────────────────────────────────────
 
 /// Arguments for establishing a session.

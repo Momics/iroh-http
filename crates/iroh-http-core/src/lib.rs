@@ -14,7 +14,7 @@ pub mod server;
 pub mod session;
 pub mod stream;
 
-pub use client::{fetch, raw_connect};
+pub use client::fetch;
 #[cfg(feature = "compression")]
 pub use endpoint::CompressionOptions;
 pub use endpoint::{
@@ -133,7 +133,7 @@ impl std::error::Error for CoreError {}
 
 /// ALPN for the HTTP/1.1-over-QUIC protocol (version 2 wire format).
 pub const ALPN: &[u8] = b"iroh-http/2";
-/// ALPN for base + bidirectional streaming (duplex/raw_connect).
+/// ALPN for base + bidirectional streaming sessions.
 pub const ALPN_DUPLEX: &[u8] = b"iroh-http/2-duplex";
 
 /// String form of [`ALPN`], for use in [`NodeOptions::capabilities`].

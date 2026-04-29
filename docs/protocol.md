@@ -68,7 +68,7 @@ The QUIC connection uses ALPN (Application-Layer Protocol Negotiation) to identi
 | ALPN | Meaning |
 |------|---------|
 | `iroh-http/2` | Standard request/response (current) |
-| `iroh-http/2-duplex` | Raw bidirectional stream via HTTP Upgrade (`raw_connect`) |
+| `iroh-http/2-duplex` | Sessions — raw bidirectional streams, unidirectional streams, datagrams (`node.dial`) |
 
 The version number changed from 1 to 2 when the wire format migrated from custom framing to standard HTTP/1.1 over QUIC. Old and new builds refuse to connect to each other — the ALPN mismatch is intentional and is the correct way to signal breaking wire-format changes. See [internals/wire-format.md](internals/wire-format.md) for details.
 
@@ -95,7 +95,7 @@ iroh-http is built on standards wherever they provide the right abstraction. Whe
 | Deno.serve contract | `node.serve()` | Handler signature, `onListen`, `signal` shutdown, `onError` — all follow Deno.serve exactly |
 | WHATWG `Request` / `Response` / `Headers` / `ReadableStream` | All platform adapters | Native platform types are used throughout; no custom wrappers |
 | WHATWG WebTransport API | `IrohSession` | `IrohSession` satisfies the full `WebTransport` interface: `ready`, `closed`, `datagrams`, `createBidirectionalStream()`, `incomingBidirectionalStreams`, etc. |
-| HTTP Upgrade (RFC 7230 §6.7) | `raw_connect` / duplex streams | Standard `Upgrade: iroh-duplex` + `101 Switching Protocols` handshake via hyper |
+| HTTP Upgrade (RFC 7230 §6.7) | Server-side duplex stream upgrade | Standard `Upgrade: iroh-duplex` + `101 Switching Protocols` handshake via hyper, used by `req.upgrade()` on the serve path |
 | HTTP compression negotiation | Compression | `Accept-Encoding` / `Content-Encoding` / `Vary` headers follow standard HTTP negotiation rules, including quality value (`q=`) preference ordering |
 
 ### Where we deviate, and why

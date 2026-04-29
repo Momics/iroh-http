@@ -4,7 +4,6 @@
 identifier = "connect"
 description = "Enables raw QUIC sessions — bidirectional streams and datagrams directly to a peer, outside of HTTP framing."
 permissions = [
-  "allow-connect",
   "allow-session-connect",
   "allow-session-accept",
   "allow-session-close",

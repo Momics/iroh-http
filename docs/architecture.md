@@ -39,7 +39,7 @@ Any deviation from these contracts is a bug unless explicitly documented.
 ┌────────────────────────▼─────────────────────────────────────┐
 │  iroh-http-core (Rust)                                        │
 │                                                              │
-│  client.rs   — fetch(), raw_connect()                        │
+│  client.rs   — fetch()                                       │
 │  server.rs   — serve(), RequestService, drain                │
 │  pool.rs     — moka-backed single-flight connection pool     │
 │  stream.rs   — slotmap handle registries, body channels      │
@@ -73,7 +73,7 @@ The Rust crate that owns all transport logic. Platform adapters depend only on i
 
 | File | Responsibility |
 |------|----------------|
-| `client.rs` | `fetch()` and `raw_connect()`. Obtains a QUIC connection via the pool, wraps it in `IrohStream`, drives hyper's HTTP/1.1 client, pumps the response body into handle-based channels. |
+| `client.rs` | `fetch()`. Obtains a QUIC connection via the pool, wraps it in `IrohStream`, drives hyper's HTTP/1.1 client, pumps the response body into handle-based channels. |
 | `server.rs` | `serve()`. Accepts QUIC connections, spawns per-stream hyper HTTP/1.1 handlers, enforces concurrency via drain semaphore, applies timeout middleware. `RequestService` is the tower `Service` that bridges hyper requests to body channels. |
 | `pool.rs` | `ConnectionPool`. moka async cache keyed by `NodeId`. `try_get_with` provides single-flight connection establishment — concurrent fetches to the same peer share one connection attempt. Failed attempts are not cached. |
 | `stream.rs` | All resource handle registries (body readers, writers, fetch tokens, sessions, request heads). Uses `slotmap` for generational u64 keys. Also defines backpressure config (channel capacity, max chunk size). |
@@ -137,7 +137,7 @@ Host: <node-id>\r\n
 [HTTP/1.1 chunked body]
 ```
 
-**ALPN strings:** `iroh-http/2` (standard) and `iroh-http/2-duplex` (raw_connect). The version bump from 1 to 2 marks the migration from custom framing to hyper. Old and new builds refuse to connect — the ALPN mismatch is intentional.
+**ALPN strings:** `iroh-http/2` (HTTP request/response) and `iroh-http/2-duplex` (sessions — bi/uni streams, datagrams, server-side `req.upgrade()`). The version bump from 1 to 2 marks the migration from custom framing to hyper. Old and new builds refuse to connect — the ALPN mismatch is intentional.
 
 **URL scheme:** `httpi://<public-key>/path` — clean, parseable, and distinct from `http://`. The `Request` constructor normalizes to `http:` internally; `httpi://` is preserved in `Response.url` and `payload.url`.
 

@@ -1,10 +1,10 @@
-//! Outgoing HTTP request — `fetch()` and `raw_connect()` implementation.
+//! Outgoing HTTP request — `fetch()` implementation.
 //!
 //! HTTP/1.1 framing is delegated entirely to hyper.  Iroh's QUIC stream pair
 //! is wrapped in `IrohStream` and handed to hyper's client connection API.
 
 use bytes::Bytes;
-use http::{HeaderName, HeaderValue, Method, StatusCode};
+use http::{HeaderName, HeaderValue, Method};
 use http_body_util::{BodyExt, StreamBody};
 use hyper::body::Frame;
 use hyper_util::rt::TokioIo;
@@ -13,7 +13,7 @@ use crate::{
     io::IrohStream,
     parse_node_addr,
     stream::{BodyReader, BodyWriter, HandleStore},
-    CoreError, FfiDuplexStream, FfiResponse, IrohEndpoint, ALPN, ALPN_DUPLEX,
+    CoreError, FfiResponse, IrohEndpoint, ALPN,
 };
 
 // ── BoxBody type alias ────────────────────────────────────────────────────────
@@ -480,113 +480,6 @@ pub(crate) fn extract_path(url: &str) -> String {
         Some(pos) => raw[..pos].to_string(),
         None => raw,
     }
-}
-
-// ── Duplex / raw_connect ──────────────────────────────────────────────────────
-
-/// Open a full-duplex QUIC connection to a remote node via HTTP Upgrade.
-pub async fn raw_connect(
-    endpoint: &IrohEndpoint,
-    remote_node_id: &str,
-    path: &str,
-    headers: &[(String, String)],
-) -> Result<FfiDuplexStream, CoreError> {
-    // Validate headers.
-    for (name, value) in headers {
-        HeaderName::from_bytes(name.as_bytes())
-            .map_err(|_| CoreError::invalid_input(format!("invalid header name {:?}", name)))?;
-        HeaderValue::from_str(value).map_err(|_| {
-            CoreError::invalid_input(format!("invalid header value for {:?}", name))
-        })?;
-    }
-
-    let parsed = parse_node_addr(remote_node_id)?;
-    let node_id = parsed.node_id;
-    let mut addr = iroh::EndpointAddr::new(node_id);
-    for a in &parsed.direct_addrs {
-        addr = addr.with_ip_addr(*a);
-    }
-
-    let ep_raw = endpoint.raw().clone();
-    let addr_clone = addr.clone();
-    let max_header_size = endpoint.max_header_size();
-    let handles = endpoint.handles();
-
-    let pooled = endpoint
-        .pool()
-        .get_or_connect(node_id, ALPN_DUPLEX, || async move {
-            ep_raw
-                .connect(addr_clone, ALPN_DUPLEX)
-                .await
-                .map_err(|e| format!("connect duplex: {e}"))
-        })
-        .await
-        .map_err(CoreError::connection_failed)?;
-
-    let (send, recv) = pooled
-        .conn
-        .open_bi()
-        .await
-        .map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
-    let io = TokioIo::new(IrohStream::new(send, recv));
-
-    let (mut sender, conn_task) = hyper::client::conn::http1::Builder::new()
-        .max_buf_size(max_header_size.max(8192))
-        .handshake::<_, BoxBody>(io)
-        .await
-        .map_err(|e| CoreError::connection_failed(format!("hyper handshake (duplex): {e}")))?;
-
-    tokio::spawn(conn_task);
-
-    // Build CONNECT request with Upgrade: iroh-duplex.
-    // ISS-015: include Connection: upgrade for strict handshake compliance.
-    let mut req_builder = hyper::Request::builder()
-        .method(Method::from_bytes(b"CONNECT").expect("CONNECT is a valid HTTP method"))
-        .uri(path)
-        .header(hyper::header::CONNECTION, "upgrade")
-        .header(hyper::header::UPGRADE, "iroh-duplex");
-
-    for (k, v) in headers {
-        req_builder = req_builder.header(k.as_str(), v.as_str());
-    }
-
-    let req = req_builder
-        .body(crate::box_body(http_body_util::Empty::new()))
-        .map_err(|e| CoreError::internal(format!("build duplex request: {e}")))?;
-
-    let resp = sender
-        .send_request(req)
-        .await
-        .map_err(|e| CoreError::connection_failed(format!("send duplex request: {e}")))?;
-
-    let status = resp.status();
-    if status != StatusCode::SWITCHING_PROTOCOLS {
-        // ISS-022: use PeerRejected so callers can distinguish policy rejection
-        // from transport failure for retry/telemetry purposes.
-        return Err(CoreError::peer_rejected(format!(
-            "server rejected duplex: expected 101, got {status}"
-        )));
-    }
-
-    // Perform the protocol upgrade to get raw bidirectional IO.
-    let upgraded = hyper::upgrade::on(resp)
-        .await
-        .map_err(|e| CoreError::connection_failed(format!("upgrade error: {e}")))?;
-
-    let (server_write, server_read) = handles.make_body_channel();
-    let (client_write, client_read) = handles.make_body_channel();
-
-    let read_handle = handles.insert_reader(server_read)?;
-    let write_handle = handles.insert_writer(client_write)?;
-
-    // Pipe upgraded IO to/from body channels.
-    let io = TokioIo::new(upgraded);
-    tokio::spawn(crate::stream::pump_duplex(io, server_write, client_read));
-
-    Ok(FfiDuplexStream {
-        read_handle,
-        write_handle,
-    })
 }
 
 #[cfg(test)]

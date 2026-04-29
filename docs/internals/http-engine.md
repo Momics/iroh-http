@@ -105,11 +105,11 @@ Produces an `http_body::Body` (via `StreamBody`) from a `BodyReader`:
 
 ---
 
-## Duplex / raw_connect
+## Server-side duplex upgrade
 
 Duplex mode uses HTTP Upgrade semantics. The ALPN for duplex connections is `iroh-http/2-duplex`.
 
-**Server side:**
+**Server side** (the only side this engine implements; the client side is the user's responsibility via the session API):
 1. Detects `Upgrade: iroh-duplex` header
 2. Captures upgrade future before consuming request: `hyper::upgrade::on(&mut req)`
 3. Returns `101 Switching Protocols` to hyper immediately
@@ -117,13 +117,7 @@ Duplex mode uses HTTP Upgrade semantics. The ALPN for duplex connections is `iro
    - `recv_io → req_body_writer`: bytes from the client feed into `req_body_handle` (JS reads via `nextChunk`)
    - `res_body_reader → send_io`: bytes JS writes via `sendChunk` are forwarded to the client
 
-**Client side** (`raw_connect`):
-1. Opens a QUIC bi-stream on the duplex ALPN connection
-2. Performs hyper HTTP/1.1 handshake
-3. Sends `CONNECT /path HTTP/1.1 + Upgrade: iroh-duplex`
-4. Awaits 101 response
-5. Calls `hyper::upgrade::on(response)` to get the raw `Upgraded` IO
-6. Splits into reader/writer handles returned to JS
+*Client-side initiation of an upgraded HTTP/1.1 stream lived in `client::raw_connect` until v0.3.5; it was removed because the [session API](../../crates/iroh-http-core/src/session.rs) covers the same use case with a cleaner WebTransport-shaped surface and the JS adapters never wired it up.*
 
 ---
 

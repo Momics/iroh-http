@@ -1,6 +1,10 @@
 ## [unreleased]
 
-### 🚀 Features
+### � Breaking Changes
+
+- *(core)* Remove `raw_connect` from the public Rust surface and the `connect` Tauri command. The session API (`node.dial`/sessions) covers the same use case with a WebTransport-shaped surface; the JS adapters never wired the legacy upgrade entrypoint. Server-side `req.upgrade()` is unchanged.
+
+### �🚀 Features
 
 - *(node)* Napi-rs platform package split
 

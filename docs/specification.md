@@ -623,8 +623,9 @@ Handles are slotmap keys (generational), not plain indices.
 
 ```
 fetch(endpoint, peer, path, method, headers, body_reader?) → FfiResponse
-raw_connect(endpoint, peer, addrs?) → FfiDuplexStream
 ```
+
+A dedicated `connect`/`raw_connect` FFI symbol no longer exists; bidirectional connections go through the session API (`session_connect`, `session_create_bidi_stream`, etc., see below).
 
 ### Serve
 

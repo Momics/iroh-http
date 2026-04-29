@@ -36,7 +36,7 @@ ALPN is the version identifier on the wire. Old and new builds that use differen
 | ALPN | Used for |
 |------|----------|
 | `b"iroh-http/2"` | Regular HTTP requests (`fetch`) |
-| `b"iroh-http/2-duplex"` | Duplex / raw_connect (`Upgrade: iroh-duplex`) |
+| `b"iroh-http/2-duplex"` | Sessions — bi/uni streams, datagrams, server-side `req.upgrade()` (`Upgrade: iroh-duplex`) |
 
 The version number `2` reflects the wire format change from the original custom QPACK-prefixed encoding, not the HTTP version. The protocol is still HTTP/1.1.
 
@@ -55,7 +55,7 @@ The `-duplex` variant from version 1 no longer exists as a separate ALPN — dup
 
 ## Duplex wire format
 
-The duplex mode (`raw_connect`) uses standard HTTP Upgrade:
+The duplex mode (server-side `req.upgrade()`) uses standard HTTP Upgrade:
 
 ```
 Client → Server:

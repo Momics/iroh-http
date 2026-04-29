@@ -40,7 +40,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::wait_serve_stop,
             commands::wait_endpoint_closed,
             commands::respond_to_request,
-            commands::connect,
             commands::secret_key_sign,
             commands::public_key_verify,
             commands::generate_secret_key,
