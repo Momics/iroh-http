@@ -920,21 +920,30 @@ where
 
                         // ADR-013: enforce request body size with the standard
                         // tower-http layer rather than a hand-rolled byte
-                        // counter in the dispatcher.  The layer rejects
+                        // counter in the dispatcher. The layer rejects
                         // oversized requests with 413 (immediately for known
                         // `Content-Length`, or by erroring the wrapped
                         // `Limited` body mid-stream for chunked uploads).
                         //
-                        // Applied unconditionally with `usize::MAX` when the
-                        // user opted out, because `option_layer` cannot
-                        // unify the two response-body shapes that
-                        // `RequestBodyLimit` produces vs. doesn't produce.
-                        let body_limit_layer = tower_http::limit::RequestBodyLimitLayer::new(
-                            max_request_body_bytes.unwrap_or(usize::MAX),
-                        );
+                        // `RequestBodyLimit<S>` changes the response body
+                        // type to `ResponseBody<S::ResBody>`. To keep the two
+                        // arms of `option_layer` unifiable as
+                        // `Response<Body>` (axum's trick — see
+                        // `axum::body::Body` + `axum-core::body::HttpBody`),
+                        // we collapse the response body back to our `Body`
+                        // newtype with `MapResponseBodyLayer::new(Body::new)`
+                        // immediately after the limit layer.
+                        let body_limit_layer = max_request_body_bytes.map(|limit| {
+                            ServiceBuilder::new()
+                                .layer(tower_http::map_response_body::MapResponseBodyLayer::new(
+                                    Body::new,
+                                ))
+                                .layer(tower_http::limit::RequestBodyLimitLayer::new(limit))
+                                .into_inner()
+                        });
 
                         let core_stack = ServiceBuilder::new()
-                            .layer(body_limit_layer)
+                            .option_layer(body_limit_layer)
                             .layer(HandleLayerErrorLayer)
                             .option_layer(load_shed_layer)
                             .layer(TimeoutLayer::new(timeout_dur))

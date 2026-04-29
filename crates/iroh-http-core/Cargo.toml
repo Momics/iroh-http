@@ -26,7 +26,7 @@ http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
 tower = { workspace = true }
-tower-http = { workspace = true, features = ["limit"] }
+tower-http = { workspace = true, features = ["limit", "map-response-body"] }
 moka = { workspace = true }
 slotmap = { workspace = true }
 futures = { workspace = true }
