@@ -1,11 +1,15 @@
 name: Benchmarks
 
 # Runs benchmarks for Rust (Criterion), Node.js (mitata), and Deno.
-# Results are published to gh-pages for per-release regression tracking.
+# Results are published to gh-pages for visualisation — not as a hard gate.
 #
 # Triggers:
-#   - push to tags (v*.*.*): per-release benchmark snapshot
-#   - workflow_dispatch: manual run at any time
+#   - push to tags (v*.*.*): per-release snapshot → dev/bench/releases/<metric>
+#   - workflow_dispatch: manual main snapshot → dev/bench/main/<metric>
+#
+# Regression alerts are posted as comments but never fail the workflow.
+# This lets the chart show performance trends across releases without
+# blocking CI on variance between runs.
 
 on:
   push:
@@ -62,9 +66,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           alert-threshold: '120%'
           comment-on-alert: true
-          fail-on-alert: true
+          fail-on-alert: false
           gh-pages-branch: gh-pages
-          benchmark-data-dir-path: dev/bench/node-throughput
+          benchmark-data-dir-path: dev/bench/${{ github.event_name == 'push' && 'releases' || 'main' }}/node-throughput
       - uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: customSmallerIsBetter
@@ -72,9 +76,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           alert-threshold: '120%'
           comment-on-alert: true
-          fail-on-alert: true
+          fail-on-alert: false
           gh-pages-branch: gh-pages
-          benchmark-data-dir-path: dev/bench/node-latency
+          benchmark-data-dir-path: dev/bench/${{ github.event_name == 'push' && 'releases' || 'main' }}/node-latency
           skip-fetch-gh-pages: true
           auto-push: true
       - uses: actions/upload-artifact@v7
@@ -123,9 +127,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           alert-threshold: '120%'
           comment-on-alert: true
-          fail-on-alert: true
+          fail-on-alert: false
           gh-pages-branch: gh-pages
-          benchmark-data-dir-path: dev/bench/deno-throughput
+          benchmark-data-dir-path: dev/bench/${{ github.event_name == 'push' && 'releases' || 'main' }}/deno-throughput
       - uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: customSmallerIsBetter
@@ -133,9 +137,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           alert-threshold: '120%'
           comment-on-alert: true
-          fail-on-alert: true
+          fail-on-alert: false
           gh-pages-branch: gh-pages
-          benchmark-data-dir-path: dev/bench/deno-latency
+          benchmark-data-dir-path: dev/bench/${{ github.event_name == 'push' && 'releases' || 'main' }}/deno-latency
           skip-fetch-gh-pages: true
           auto-push: true
       - uses: actions/upload-artifact@v7
@@ -169,9 +173,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           alert-threshold: '120%'
           comment-on-alert: true
-          fail-on-alert: true
+          fail-on-alert: false
           gh-pages-branch: gh-pages
-          benchmark-data-dir-path: dev/bench/rust-throughput
+          benchmark-data-dir-path: dev/bench/${{ github.event_name == 'push' && 'releases' || 'main' }}/rust-throughput
       - uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: customSmallerIsBetter
@@ -179,9 +183,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           alert-threshold: '120%'
           comment-on-alert: true
-          fail-on-alert: true
+          fail-on-alert: false
           gh-pages-branch: gh-pages
-          benchmark-data-dir-path: dev/bench/rust-latency
+          benchmark-data-dir-path: dev/bench/${{ github.event_name == 'push' && 'releases' || 'main' }}/rust-latency
           skip-fetch-gh-pages: true
           auto-push: true
       - uses: actions/upload-artifact@v7
