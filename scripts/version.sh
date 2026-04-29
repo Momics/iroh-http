@@ -162,10 +162,17 @@ if [[ -f "$ROOT/packages/iroh-http-tauri/Cargo.lock" ]]; then
 fi
 
 echo "Regenerating package-lock.json …"
-# --omit=optional: prevent empty-version stubs for platform-specific native
-# addon packages (e.g. @momics/iroh-http-node-darwin-arm64) that crash
-# npm ci on other platforms with "Invalid Version: ".
-(cd "$ROOT" && rm -f package-lock.json && npm install --package-lock-only --ignore-scripts --omit=optional)
+# Regenerate with ALL platform optional deps resolved. Using --omit=optional
+# here was the bug behind issue #154: it produces bare {"optional": true}
+# stubs for native binary deps that the host platform did not need to install,
+# which then crashes `npm ci` on every other platform with
+# `TypeError: Invalid Version:` from semver.
+#
+# `npm install --package-lock-only` (default flags) downloads metadata for all
+# optional deps without actually unpacking the binaries, so every entry ends up
+# with a real semver version.
+(cd "$ROOT" && rm -f package-lock.json && npm install --package-lock-only --ignore-scripts)
+node "$ROOT/scripts/check-lockfile.mjs"
 echo "  ✓ package-lock.json"
 
 echo "Regenerating deno.lock …"

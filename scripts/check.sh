@@ -86,6 +86,10 @@ echo "  → typecheck"
 npm run typecheck --silent
 ok "typecheck"
 
+echo "  → lockfile"
+node "$ROOT/scripts/check-lockfile.mjs" >/dev/null
+ok "lockfile (no empty-version optional stubs — #154)"
+
 section "Tests"
 
 echo "  → test:node"

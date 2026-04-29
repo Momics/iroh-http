@@ -30,6 +30,7 @@
     "test": "npm run test:rust && npm run test:tauri && npm run test:node && npm run test:deno && npm run test:interop",
     "bench:smoke": "cargo bench -p iroh-http-core -- --test --quiet",
     "check:features": "cargo check -p iroh-http-node --no-default-features --features compression --quiet && cargo check -p iroh-http-deno --no-default-features --features compression --quiet",
+    "check:lockfile": "node scripts/check-lockfile.mjs",
     "bench:node": "node bench/node/bench.mjs",
     "bench:node:report": "node bench/node/report.mjs",
     "bench:deno": "deno bench --allow-net --allow-ffi --allow-env --allow-read --allow-write --allow-sys bench/deno/bench.ts",
