@@ -39,7 +39,7 @@ use crate::BoxError;
 //
 // Per ADR-014, `IrohHttpService::Error = Infallible` — every internal failure
 // is rendered to an HTTP response inside the service. Layer-level failures
-// (timeout, load-shed) are still mapped to 408 / 503 in `TowerErrorHandler`
+// (timeout, load-shed) are still mapped to 408 / 503 in `HandleLayerError`
 // because those errors arise *outside* this service.
 
 fn internal_error(detail: &'static [u8]) -> hyper::Response<Body> {
@@ -1036,42 +1036,44 @@ where
     }
 }
 
-// ── TowerErrorHandler — maps Tower layer errors to HTTP responses ─────────────
+// ── HandleLayerError — convert tower-layer errors to HTTP responses ──────────
+//
+// ADR-013 ("Lean on the ecosystem") justification: tower itself, tower-http,
+// and hyper-util do not ship an "error → response" adapter. axum has
+// `axum::error_handling::HandleErrorLayer`, but pulling axum into the runtime
+// just for this seam would invert the dependency direction (axum sits *on
+// top of* tower; iroh-http-core lives one level lower). `HandleLayerError` is
+// a ~50-line bespoke layer that exists solely because that gap in the
+// ecosystem hasn't been filled — every other layer in the serve stack is a
+// stock `tower-http` / `tower` building block.
 //
 // `ConcurrencyLimitLayer`, `TimeoutLayer`, and `LoadShedLayer` return errors
-// rather than `Response` values when they reject a request.  `TowerErrorHandler`
-// wraps the composed service and converts those errors to proper HTTP responses:
+// rather than `Response` values when they reject a request. This adapter
+// catches them and renders an HTTP response so hyper only ever sees
+// `Ok(Response)`:
 //
-//   tower::timeout::error::Elapsed     → 408 Request Timeout
+//   tower::timeout::error::Elapsed      → 408 Request Timeout
 //   tower::load_shed::error::Overloaded → 503 Service Unavailable
-//   anything else                       → 500 Internal Server Error
-//
-// This allows the whole stack to satisfy hyper's requirement that the service
-// returns `Ok(Response)` — errors crash the connection instead of producing a
-// status code.
+//   anything else                        → 500 Internal Server Error
 
-#[derive(Clone)]
-struct TowerErrorHandler<S>(S);
-
-/// `Layer` adapter that wraps a fallible inner service with [`TowerErrorHandler`].
-///
-/// Composes inside [`tower::ServiceBuilder`] so the serve-loop wiring stays
-/// a single expression. Per ADR-014 the only fallible boundary in the serve
-/// stack is the `TimeoutLayer` / `LoadShedLayer` pair; this layer converts
-/// their `Elapsed` / `Overloaded` errors into 408 / 503 responses so hyper
-/// only ever sees `Ok(Response)`.
+/// `Layer` form: insert in any `tower::ServiceBuilder` pipeline that contains
+/// a `TimeoutLayer` and/or `LoadShedLayer` to convert their errors into HTTP
+/// responses. Wraps the inner service with [`HandleLayerError`].
 #[derive(Clone, Default)]
 struct HandleLayerErrorLayer;
 
 impl<S> tower::Layer<S> for HandleLayerErrorLayer {
-    type Service = TowerErrorHandler<S>;
+    type Service = HandleLayerError<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        TowerErrorHandler(inner)
+        HandleLayerError(inner)
     }
 }
 
-impl<S, Req> Service<Req> for TowerErrorHandler<S>
+#[derive(Clone)]
+struct HandleLayerError<S>(S);
+
+impl<S, Req> Service<Req> for HandleLayerError<S>
 where
     S: Service<Req, Response = hyper::Response<Body>>,
     S::Error: Into<BoxError>,

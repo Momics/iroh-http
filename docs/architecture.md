@@ -40,7 +40,8 @@ Any deviation from these contracts is a bug unless explicitly documented.
 │  iroh-http-core (Rust)                                        │
 │                                                              │
 │  client.rs   — fetch()                                       │
-│  server.rs   — serve(), RequestService, drain                │
+│  server.rs   — serve(), IrohHttpService + FfiDispatcher,    │
+│                drain                                         │
 │  pool.rs     — moka-backed single-flight connection pool     │
 │  stream.rs   — slotmap handle registries, body channels      │
 │  session.rs  — session/WebTransport-style API                │
@@ -74,7 +75,7 @@ The Rust crate that owns all transport logic. Platform adapters depend only on i
 | File | Responsibility |
 |------|----------------|
 | `client.rs` | `fetch()`. Obtains a QUIC connection via the pool, wraps it in `IrohStream`, drives hyper's HTTP/1.1 client, pumps the response body into handle-based channels. |
-| `server.rs` | `serve()`. Accepts QUIC connections, spawns per-stream hyper HTTP/1.1 handlers, enforces concurrency via drain semaphore, applies timeout middleware. `RequestService` is the tower `Service` that bridges hyper requests to body channels. |
+| `server.rs` | `serve()`. Accepts QUIC connections, spawns per-stream hyper HTTP/1.1 handlers, enforces concurrency via drain semaphore, and composes the standard `tower-http` reliability stack (`CompressionLayer`, `RequestDecompressionLayer`, `TimeoutLayer`, `ConcurrencyLimitLayer`, `LoadShedLayer`) per ADR-014. `IrohHttpService` is the thin `tower::Service<Request<B>, Response = Response<Body>, Error = Infallible>` shell at the hyper boundary; it delegates each request to `FfiDispatcher`, which owns the JS-bridge concerns (handle allocation, `on_request` firing, body-channel pumping, response-head rendezvous, duplex upgrade). The only bespoke layer in the stack is `HandleLayerError`, which converts `tower::timeout::Elapsed` / `tower::load_shed::Overloaded` errors into 408 / 503 responses (no `axum::error_handling::HandleErrorLayer` equivalent exists in plain tower / tower-http — see ADR-013). |
 | `pool.rs` | `ConnectionPool`. moka async cache keyed by `NodeId`. `try_get_with` provides single-flight connection establishment — concurrent fetches to the same peer share one connection attempt. Failed attempts are not cached. |
 | `stream.rs` | All resource handle registries (body readers, writers, fetch tokens, sessions, request heads). Uses `slotmap` for generational u64 keys. Also defines backpressure config (channel capacity, max chunk size). |
 | `session.rs` | Session lifecycle: `session_connect` (non-pooled dedicated connections), bidirectional/unidirectional streams, datagrams. Session registry. |
