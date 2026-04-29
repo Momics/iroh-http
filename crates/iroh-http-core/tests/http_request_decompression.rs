@@ -44,8 +44,7 @@ async fn request_body_with_content_encoding_zstd_is_decompressed() {
                 }
 
                 let response_body = format!("received {} bytes", body.len());
-                respond(server_ep.handles(), req_handle, 200, vec![])
-                    .expect("write response head");
+                respond(server_ep.handles(), req_handle, 200, vec![]).expect("write response head");
                 server_ep
                     .handles()
                     .send_chunk(res_body_handle, Bytes::from(response_body.into_bytes()))
@@ -60,8 +59,8 @@ async fn request_body_with_content_encoding_zstd_is_decompressed() {
     );
 
     // Compress the request body with zstd (default level 3).
-    let compressed = zstd::stream::encode_all(plaintext.as_slice(), 0)
-        .expect("zstd encode succeeds");
+    let compressed =
+        zstd::stream::encode_all(plaintext.as_slice(), 0).expect("zstd encode succeeds");
     assert!(
         compressed.len() < plaintext_len,
         "compressed body should be smaller than plaintext"
@@ -92,7 +91,10 @@ async fn request_body_with_content_encoding_zstd_is_decompressed() {
         "/upload",
         "POST",
         &[
-            ("content-type".to_string(), "application/octet-stream".to_string()),
+            (
+                "content-type".to_string(),
+                "application/octet-stream".to_string(),
+            ),
             ("content-encoding".to_string(), "zstd".to_string()),
         ],
         Some(body_reader),
@@ -150,8 +152,7 @@ async fn request_body_without_content_encoding_passes_through() {
                     body.extend_from_slice(&chunk);
                 }
                 let response_body = format!("received {} bytes", body.len());
-                respond(server_ep.handles(), req_handle, 200, vec![])
-                    .expect("write head");
+                respond(server_ep.handles(), req_handle, 200, vec![]).expect("write head");
                 server_ep
                     .handles()
                     .send_chunk(res_body_handle, Bytes::from(response_body.into_bytes()))

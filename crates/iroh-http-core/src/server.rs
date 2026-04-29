@@ -887,8 +887,7 @@ where
                             svc.get_ref().dispatcher.compression.as_ref().map(|comp| {
                                 let mut layer = CompressionLayer::new().zstd(true);
                                 if let Some(level) = comp.level {
-                                    layer =
-                                        layer.quality(CompressionLevel::Precise(level as i32));
+                                    layer = layer.quality(CompressionLevel::Precise(level as i32));
                                 }
                                 let not_pre_compressed =
                                     |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
@@ -915,10 +914,7 @@ where
                                             None => return true,
                                         };
                                         let media = ct.split(';').next().unwrap_or(ct).trim();
-                                        let skip = [
-                                            "application/zstd",
-                                            "application/octet-stream",
-                                        ];
+                                        let skip = ["application/zstd", "application/octet-stream"];
                                         if skip.iter().any(|s| media.eq_ignore_ascii_case(s)) {
                                             return false;
                                         }
@@ -943,7 +939,9 @@ where
                             })
                         };
                         #[cfg(not(feature = "compression"))]
-                        let compression_layer: Option<tower::layer::util::Identity> = None;
+                        let compression_layer: Option<
+                            tower::layer::util::Identity,
+                        > = None;
 
                         let load_shed_layer = if load_shed_enabled {
                             Some(tower::load_shed::LoadShedLayer::new())
