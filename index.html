@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>iroh-http · Benchmarks</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --border:  #30363d;
+      --text:    #e6edf3;
+      --muted:   #8b949e;
+      --blue:    #58a6ff;
+      --orange:  #f0883e;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      font-size: 14px;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Header ────────────────────────────────────────────────────────── */
+    header {
+      padding: 1.75rem 2rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: baseline;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header p  { color: var(--muted); font-size: 0.875rem; }
+
+    /* ── Legend ────────────────────────────────────────────────────────── */
+    .global-legend {
+      display: flex;
+      gap: 1.5rem;
+      padding: 0.75rem 2rem;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .leg {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    .leg-swatch {
+      width: 28px;
+      height: 2px;
+      border-radius: 2px;
+    }
+
+    /* ── Main layout ───────────────────────────────────────────────────── */
+    main { padding: 2rem; max-width: 1440px; margin: 0 auto; }
+    section { margin-bottom: 2.5rem; }
+    section h2 {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .chart-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 860px) {
+      .chart-row { grid-template-columns: 1fr; }
+    }
+
+    /* ── Chart cards ───────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+      min-height: 260px;
+      display: flex;
+      flex-direction: column;
+    }
+    .card h3 {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+    .card canvas { flex: 1; max-height: 280px; }
+    .empty {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-align: center;
+      padding: 1rem;
+      opacity: 0.6;
+    }
+
+    /* ── Footer ────────────────────────────────────────────────────────── */
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>iroh-http · Benchmarks</h1>
+  <p>
+    Per-release history &amp; live main snapshots ·
+    <a href="https://github.com/Momics/iroh-http">Momics/iroh-http</a>
+  </p>
+</header>
+
+<div class="global-legend">
+  <span class="leg">
+    <span class="leg-swatch" style="background:var(--blue)"></span>
+    Releases (tag push)
+  </span>
+  <span class="leg">
+    <span class="leg-swatch" style="background:var(--orange); opacity:.8;
+      background: repeating-linear-gradient(90deg,var(--orange) 0,var(--orange) 5px,transparent 5px,transparent 9px)">
+    </span>
+    Main (manual run)
+  </span>
+</div>
+
+<main>
+  <section id="sec-node">
+    <h2>Node.js</h2>
+    <div class="chart-row">
+      <div class="card">
+        <h3>Throughput — MB/s (higher is better)</h3>
+        <canvas id="node-throughput"></canvas>
+      </div>
+      <div class="card">
+        <h3>Latency — ms (lower is better)</h3>
+        <canvas id="node-latency"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <section id="sec-deno">
+    <h2>Deno</h2>
+    <div class="chart-row">
+      <div class="card">
+        <h3>Throughput — MB/s (higher is better)</h3>
+        <canvas id="deno-throughput"></canvas>
+      </div>
+      <div class="card">
+        <h3>Latency — ms (lower is better)</h3>
+        <canvas id="deno-latency"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <section id="sec-rust">
+    <h2>Rust (Criterion)</h2>
+    <div class="chart-row">
+      <div class="card">
+        <h3>Throughput — MB/s (higher is better)</h3>
+        <canvas id="rust-throughput"></canvas>
+      </div>
+      <div class="card">
+        <h3>Latency — µs (lower is better)</h3>
+        <canvas id="rust-latency"></canvas>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Generated from <a href="https://github.com/Momics/iroh-http/tree/gh-pages">gh-pages</a> data ·
+  Charts update on every release tag or manual benchmark dispatch.
+</footer>
+
+<script>
+// ── Palette ────────────────────────────────────────────────────────────────────
+const PALETTE = [
+  '#58a6ff','#3fb950','#d2a8ff','#ff7b72',
+  '#ffa657','#79c0ff','#56d364','#f78166',
+  '#e3b341','#a5d6ff','#7ee787','#ffa198',
+];
+const REL_COLOR   = (i) => PALETTE[i % PALETTE.length];
+const MAIN_ALPHA  = 'b0'; // hex alpha for main-branch lines
+
+// ── Data loading ───────────────────────────────────────────────────────────────
+async function loadData(path) {
+  try {
+    const res = await fetch(path);
+    if (!res.ok) return null;
+    const text = await res.text();
+    const prefix = 'window.BENCHMARK_DATA = ';
+    const start  = text.indexOf(prefix);
+    if (start === -1) return null;
+    return JSON.parse(text.slice(start + prefix.length).replace(/;\s*$/, ''));
+  } catch { return null; }
+}
+
+// ── Extract series from benchmark data ────────────────────────────────────────
+function extractSeries(data) {
+  if (!data) return null;
+  const entries = Object.values(data.entries ?? {})[0] ?? [];
+  if (!entries.length) return null;
+
+  const names = [...new Set(entries.flatMap(e => e.benches.map(b => b.name)))];
+  const labels = entries.map(e => e.commit?.id?.slice(0, 7) ?? '?');
+
+  const datasets = names.map(name => ({
+    name,
+    values: entries.map(e => {
+      const b = e.benches.find(b => b.name === name);
+      return b?.value ?? null;
+    }),
+  }));
+
+  return { labels, datasets };
+}
+
+// ── Build Chart.js datasets from rel + main series ────────────────────────────
+function buildDatasets(rel, main) {
+  const allNames = [...new Set([
+    ...(rel?.datasets.map(d => d.name)  ?? []),
+    ...(main?.datasets.map(d => d.name) ?? []),
+  ])];
+
+  const out = [];
+  allNames.forEach((name, i) => {
+    const base = REL_COLOR(i);
+
+    if (rel) {
+      const d = rel.datasets.find(d => d.name === name);
+      out.push({
+        label: name + ' · releases',
+        data: rel.labels.map((x, idx) => ({ x, y: d?.values[idx] ?? null })),
+        borderColor: base,
+        backgroundColor: base + '22',
+        borderWidth: 2,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        tension: 0.3,
+        borderDash: [],
+        spanGaps: false,
+      });
+    }
+
+    if (main) {
+      const d = main.datasets.find(d => d.name === name);
+      out.push({
+        label: name + ' · main',
+        data: main.labels.map((x, idx) => ({ x, y: d?.values[idx] ?? null })),
+        borderColor: base + MAIN_ALPHA,
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        tension: 0.3,
+        borderDash: [5, 4],
+        spanGaps: false,
+      });
+    }
+  });
+
+  return out;
+}
+
+// ── Render a single chart ──────────────────────────────────────────────────────
+function renderChart(canvasId, relData, mainData) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+
+  const rel  = relData  ? extractSeries(relData)  : null;
+  const main = mainData ? extractSeries(mainData) : null;
+
+  if (!rel && !main) {
+    canvas.style.display = 'none';
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No data yet — trigger the benchmark workflow to populate this chart.';
+    canvas.parentNode.appendChild(empty);
+    return;
+  }
+
+  new Chart(canvas, {
+    type: 'line',
+    data: { datasets: buildDatasets(rel, main) },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: {
+          type: 'category',
+          ticks: {
+            color: '#8b949e',
+            maxRotation: 45,
+            font: { size: 11 },
+          },
+          grid: { color: '#21262d' },
+        },
+        y: {
+          beginAtZero: false,
+          ticks: { color: '#8b949e', font: { size: 11 } },
+          grid:  { color: '#21262d' },
+        },
+      },
+      plugins: {
+        legend: {
+          labels: {
+            color: '#8b949e',
+            boxWidth: 16,
+            boxHeight: 2,
+            font: { size: 11 },
+            usePointStyle: false,
+          },
+        },
+        tooltip: {
+          backgroundColor: '#1c2128',
+          borderColor: '#30363d',
+          borderWidth: 1,
+          titleColor: '#e6edf3',
+          bodyColor:  '#8b949e',
+          padding: 10,
+        },
+      },
+    },
+  });
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+(async () => {
+  const metrics = [
+    'node-throughput',
+    'node-latency',
+    'deno-throughput',
+    'deno-latency',
+    'rust-throughput',
+    'rust-latency',
+  ];
+
+  await Promise.all(metrics.map(async (m) => {
+    const [rel, main] = await Promise.all([
+      loadData(`./dev/bench/releases/${m}/data.js`),
+      loadData(`./dev/bench/main/${m}/data.js`),
+    ]);
+    renderChart(m, rel, main);
+  }));
+})();
+</script>
+</body>
+</html>
