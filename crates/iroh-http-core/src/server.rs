@@ -243,7 +243,7 @@ struct FfiDispatcher {
     own_node_id: Arc<String>,
     max_header_size: Option<usize>,
     #[cfg(feature = "compression")]
-    compression: Option<crate::endpoint::CompressionOptions>,
+    compression: Option<crate::config::CompressionOptions>,
 }
 
 #[derive(Clone)]

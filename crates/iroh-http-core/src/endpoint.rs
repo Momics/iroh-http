@@ -3,7 +3,6 @@
 use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
 use iroh::endpoint::{Builder, IdleTimeout, QuicTransportConfig, TransportAddrUsage};
 use iroh::{Endpoint, RelayMode, SecretKey};
-use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,117 +12,12 @@ use crate::server::ServeHandle;
 use crate::stream::{HandleStore, StoreConfig};
 use crate::{ALPN, ALPN_DUPLEX};
 
-/// Networking / QUIC transport configuration.
-#[derive(Debug, Clone, Default)]
-pub struct NetworkingOptions {
-    /// Relay server mode. `"default"`, `"staging"`, `"disabled"`, or `"custom"`. Default: `"default"`.
-    pub relay_mode: Option<String>,
-    /// Custom relay server URLs. Only used when `relay_mode` is `"custom"`.
-    pub relays: Vec<String>,
-    /// UDP socket addresses to bind. Empty means OS-assigned.
-    pub bind_addrs: Vec<String>,
-    /// Milliseconds before an idle QUIC connection is cleaned up.
-    pub idle_timeout_ms: Option<u64>,
-    /// HTTP proxy URL for relay traffic.
-    pub proxy_url: Option<String>,
-    /// Read `HTTP_PROXY` / `HTTPS_PROXY` env vars for proxy config.
-    pub proxy_from_env: bool,
-    /// Disable relay servers and DNS discovery entirely. Overrides `relay_mode`.
-    /// Useful for in-process tests where endpoints connect via direct addresses.
-    pub disabled: bool,
-}
-
-/// DNS-based peer discovery configuration.
-#[derive(Debug, Clone)]
-pub struct DiscoveryOptions {
-    /// DNS discovery server URL. Uses n0 DNS defaults when `None`.
-    pub dns_server: Option<String>,
-    /// Whether to enable DNS discovery. Default: `true`.
-    pub enabled: bool,
-}
-
-impl Default for DiscoveryOptions {
-    fn default() -> Self {
-        Self {
-            dns_server: None,
-            enabled: true,
-        }
-    }
-}
-
-/// Connection-pool tuning.
-#[derive(Debug, Clone, Default)]
-pub struct PoolOptions {
-    /// Maximum number of idle connections to keep in the pool.
-    pub max_connections: Option<usize>,
-    /// Milliseconds a pooled connection may remain idle before being evicted.
-    pub idle_timeout_ms: Option<u64>,
-}
-
-/// Body-streaming and handle-store configuration.
-#[derive(Debug, Clone, Default)]
-pub struct StreamingOptions {
-    /// Capacity (in chunks) of each body channel. Default: 32.
-    pub channel_capacity: Option<usize>,
-    /// Maximum byte length of a single chunk in `send_chunk`. Default: 65536.
-    pub max_chunk_size_bytes: Option<usize>,
-    /// Milliseconds to wait for a slow body reader. Default: 30000.
-    pub drain_timeout_ms: Option<u64>,
-    /// TTL in ms for slab handle entries. `0` disables sweeping. Default: 300000.
-    pub handle_ttl_ms: Option<u64>,
-    /// How often (in ms) the TTL sweep task runs. Default: 60000 (60 s).
-    /// Reducing this lowers the worst-case leaked-handle window at the cost of
-    /// more frequent write-lock acquisitions on every handle registry.
-    /// Useful for short-lived endpoints and test fixtures.
-    pub sweep_interval_ms: Option<u64>,
-}
-
-/// Configuration passed to [`IrohEndpoint::bind`].
-#[derive(Debug, Clone, Default)]
-pub struct NodeOptions {
-    /// 32-byte Ed25519 secret key. Generate a fresh one when `None`.
-    pub key: Option<[u8; 32]>,
-    /// Networking / QUIC transport configuration.
-    pub networking: NetworkingOptions,
-    /// DNS-based peer discovery configuration.
-    pub discovery: DiscoveryOptions,
-    /// Connection-pool tuning.
-    pub pool: PoolOptions,
-    /// Body-streaming and handle-store configuration.
-    pub streaming: StreamingOptions,
-    /// ALPN capabilities to advertise.
-    ///
-    /// Valid values: [`ALPN_STR`](crate::ALPN_STR) (`"iroh-http/2"`) and
-    /// [`ALPN_DUPLEX_STR`](crate::ALPN_DUPLEX_STR) (`"iroh-http/2-duplex"`).
-    ///
-    /// When empty (the default), both protocols are advertised. When non-empty,
-    /// the base protocol (`iroh-http/2`) is automatically injected if not
-    /// already present. Unknown values cause [`IrohEndpoint::bind`] to return
-    /// an error.
-    pub capabilities: Vec<String>,
-    /// Write TLS session keys to $SSLKEYLOGFILE. Dev/debug only.
-    pub keylog: bool,
-    /// Maximum byte size of the HTTP/1.1 request or response head.
-    /// `None` = 65536.  `Some(0)` is rejected.
-    pub max_header_size: Option<usize>,
-    /// Maximum decompressed response body bytes the client will accept per
-    /// outgoing `fetch()`.  Default: 256 MiB.  Protects against compression
-    /// bombs from malicious peers.
-    pub max_response_body_bytes: Option<usize>,
-    #[cfg(feature = "compression")]
-    pub compression: Option<CompressionOptions>,
-}
-
-/// Compression options for response bodies.
-/// Only used when the `compression` feature is enabled.
 #[cfg(feature = "compression")]
-#[derive(Debug, Clone)]
-pub struct CompressionOptions {
-    /// Minimum body size in bytes before compression is applied. Default: 512.
-    pub min_body_bytes: usize,
-    /// Zstd compression level (1–22). `None` uses the zstd default (3).
-    pub level: Option<u32>,
-}
+pub use crate::config::CompressionOptions;
+pub use crate::config::{
+    DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions,
+};
+pub use crate::stats::{ConnectionEvent, EndpointStats, NodeAddrInfo, PathInfo, PeerStats};
 
 /// A shared Iroh endpoint.
 ///
@@ -824,85 +718,7 @@ fn classify_bind_error(e: impl std::fmt::Display) -> crate::CoreError {
     crate::CoreError::connection_failed(msg)
 }
 
-// ── NodeAddr info ────────────────────────────────────────────────────────────
-
-/// Serialisable node address: node ID + relay and direct addresses.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeAddrInfo {
-    /// Base32-encoded public key.
-    pub id: String,
-    /// Relay URLs and/or `ip:port` direct addresses.
-    pub addrs: Vec<String>,
-}
-
-// ── Observability types ──────────────────────────────────────────────────────
-
-/// Endpoint-level observability snapshot.
-///
-/// Returned by [`IrohEndpoint::endpoint_stats`].  All counts are point-in-time reads
-/// and may change between calls.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct EndpointStats {
-    /// Number of currently open body reader handles.
-    pub active_readers: usize,
-    /// Number of currently open body writer handles.
-    pub active_writers: usize,
-    /// Number of live QUIC sessions (WebTransport connections).
-    pub active_sessions: usize,
-    /// Total number of allocated (reader + writer + session + other) handles.
-    pub total_handles: usize,
-    /// Number of QUIC connections currently cached in the connection pool.
-    pub pool_size: usize,
-    /// Number of live QUIC connections accepted by the serve loop.
-    pub active_connections: usize,
-    /// Number of HTTP requests currently being processed.
-    pub active_requests: usize,
-}
-
-/// A connection lifecycle event fired when a QUIC peer connection opens or closes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectionEvent {
-    /// Base32-encoded public key of the peer.
-    pub peer_id: String,
-    /// `true` when this is the first connection from the peer (0→1), `false` when the last one closes (1→0).
-    pub connected: bool,
-}
-
-/// Per-peer connection statistics.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PeerStats {
-    /// Whether the peer is connected via a relay server (vs direct).
-    pub relay: bool,
-    /// Active relay URL, if any.
-    pub relay_url: Option<String>,
-    /// All known paths to this peer.
-    pub paths: Vec<PathInfo>,
-    /// Round-trip time in milliseconds.  `None` if no active QUIC connection is pooled.
-    pub rtt_ms: Option<f64>,
-    /// Total UDP bytes sent to this peer.  `None` if no active QUIC connection is pooled.
-    pub bytes_sent: Option<u64>,
-    /// Total UDP bytes received from this peer.  `None` if no active QUIC connection is pooled.
-    pub bytes_received: Option<u64>,
-    /// Total packets lost on the QUIC path.  `None` if no active QUIC connection is pooled.
-    pub lost_packets: Option<u64>,
-    /// Total packets sent on the QUIC path.  `None` if no active QUIC connection is pooled.
-    pub sent_packets: Option<u64>,
-    /// Current congestion window in bytes.  `None` if no active QUIC connection is pooled.
-    pub congestion_window: Option<u64>,
-}
-
-/// Network path information for a single transport address.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PathInfo {
-    /// Whether this path goes through a relay server.
-    pub relay: bool,
-    /// The relay URL (if relay) or `ip:port` (if direct).
-    pub addr: String,
-    /// Whether this is the currently selected/active path.
-    pub active: bool,
-}
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Parse an optional list of socket address strings into `SocketAddr` values.
 ///

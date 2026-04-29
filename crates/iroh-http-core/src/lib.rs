@@ -6,6 +6,7 @@
 
 pub mod body;
 pub mod client;
+pub mod config;
 pub mod endpoint;
 pub mod events;
 pub(crate) mod io;
@@ -13,17 +14,15 @@ pub(crate) mod pool;
 pub mod registry;
 pub mod server;
 pub mod session;
+pub mod stats;
 pub mod stream;
 
 pub use body::{Body, BoxError};
 pub use client::fetch;
 #[cfg(feature = "compression")]
-pub use endpoint::CompressionOptions;
-pub use endpoint::{
-    parse_direct_addrs, ConnectionEvent, DiscoveryOptions, EndpointStats, IrohEndpoint,
-    NetworkingOptions, NodeAddrInfo, NodeOptions, PathInfo, PeerStats, PoolOptions,
-    StreamingOptions,
-};
+pub use config::CompressionOptions;
+pub use config::{DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions};
+pub use endpoint::{parse_direct_addrs, IrohEndpoint};
 pub use events::TransportEvent;
 pub use registry::{get_endpoint, insert_endpoint, remove_endpoint};
 pub use server::respond;
@@ -37,6 +36,7 @@ pub use session::{
     session_next_uni_stream, session_ready, session_recv_datagram, session_remote_id,
     session_send_datagram, CloseInfo,
 };
+pub use stats::{ConnectionEvent, EndpointStats, NodeAddrInfo, PathInfo, PeerStats};
 pub use stream::{BodyReader, HandleStore, StoreConfig};
 
 // ── Structured error types ────────────────────────────────────────────────────
