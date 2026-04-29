@@ -27,13 +27,14 @@ When `compression` is enabled:
   body is decompressed before being delivered to JS.
 - **Inbound requests** (`node.serve`): if the request advertises
   `Accept-Encoding: zstd`, the response body is compressed before sending.
-  Inbound request bodies are **not** decompressed automatically — if a peer
-  sends a request with `Content-Encoding: zstd`, the handler receives the
-  raw compressed bytes.
+  If the request itself carries `Content-Encoding: zstd`, the request body
+  is decompressed before being delivered to the handler — the
+  `Content-Encoding` header is also stripped so the handler sees the request
+  as if it had arrived uncompressed.
 
-The JS handler never sees compressed bytes on the **fetch** path. On the
-**serve** path, response compression is transparent but request decompression
-is not performed.
+The JS handler never sees compressed bytes in either direction:
+**fetch** decompresses inbound responses, and **serve** decompresses inbound
+request bodies and compresses outbound response bodies.
 
 ## Transferring pre-compressed content
 

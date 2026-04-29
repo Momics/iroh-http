@@ -18,7 +18,6 @@ use std::{
 
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, StatusCode};
-use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
 use hyper_util::service::TowerToHyperService;
 use tower::Service;
@@ -236,7 +235,11 @@ struct RequestService {
     compression: Option<crate::endpoint::CompressionOptions>,
 }
 
-impl Service<hyper::Request<Incoming>> for RequestService {
+impl<B> Service<hyper::Request<B>> for RequestService
+where
+    B: http_body::Body<Data = Bytes> + Send + 'static,
+    B::Error: std::fmt::Debug + Send + Sync + 'static,
+{
     type Response = hyper::Response<Body>;
     type Error = std::convert::Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -245,14 +248,18 @@ impl Service<hyper::Request<Incoming>> for RequestService {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: hyper::Request<Incoming>) -> Self::Future {
+    fn call(&mut self, req: hyper::Request<B>) -> Self::Future {
         let svc = self.clone();
         Box::pin(async move { Ok(svc.handle(req).await) })
     }
 }
 
 impl RequestService {
-    async fn handle(self, mut req: hyper::Request<Incoming>) -> hyper::Response<Body> {
+    async fn handle<B>(self, mut req: hyper::Request<B>) -> hyper::Response<Body>
+    where
+        B: http_body::Body<Data = Bytes> + Send + 'static,
+        B::Error: std::fmt::Debug + Send + Sync + 'static,
+    {
         let handles = self.endpoint.handles();
         let own_node_id = &*self.own_node_id;
         let remote_node_id = self.remote_node_id.clone().unwrap_or_default();
@@ -930,17 +937,26 @@ where
                             .max_headers(128);
 
                         #[cfg(feature = "compression")]
-                        let result = if let Some(comp) = compression_layer {
-                            let stack = ServiceBuilder::new().layer(comp).service(core_stack);
-                            builder
-                                .serve_connection(io, TowerToHyperService::new(stack))
-                                .with_upgrades()
-                                .await
-                        } else {
-                            builder
-                                .serve_connection(io, TowerToHyperService::new(core_stack))
-                                .with_upgrades()
-                                .await
+                        let result = {
+                            use tower_http::decompression::RequestDecompressionLayer;
+                            let req_decomp = RequestDecompressionLayer::new();
+                            if let Some(comp) = compression_layer {
+                                let stack = ServiceBuilder::new()
+                                    .layer(req_decomp)
+                                    .layer(comp)
+                                    .service(core_stack);
+                                builder
+                                    .serve_connection(io, TowerToHyperService::new(stack))
+                                    .with_upgrades()
+                                    .await
+                            } else {
+                                let stack =
+                                    ServiceBuilder::new().layer(req_decomp).service(core_stack);
+                                builder
+                                    .serve_connection(io, TowerToHyperService::new(stack))
+                                    .with_upgrades()
+                                    .await
+                            }
                         };
                         #[cfg(not(feature = "compression"))]
                         let result = {
