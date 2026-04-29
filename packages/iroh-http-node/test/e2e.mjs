@@ -878,13 +878,13 @@ test(
         );
 
         // 32 concurrent fetches — mirrors "multiplexing iroh 32 streams" bench.
-        const bodies = await Promise.all(
+        const responses = await Promise.all(
           Array.from({ length: STREAMS }, () =>
             client
               .fetch(`httpi://${serverId}/data`, {
                 directAddrs: serverAddrs,
               })
-              .then((r) => r.text()),
+              .then(async (r) => ({ status: r.status, body: await r.text() })),
           ),
         );
 
@@ -892,9 +892,10 @@ test(
         ac.abort();
         await handle.finished;
 
-        // Every body must have arrived intact.
+        // Every response must be 200 with the full body.
         for (let i = 0; i < STREAMS; i++) {
-          assert.equal(bodies[i], BODY, `iter ${iter} stream ${i}: body truncated`);
+          assert.equal(responses[i].status, 200, `iter ${iter} stream ${i}: expected 200, got ${responses[i].status}`);
+          assert.equal(responses[i].body, BODY, `iter ${iter} stream ${i}: body truncated`);
         }
       }
 
