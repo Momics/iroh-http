@@ -1,45 +1,58 @@
 //! Global endpoint registry shared by all FFI adapters.
 //!
-//! Centralises the `Slab<IrohEndpoint>` that was previously triplicated
-//! across Node, Deno, and Tauri adapters.  Handles are `u64`, consistent
-//! with stream handles from `slotmap`.
+//! Centralises the `SlotMap<EndpointKey, IrohEndpoint>` that was previously
+//! triplicated across Node, Deno, and Tauri adapters.  Handles are `u64`
+//! (via `KeyData::as_ffi`), consistent with stream handles from `slotmap`.
+//!
+//! Using `SlotMap` instead of `Slab` prevents the ABA handle-reuse problem:
+//! each key carries a generation counter, so a stale handle from a closed
+//! endpoint will never accidentally resolve to a newly inserted one.
 
 use std::sync::{Mutex, OnceLock};
 
-use slab::Slab;
+use slotmap::{Key, KeyData, SlotMap};
 
 use crate::endpoint::IrohEndpoint;
 
-fn endpoint_slab() -> &'static Mutex<Slab<IrohEndpoint>> {
-    static S: OnceLock<Mutex<Slab<IrohEndpoint>>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(Slab::new()))
+slotmap::new_key_type! { struct EndpointKey; }
+
+fn endpoint_map() -> &'static Mutex<SlotMap<EndpointKey, IrohEndpoint>> {
+    static S: OnceLock<Mutex<SlotMap<EndpointKey, IrohEndpoint>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(SlotMap::with_key()))
+}
+
+fn key_to_handle(k: EndpointKey) -> u64 {
+    k.data().as_ffi()
+}
+
+fn handle_to_key(h: u64) -> EndpointKey {
+    EndpointKey::from(KeyData::from_ffi(h))
 }
 
 /// Insert an endpoint into the global registry and return its handle.
 pub fn insert_endpoint(ep: IrohEndpoint) -> u64 {
-    endpoint_slab()
+    let key = endpoint_map()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(ep) as u64
+        .insert(ep);
+    key_to_handle(key)
 }
 
 /// Look up an endpoint by handle (cheap `Arc` clone).
 pub fn get_endpoint(handle: u64) -> Option<IrohEndpoint> {
-    endpoint_slab()
+    endpoint_map()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .get(handle as usize)
+        .get(handle_to_key(handle))
         .cloned()
 }
 
 /// Remove an endpoint from the registry, returning it if it existed.
 pub fn remove_endpoint(handle: u64) -> Option<IrohEndpoint> {
-    let mut slab = endpoint_slab().lock().unwrap_or_else(|e| e.into_inner());
-    if slab.contains(handle as usize) {
-        Some(slab.remove(handle as usize))
-    } else {
-        None
-    }
+    endpoint_map()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(handle_to_key(handle))
 }
 
 /// Drain the entire registry and force-close every endpoint.
@@ -52,17 +65,9 @@ pub fn remove_endpoint(handle: u64) -> Option<IrohEndpoint> {
 /// context, including synchronous window-event handlers outside a tokio task).
 pub fn close_all_endpoints() {
     let endpoints: Vec<IrohEndpoint> = {
-        let mut slab = endpoint_slab().lock().unwrap_or_else(|e| e.into_inner());
-        let keys: Vec<usize> = slab.iter().map(|(k, _)| k).collect();
-        keys.into_iter()
-            .filter_map(|k| {
-                if slab.contains(k) {
-                    Some(slab.remove(k))
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut map = endpoint_map().lock().unwrap_or_else(|e| e.into_inner());
+        let keys: Vec<EndpointKey> = map.keys().collect();
+        keys.into_iter().filter_map(|k| map.remove(k)).collect()
     };
     if endpoints.is_empty() {
         return;

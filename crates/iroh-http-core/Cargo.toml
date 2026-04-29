@@ -20,7 +20,6 @@ compression = [
 iroh = { workspace = true }
 tokio = { workspace = true }
 bytes = { workspace = true }
-slab = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 http = { workspace = true }
