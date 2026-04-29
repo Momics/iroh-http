@@ -1,7 +1,7 @@
 //! Incoming HTTP request — `serve()` implementation.
 //!
 //! Each accepted QUIC bidirectional stream is driven by hyper's HTTP/1.1
-//! server connection.  A `tower::Service` (`RequestService`) bridges between
+//! server connection.  A `tower::Service` (`IrohHttpService`) bridges between
 //! hyper and the existing body-channel + slab infrastructure.
 
 use std::{
@@ -35,9 +35,9 @@ use crate::{
 use crate::Body;
 use crate::BoxError;
 
-// ── Inline error responses (RequestService is infallible) ───────────────
+// ── Inline error responses (IrohHttpService is infallible) ───────────────
 //
-// Per ADR-014, `RequestService::Error = Infallible` — every internal failure
+// Per ADR-014, `IrohHttpService::Error = Infallible` — every internal failure
 // is rendered to an HTTP response inside the service. Layer-level failures
 // (timeout, load-shed) are still mapped to 408 / 503 in `TowerErrorHandler`
 // because those errors arise *outside* this service.
@@ -221,21 +221,39 @@ impl Drop for PeerConnectionGuard {
     }
 }
 
-// ── RequestService ────────────────────────────────────────────────────────────
+// ── FFI dispatcher + IrohHttpService ─────────────────────────────────────────
+//
+// Per ADR-014 the hyper-facing service is split in two:
+//
+//   * `FfiDispatcher` owns all the JS-bridge concerns — handle allocation,
+//     `on_request` callback firing, body-channel pumping, response-head
+//     rendezvous, and duplex upgrade hand-off. It is shared across every
+//     accepted connection and request via `Arc`.
+//   * `IrohHttpService` is the thin `tower::Service` shell. It clones cheaply
+//     (Arc bump + Option<String>), patches the per-connection `remote_node_id`
+//     in `serve_with_events`, and delegates each request to the dispatcher.
+//
+// The split keeps the tower::Service contract narrow (Infallible, generic over
+// any `http_body::Body`) and isolates the FFI logic so future tests can mock
+// `FfiDispatcher::dispatch` without standing up a real connection.
 
-#[derive(Clone)]
-struct RequestService {
+struct FfiDispatcher {
     on_request: Arc<dyn Fn(RequestPayload) + Send + Sync>,
     endpoint: IrohEndpoint,
     own_node_id: Arc<String>,
-    remote_node_id: Option<String>,
     max_request_body_bytes: Option<usize>,
     max_header_size: Option<usize>,
     #[cfg(feature = "compression")]
     compression: Option<crate::endpoint::CompressionOptions>,
 }
 
-impl<B> Service<hyper::Request<B>> for RequestService
+#[derive(Clone)]
+struct IrohHttpService {
+    dispatcher: Arc<FfiDispatcher>,
+    remote_node_id: Option<String>,
+}
+
+impl<B> Service<hyper::Request<B>> for IrohHttpService
 where
     B: http_body::Body<Data = Bytes> + Send + 'static,
     B::Error: std::fmt::Debug + Send + Sync + 'static,
@@ -249,20 +267,24 @@ where
     }
 
     fn call(&mut self, req: hyper::Request<B>) -> Self::Future {
-        let svc = self.clone();
-        Box::pin(async move { Ok(svc.handle(req).await) })
+        let dispatcher = self.dispatcher.clone();
+        let remote_node_id = self.remote_node_id.clone().unwrap_or_default();
+        Box::pin(async move { Ok(dispatcher.dispatch(req, remote_node_id).await) })
     }
 }
 
-impl RequestService {
-    async fn handle<B>(self, mut req: hyper::Request<B>) -> hyper::Response<Body>
+impl FfiDispatcher {
+    async fn dispatch<B>(
+        self: Arc<Self>,
+        mut req: hyper::Request<B>,
+        remote_node_id: String,
+    ) -> hyper::Response<Body>
     where
         B: http_body::Body<Data = Bytes> + Send + 'static,
         B::Error: std::fmt::Debug + Send + Sync + 'static,
     {
         let handles = self.endpoint.handles();
         let own_node_id = &*self.own_node_id;
-        let remote_node_id = self.remote_node_id.clone().unwrap_or_default();
         let max_request_body_bytes = self.max_request_body_bytes;
         let max_header_size = self.max_header_size;
 
@@ -662,11 +684,10 @@ where
     let in_flight: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let drain_notify: Arc<tokio::sync::Notify> = Arc::new(tokio::sync::Notify::new());
 
-    let base_svc = RequestService {
+    let dispatcher = Arc::new(FfiDispatcher {
         on_request,
         endpoint: endpoint.clone(),
         own_node_id,
-        remote_node_id: None,
         max_request_body_bytes,
         max_header_size: if max_header_size == 0 {
             None
@@ -675,6 +696,11 @@ where
         },
         #[cfg(feature = "compression")]
         compression,
+    });
+
+    let base_svc = IrohHttpService {
+        dispatcher,
+        remote_node_id: None,
     };
 
     use tower::{limit::ConcurrencyLimitLayer, Layer};
@@ -838,12 +864,12 @@ where
                         // Build the Tower reliability service stack and serve the connection.
                         //
                         // Layer ordering (outermost first):
-                        //   [CompressionLayer →] HandleLayerError → [LoadShed →] Timeout → RequestService
+                        //   [CompressionLayer →] HandleLayerError → [LoadShed →] Timeout → IrohHttpService
                         //
                         // Both the compression layer (cfg-gated + runtime-opt) and the
                         // load-shed layer (runtime-opt) are conditionally inserted via
                         // `option_layer`, so the four feature × runtime combinations
-                        // collapse to a single expression. `RequestService::Error` is
+                        // collapse to a single expression. `IrohHttpService::Error` is
                         // `Infallible`, so the only fallible boundary in the stack is
                         // the `TimeoutLayer` / `LoadShedLayer` pair; `HandleLayerError`
                         // converts their `Elapsed` / `Overloaded` errors into 408 / 503
@@ -858,7 +884,7 @@ where
                                 predicate::{Predicate, SizeAbove},
                                 CompressionLayer, CompressionLevel,
                             };
-                            svc.get_ref().compression.as_ref().map(|comp| {
+                            svc.get_ref().dispatcher.compression.as_ref().map(|comp| {
                                 let mut layer = CompressionLayer::new().zstd(true);
                                 if let Some(level) = comp.level {
                                     layer =
