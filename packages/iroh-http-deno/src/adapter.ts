@@ -770,6 +770,15 @@ if (Deno.build.os !== "windows") {
 }
 globalThis.addEventListener("unload", _closeAllSync);
 
+/**
+ * @internal Test-only hook that triggers the same path as the SIGINT/SIGTERM
+ * signal handlers. Used by the regression test for issue #155 to verify that
+ * `iroh_http_close_all` wakes pending serve polling loops.
+ */
+export function _closeAllForTesting(): void {
+  _closeAllSync();
+}
+
 /** Normalise the `discovery` option into flat fields for the Rust adapter. */
 function normaliseDiscovery(
   disc?: import("@momics/iroh-http-shared").NodeOptions["discovery"],

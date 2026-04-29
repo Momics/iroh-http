@@ -203,3 +203,33 @@ Deno.test({
     await client.close();
   }
 });
+
+// ── SIGINT / close_all serve shutdown (regression #155) ──────────────────────
+
+// Regression #155: iroh_http_close_all (the SIGINT/SIGTERM handler) used to
+// only drain the endpoint registry, leaving serve queues live and the JS
+// polling loop spinning forever. The Deno process would never exit on CTRL+C
+// while .serve() was active. close_all must now also wake all serve queues.
+import { _closeAllForTesting } from "../src/adapter.ts";
+
+Deno.test({
+  name: "serve — close_all wakes pending polling loop (regression #155)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const handle = server.serve((_req: Request) => new Response("ok"));
+
+  // Simulate the SIGINT path. Without the fix this never wakes the polling
+  // loop, the test times out, and Deno reports the leaked async op.
+  _closeAllForTesting();
+
+  // Bound the wait so a regression surfaces as a clear timeout rather than
+  // hanging indefinitely.
+  const timeout = new Promise<"timeout">((resolve) =>
+    setTimeout(() => resolve("timeout"), 5_000)
+  );
+  const finished = handle.finished.then(() => "finished" as const);
+  const result = await Promise.race([finished, timeout]);
+  assertEquals(result, "finished", "serve loop did not exit after close_all");
+});

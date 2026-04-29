@@ -581,6 +581,9 @@ pub unsafe extern "C" fn iroh_http_try_next_request(
 /// frame before the process exits.
 #[unsafe(no_mangle)]
 pub extern "C" fn iroh_http_close_all() {
+    // Wake all serve polling loops first so JS handlers can settle before the
+    // endpoints they hold are torn out from under them (regression: issue #155).
+    serve_registry::shutdown_all();
     registry::close_all_endpoints();
 }
 

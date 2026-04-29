@@ -98,3 +98,18 @@ pub fn signal_shutdown(endpoint_handle: u32) {
         let _ = queue.shutdown_tx.send(true);
     }
 }
+
+/// Signal shutdown to *every* registered serve queue and drain the registry.
+///
+/// Called from `iroh_http_close_all` so that a SIGINT path which bypasses
+/// `closeEndpoint` still wakes JS polling loops; otherwise `nextRequest`
+/// would block forever and the Deno process would never exit (issue #155).
+pub fn shutdown_all() {
+    let drained: Vec<std::sync::Arc<ServeQueue>> = {
+        let mut map = registry().lock().unwrap_or_else(|e| e.into_inner());
+        map.drain().map(|(_, q)| q).collect()
+    };
+    for queue in drained {
+        let _ = queue.shutdown_tx.send(true);
+    }
+}
