@@ -99,7 +99,7 @@ Per the repo's Issue Resolution Policy (in `copilot-instructions.md`):
 
 | Bug type | Where to add test |
 |----------|-------------------|
-| FFI boundary | `smoke.test.ts` (Deno) or `e2e.mjs` (Node) |
+| FFI boundary | `adapter.test.ts` (Deno) or `adapter.test.mjs` (Node) |
 | Rust core | `cargo test` — `integration.rs` or new test file |
 | Type/export | Verified by `tsc` (no new test if CI gates it) |
 | Protocol | `cases.json` in `tests/http-compliance/` |

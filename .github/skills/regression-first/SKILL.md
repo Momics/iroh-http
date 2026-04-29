@@ -77,7 +77,7 @@ the issue via the `manage-issues` skill.
 | Layer | Location |
 |---|---|
 | Rust core logic | `crates/iroh-http-core/tests/integration.rs` |
-| Deno adapter / JS behaviour | `packages/iroh-http-deno/test/smoke.test.ts` |
+| Deno adapter / JS behaviour | `packages/iroh-http-deno/test/adapter.test.ts` |
 | Node.js adapter | `packages/iroh-http-node/test/` |
 | Shared TypeScript | `packages/iroh-http-shared/src/*.test.ts` (if exists) |
 

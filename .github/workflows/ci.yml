@@ -169,9 +169,9 @@ jobs:
           npx napi build --platform --profile ci
           npx tsc --skipLibCheck
 
-      - name: Node e2e + compliance
+      - name: Node adapter + compliance
         run: |
-          node packages/iroh-http-node/test/e2e.mjs
+          node --test packages/iroh-http-node/test/adapter.test.mjs
           node packages/iroh-http-node/test/compliance.mjs
 
       - name: Copy Deno native lib
@@ -180,10 +180,10 @@ jobs:
           cp target/ci/libiroh_http_deno.so \
              packages/iroh-http-deno/lib/libiroh_http_deno.linux-x86_64.so
 
-      - name: Deno tests + compliance
+      - name: Deno adapter + compliance
         run: |
           deno test --allow-read --allow-ffi --allow-env --allow-net \
-            packages/iroh-http-deno/test/smoke.test.ts \
+            packages/iroh-http-deno/test/adapter.test.ts \
             packages/iroh-http-deno/test/compliance.ts
 
       - name: Cross-runtime compliance (node↔deno)

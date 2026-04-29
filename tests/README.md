@@ -68,46 +68,47 @@ Tests behavior under load:
 
 ```
 tests/
-├── harness.mjs                  # Shared test harness (suite/test/assert)
-├── run-all.sh                   # Run all categories for Node + Deno
+├── run-all.sh                   # Run all suites for Node + Deno
 ├── README.md
 │
-├── http-compliance/             # Data-driven HTTP tests
-│   ├── cases.json               # 102 test cases (upstream-compatible)
-│   ├── handler.mjs              # Shared compliance server routes
-│   ├── assertions.mjs           # Shared assertion engine
-│   ├── run-node.mjs             # Node same-process runner
-│   ├── run-deno.ts              # Deno same-process runner
-│   ├── run-tauri.ts             # Tauri webview runner
-│   ├── tauri-test.html          # Tauri test entry page
-│   ├── server-node.mjs          # Standalone Node server (cross-runtime)
-│   ├── server-deno.ts           # Standalone Deno server
-│   ├── client-node.mjs          # Standalone Node client
-│   ├── client-deno.ts           # Standalone Deno client
-│   └── run-cross.sh             # Cross-runtime orchestrator
+├── suites/                      # Shared cross-runtime test suites
+│   ├── lifecycle.mjs            # Node creation, shutdown, serve lifecycle
+│   ├── errors.mjs               # Handler failures, unknown peers, abort
+│   ├── stress.mjs               # Concurrent/sequential load, regressions
+│   ├── events.mjs               # EventTarget, diagnostics
+│   ├── sessions.mjs             # WebTransport sessions
+│   ├── keys.mjs                 # PublicKey/SecretKey, sign/verify
+│   └── discovery.mjs            # mDNS/DNS peer discovery
 │
-├── lifecycle/                   # Node lifecycle tests
-│   ├── test-node.mjs
-│   └── test-deno.ts
+├── runners/                     # Thin per-runtime wrappers
+│   ├── node.mjs                 # Binds suites to node:test + node:assert
+│   ├── deno.ts                  # Binds suites to Deno.test + @std/assert
+│   └── tauri.ts                 # Binds suites to Tauri webview
 │
-├── errors/                      # Error handling tests
-│   ├── test-node.mjs
-│   └── test-deno.ts
-│
-└── stress/                      # Stress / load tests
-    ├── test-node.mjs
-    └── test-deno.ts
+└── http-compliance/             # Data-driven HTTP tests
+    ├── cases.json               # 102 test cases (RFC 9110)
+    ├── handler.mjs              # Shared compliance server routes
+    ├── assertions.mjs           # Shared assertion engine
+    ├── run-node.mjs             # Node same-process runner
+    ├── run-deno.ts              # Deno same-process runner
+    ├── run-tauri.ts             # Tauri webview runner
+    ├── run.sh                   # Cross-runtime orchestrator
+    ├── runner.ts                # Deno compliance runner helper
+    ├── server.mjs               # Standalone Node server
+    ├── server.deno.ts           # Standalone Deno server
+    ├── client.mjs               # Standalone Node client
+    ├── client.deno.ts           # Standalone Deno client
+    ├── tauri-test.html          # Tauri test entry page
+    └── deno.json                # Deno workspace config
 ```
 
 ### Design principles
 
-1. **DRY** — Shared `handler.mjs`, `assertions.mjs`, and `harness.mjs` eliminate duplicated logic across runtimes.
+1. **DRY** — Shared suites in `tests/suites/` contain all cross-runtime test logic. Thin runners in `tests/runners/` bind them to each runtime's test API.
 
-2. **Upstream-compatible** — `cases.json` is a superset of the upstream format. Extended fields (`concurrent`, `sequential`, `bodyContains`, etc.) are ignored by runners that don't support them.
+2. **Categorized** — Each test concern lives in its own suite file. Adapter-specific tests live in each package's `test/adapter.test.*`.
 
-3. **Categorized** — Each test concern lives in its own directory. Run one category or all of them.
-
-4. **CI-friendly** — All scripts exit with code 1 on failure. The `run-all.sh` orchestrator runs everything. The CI workflow runs each category as a separate step for clear failure attribution.
+3. **CI-friendly** — All scripts exit with code 1 on failure. The `run-all.sh` orchestrator runs everything. The CI workflow runs each category as a separate step for clear failure attribution.
 
 ## Quick start
 
@@ -117,34 +118,36 @@ tests/
 ./tests/run-all.sh
 ```
 
-### Run by category
+### Run by runtime
 
 ```bash
-# Node only, specific category
-./tests/run-all.sh --node --category lifecycle
-
-# Deno only, multiple categories
-./tests/run-all.sh --deno --category http-compliance,stress
+./tests/run-all.sh --node       # Node only
+./tests/run-all.sh --deno       # Deno only
 ```
 
 ### Run individual test scripts
 
 ```bash
-# HTTP compliance (Node)
-cd node && npm install
-node ../tests/http-compliance/run-node.mjs --verbose
+# Shared suites (Node)
+node --test tests/runners/node.mjs
 
-# Lifecycle (Deno)
-deno run -A tests/lifecycle/test-deno.ts
+# Shared suites (Deno)
+deno test -A tests/runners/deno.ts
 
-# Error handling (Node)
-cd node && node ../tests/errors/test-node.mjs
+# HTTP compliance (Node, same-process)
+node tests/http-compliance/run-node.mjs --verbose
 
-# Stress (Deno)
-deno run -A tests/stress/test-deno.ts
+# HTTP compliance (Deno, same-process)
+deno run -A tests/http-compliance/run-deno.ts
 
-# Cross-runtime HTTP compliance
-./tests/http-compliance/run-cross.sh
+# Adapter-specific (Node)
+node --test packages/iroh-http-node/test/adapter.test.mjs
+
+# Adapter-specific (Deno)
+deno test -A packages/iroh-http-deno/test/adapter.test.ts
+
+# Cross-runtime compliance
+bash tests/http-compliance/run.sh
 ```
 
 ### Tauri (in webview)
@@ -201,12 +204,11 @@ deno run -A tests/http-compliance/run-deno.ts --filter peer-id
 | `requests` | array | Multi-step sequential test with per-step expectations |
 | `assertAllBodiesEqual` | boolean | Assert all repeated responses have identical bodies |
 
-## Contributing upstream
+## Contributing
 
-This test suite is designed to be contributed to [`Momics/iroh-http`](https://github.com/Momics/iroh-http).
+When adding new cross-runtime tests, add them to the appropriate suite file
+in `tests/suites/`. Both runners (`tests/runners/node.mjs` and
+`tests/runners/deno.ts`) will automatically pick them up.
 
-To merge:
-1. Copy `http-compliance/cases.json` entries into upstream's `tests/http-compliance/cases.json`
-2. Port `handler.mjs` routes into the upstream compliance servers
-3. Port `assertions.mjs` logic into the upstream runner
-4. Add `lifecycle/`, `errors/`, `stress/` as new test categories under `tests/`
+For adapter-specific tests (e.g., Deno FFI functions not available in Node),
+add them to the package's `test/adapter.test.*` file.

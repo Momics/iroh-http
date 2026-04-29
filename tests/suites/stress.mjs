@@ -238,4 +238,83 @@ export function stressTests({ createNode, test, assert, assertEqual }) {
     await server.close();
     await client.close();
   });
+
+  // ── Regression: stale-handle errors after serve restart (#119) ─────────────
+
+  test("32-stream burst × 5 iterations: no stale-handle errors (regression #119)", async () => {
+    const STREAMS = 32;
+    const ITERS = 5;
+    const BODY = "x".repeat(4096);
+
+    const errors = [];
+    const originalError = console.error.bind(console);
+    console.error = (...args) => {
+      const msg = args.map(String).join(" ");
+      if (msg.includes("unknown handle") || msg.includes("node closed or not found") || msg.includes("sendChunk failed")) {
+        errors.push(msg);
+      }
+      originalError(...args);
+    };
+
+    const server = await createNode();
+    const client = await createNode();
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+
+    try {
+      for (let iter = 0; iter < ITERS; iter++) {
+        const ac = new AbortController();
+        const handle = server.serve({ signal: ac.signal, loadShed: false }, () => new Response(BODY));
+
+        await Promise.all(
+          Array.from({ length: STREAMS }, () =>
+            client.fetch(`httpi://${serverId}/data`, { directAddrs: serverAddrs }).then((r) => r.text())
+          ),
+        );
+
+        ac.abort();
+        await handle.finished;
+      }
+
+      assertEqual(errors, [], `stale-handle errors: ${errors.join(" | ")}`);
+    } finally {
+      console.error = originalError;
+      await server.close();
+      await client.close();
+    }
+  });
+
+  // ── Regression: dispatch-level 503 during serve stop/restart (#149) ────────
+
+  test("no dispatch-level 503 during stop/restart cycles (regression #149)", async () => {
+    const STREAMS = 32;
+    const ITERS = 10;
+    const BODY = "x".repeat(4096);
+
+    const server = await createNode();
+    const client = await createNode();
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+
+    try {
+      for (let iter = 0; iter < ITERS; iter++) {
+        const ac = new AbortController();
+        const handle = server.serve({ signal: ac.signal, loadShed: false }, () => new Response(BODY));
+
+        const results = await Promise.all(
+          Array.from({ length: STREAMS }, () =>
+            client.fetch(`httpi://${serverId}/data`, { directAddrs: serverAddrs }).then(async (r) => ({ status: r.status }))
+          ),
+        );
+
+        ac.abort();
+        await handle.finished;
+
+        for (let i = 0; i < STREAMS; i++) {
+          assertEqual(results[i].status, 200, `iter ${iter} stream ${i}: expected 200, got ${results[i].status}`);
+        }
+      }
+    } finally {
+      await server.close();
+      await client.close();
+    }
+  });
 }

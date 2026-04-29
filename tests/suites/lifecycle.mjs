@@ -226,4 +226,41 @@ export function lifecycleTests({ createNode, test, assert, assertEqual, assertNo
       await node.close();
     }
   });
+
+  // ── Serve double-call guard (regression #114) ──────────────────────────────
+
+  test("serve() twice on same node throws TypeError", async () => {
+    const node = await createNode();
+    const ac = new AbortController();
+    try {
+      node.serve({ signal: ac.signal }, () => new Response("first"));
+      let threw = false;
+      try {
+        node.serve(() => new Response("second"));
+      } catch {
+        threw = true;
+      }
+      assert(threw, "Expected second serve() to throw");
+    } finally {
+      ac.abort();
+      await node.close();
+    }
+  });
+
+  test("serve() allowed again after previous loop finishes", async () => {
+    const node = await createNode();
+    const ac1 = new AbortController();
+    try {
+      const h1 = node.serve({ signal: ac1.signal }, () => new Response("first"));
+      ac1.abort();
+      await h1.finished.catch(() => {});
+
+      const ac2 = new AbortController();
+      const h2 = node.serve({ signal: ac2.signal }, () => new Response("second"));
+      ac2.abort();
+      await h2.finished.catch(() => {});
+    } finally {
+      await node.close();
+    }
+  });
 }

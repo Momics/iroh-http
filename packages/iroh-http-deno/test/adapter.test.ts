@@ -1,0 +1,205 @@
+/**
+ * Deno adapter test — verifies Deno FFI-specific functionality.
+ *
+ * Tests here exercise APIs only available through the Deno FFI adapter
+ * (generateSecretKey, secretKeySign, publicKeyVerify) and Deno-specific
+ * runtime behavior (sanitizeOps).
+ *
+ * Cross-runtime integration tests live in tests/suites/ and are executed
+ * by tests/runners/deno.ts.
+ *
+ * Run:  deno test -A test/adapter.test.ts
+ */
+
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+} from "jsr:@std/assert@^1";
+import { createNode } from "../mod.ts";
+import {
+  generateSecretKey,
+  publicKeyVerify,
+  secretKeySign,
+} from "../mod.ts";
+
+// ── generateSecretKey (FFI-only) ─────────────────────────────────────────────
+
+Deno.test("generateSecretKey — returns 32 bytes", async () => {
+  const key = await generateSecretKey();
+  assertInstanceOf(key, Uint8Array);
+  assertEquals(key.length, 32);
+});
+
+Deno.test("generateSecretKey — successive calls differ", async () => {
+  const k1 = await generateSecretKey();
+  const k2 = await generateSecretKey();
+  assert(
+    !k1.every((b: number, i: number) => b === k2[i]),
+    "Two generated keys must differ",
+  );
+});
+
+// ── secretKeySign (FFI-only) ─────────────────────────────────────────────────
+
+Deno.test("secretKeySign — returns 64-byte signature", async () => {
+  const key = await generateSecretKey();
+  const sig = await secretKeySign(key, new TextEncoder().encode("hello"));
+  assertInstanceOf(sig, Uint8Array);
+  assertEquals(sig.length, 64);
+});
+
+Deno.test("secretKeySign — deterministic for same key + message", async () => {
+  const key = await generateSecretKey();
+  const msg = new TextEncoder().encode("deterministic");
+  const s1 = await secretKeySign(key, msg);
+  const s2 = await secretKeySign(key, msg);
+  assertEquals(s1, s2);
+});
+
+// ── publicKeyVerify (FFI-only) ───────────────────────────────────────────────
+
+Deno.test("publicKeyVerify — valid signature passes", async () => {
+  const key = await generateSecretKey();
+  const node = await createNode({ key, disableNetworking: true });
+  const msg = new TextEncoder().encode("test message");
+  const sig = await secretKeySign(key, msg);
+
+  const pubBytes = node.publicKey.bytes;
+  try {
+    assert(
+      await publicKeyVerify(pubBytes, msg, sig),
+      "Valid signature must verify",
+    );
+    const tampered = new Uint8Array(sig);
+    tampered[0] ^= 0xff;
+    assert(
+      !(await publicKeyVerify(pubBytes, msg, tampered)),
+      "Tampered signature must fail",
+    );
+  } finally {
+    await node.close();
+  }
+});
+
+// ── Deno-specific serve lifecycle ────────────────────────────────────────────
+
+// Regression #115: serve loop must not hold pending ops after shutdown.
+// This test uses sanitizeOps: true (the Deno default) intentionally —
+// if stopServe() doesn't drain the pending nextRequest() call, Deno's
+// sanitizeOps check will fail.
+Deno.test({
+  name: "serve — no pending ops remain after signal abort (regression #115)",
+  sanitizeOps: true,
+}, async () => {
+  const server = await createNode({ bindAddr: "127.0.0.1:0" });
+  const ac = new AbortController();
+
+  const handle = server.serve(
+    { signal: ac.signal },
+    (_req: Request) => new Response("ok"),
+  );
+
+  ac.abort();
+  await server.close();
+  await handle.finished;
+});
+
+// ── Load-shed 503 (depends on maxConcurrency option) ─────────────────────────
+
+Deno.test({
+  name: "serve — loadShed returns 503 when maxConcurrency exceeded",
+  sanitizeOps: false,
+}, async () => {
+  const STREAMS = 8;
+  const CONCURRENCY_LIMIT = 2;
+
+  const server = await createNode({ disableNetworking: true, bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ disableNetworking: true, bindAddr: "127.0.0.1:0" });
+  const { id: serverId, addrs: serverAddrs } = await server.addr();
+
+  const ac = new AbortController();
+  const handle = server.serve(
+    { signal: ac.signal, maxConcurrency: CONCURRENCY_LIMIT },
+    async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      return new Response("ok");
+    },
+  );
+
+  try {
+    const results = await Promise.all(
+      Array.from({ length: STREAMS }, () =>
+        client
+          .fetch(`httpi://${serverId}/load`, { directAddrs: serverAddrs })
+          .then(async (r) => ({ status: r.status }))
+      ),
+    );
+
+    const ok = results.filter((r) => r.status === 200);
+    const shed = results.filter((r) => r.status === 503);
+
+    assert(shed.length > 0, `Expected ≥1 load-shed 503, all ${STREAMS} got 200`);
+    assert(ok.length > 0, `Expected ≥1 success, all ${STREAMS} got 503`);
+  } finally {
+    ac.abort();
+    await handle.finished;
+    await server.close();
+    await client.close();
+  }
+});
+
+// ── Low-concurrency stale-handle variant (#119) ──────────────────────────────
+
+Deno.test({
+  name: "regression #119 — 8-stream burst × 20 iterations: no stale-handle errors",
+  sanitizeOps: false,
+}, async () => {
+  const STREAMS = 8;
+  const ITERS = 20;
+  const BODY = "x".repeat(4096);
+
+  const errors: string[] = [];
+  const originalConsoleError = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    const msg = args.map(String).join(" ");
+    if (
+      msg.includes("unknown handle") ||
+      msg.includes("node closed or not found") ||
+      msg.includes("sendChunk failed")
+    ) {
+      errors.push(msg);
+    }
+    originalConsoleError(...args);
+  };
+
+  const server = await createNode({ disableNetworking: true, bindAddr: "127.0.0.1:0" });
+  const client = await createNode({ disableNetworking: true, bindAddr: "127.0.0.1:0" });
+  const { id: serverId, addrs: serverAddrs } = await server.addr();
+
+  try {
+    for (let iter = 0; iter < ITERS; iter++) {
+      const ac = new AbortController();
+      const handle = server.serve({ signal: ac.signal, loadShed: false }, () =>
+        new Response(BODY)
+      );
+
+      await Promise.all(
+        Array.from({ length: STREAMS }, () =>
+          client
+            .fetch(`httpi://${serverId}/data`, { directAddrs: serverAddrs })
+            .then((r) => r.text())
+        ),
+      );
+
+      ac.abort();
+      await handle.finished;
+    }
+
+    assertEquals(errors, [], `handle errors detected: ${errors.join(" | ")}`);
+  } finally {
+    console.error = originalConsoleError;
+    await server.close();
+    await client.close();
+  }
+});
