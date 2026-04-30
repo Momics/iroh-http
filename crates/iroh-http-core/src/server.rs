@@ -19,7 +19,6 @@ use std::{
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, StatusCode};
 use hyper_util::rt::TokioIo;
-use hyper_util::service::TowerToHyperService;
 use tower::Service;
 
 use crate::{
@@ -247,7 +246,7 @@ struct FfiDispatcher {
 }
 
 #[derive(Clone)]
-struct IrohHttpService {
+pub(crate) struct IrohHttpService {
     dispatcher: Arc<FfiDispatcher>,
     remote_node_id: Option<String>,
 }
@@ -830,153 +829,26 @@ where
                             max_header_size.max(8192)
                         };
 
-                        // Build the Tower reliability service stack and serve the connection.
-                        //
-                        // Layer ordering (outermost first):
-                        //   [CompressionLayer →] HandleLayerError → [LoadShed →] Timeout → IrohHttpService
-                        //
-                        // Both the compression layer (cfg-gated + runtime-opt) and the
-                        // load-shed layer (runtime-opt) are conditionally inserted via
-                        // `option_layer`, so the four feature × runtime combinations
-                        // collapse to a single expression. `IrohHttpService::Error` is
-                        // `Infallible`, so the only fallible boundary in the stack is
-                        // the `TimeoutLayer` / `LoadShedLayer` pair; `HandleLayerError`
-                        // converts their `Elapsed` / `Overloaded` errors into 408 / 503
-                        // responses so hyper only ever sees `Ok(Response)`.
-
-                        use tower::{timeout::TimeoutLayer, ServiceBuilder};
-
+                        // Build the per-bistream tower pipeline (compression,
+                        // decompression, body limit, load-shed, timeout, layer-error
+                        // handling) and serve the connection. The full assembly
+                        // lives in [`crate::server_pipeline::serve_bistream`] —
+                        // closes recommendation §5.1 of the post-rework review (#169).
                         #[cfg(feature = "compression")]
-                        let compression_layer = {
-                            use http::{Extensions, HeaderMap, Version};
-                            use tower_http::compression::{
-                                predicate::{NotForContentType, Predicate, SizeAbove},
-                                CompressionLayer, CompressionLevel,
-                            };
-                            svc.get_ref().dispatcher.compression.as_ref().map(|comp| {
-                                let mut layer = CompressionLayer::new().zstd(true);
-                                if let Some(level) = comp.level {
-                                    layer = layer.quality(CompressionLevel::Precise(level as i32));
-                                }
-                                // Two custom predicates remain — tower-http does not ship
-                                // built-ins for either:
-                                //
-                                // 1. Skip if the response already carries Content-Encoding
-                                //    (handler returned a pre-encoded body).
-                                // 2. Honour Cache-Control: no-transform per RFC 9111 §5.2.2.7.
-                                let not_pre_compressed =
-                                    |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
-                                        !h.contains_key(http::header::CONTENT_ENCODING)
-                                    };
-                                let not_no_transform =
-                                    |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
-                                        h.get(http::header::CACHE_CONTROL)
-                                            .and_then(|v| v.to_str().ok())
-                                            .map(|v| {
-                                                !v.split(',').any(|d| {
-                                                    d.trim().eq_ignore_ascii_case("no-transform")
-                                                })
-                                            })
-                                            .unwrap_or(true)
-                                    };
-                                // Opaque / pre-compressed media types — built-ins from
-                                // tower-http (`IMAGES` excludes `image/svg+xml` for free)
-                                // plus three additions that have no shipped constant.
-                                let predicate = SizeAbove::new(
-                                    comp.min_body_bytes.min(u16::MAX as usize) as u16,
-                                )
-                                .and(NotForContentType::IMAGES)
-                                .and(NotForContentType::SSE)
-                                .and(NotForContentType::const_new("audio/"))
-                                .and(NotForContentType::const_new("video/"))
-                                .and(NotForContentType::const_new("application/zstd"))
-                                .and(NotForContentType::const_new("application/octet-stream"))
-                                .and(not_pre_compressed)
-                                .and(not_no_transform);
-                                layer.compress_when(predicate)
-                            })
-                        };
-                        #[cfg(not(feature = "compression"))]
-                        let compression_layer: Option<
-                            tower::layer::util::Identity,
-                        > = None;
-
-                        let load_shed_layer = if load_shed_enabled {
-                            Some(tower::load_shed::LoadShedLayer::new())
-                        } else {
-                            None
-                        };
-
-                        // ADR-013: enforce request body size with the standard
-                        // tower-http layer rather than a hand-rolled byte
-                        // counter in the dispatcher. The layer rejects
-                        // oversized requests with 413 (immediately for known
-                        // `Content-Length`, or by erroring the wrapped
-                        // `Limited` body mid-stream for chunked uploads).
-                        //
-                        // `RequestBodyLimit<S>` changes the response body
-                        // type to `ResponseBody<S::ResBody>`. To keep the two
-                        // arms of `option_layer` unifiable as
-                        // `Response<Body>` (axum's trick — see
-                        // `axum::body::Body` + `axum-core::body::HttpBody`),
-                        // we collapse the response body back to our `Body`
-                        // newtype with `MapResponseBodyLayer::new(Body::new)`
-                        // immediately after the limit layer.
-                        let body_limit_layer = max_request_body_bytes.map(|limit| {
-                            ServiceBuilder::new()
-                                .layer(tower_http::map_response_body::MapResponseBodyLayer::new(
-                                    Body::new,
-                                ))
-                                .layer(tower_http::limit::RequestBodyLimitLayer::new(limit))
-                                .into_inner()
-                        });
-
-                        let core_stack = ServiceBuilder::new()
-                            .option_layer(body_limit_layer)
-                            .layer(HandleLayerErrorLayer)
-                            .option_layer(load_shed_layer)
-                            .layer(TimeoutLayer::new(timeout_dur))
-                            .service(svc);
-
-                        let mut builder = hyper::server::conn::http1::Builder::new();
-                        builder
-                            .max_buf_size(effective_header_limit)
-                            .max_headers(128);
-
-                        #[cfg(feature = "compression")]
-                        let result = {
-                            use tower_http::decompression::RequestDecompressionLayer;
-                            let req_decomp = RequestDecompressionLayer::new();
-                            if let Some(comp) = compression_layer {
-                                let stack = ServiceBuilder::new()
-                                    .layer(req_decomp)
-                                    .layer(comp)
-                                    .service(core_stack);
-                                builder
-                                    .serve_connection(io, TowerToHyperService::new(stack))
-                                    .with_upgrades()
-                                    .await
-                            } else {
-                                let stack =
-                                    ServiceBuilder::new().layer(req_decomp).service(core_stack);
-                                builder
-                                    .serve_connection(io, TowerToHyperService::new(stack))
-                                    .with_upgrades()
-                                    .await
-                            }
-                        };
-                        #[cfg(not(feature = "compression"))]
-                        let result = {
-                            let _ = compression_layer;
-                            builder
-                                .serve_connection(io, TowerToHyperService::new(core_stack))
-                                .with_upgrades()
-                                .await
-                        };
-
-                        if let Err(e) = result {
-                            tracing::debug!("iroh-http: http1 connection error: {e}");
-                        }
+                        let stack_compression = svc.get_ref().dispatcher.compression.clone();
+                        crate::server_pipeline::serve_bistream(
+                            io,
+                            svc,
+                            crate::server_pipeline::PipelineParams {
+                                timeout: timeout_dur,
+                                max_request_body_bytes,
+                                load_shed_enabled,
+                                effective_header_limit,
+                                #[cfg(feature = "compression")]
+                                compression: stack_compression,
+                            },
+                        )
+                        .await;
                     });
                 }
             });
@@ -1041,7 +913,7 @@ where
 /// a `TimeoutLayer` and/or `LoadShedLayer` to convert their errors into HTTP
 /// responses. Wraps the inner service with [`HandleLayerError`].
 #[derive(Clone, Default)]
-struct HandleLayerErrorLayer;
+pub(crate) struct HandleLayerErrorLayer;
 
 impl<S> tower::Layer<S> for HandleLayerErrorLayer {
     type Service = HandleLayerError<S>;
@@ -1052,7 +924,7 @@ impl<S> tower::Layer<S> for HandleLayerErrorLayer {
 }
 
 #[derive(Clone)]
-struct HandleLayerError<S>(S);
+pub(crate) struct HandleLayerError<S>(S);
 
 impl<S, Req> Service<Req> for HandleLayerError<S>
 where

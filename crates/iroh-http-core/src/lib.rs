@@ -13,6 +13,7 @@ pub(crate) mod io;
 pub(crate) mod pool;
 pub mod registry;
 pub mod server;
+pub(crate) mod server_pipeline;
 pub mod session;
 pub mod stats;
 pub mod stream;
