@@ -7,6 +7,41 @@ and handled entirely at the Rust layer — the JS handler always sees plain byte
 Enabled by default. To disable (e.g. for minimal binary size or environments
 without a C toolchain), compile with `default-features = false`.
 
+## Supported algorithms
+
+**zstd only.** No `gzip`, no `br`, no `deflate`.
+
+This is intentional. iroh-http is a new P2P protocol with no legacy-client
+compatibility surface — every client is an iroh-http peer linked against the
+same Rust core. We therefore standardise on a single modern algorithm rather
+than negotiating across a menagerie. zstd was chosen because:
+
+- Better compression ratio than gzip at equivalent CPU.
+- Faster decoding than brotli at equivalent ratio.
+- Pure-Rust implementation already in the dependency tree (`zstd` crate).
+- The `tower-http` `compression-zstd` and `decompression-zstd` features
+  give us streaming compression with no custom code (see
+  [ADR-013 — Lean on the ecosystem](../adr/013-lean-on-the-ecosystem.md)).
+
+### Behaviour for unsupported `Accept-Encoding`
+
+A peer advertising **only** `gzip` or `br` (e.g. a non-iroh-http client
+bridged in, or a hand-crafted request) receives the response **uncompressed**.
+There is no negotiation failure — `tower-http`'s compression layer treats an
+unsupported `Accept-Encoding` as "send identity" rather than `406 Not Acceptable`.
+
+If you need to verify the wire encoding, inspect `Content-Encoding` on the
+response: it is present iff the body was compressed.
+
+### Runtime notes
+
+| Runtime | Compression behaviour |
+|---|---|
+| Node.js (`@momics/iroh-http-node`) | Full support. Zstd built into the NAPI binary. |
+| Deno (`@momics/iroh-http-deno`) | Full support. Zstd built into the dynamic library. |
+| Tauri (`@momics/iroh-http-tauri`) | Full support. Zstd built into the plugin. |
+| Browser fetch over `httpi://` | N/A. iroh-http does not run in browsers — the WebTransport prototype in `nebulous` is a separate code path. |
+
 ## Configuration
 
 ```ts
