@@ -77,6 +77,80 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     await client.close();
   });
 
+  // ── dial() input forms (#166) ─────────────────────────────────────────────
+
+  test("dial() accepts httpi:// URL", async () => {
+    const server = await createNode();
+    const client = await createNode();
+    const { id: serverId, addrs: serverAddrs } = await server.addr();
+
+    const accept = acceptOne(server);
+    // Pass the full URL form, including a path (which dial must ignore).
+    const url = `httpi://${serverId}/some/path`;
+    const session = await client.dial(url, { directAddrs: serverAddrs });
+    await accept.promise;
+
+    assertEqual(
+      session.remoteId.toString(),
+      serverId,
+      "remoteId extracted from httpi:// URL",
+    );
+
+    session.close();
+    await server.close();
+    await client.close();
+  });
+
+  test("dial() accepts peer.toURL()", async () => {
+    const server = await createNode();
+    const client = await createNode();
+    const { addrs: serverAddrs } = await server.addr();
+
+    const accept = acceptOne(server);
+    const session = await client.dial(server.publicKey.toURL("/"), {
+      directAddrs: serverAddrs,
+    });
+    await accept.promise;
+
+    assertEqual(
+      session.remoteId.toString(),
+      server.publicKey.toString(),
+      "remoteId matches when dialing via peer.toURL()",
+    );
+
+    session.close();
+    await server.close();
+    await client.close();
+  });
+
+  test("dial() rejects http:// and https:// URLs", async () => {
+    const client = await createNode();
+
+    let httpsErr;
+    try {
+      await client.dial("https://example.com");
+    } catch (e) {
+      httpsErr = e;
+    }
+    assert(
+      httpsErr instanceof TypeError,
+      "https:// must throw TypeError",
+    );
+
+    let httpErr;
+    try {
+      await client.dial("http://example.com");
+    } catch (e) {
+      httpErr = e;
+    }
+    assert(
+      httpErr instanceof TypeError,
+      "http:// must throw TypeError",
+    );
+
+    await client.close();
+  });
+
   // ── session.close() ────────────────────────────────────────────────────────
 
   test("session.close() is safe to call twice", async () => {

@@ -134,9 +134,33 @@ export class PublicKey {
 }
 
 /**
- * Resolve a `PublicKey | string` argument to a base32 string suitable for
- * passing to the FFI layer.
+ * Resolve a `PublicKey | string` argument to a base32 node-id string
+ * suitable for passing to the FFI layer.
+ *
+ * Accepts:
+ * - a `PublicKey` instance — `.toString()` is called.
+ * - a bare base32 public-key string (e.g. `"tvtswinq..."`).
+ * - a full `httpi://` URL (e.g. `"httpi://tvtswinq.../some/path"`) — the
+ *   hostname is extracted via the WHATWG `URL` parser. The path, query and
+ *   fragment, if any, are ignored: this helper resolves *identity*, not a
+ *   request target.
+ *
+ * Throws `TypeError` for `http://` / `https://` URLs to match the rejection
+ * in `node.fetch()` — iroh-http is a separate scheme on purpose.
  */
 export function resolveNodeId(peer: PublicKey | string): string {
-  return typeof peer === "string" ? peer : peer.toString();
+  if (typeof peer !== "string") return peer.toString();
+  if (/^httpi:\/\//i.test(peer)) {
+    // WHATWG URL handles hostname normalisation (lower-casing, IDN, etc.).
+    return new URL(peer).hostname;
+  }
+  if (/^https?:\/\//i.test(peer)) {
+    throw new TypeError(
+      `iroh-http requires the "httpi://" scheme, not "${
+        peer.slice(0, peer.indexOf("://") + 3)
+      }". ` +
+        `Use peer.toURL() or pass the bare base32 node-id.`,
+    );
+  }
+  return peer;
 }
