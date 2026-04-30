@@ -63,13 +63,30 @@ pub(crate) struct PipelineParams {
 /// caller's task). Connection-level errors are logged at `debug!` level —
 /// see ADR-014 §D5 for why these stay under `tracing::debug` not `warn`.
 ///
-/// `svc` is typically `ConcurrencyLimit<IrohHttpService>` with the
-/// per-connection `remote_node_id` populated; the only requirements are
-/// the shape of its `Service` impl, which mirrors what hyper expects.
-/// Concrete inner service expected by [`serve_bistream`] —
-/// `ConcurrencyLimit<IrohHttpService>` with the per-connection
-/// `remote_node_id` already populated.
-pub(crate) type ServeService = tower::limit::ConcurrencyLimit<crate::server::IrohHttpService>;
+/// `svc` is a fully type-erased [`ServeService`] (a [`BoxCloneService`]).
+/// The accept loop boxes the per-connection stack \u2014 [`IrohHttpService`]
+/// wrapped with `ConcurrencyLimitLayer` and any other operator layers \u2014
+/// once at construction time, so adding a new layer in [`crate::server`]
+/// does not change the signature seen here.
+///
+/// [`BoxCloneService`]: tower::util::BoxCloneService
+/// [`IrohHttpService`]: crate::server::IrohHttpService
+/// Type-erased per-connection service handed to [`serve_bistream`].
+///
+/// Boxing once at the construction site (in `server::serve_with_events`)
+/// means every future addition to the layer stack \u2014 `AddExtensionLayer`,
+/// `TraceLayer`, a response-signing layer, anything \u2014 is **one append**
+/// in the builder without rippling a new concrete type signature through
+/// this module and the accept loop. This is the structural payoff of #175 /
+/// ADR-014 D2: the recurring "tower body type soup" was a symptom of a
+/// non-erased inner type. With the body normalised to [`Body`] at every
+/// seam (ADR-014 D2) and the error fixed at [`Infallible`], the box
+/// compiles cleanly.
+pub(crate) type ServeService = tower::util::BoxCloneService<
+    hyper::Request<Body>,
+    hyper::Response<Body>,
+    std::convert::Infallible,
+>;
 
 pub(crate) fn serve_bistream(
     io: TokioIo<IrohStream>,
@@ -81,17 +98,21 @@ pub(crate) fn serve_bistream(
     async move {
         // ADR-013: enforce request body size with the standard tower-http
         // layer rather than a hand-rolled byte counter in the dispatcher.
-        // `RequestBodyLimit<S>` changes the response body type to
-        // `ResponseBody<S::ResBody>`. To keep both arms of `option_layer`
-        // unifiable as `Response<Body>`, we collapse the response body back
-        // to our `Body` newtype with `MapResponseBodyLayer::new(Body::new)`
-        // immediately after the limit layer.
+        // `RequestBodyLimitLayer` wraps the request body to `Limited<B>` and
+        // changes the response body to `ResponseBody<S::ResBody>`. Per
+        // ADR-014 D2 / #175 we renormalise both directions back to `Body`
+        // so the inner service stays `Service<Request<Body>, Response = Response<Body>>`:
+        //   * `MapRequestBodyLayer::new(Body::new)` after the limit (request side)
+        //   * `MapResponseBodyLayer::new(Body::new)` before it (response side)
         let body_limit_layer = params.max_request_body_bytes.map(|limit| {
             ServiceBuilder::new()
                 .layer(tower_http::map_response_body::MapResponseBodyLayer::new(
-                    Body::new,
+                    |b: tower_http::limit::ResponseBody<Body>| Body::new(b),
                 ))
                 .layer(tower_http::limit::RequestBodyLimitLayer::new(limit))
+                .layer(tower_http::map_request_body::MapRequestBodyLayer::new(
+                    |b: tower_http::body::Limited<Body>| Body::new(b),
+                ))
                 .into_inner()
         });
 
@@ -111,30 +132,87 @@ pub(crate) fn serve_bistream(
             .max_buf_size(params.effective_header_limit)
             .max_headers(128);
 
+        // ADR-014 D2 / #175 — body normalisation sandwich.
+        //
+        // `IrohHttpService` is non-generic (`Service<Request<Body>>`).
+        // Every layer that rewraps the request *or* response body
+        // (compression, decompression, body-limit) must be sandwiched with
+        // `MapRequestBodyLayer` / `MapResponseBodyLayer` that renormalise
+        // the body back to `Body`. This keeps the entire chain typed as
+        // `Service<Request<Body>, Response = Response<Body>>`, which is
+        // also what `option_layer`'s `Either` requires for both arms to
+        // unify. Same pattern as `axum::serve`
+        // (`make_service.call(...).map_request(|r| r.map(Body::new))`),
+        // applied at every seam where a layer changes the body type.
+        //
+        // Each closure carries an explicit input type so type inference
+        // picks the correct monomorphisation of `Body::new`.
+        use tower_http::map_request_body::MapRequestBodyLayer;
+        use tower_http::map_response_body::MapResponseBodyLayer;
+
+        // Cfg gates live at *layer construction* only — the chain below is
+        // a single uniform `ServiceBuilder` per ADR-014 D2 / #175. Adding a
+        // future operator layer is one append between `from_incoming` and
+        // `.service(core_stack)`.
+        //
+        // Compression bundle: `CompressionLayer` wraps the response body
+        // to `CompressionBody<Body>`; the outer `MapResponseBodyLayer`
+        // renormalises it back to `Body` so the option_layer arms unify.
         #[cfg(feature = "compression")]
-        let result = {
-            use tower_http::decompression::RequestDecompressionLayer;
-            let req_decomp = RequestDecompressionLayer::new();
-            if let Some(comp) = params.compression.as_ref().map(build_compression_layer) {
-                let stack = ServiceBuilder::new()
-                    .layer(req_decomp)
+        let comp_layer = params
+            .compression
+            .as_ref()
+            .map(build_compression_layer)
+            .map(|comp| {
+                ServiceBuilder::new()
+                    .layer(MapResponseBodyLayer::new(
+                        |b: tower_http::compression::CompressionBody<Body>| Body::new(b),
+                    ))
                     .layer(comp)
-                    .service(core_stack);
-                builder
-                    .serve_connection(io, TowerToHyperService::new(stack))
-                    .with_upgrades()
-                    .await
-            } else {
-                let stack = ServiceBuilder::new().layer(req_decomp).service(core_stack);
-                builder
-                    .serve_connection(io, TowerToHyperService::new(stack))
-                    .with_upgrades()
-                    .await
-            }
+                    .into_inner()
+            });
+        #[cfg(not(feature = "compression"))]
+        let comp_layer: Option<tower::layer::util::Identity> = None;
+
+        // Decompression bundle: `RequestDecompressionLayer` wraps the
+        // request body to `DecompressionBody<Body>` (renormalised on the
+        // way in) and unifies its response body to
+        // `tower_http::body::UnsyncBoxBody<Bytes, BoxError>` (renormalised
+        // on the way out). The response renormaliser uses a bare `fn` item
+        // (not a closure) so its signature exactly matches what tower-http's
+        // higher-ranked body type requires.
+        #[cfg(feature = "compression")]
+        fn box_to_body(
+            b: tower_http::body::UnsyncBoxBody<bytes::Bytes, crate::body::BoxError>,
+        ) -> Body {
+            Body::new(b)
+        }
+        #[cfg(feature = "compression")]
+        let decomp_layer = {
+            use tower_http::decompression::{DecompressionBody, RequestDecompressionLayer};
+            Some(
+                ServiceBuilder::new()
+                    .layer(MapResponseBodyLayer::new(box_to_body))
+                    .layer(RequestDecompressionLayer::new())
+                    .layer(MapRequestBodyLayer::new(|b: DecompressionBody<Body>| {
+                        Body::new(b)
+                    }))
+                    .into_inner(),
+            )
         };
         #[cfg(not(feature = "compression"))]
+        let decomp_layer: Option<tower::layer::util::Identity> = None;
+
+        let from_incoming = MapRequestBodyLayer::new(|b: hyper::body::Incoming| Body::new(b));
+
+        let stack = ServiceBuilder::new()
+            .layer(from_incoming)
+            .option_layer(comp_layer)
+            .option_layer(decomp_layer)
+            .service(core_stack);
+
         let result = builder
-            .serve_connection(io, TowerToHyperService::new(core_stack))
+            .serve_connection(io, TowerToHyperService::new(stack))
             .with_upgrades()
             .await;
 

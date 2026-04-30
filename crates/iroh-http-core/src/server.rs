@@ -251,11 +251,11 @@ pub(crate) struct IrohHttpService {
     remote_node_id: Option<String>,
 }
 
-impl<B> Service<hyper::Request<B>> for IrohHttpService
-where
-    B: http_body::Body<Data = Bytes> + Send + 'static,
-    B::Error: std::fmt::Debug + Send + Sync + 'static,
-{
+/// ADR-014 D2 / #175: service is concrete — not generic over `B`.
+/// The caller (server_pipeline::serve_bistream) normalises every incoming
+/// `Request<Incoming>` to `Request<Body>` with `.map_request(…Body::new)`
+/// before the service is reached, so no `<B>` parameter is needed here.
+impl Service<hyper::Request<Body>> for IrohHttpService {
     type Response = hyper::Response<Body>;
     type Error = std::convert::Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -264,7 +264,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: hyper::Request<B>) -> Self::Future {
+    fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
         let dispatcher = self.dispatcher.clone();
         let remote_node_id = self.remote_node_id.clone().unwrap_or_default();
         Box::pin(async move { Ok(dispatcher.dispatch(req, remote_node_id).await) })
@@ -272,15 +272,14 @@ where
 }
 
 impl FfiDispatcher {
-    async fn dispatch<B>(
+    /// Per ADR-014 D2 / #175: `req` carries `Body` (our concrete newtype),
+    /// not a generic `B`. Body normalisation happens upstream at the
+    /// hyper → tower seam in `server_pipeline::serve_bistream`.
+    async fn dispatch(
         self: Arc<Self>,
-        mut req: hyper::Request<B>,
+        mut req: hyper::Request<Body>,
         remote_node_id: String,
-    ) -> hyper::Response<Body>
-    where
-        B: http_body::Body<Data = Bytes> + Send + 'static,
-        B::Error: std::fmt::Debug + Send + Sync + 'static,
-    {
+    ) -> hyper::Response<Body> {
         let handles = self.endpoint.handles();
         let own_node_id = &*self.own_node_id;
         let max_header_size = self.max_header_size;
@@ -664,16 +663,17 @@ where
         compression,
     });
 
-    let base_svc = IrohHttpService {
-        dispatcher,
-        remote_node_id: None,
-    };
+    let dispatcher_for_conn = dispatcher.clone();
 
-    use tower::{limit::ConcurrencyLimitLayer, Layer};
-    // SEC-002: build the concurrency limiter once so all clones share one
-    // Arc<Semaphore>, enforcing a true global request cap across every
-    // connection and request task.
-    let shared_conc = ConcurrencyLimitLayer::new(max).layer(base_svc);
+    use tower::{limit::ConcurrencyLimitLayer, ServiceBuilder, ServiceExt};
+    // SEC-002: build the concurrency limiter as a *layer* once so every
+    // per-connection stack we wrap with it shares the same `Arc<Semaphore>`,
+    // enforcing a true global request cap across all connections. Boxing
+    // each wrapped stack into a [`crate::server_pipeline::ServeService`]
+    // (a `BoxCloneService`) is what gives us the structural property
+    // ADR-014 D2 / #175 calls for: adding a future layer is one append
+    // here, not a new concrete type rippling through `serve_bistream`.
+    let conc_layer = ConcurrencyLimitLayer::new(max);
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
     let shutdown_listen = shutdown_notify.clone();
@@ -758,9 +758,21 @@ where
                 }
             };
 
-            let mut conn_conc = shared_conc.clone();
-            conn_conc.get_mut().remote_node_id = Some(remote_id);
-
+            // Build the per-connection service: IrohHttpService with the
+            // peer's `remote_node_id` baked in, wrapped with the shared
+            // concurrency limiter, and type-erased into ServeService. Per
+            // ADR-014 D2 / #175 this is the *only* place that names the
+            // concrete inner stack \u2014 every downstream consumer sees the
+            // box.
+            let conn_svc: crate::server_pipeline::ServeService = ServiceBuilder::new()
+                .layer(conc_layer.clone())
+                .service(IrohHttpService {
+                    dispatcher: dispatcher_for_conn.clone(),
+                    remote_node_id: Some(remote_id),
+                })
+                .boxed_clone();
+            #[cfg(feature = "compression")]
+            let stack_compression = dispatcher_for_conn.compression.clone();
             let timeout_dur = if request_timeout.is_zero() {
                 Duration::MAX
             } else {
@@ -790,13 +802,15 @@ where
                     };
 
                     let io = TokioIo::new(IrohStream::new(send, recv));
-                    let svc = conn_conc.clone();
+                    let svc = conn_svc.clone();
                     let req_counter = conn_requests.clone();
                     req_counter.fetch_add(1, Ordering::Relaxed);
                     in_flight_conn.fetch_add(1, Ordering::Relaxed);
 
                     let in_flight_req = in_flight_conn.clone();
                     let drain_notify_req = drain_notify_conn.clone();
+                    #[cfg(feature = "compression")]
+                    let req_compression = stack_compression.clone();
 
                     tokio::spawn(async move {
                         // Decrement request count when this task exits.
@@ -832,8 +846,6 @@ where
                         // handling) and serve the connection. The full assembly
                         // lives in [`crate::server_pipeline::serve_bistream`] —
                         // closes recommendation §5.1 of the post-rework review (#169).
-                        #[cfg(feature = "compression")]
-                        let stack_compression = svc.get_ref().dispatcher.compression.clone();
                         crate::server_pipeline::serve_bistream(
                             io,
                             svc,
@@ -843,7 +855,7 @@ where
                                 load_shed_enabled,
                                 effective_header_limit,
                                 #[cfg(feature = "compression")]
-                                compression: stack_compression,
+                                compression: req_compression,
                             },
                         )
                         .await;
