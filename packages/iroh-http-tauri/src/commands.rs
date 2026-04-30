@@ -594,7 +594,7 @@ pub async fn serve(
     // channel failure without capturing the outer ep.
     let ep_for_closure = ep.clone();
 
-    let handle = iroh_http_core::serve_with_events(
+    let handle = iroh_http_core::serve_with_callback(
         ep.clone(),
         serve_opts,
         move |payload: RequestPayload| {

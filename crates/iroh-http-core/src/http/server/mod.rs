@@ -1,8 +1,15 @@
-//! Incoming HTTP request — `serve()` implementation.
+//! Incoming HTTP request — pure-Rust `serve()` implementation.
 //!
 //! Each accepted QUIC bidirectional stream is driven by hyper's HTTP/1.1
-//! server connection.  A `tower::Service` (`IrohHttpService`) bridges between
-//! hyper and the existing body-channel + slab infrastructure.
+//! server connection. The user supplies a `tower::Service<Request<Body>,
+//! Response = Response<Body>, Error = Infallible>`; the per-connection
+//! `AddExtensionLayer` makes the authenticated peer id available as a
+//! [`RemoteNodeId`] request extension (closes #177).
+//!
+//! The FFI-shaped callback API ([`crate::ffi::dispatcher::serve_with_callback`])
+//! is one specific consumer of this entry — it constructs an
+//! `IrohHttpService` around the JS callback and hands it in like any
+//! other service.
 
 pub(crate) mod pipeline;
 pub(crate) mod stack;
@@ -20,43 +27,16 @@ use std::{
 };
 
 use bytes::Bytes;
-use http::{HeaderName, HeaderValue, StatusCode};
+use http::StatusCode;
 use hyper_util::rt::TokioIo;
 use tower::Service;
 
-use crate::{
-    base32_encode,
-    ffi::handles::{HandleStore, ResponseHeadEntry},
-    http::client::pump_hyper_body_to_channel,
-    http::transport::io::IrohStream,
-    ConnectionEvent, CoreError, IrohEndpoint, RequestPayload,
-};
+use crate::{base32_encode, http::transport::io::IrohStream, ConnectionEvent, IrohEndpoint};
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
 
 use crate::Body;
 use crate::BoxError;
-
-// ── Inline error responses (IrohHttpService is infallible) ───────────────
-//
-// Per ADR-014, `IrohHttpService::Error = Infallible` — every internal failure
-// is rendered to an HTTP response inside the service. Layer-level failures
-// (timeout, load-shed) are still mapped to 408 / 503 in `HandleLayerError`
-// because those errors arise *outside* this service.
-
-fn internal_error(detail: &'static [u8]) -> hyper::Response<Body> {
-    hyper::Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(Body::full(Bytes::from_static(detail)))
-        .expect("static error response args are valid")
-}
-
-fn service_unavailable(detail: &'static [u8]) -> hyper::Response<Body> {
-    hyper::Response::builder()
-        .status(StatusCode::SERVICE_UNAVAILABLE)
-        .body(Body::full(Bytes::from_static(detail)))
-        .expect("static error response args are valid")
-}
 
 // ── ServeOptions ──────────────────────────────────────────────────────────────
 
@@ -132,36 +112,9 @@ impl ServeHandle {
     }
 }
 
-// ── respond() ────────────────────────────────────────────────────────────────
-
-pub fn respond(
-    handles: &HandleStore,
-    req_handle: u64,
-    status: u16,
-    headers: Vec<(String, String)>,
-) -> Result<(), CoreError> {
-    StatusCode::from_u16(status)
-        .map_err(|_| CoreError::invalid_input(format!("invalid HTTP status code: {status}")))?;
-    for (name, value) in &headers {
-        HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
-            CoreError::invalid_input(format!("invalid response header name {:?}", name))
-        })?;
-        HeaderValue::from_str(value).map_err(|_| {
-            CoreError::invalid_input(format!("invalid response header value for {:?}", name))
-        })?;
-    }
-
-    let sender = handles
-        .take_req_sender(req_handle)
-        .ok_or_else(|| CoreError::invalid_handle(req_handle))?;
-    sender
-        .send(ResponseHeadEntry { status, headers })
-        .map_err(|_| CoreError::internal("serve task dropped before respond"))
-}
-
 // ── PeerConnectionGuard ───────────────────────────────────────────────────────
 
-type ConnectionEventFn = Arc<dyn Fn(ConnectionEvent) + Send + Sync>;
+pub(crate) type ConnectionEventFn = Arc<dyn Fn(ConnectionEvent) + Send + Sync>;
 
 struct PeerConnectionGuard {
     counts: Arc<Mutex<HashMap<iroh::PublicKey, usize>>>,
@@ -223,445 +176,32 @@ impl Drop for PeerConnectionGuard {
     }
 }
 
-// ── FFI dispatcher + IrohHttpService ─────────────────────────────────────────
-//
-// Per ADR-014 the hyper-facing service is split in two:
-//
-//   * `FfiDispatcher` owns all the JS-bridge concerns — handle allocation,
-//     `on_request` callback firing, body-channel pumping, response-head
-//     rendezvous, and duplex upgrade hand-off. It is shared across every
-//     accepted connection and request via `Arc`.
-//   * `IrohHttpService` is the thin `tower::Service` shell. It clones cheaply
-//     (one Arc bump) and delegates each request to the dispatcher. Per #185
-//     the per-connection `remote_node_id` arrives as a typed
-//     [`RemoteNodeId`] request extension inserted by the per-connection
-//     [`AddExtensionLayer`] in [`serve_with_events_inner`], not as a
-//     mutable service field. This makes `IrohHttpService` independent of
-//     connection state, so the same service value is reused across every
-//     accepted connection.
-//
-// The split keeps the tower::Service contract narrow (Infallible, generic over
-// any `http_body::Body`) and isolates the FFI logic so future tests can mock
-// `FfiDispatcher::dispatch` without standing up a real connection.
+// `RemoteNodeId` extension + `ConnectionEventFn` defined above; the
+// FFI dispatcher and respond() live in `crate::ffi::dispatcher`.
 
 /// Authenticated peer node id of the QUIC connection a request arrived
 /// on. Inserted as a request extension by the per-connection
 /// [`tower_http::add_extension::AddExtensionLayer`] in
-/// [`serve_with_events_inner`].
+/// [`serve_service_with_events`].
 ///
 /// User-facing pure-Rust services consume it with
-/// `req.extensions().get::<RemoteNodeId>()`; the FFI dispatcher
-/// ([`FfiDispatcher::dispatch`]) reads it the same way. Closes #177.
+/// `req.extensions().get::<RemoteNodeId>()`. Closes #177.
 #[derive(Clone, Debug)]
 pub struct RemoteNodeId(pub Arc<String>);
 
-struct FfiDispatcher {
-    on_request: Arc<dyn Fn(RequestPayload) + Send + Sync>,
-    endpoint: IrohEndpoint,
-    own_node_id: Arc<String>,
-    max_header_size: Option<usize>,
-}
-
-#[derive(Clone)]
-pub(crate) struct IrohHttpService {
-    dispatcher: Arc<FfiDispatcher>,
-}
-
-/// ADR-014 D2 / #175: service is concrete — not generic over `B`.
-/// The caller (server_pipeline::serve_bistream) normalises every incoming
-/// `Request<Incoming>` to `Request<Body>` with `.map_request(…Body::new)`
-/// before the service is reached, so no `<B>` parameter is needed here.
-impl Service<hyper::Request<Body>> for IrohHttpService {
-    type Response = hyper::Response<Body>;
-    type Error = std::convert::Infallible;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
-        let dispatcher = self.dispatcher.clone();
-        // Per #177: the authenticated peer id is supplied as a request
-        // extension by the per-connection `AddExtensionLayer` in
-        // `serve_with_events_inner`. Missing extension is treated as a
-        // server-side bug (the layer is unconditionally applied) and
-        // surfaces as 500 from `dispatcher.dispatch`.
-        let remote_node_id = req
-            .extensions()
-            .get::<RemoteNodeId>()
-            .map(|r| r.0.clone())
-            .unwrap_or_else(|| Arc::new(String::new()));
-        Box::pin(async move { Ok(dispatcher.dispatch(req, remote_node_id).await) })
-    }
-}
-
-impl FfiDispatcher {
-    /// Per ADR-014 D2 / #175: `req` carries `Body` (our concrete newtype),
-    /// not a generic `B`. Body normalisation happens upstream at the
-    /// hyper → tower seam in `server_pipeline::serve_bistream`.
-    async fn dispatch(
-        self: Arc<Self>,
-        mut req: hyper::Request<Body>,
-        remote_node_id: Arc<String>,
-    ) -> hyper::Response<Body> {
-        let handles = self.endpoint.handles();
-        let own_node_id = &*self.own_node_id;
-        let max_header_size = self.max_header_size;
-
-        let method = req.method().to_string();
-        let path_and_query = req
-            .uri()
-            .path_and_query()
-            .map(|p| p.as_str())
-            .unwrap_or("/")
-            .to_string();
-
-        tracing::debug!(
-            method = %method,
-            path = %path_and_query,
-            peer = %remote_node_id,
-            "iroh-http: incoming request",
-        );
-        // Strip any client-supplied peer-id to prevent spoofing,
-        // then inject the authenticated identity from the QUIC connection.
-        //
-        // ISS-011: Use raw byte length for header-size accounting to prevent
-        // bypass via non-UTF8 values.  Reject non-UTF8 header values with 400
-        // instead of silently converting them to empty strings.
-
-        // First pass: measure header bytes using raw values (before lossy conversion).
-        if let Some(limit) = max_header_size {
-            let header_bytes: usize = req
-                .headers()
-                .iter()
-                .filter(|(k, _)| !k.as_str().eq_ignore_ascii_case("peer-id"))
-                .map(|(k, v)| {
-                    k.as_str()
-                        .len()
-                        .saturating_add(v.as_bytes().len())
-                        .saturating_add(4)
-                }) // ": " + "\r\n"
-                .fold(0usize, |acc, x| acc.saturating_add(x))
-                .saturating_add("peer-id".len())
-                .saturating_add(remote_node_id.len())
-                .saturating_add(4)
-                .saturating_add(req.uri().to_string().len())
-                .saturating_add(method.len())
-                .saturating_add(12); // "HTTP/1.1 \r\n\r\n" overhead
-            if header_bytes > limit {
-                let resp = hyper::Response::builder()
-                    .status(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE)
-                    .body(Body::empty())
-                    .expect("static response args are valid");
-                return resp;
-            }
-        }
-
-        // Build header list — reject non-UTF8 values instead of silently dropping.
-        let mut req_headers: Vec<(String, String)> = Vec::new();
-        for (k, v) in req.headers().iter() {
-            if k.as_str().eq_ignore_ascii_case("peer-id") {
-                continue;
-            }
-            match v.to_str() {
-                Ok(s) => req_headers.push((k.as_str().to_string(), s.to_string())),
-                Err(_) => {
-                    let resp = hyper::Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .body(Body::full(Bytes::from_static(b"non-UTF8 header value")))
-                        .expect("static response args are valid");
-                    return resp;
-                }
-            }
-        }
-        req_headers.push(("peer-id".to_string(), (*remote_node_id).clone()));
-
-        let url = format!("httpi://{own_node_id}{path_and_query}");
-
-        // ISS-015: strict duplex upgrade validation — require CONNECT method +
-        // Upgrade: iroh-duplex + Connection: upgrade headers.
-        let has_upgrade_header = req_headers.iter().any(|(k, v)| {
-            k.eq_ignore_ascii_case("upgrade") && v.eq_ignore_ascii_case("iroh-duplex")
-        });
-        let has_connection_upgrade = req_headers.iter().any(|(k, v)| {
-            k.eq_ignore_ascii_case("connection")
-                && v.split(',')
-                    .any(|tok| tok.trim().eq_ignore_ascii_case("upgrade"))
-        });
-        let is_connect = req.method() == http::Method::CONNECT;
-
-        let is_bidi = if has_upgrade_header {
-            if !has_connection_upgrade || !is_connect {
-                let resp = hyper::Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body(Body::full(Bytes::from_static(
-                        b"duplex upgrade requires CONNECT method with Connection: upgrade header",
-                    )))
-                    .expect("static response args are valid");
-                return resp;
-            }
-            true
-        } else {
-            false
-        };
-
-        // For duplex: capture the upgrade future BEFORE consuming the request.
-        let upgrade_future = if is_bidi {
-            Some(hyper::upgrade::on(&mut req))
-        } else {
-            None
-        };
-
-        // ── Allocate channels ────────────────────────────────────────────────
-
-        // Request body: writer pumped from hyper; reader given to JS.
-        let mut guard = handles.insert_guard();
-        let (req_body_writer, req_body_reader) = handles.make_body_channel();
-        let req_body_handle = match guard.insert_reader(req_body_reader) {
-            Ok(h) => h,
-            Err(_) => return service_unavailable(b"server handle table full"),
-        };
-
-        // Response body: writer given to JS (sendChunk); reader feeds hyper response.
-        let (res_body_writer, res_body_reader) = handles.make_body_channel();
-        let res_body_handle = match guard.insert_writer(res_body_writer) {
-            Ok(h) => h,
-            Err(_) => return service_unavailable(b"server handle table full"),
-        };
-
-        // ── Allocate response-head rendezvous ────────────────────────────────
-
-        let (head_tx, head_rx) = tokio::sync::oneshot::channel::<ResponseHeadEntry>();
-        let req_handle = match guard.allocate_req_handle(head_tx) {
-            Ok(h) => h,
-            Err(_) => return service_unavailable(b"server handle table full"),
-        };
-
-        guard.commit();
-
-        // RAII guard: remove the req_handle slab entry on all exit paths
-        // (413 early-return, timeout drop, "JS handler dropped", normal completion).
-        // If respond() already consumed the entry, take_req_sender returns None — safe no-op.
-        struct ReqHeadCleanup {
-            endpoint: IrohEndpoint,
-            req_handle: u64,
-        }
-        impl Drop for ReqHeadCleanup {
-            fn drop(&mut self) {
-                self.endpoint.handles().take_req_sender(self.req_handle);
-            }
-        }
-        let _req_head_cleanup = ReqHeadCleanup {
-            endpoint: self.endpoint.clone(),
-            req_handle,
-        };
-
-        // ── Pump request body ────────────────────────────────────────────────
-
-        // For duplex: keep req_body_writer to move into the upgrade spawn below.
-        // For regular: consume it immediately into the pump task.
-        //
-        // Body-size enforcement is handled by `tower_http::limit::RequestBodyLimitLayer`
-        // in the per-connection layer stack below: the layer rejects oversized
-        // requests with `413 Payload Too Large` (immediately for known
-        // `Content-Length`, or by erroring the wrapped `Limited` body
-        // mid-stream for chunked uploads).  The pump just drains whatever
-        // body the layer hands us; on a length-limit error the body simply
-        // ends short and the JS handler sees a truncated read.
-        let duplex_req_body_writer = if !is_bidi {
-            let body = req.into_body();
-            tokio::spawn(pump_hyper_body_to_channel(body, req_body_writer));
-            None
-        } else {
-            // Duplex: discard the HTTP preamble body (empty before 101).
-            drop(req.into_body());
-            Some(req_body_writer)
-        };
-
-        // ── Fire on_request callback ─────────────────────────────────────────
-
-        on_request_fire(
-            &self.on_request,
-            req_handle,
-            req_body_handle,
-            res_body_handle,
-            method,
-            url,
-            req_headers,
-            Arc::unwrap_or_clone(remote_node_id),
-            is_bidi,
-        );
-
-        // ── Await response head from JS ──────────────────────────────────────
-        //
-        // Body-size overflow is no longer handled here — `RequestBodyLimitLayer`
-        // either rejects the request before we are called (Content-Length
-        // pre-check) or ends the body short mid-stream (chunked uploads).
-        let response_head = match head_rx.await {
-            Ok(h) => h,
-            Err(_) => return internal_error(b"JS handler dropped without responding"),
-        };
-
-        // ── Duplex path: honor handler status, upgrade only on 101 ──────────────
-        //
-        // ISS-002: the handler may reject the duplex request by returning any
-        // non-101 status.  Only perform the QUIC stream pump when the handler
-        // explicitly returns 101 Switching Protocols.
-
-        if let Some(upgrade_fut) = upgrade_future {
-            let req_body_writer =
-                duplex_req_body_writer.expect("duplex path always has req_body_writer");
-
-            // If the handler returned a non-101 status, send that response and
-            // do NOT perform the upgrade.  Drop the upgrade future and writer.
-            if response_head.status != StatusCode::SWITCHING_PROTOCOLS.as_u16() {
-                drop(upgrade_fut);
-                drop(req_body_writer);
-                let mut resp_builder = hyper::Response::builder().status(response_head.status);
-                for (k, v) in &response_head.headers {
-                    resp_builder = resp_builder.header(k.as_str(), v.as_str());
-                }
-                let resp = match resp_builder.body(Body::empty()) {
-                    Ok(r) => r,
-                    Err(_) => return internal_error(b"failed to build response head from JS"),
-                };
-                return resp;
-            }
-
-            // Spawn the upgrade pump after hyper delivers the 101.
-            //
-            // Both directions are wired to the channels already sent to JS:
-            //   recv_io → req_body_writer  (JS reads via req_body_handle)
-            //   res_body_reader → send_io  (JS writes via res_body_handle)
-            tokio::spawn(async move {
-                match upgrade_fut.await {
-                    Err(e) => tracing::warn!("iroh-http: duplex upgrade error: {e}"),
-                    Ok(upgraded) => {
-                        let io = TokioIo::new(upgraded);
-                        crate::ffi::pumps::pump_duplex(io, req_body_writer, res_body_reader).await;
-                    }
-                }
-            });
-
-            // ISS-015: emit both Connection and Upgrade headers in 101 response.
-            let resp = hyper::Response::builder()
-                .status(StatusCode::SWITCHING_PROTOCOLS)
-                .header(hyper::header::CONNECTION, "Upgrade")
-                .header(hyper::header::UPGRADE, "iroh-duplex")
-                .body(Body::empty())
-                .expect("static response args are valid");
-            return resp;
-        }
-
-        // ── Regular HTTP response ─────────────────────────────────────────────
-
-        let mut resp_builder = hyper::Response::builder().status(response_head.status);
-        for (k, v) in &response_head.headers {
-            resp_builder = resp_builder.header(k.as_str(), v.as_str());
-        }
-
-        let resp_builder = resp_builder; // CompressionLayer in ServiceBuilder handles this
-
-        match resp_builder.body(Body::new(res_body_reader)) {
-            Ok(r) => r,
-            Err(_) => internal_error(b"failed to build response head from JS"),
-        }
-    }
-}
-
-#[inline]
-#[allow(clippy::too_many_arguments)]
-fn on_request_fire(
-    cb: &Arc<dyn Fn(RequestPayload) + Send + Sync>,
-    req_handle: u64,
-    req_body_handle: u64,
-    res_body_handle: u64,
-    method: String,
-    url: String,
-    headers: Vec<(String, String)>,
-    remote_node_id: String,
-    is_bidi: bool,
-) {
-    cb(RequestPayload {
-        req_handle,
-        req_body_handle,
-        res_body_handle,
-        method,
-        url,
-        headers,
-        remote_node_id,
-        is_bidi,
-    });
-}
-
-// ── serve() ───────────────────────────────────────────────────────────────────
-
-/// Start the serve accept loop.
-///
-/// This is the 3-argument form for backward compatibility.
-/// Use `serve_with_events` to also receive peer connect/disconnect callbacks.
-///
-/// # Security
-///
-/// Calling `serve()` opens a **public endpoint** on the Iroh overlay network.
-/// Unlike regular HTTP (where you choose whether to bind on `0.0.0.0`), any
-/// peer that knows or discovers your node's public key can connect and send
-/// requests. Iroh QUIC authenticates the peer's *identity* cryptographically,
-/// but does not enforce *authorization*.
-///
-/// Always inspect `RequestPayload::peer_id` (exposed as the `Peer-Id` request
-/// header at the FFI layer) and reject requests from untrusted peers:
-///
-/// ```ignore
-/// serve(endpoint, ServeOptions::default(), |payload| {
-///     if !ALLOWED_PEERS.contains(&payload.peer_id) {
-///         respond(handles, payload.req_handle, 403, vec![]).ok();
-///         return;
-///     }
-///     // ... handle request
-/// });
-/// ```
-pub fn serve<F>(endpoint: IrohEndpoint, options: ServeOptions, on_request: F) -> ServeHandle
+/// Pure-Rust serve entry — convenience 3-arg wrapper that omits the
+/// connection-event callback. Equivalent to `serve_service_with_events(ep,
+/// opts, svc, None)`.
+pub fn serve_service<S>(endpoint: IrohEndpoint, options: ServeOptions, svc: S) -> ServeHandle
 where
-    F: Fn(RequestPayload) + Send + Sync + 'static,
+    S: Service<hyper::Request<Body>, Response = hyper::Response<Body>, Error = std::convert::Infallible>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    S::Future: Send + 'static,
 {
-    serve_with_events(endpoint, options, on_request, None)
-}
-
-/// Start the serve accept loop with an optional peer connection event callback.
-///
-/// `on_connection_event` is called on 0→1 (first connection from a peer) and
-/// 1→0 (last connection from a peer closed) count transitions.
-pub fn serve_with_events<F>(
-    endpoint: IrohEndpoint,
-    options: ServeOptions,
-    on_request: F,
-    on_connection_event: Option<ConnectionEventFn>,
-) -> ServeHandle
-where
-    F: Fn(RequestPayload) + Send + Sync + 'static,
-{
-    // Build the FFI dispatcher and the thin `IrohHttpService` shell. The
-    // user-supplied `on_request` callback is captured here; from this
-    // point on the accept loop is fully generic over the inner service.
-    let max_header_size = endpoint.max_header_size();
-    let own_node_id = Arc::new(endpoint.node_id().to_string());
-    let on_request = Arc::new(on_request) as Arc<dyn Fn(RequestPayload) + Send + Sync>;
-
-    let dispatcher = Arc::new(FfiDispatcher {
-        on_request,
-        endpoint: endpoint.clone(),
-        own_node_id,
-        max_header_size: if max_header_size == 0 {
-            None
-        } else {
-            Some(max_header_size)
-        },
-    });
-    let svc = IrohHttpService { dispatcher };
-
-    serve_with_events_inner(endpoint, options, svc, on_connection_event)
+    serve_service_with_events(endpoint, options, svc, None)
 }
 
 /// Pure-Rust serve entry — the canonical inbound API.
@@ -674,9 +214,17 @@ where
 /// requests with the authenticated peer id available as a typed
 /// [`RemoteNodeId`] request extension.
 ///
-/// Closes the FFI-shaped contract from #182: the FFI is now one consumer
-/// of this API, not the only entry point.
-pub fn serve_with_events_inner<S>(
+/// `on_connection_event` is called on 0→1 (first connection from a peer)
+/// and 1→0 (last connection from a peer closed) count transitions.
+///
+/// # Security
+///
+/// Calling this opens a **public endpoint** on the Iroh overlay network.
+/// Any peer that knows or discovers your node's public key can connect
+/// and send requests. Iroh QUIC authenticates the peer's *identity*
+/// cryptographically, but does not enforce *authorization*. Inspect
+/// [`RemoteNodeId`] in your service and reject untrusted peers.
+pub fn serve_service_with_events<S>(
     endpoint: IrohEndpoint,
     options: ServeOptions,
     svc: S,

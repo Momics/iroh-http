@@ -10,6 +10,7 @@
 //! the reverse. `tests/architecture.rs` enforces this — `crate::http::*`
 //! MUST NOT import from `crate::ffi::*`.
 
+pub(crate) mod dispatcher;
 pub(crate) mod handles;
 pub(crate) mod pumps;
 pub(crate) mod types;
