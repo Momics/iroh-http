@@ -108,7 +108,9 @@ pub async fn create_endpoint(
                     || a.compression_level.is_some()
                 {
                     Some(iroh_http_core::CompressionOptions {
-                        min_body_bytes: a.compression_min_body_bytes.unwrap_or(512),
+                        min_body_bytes: a
+                            .compression_min_body_bytes
+                            .unwrap_or(iroh_http_core::CompressionOptions::DEFAULT_MIN_BODY_BYTES),
                         level: a.compression_level,
                     })
                 } else {

@@ -259,3 +259,16 @@ async fn bind_rejects_out_of_range_compression_level() {
         "error should mention compression level, got: {err}"
     );
 }
+
+#[test]
+fn compression_options_default_min_body_bytes_is_1_kib() {
+    // Regression guard for #167: default must agree with the documented
+    // value in docs/features/compression.md (1 KiB).
+    let opts = iroh_http_core::CompressionOptions::default();
+    assert_eq!(opts.min_body_bytes, 1024);
+    assert_eq!(opts.level, None);
+    assert_eq!(
+        iroh_http_core::CompressionOptions::DEFAULT_MIN_BODY_BYTES,
+        1024
+    );
+}

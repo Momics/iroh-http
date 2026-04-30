@@ -417,7 +417,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                         min_body_bytes: o
                             .compression_min_body_bytes
                             .map(|v| v as usize)
-                            .unwrap_or(512),
+                            .unwrap_or(iroh_http_core::CompressionOptions::DEFAULT_MIN_BODY_BYTES),
                         level: o.compression_level.map(|v| v as u32),
                     })
                 } else {

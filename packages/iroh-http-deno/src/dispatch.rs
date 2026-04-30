@@ -282,7 +282,9 @@ async fn create_endpoint(p: Value) -> Value {
                 }
             }
             Some(iroh_http_core::CompressionOptions {
-                min_body_bytes: args.compression_min_body_bytes.unwrap_or(512),
+                min_body_bytes: args
+                    .compression_min_body_bytes
+                    .unwrap_or(iroh_http_core::CompressionOptions::DEFAULT_MIN_BODY_BYTES),
                 level: args.compression_level.map(|v| v as u32),
             })
         } else {
