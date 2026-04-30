@@ -29,6 +29,56 @@ cargo check -p iroh-http-deno --no-default-features
 
 ---
 
+## Build performance
+
+Rust compile times dominate the local CI loop (`npm run ci`). The
+following optional tools speed up edit→compile→test cycles substantially.
+None are required; the build works without them.
+
+### Incremental builds and linkers
+
+The repo ships a `.cargo/config.toml` with `incremental = true` enabled
+for the `dev` profile and commented-out `[target.*]` recipes for faster
+linkers. Uncomment the block matching your host:
+
+- **Linux (x86_64)** — install [`mold`](https://github.com/rui314/mold)
+  (`apt install mold` or `brew install mold`) and uncomment the
+  `x86_64-unknown-linux-gnu` block. Falls back to `lld` if preferred.
+- **macOS (Apple Silicon)** — install LLVM (`brew install llvm`) and
+  uncomment the `aarch64-apple-darwin` block to use `lld`.
+- **macOS (Intel)** — same as above with the `x86_64-apple-darwin` block.
+
+Linker swaps typically cut incremental link times from seconds to
+milliseconds.
+
+### sccache
+
+[`sccache`](https://github.com/mozilla/sccache) caches `rustc` outputs
+across branches and `cargo clean` cycles:
+
+```sh
+brew install sccache       # or: cargo install sccache
+export RUSTC_WRAPPER=sccache
+```
+
+Add the export to your shell profile to make it persistent. First clean
+build is unchanged; subsequent rebuilds reuse cached artifacts.
+
+### cargo nextest
+
+[`cargo-nextest`](https://nexte.st) runs the test suite in parallel with
+better output and faster test-process startup:
+
+```sh
+cargo install cargo-nextest --locked
+```
+
+`npm run test:rust` and `npm run test:tauri` automatically prefer
+`cargo nextest run` when it is on `PATH`, falling back to `cargo test`
+otherwise. No further configuration is needed.
+
+---
+
 ## TypeScript
 
 ```sh

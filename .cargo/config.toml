@@ -1,0 +1,34 @@
+# Cargo build-performance configuration.
+#
+# Keep all settings opt-in or auto-fallback so this file does not break
+# clean clones on machines without `mold` / `lld` / `sccache` installed.
+# See docs/build-and-test.md for the full setup walkthrough (#168).
+
+[build]
+# Incremental compilation is the default in dev profile; making it explicit
+# here documents the choice and survives global cargo configuration changes.
+incremental = true
+
+# ── Faster linkers (commented; uncomment after installing). ─────────────────
+#
+# Linux + mold (`apt install mold` / `brew install mold`):
+#
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+#
+# Linux + lld (always available with the Rust toolchain on x86_64):
+#
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+#
+# macOS Apple Silicon + lld (`brew install llvm`):
+#
+# [target.aarch64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+#
+# macOS Intel + lld (`brew install llvm`):
+#
+# [target.x86_64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
