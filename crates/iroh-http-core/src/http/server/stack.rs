@@ -268,7 +268,10 @@ pub(crate) fn apply_timeout(svc: ServeService, timeout: Option<Duration>) -> Ser
 
 /// Response compression with project-specific predicates (see
 /// [`build_compression_layer`]). No-op when `comp = None`.
-pub(crate) fn apply_compression(svc: ServeService, comp: Option<&CompressionOptions>) -> ServeService {
+pub(crate) fn apply_compression(
+    svc: ServeService,
+    comp: Option<&CompressionOptions>,
+) -> ServeService {
     use tower::ServiceExt;
     use tower_http::map_response_body::MapResponseBodyLayer;
 

@@ -24,9 +24,9 @@ pub(crate) mod ffi;
 pub(crate) mod http;
 
 // ── Pure-Rust HTTP API surface (`mod http`) ───────────────────────────────────
+pub use ffi::dispatcher::{respond, serve, serve_with_callback};
 pub use http::body::{Body, BoxError};
 pub use http::client::fetch;
-pub use ffi::dispatcher::{respond, serve, serve_with_callback};
 pub use http::server::{
     serve_service, serve_service_with_events, RemoteNodeId, ServeHandle, ServeOptions,
 };

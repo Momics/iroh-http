@@ -194,8 +194,11 @@ pub struct RemoteNodeId(pub Arc<String>);
 /// opts, svc, None)`.
 pub fn serve_service<S>(endpoint: IrohEndpoint, options: ServeOptions, svc: S) -> ServeHandle
 where
-    S: Service<hyper::Request<Body>, Response = hyper::Response<Body>, Error = std::convert::Infallible>
-        + Clone
+    S: Service<
+            hyper::Request<Body>,
+            Response = hyper::Response<Body>,
+            Error = std::convert::Infallible,
+        > + Clone
         + Send
         + Sync
         + 'static,
@@ -231,8 +234,11 @@ pub fn serve_service_with_events<S>(
     on_connection_event: Option<ConnectionEventFn>,
 ) -> ServeHandle
 where
-    S: Service<hyper::Request<Body>, Response = hyper::Response<Body>, Error = std::convert::Infallible>
-        + Clone
+    S: Service<
+            hyper::Request<Body>,
+            Response = hyper::Response<Body>,
+            Error = std::convert::Infallible,
+        > + Clone
         + Send
         + Sync
         + 'static,
