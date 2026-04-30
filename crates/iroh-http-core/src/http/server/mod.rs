@@ -232,30 +232,39 @@ impl Drop for PeerConnectionGuard {
 //     rendezvous, and duplex upgrade hand-off. It is shared across every
 //     accepted connection and request via `Arc`.
 //   * `IrohHttpService` is the thin `tower::Service` shell. It clones cheaply
-//     (two Arc bumps) and delegates each request to the dispatcher. The
-//     per-connection `remote_node_id` is baked into the service once at
-//     construction time in `serve_with_events`, so the field is
-//     unconditionally present — there is no "unknown peer" state.
+//     (one Arc bump) and delegates each request to the dispatcher. Per #185
+//     the per-connection `remote_node_id` arrives as a typed
+//     [`RemoteNodeId`] request extension inserted by the per-connection
+//     [`AddExtensionLayer`] in [`serve_with_events_inner`], not as a
+//     mutable service field. This makes `IrohHttpService` independent of
+//     connection state, so the same service value is reused across every
+//     accepted connection.
 //
 // The split keeps the tower::Service contract narrow (Infallible, generic over
 // any `http_body::Body`) and isolates the FFI logic so future tests can mock
 // `FfiDispatcher::dispatch` without standing up a real connection.
+
+/// Authenticated peer node id of the QUIC connection a request arrived
+/// on. Inserted as a request extension by the per-connection
+/// [`tower_http::add_extension::AddExtensionLayer`] in
+/// [`serve_with_events_inner`].
+///
+/// User-facing pure-Rust services consume it with
+/// `req.extensions().get::<RemoteNodeId>()`; the FFI dispatcher
+/// ([`FfiDispatcher::dispatch`]) reads it the same way. Closes #177.
+#[derive(Clone, Debug)]
+pub struct RemoteNodeId(pub Arc<String>);
 
 struct FfiDispatcher {
     on_request: Arc<dyn Fn(RequestPayload) + Send + Sync>,
     endpoint: IrohEndpoint,
     own_node_id: Arc<String>,
     max_header_size: Option<usize>,
-    compression: Option<crate::http::server::stack::CompressionOptions>,
 }
 
 #[derive(Clone)]
 pub(crate) struct IrohHttpService {
     dispatcher: Arc<FfiDispatcher>,
-    /// Authenticated peer node id of the QUIC connection this service
-    /// instance was constructed for. Always present: baked in at boxing
-    /// time in `serve_with_events`.
-    remote_node_id: Arc<String>,
 }
 
 /// ADR-014 D2 / #175: service is concrete — not generic over `B`.
@@ -273,7 +282,16 @@ impl Service<hyper::Request<Body>> for IrohHttpService {
 
     fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
         let dispatcher = self.dispatcher.clone();
-        let remote_node_id = self.remote_node_id.clone();
+        // Per #177: the authenticated peer id is supplied as a request
+        // extension by the per-connection `AddExtensionLayer` in
+        // `serve_with_events_inner`. Missing extension is treated as a
+        // server-side bug (the layer is unconditionally applied) and
+        // surfaces as 500 from `dispatcher.dispatch`.
+        let remote_node_id = req
+            .extensions()
+            .get::<RemoteNodeId>()
+            .map(|r| r.0.clone())
+            .unwrap_or_else(|| Arc::new(String::new()));
         Box::pin(async move { Ok(dispatcher.dispatch(req, remote_node_id).await) })
     }
 }
@@ -624,6 +642,54 @@ pub fn serve_with_events<F>(
 where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
+    // Build the FFI dispatcher and the thin `IrohHttpService` shell. The
+    // user-supplied `on_request` callback is captured here; from this
+    // point on the accept loop is fully generic over the inner service.
+    let max_header_size = endpoint.max_header_size();
+    let own_node_id = Arc::new(endpoint.node_id().to_string());
+    let on_request = Arc::new(on_request) as Arc<dyn Fn(RequestPayload) + Send + Sync>;
+
+    let dispatcher = Arc::new(FfiDispatcher {
+        on_request,
+        endpoint: endpoint.clone(),
+        own_node_id,
+        max_header_size: if max_header_size == 0 {
+            None
+        } else {
+            Some(max_header_size)
+        },
+    });
+    let svc = IrohHttpService { dispatcher };
+
+    serve_with_events_inner(endpoint, options, svc, on_connection_event)
+}
+
+/// Pure-Rust serve entry — the canonical inbound API.
+///
+/// Accepts any `tower::Service<Request<Body>, Response = Response<Body>,
+/// Error = Infallible>` (`Clone + Send + Sync + 'static`, with
+/// `Send` futures). Each accepted QUIC bidirectional stream is driven by
+/// hyper's HTTP/1.1 server connection through the per-connection tower
+/// stack composed in [`stack::build_stack`]; the user service sees
+/// requests with the authenticated peer id available as a typed
+/// [`RemoteNodeId`] request extension.
+///
+/// Closes the FFI-shaped contract from #182: the FFI is now one consumer
+/// of this API, not the only entry point.
+pub fn serve_with_events_inner<S>(
+    endpoint: IrohEndpoint,
+    options: ServeOptions,
+    svc: S,
+    on_connection_event: Option<ConnectionEventFn>,
+) -> ServeHandle
+where
+    S: Service<hyper::Request<Body>, Response = hyper::Response<Body>, Error = std::convert::Infallible>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    S::Future: Send + 'static,
+{
     let max = options.max_concurrency.unwrap_or(DEFAULT_CONCURRENCY);
     let max_errors = options.max_serve_errors.unwrap_or(5);
     let request_timeout = options
@@ -642,9 +708,7 @@ where
     // Load-shed is opt-out — default `true` (reject immediately when at capacity).
     let load_shed_enabled = options.load_shed.unwrap_or(true);
     let max_header_size = endpoint.max_header_size();
-    let compression = endpoint.compression().cloned();
-    let own_node_id = Arc::new(endpoint.node_id().to_string());
-    let on_request = Arc::new(on_request) as Arc<dyn Fn(RequestPayload) + Send + Sync>;
+    let stack_compression = endpoint.compression().cloned();
 
     let peer_counts: Arc<Mutex<HashMap<iroh::PublicKey, usize>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -655,28 +719,10 @@ where
     let in_flight: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let drain_notify: Arc<tokio::sync::Notify> = Arc::new(tokio::sync::Notify::new());
 
-    let dispatcher = Arc::new(FfiDispatcher {
-        on_request,
-        endpoint: endpoint.clone(),
-        own_node_id,
-        max_header_size: if max_header_size == 0 {
-            None
-        } else {
-            Some(max_header_size)
-        },
-        compression,
-    });
-
-    let dispatcher_for_conn = dispatcher.clone();
-
     use tower::{limit::ConcurrencyLimitLayer, ServiceBuilder, ServiceExt};
     // SEC-002: build the concurrency limiter as a *layer* once so every
     // per-connection stack we wrap with it shares the same `Arc<Semaphore>`,
-    // enforcing a true global request cap across all connections. Boxing
-    // each wrapped stack into a [`crate::http::server::pipeline::ServeService`]
-    // (a `BoxCloneService`) is what gives us the structural property
-    // ADR-014 D2 / #175 calls for: adding a future layer is one append
-    // here, not a new concrete type rippling through `serve_bistream`.
+    // enforcing a true global request cap across all connections.
     let conc_layer = ConcurrencyLimitLayer::new(max);
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
@@ -762,20 +808,19 @@ where
                 }
             };
 
-            // Build the per-connection service: IrohHttpService with the
-            // peer's `remote_node_id` baked in, wrapped with the shared
-            // concurrency limiter, and type-erased into ServeService. Per
-            // ADR-014 D2 / #175 this is the *only* place that names the
-            // concrete inner stack \u2014 every downstream consumer sees the
-            // box.
+            // Build the per-connection service: user-supplied `svc` with the
+            // peer's `remote_node_id` injected as a [`RemoteNodeId`] request
+            // extension (closes #177), wrapped with the shared concurrency
+            // limiter, then type-erased into ServeService. Per ADR-014 D2 /
+            // #175 this is the *only* place that names the concrete inner
+            // stack — every downstream consumer sees the box.
             let conn_svc: crate::http::server::pipeline::ServeService = ServiceBuilder::new()
                 .layer(conc_layer.clone())
-                .service(IrohHttpService {
-                    dispatcher: dispatcher_for_conn.clone(),
-                    remote_node_id: Arc::new(remote_id),
-                })
+                .layer(tower_http::add_extension::AddExtensionLayer::new(
+                    RemoteNodeId(Arc::new(remote_id)),
+                ))
+                .service(svc.clone())
                 .boxed_clone();
-            let stack_compression = dispatcher_for_conn.compression.clone();
             let timeout_dur = if request_timeout.is_zero() {
                 Duration::MAX
             } else {
@@ -786,6 +831,7 @@ where
             let conn_requests = total_requests.clone();
             let in_flight_conn = in_flight.clone();
             let drain_notify_conn = drain_notify.clone();
+            let stack_compression_conn = stack_compression.clone();
             conn_total.fetch_add(1, Ordering::Relaxed);
             tokio::spawn(async move {
                 let _guard = guard;
@@ -812,7 +858,7 @@ where
 
                     let in_flight_req = in_flight_conn.clone();
                     let drain_notify_req = drain_notify_conn.clone();
-                    let req_compression = stack_compression.clone();
+                    let req_compression = stack_compression_conn.clone();
 
                     tokio::spawn(async move {
                         // Decrement request count when this task exits.
