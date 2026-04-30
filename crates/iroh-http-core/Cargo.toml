@@ -10,11 +10,9 @@ keywords = ["iroh", "p2p", "quic", "http", "peer-to-peer"]
 categories = ["network-programming", "web-programming::http-client", "web-programming::http-server"]
 
 [features]
-default = ["compression"]
-compression = [
-    "tower-http/compression-zstd",
-    "tower-http/decompression-zstd",
-]
+# Compression (zstd) is always-on; see ADR-014 D2 follow-up. Operators still
+# opt in *at runtime* via `CompressionOptions` — the build flag was an
+# unnecessary layer of policy disguised as a build switch.
 
 [dependencies]
 iroh = { workspace = true }
@@ -26,7 +24,13 @@ http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
 tower = { workspace = true }
-tower-http = { workspace = true, features = ["limit", "map-request-body", "map-response-body"] }
+tower-http = { workspace = true, features = [
+    "compression-zstd",
+    "decompression-zstd",
+    "limit",
+    "map-request-body",
+    "map-response-body",
+] }
 moka = { workspace = true }
 slotmap = { workspace = true }
 futures = { workspace = true }

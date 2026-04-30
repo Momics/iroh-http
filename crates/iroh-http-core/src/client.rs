@@ -23,10 +23,8 @@ use crate::Body;
 
 /// Wraps `SendRequest<Body>` as a `tower::Service` so compression/decompression
 /// layers from `tower-http` can be composed around it.
-#[cfg(feature = "compression")]
 struct HyperClientSvc(hyper::client::conn::http1::SendRequest<Body>);
 
-#[cfg(feature = "compression")]
 impl tower::Service<hyper::Request<Body>> for HyperClientSvc {
     type Response = hyper::Response<hyper::body::Incoming>;
     type Error = hyper::Error;
@@ -198,8 +196,7 @@ async fn do_fetch(
 
     let io = TokioIo::new(IrohStream::new(send, recv));
 
-    #[allow(unused_mut)] // mut only needed without the compression feature
-    let (mut sender, conn_task) = hyper::client::conn::http1::Builder::new()
+    let (sender, conn_task) = hyper::client::conn::http1::Builder::new()
         // hyper requires max_buf_size >= 8192; clamp upward so small
         // max_header_size values don't panic.  Header-size enforcement happens
         // via the response parsing error that hyper returns when the actual
@@ -225,7 +222,6 @@ async fn do_fetch(
     // only if the caller has not already set Accept-Encoding.  A caller passing
     // `Accept-Encoding: identity` is opting out of compression and must not be
     // overridden.
-    #[cfg(feature = "compression")]
     {
         let has_accept_encoding = headers
             .iter()
@@ -249,9 +245,8 @@ async fn do_fetch(
         .body(req_body)
         .map_err(|e| CoreError::internal(format!("build request: {e}")))?;
 
-    // Dispatch: with compression, wrap sender in DecompressionLayer so the
-    // response body is transparently decompressed before reaching the channel pump.
-    #[cfg(feature = "compression")]
+    // Dispatch: wrap sender in DecompressionLayer so the response body is
+    // transparently decompressed before reaching the channel pump.
     let resp = {
         use tower::ServiceExt;
         let svc = tower::ServiceBuilder::new()
@@ -261,11 +256,6 @@ async fn do_fetch(
             .await
             .map_err(|e| classify_hyper_error(&e, "send_request"))?
     };
-    #[cfg(not(feature = "compression"))]
-    let resp = sender
-        .send_request(req)
-        .await
-        .map_err(|e| classify_hyper_error(&e, "send_request"))?;
 
     let status = resp.status().as_u16();
     // ISS-011: measure header bytes using raw values before string conversion;

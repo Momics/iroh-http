@@ -375,7 +375,10 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                     relay_mode: o.relay_mode,
                     relays: o.relays.unwrap_or_default(),
                     bind_addrs: o.bind_addrs.unwrap_or_default(),
-                    idle_timeout_ms: o.idle_timeout.map(|t| safe_f64_to_u64(t, "idleTimeout", MAX_TIMEOUT_MS)).transpose()?,
+                    idle_timeout_ms: o
+                        .idle_timeout
+                        .map(|t| safe_f64_to_u64(t, "idleTimeout", MAX_TIMEOUT_MS))
+                        .transpose()?,
                     proxy_url: o.proxy_url,
                     proxy_from_env: o.proxy_from_env.unwrap_or(false),
                     disabled: o.disable_networking.unwrap_or(false),
@@ -386,20 +389,31 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
                 },
                 pool: PoolOptions {
                     max_connections: o.max_pooled_connections.map(|v| v as usize),
-                    idle_timeout_ms: o.pool_idle_timeout_ms.map(|v| safe_f64_to_u64(v, "poolIdleTimeoutMs", MAX_TIMEOUT_MS)).transpose()?,
+                    idle_timeout_ms: o
+                        .pool_idle_timeout_ms
+                        .map(|v| safe_f64_to_u64(v, "poolIdleTimeoutMs", MAX_TIMEOUT_MS))
+                        .transpose()?,
                 },
                 streaming: StreamingOptions {
                     channel_capacity: o.channel_capacity.map(|v| v as usize),
                     max_chunk_size_bytes: o.max_chunk_size_bytes.map(|v| v as usize),
                     drain_timeout_ms: None,
-                    handle_ttl_ms: o.handle_ttl.map(|v| safe_f64_to_u64(v, "handleTtl", MAX_TIMEOUT_MS)).transpose()?,
-                    sweep_interval_ms: o.sweep_interval.map(|v| safe_f64_to_u64(v, "sweepInterval", MAX_TIMEOUT_MS)).transpose()?,
+                    handle_ttl_ms: o
+                        .handle_ttl
+                        .map(|v| safe_f64_to_u64(v, "handleTtl", MAX_TIMEOUT_MS))
+                        .transpose()?,
+                    sweep_interval_ms: o
+                        .sweep_interval
+                        .map(|v| safe_f64_to_u64(v, "sweepInterval", MAX_TIMEOUT_MS))
+                        .transpose()?,
                 },
                 capabilities: Vec::new(),
                 keylog: o.keylog.unwrap_or(false),
-                max_header_size: o.max_header_bytes.map(|v| safe_f64_to_usize(v, "maxHeaderBytes", MAX_HEADER_BYTES)).transpose()?,
+                max_header_size: o
+                    .max_header_bytes
+                    .map(|v| safe_f64_to_usize(v, "maxHeaderBytes", MAX_HEADER_BYTES))
+                    .transpose()?,
                 max_response_body_bytes: None,
-                #[cfg(feature = "compression")]
                 // NODE-003: enable compression when level or minBodyBytes is provided.
                 compression: if o.compression_min_body_bytes.is_some()
                     || o.compression_level.is_some()

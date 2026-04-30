@@ -3,8 +3,6 @@
 //! Closes #153 — verifies that a peer-supplied compressed request body is
 //! transparently decompressed before it reaches the JS-visible handler.
 
-#![cfg(feature = "compression")]
-
 mod common;
 
 use bytes::Bytes;

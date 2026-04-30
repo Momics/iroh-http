@@ -20,7 +20,6 @@ pub mod stream;
 
 pub use body::{Body, BoxError};
 pub use client::fetch;
-#[cfg(feature = "compression")]
 pub use config::CompressionOptions;
 pub use config::{DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions};
 pub use endpoint::{parse_direct_addrs, IrohEndpoint};

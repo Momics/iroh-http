@@ -10,9 +10,8 @@ repository.workspace = true
 crate-type = ["cdylib"]
 
 [features]
-default = ["discovery", "compression"]
+default = ["discovery"]
 discovery = ["iroh-http-discovery/mdns", "iroh"]
-compression = ["iroh-http-core/compression"]
 
 [dependencies]
 iroh-http-core = { path = "../../crates/iroh-http-core", version = "0.4.0" }

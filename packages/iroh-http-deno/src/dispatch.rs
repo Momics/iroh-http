@@ -188,7 +188,6 @@ pub async fn dispatch(method: &str, payload: &[u8]) -> Value {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)] // compression fields only read under #[cfg(feature = "compression")]
 struct CreateEndpointPayload {
     key: Option<String>,
     idle_timeout: Option<u64>,
@@ -207,9 +206,7 @@ struct CreateEndpointPayload {
     proxy_url: Option<String>,
     proxy_from_env: Option<bool>,
     keylog: Option<bool>,
-    #[allow(dead_code)] // only read when `compression` feature is enabled
     compression_level: Option<i32>,
-    #[allow(dead_code)] // only read when `compression` feature is enabled
     compression_min_body_bytes: Option<usize>,
     max_header_bytes: Option<usize>,
 }
@@ -269,7 +266,6 @@ async fn create_endpoint(p: Value) -> Value {
         keylog: args.keylog.unwrap_or(false),
         max_header_size: args.max_header_bytes,
         max_response_body_bytes: None,
-        #[cfg(feature = "compression")]
         compression: if args.compression_min_body_bytes.is_some()
             || args.compression_level.is_some()
         {

@@ -36,9 +36,7 @@ pub struct CreateEndpointArgs {
     pub proxy_url: Option<String>,
     pub proxy_from_env: Option<bool>,
     pub keylog: Option<bool>,
-    #[cfg(feature = "compression")]
     pub compression_min_body_bytes: Option<usize>,
-    #[cfg(feature = "compression")]
     pub compression_level: Option<u32>,
     pub max_header_bytes: Option<usize>,
     /// TAURI-002: pool-tuning options previously ignored.
@@ -103,7 +101,6 @@ pub async fn create_endpoint(
                 keylog: a.keylog.unwrap_or(false),
                 max_header_size: a.max_header_bytes,
                 max_response_body_bytes: None,
-                #[cfg(feature = "compression")]
                 compression: if a.compression_min_body_bytes.is_some()
                     || a.compression_level.is_some()
                 {

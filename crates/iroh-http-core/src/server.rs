@@ -241,7 +241,6 @@ struct FfiDispatcher {
     endpoint: IrohEndpoint,
     own_node_id: Arc<String>,
     max_header_size: Option<usize>,
-    #[cfg(feature = "compression")]
     compression: Option<crate::config::CompressionOptions>,
 }
 
@@ -536,7 +535,6 @@ impl FfiDispatcher {
             resp_builder = resp_builder.header(k.as_str(), v.as_str());
         }
 
-        #[cfg(feature = "compression")]
         let resp_builder = resp_builder; // CompressionLayer in ServiceBuilder handles this
 
         match resp_builder.body(Body::new(res_body_reader)) {
@@ -636,7 +634,6 @@ where
     // Load-shed is opt-out — default `true` (reject immediately when at capacity).
     let load_shed_enabled = options.load_shed.unwrap_or(true);
     let max_header_size = endpoint.max_header_size();
-    #[cfg(feature = "compression")]
     let compression = endpoint.compression().cloned();
     let own_node_id = Arc::new(endpoint.node_id().to_string());
     let on_request = Arc::new(on_request) as Arc<dyn Fn(RequestPayload) + Send + Sync>;
@@ -659,7 +656,6 @@ where
         } else {
             Some(max_header_size)
         },
-        #[cfg(feature = "compression")]
         compression,
     });
 
@@ -771,7 +767,6 @@ where
                     remote_node_id: Some(remote_id),
                 })
                 .boxed_clone();
-            #[cfg(feature = "compression")]
             let stack_compression = dispatcher_for_conn.compression.clone();
             let timeout_dur = if request_timeout.is_zero() {
                 Duration::MAX
@@ -809,7 +804,6 @@ where
 
                     let in_flight_req = in_flight_conn.clone();
                     let drain_notify_req = drain_notify_conn.clone();
-                    #[cfg(feature = "compression")]
                     let req_compression = stack_compression.clone();
 
                     tokio::spawn(async move {
@@ -854,7 +848,6 @@ where
                                 max_request_body_bytes,
                                 load_shed_enabled,
                                 effective_header_limit,
-                                #[cfg(feature = "compression")]
                                 compression: req_compression,
                             },
                         )

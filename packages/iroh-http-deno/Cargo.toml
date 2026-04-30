@@ -11,9 +11,8 @@ name = "iroh_http_deno"
 crate-type = ["cdylib"]
 
 [features]
-default = ["discovery", "compression"]
+default = ["discovery"]
 discovery = ["iroh-http-discovery/mdns"]
-compression = ["iroh-http-core/compression"]
 
 [dependencies]
 iroh-http-core = { path = "../../crates/iroh-http-core", version = "0.4.0" }

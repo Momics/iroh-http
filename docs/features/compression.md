@@ -4,8 +4,10 @@ iroh-http compresses request and response bodies using zstd. Compression is
 negotiated with standard HTTP headers (`Accept-Encoding` / `Content-Encoding`)
 and handled entirely at the Rust layer — the JS handler always sees plain bytes.
 
-Enabled by default. To disable (e.g. for minimal binary size or environments
-without a C toolchain), compile with `default-features = false`.
+Always built in. Compression on the response side is opt-in per endpoint via
+the `compression` option (see below). Decompression on the request side is
+always-on: a peer sending `Content-Encoding: zstd` is transparently
+decompressed before reaching the handler.
 
 ## Supported algorithms
 

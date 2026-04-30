@@ -39,9 +39,7 @@ mod tests {
             proxy_url: None,
             proxy_from_env: None,
             keylog: None,
-            #[cfg(feature = "compression")]
             compression_min_body_bytes: None,
-            #[cfg(feature = "compression")]
             compression_level: None,
             max_header_bytes: None,
             max_pooled_connections: None,
@@ -267,9 +265,7 @@ mod tests {
             proxy_url: None,
             proxy_from_env: None,
             keylog: None,
-            #[cfg(feature = "compression")]
             compression_min_body_bytes: None,
-            #[cfg(feature = "compression")]
             compression_level: None,
             max_header_bytes: None,
             max_pooled_connections: None,

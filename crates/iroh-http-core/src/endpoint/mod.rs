@@ -33,7 +33,6 @@ use crate::server::ServeHandle;
 use crate::stream::{HandleStore, StoreConfig};
 use crate::{ALPN, ALPN_DUPLEX};
 
-#[cfg(feature = "compression")]
 pub use crate::config::CompressionOptions;
 pub use crate::config::{
     DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions,
@@ -119,7 +118,6 @@ impl IrohEndpoint {
         }
 
         // Validate compression level range (zstd accepts 1–22).
-        #[cfg(feature = "compression")]
         if let Some(level) = opts.compression.as_ref().and_then(|c| c.level) {
             if !(1..=22).contains(&level) {
                 return Err(crate::CoreError::invalid_input(format!(
@@ -275,7 +273,6 @@ impl IrohEndpoint {
                     .unwrap_or(crate::server::DEFAULT_MAX_RESPONSE_BODY_BYTES),
                 active_connections: Arc::new(AtomicUsize::new(0)),
                 active_requests: Arc::new(AtomicUsize::new(0)),
-                #[cfg(feature = "compression")]
                 compression: opts.compression,
             },
             session: SessionRuntime {
@@ -502,7 +499,6 @@ impl IrohEndpoint {
     }
 
     /// Compression options, if the `compression` feature is enabled.
-    #[cfg(feature = "compression")]
     pub fn compression(&self) -> Option<&CompressionOptions> {
         self.inner.http.compression.as_ref()
     }

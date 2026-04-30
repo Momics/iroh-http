@@ -101,13 +101,11 @@ pub struct NodeOptions {
     /// outgoing `fetch()`.  Default: 256 MiB.  Protects against compression
     /// bombs from malicious peers.
     pub max_response_body_bytes: Option<usize>,
-    #[cfg(feature = "compression")]
     pub compression: Option<CompressionOptions>,
 }
 
 /// Compression options for response bodies.
 /// Only used when the `compression` feature is enabled.
-#[cfg(feature = "compression")]
 #[derive(Debug, Clone)]
 pub struct CompressionOptions {
     /// Minimum body size in bytes before compression is applied.
@@ -117,7 +115,6 @@ pub struct CompressionOptions {
     pub level: Option<u32>,
 }
 
-#[cfg(feature = "compression")]
 impl CompressionOptions {
     /// Default minimum body size before compression is applied.
     ///
@@ -127,7 +124,6 @@ impl CompressionOptions {
     pub const DEFAULT_MIN_BODY_BYTES: usize = 1024;
 }
 
-#[cfg(feature = "compression")]
 impl Default for CompressionOptions {
     fn default() -> Self {
         Self {

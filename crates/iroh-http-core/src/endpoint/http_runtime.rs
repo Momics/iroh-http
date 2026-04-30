@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use crate::pool::ConnectionPool;
 
-#[cfg(feature = "compression")]
 use crate::config::CompressionOptions;
 
 /// HTTP-layer runtime state.
@@ -27,7 +26,6 @@ pub(crate) struct HttpRuntime {
     /// Number of currently in-flight HTTP requests.
     pub active_requests: Arc<AtomicUsize>,
     /// Body compression options, if the feature is enabled.
-    #[cfg(feature = "compression")]
     pub compression: Option<CompressionOptions>,
 }
 
@@ -42,7 +40,6 @@ impl HttpRuntime {
             max_response_body_bytes: crate::server::DEFAULT_MAX_RESPONSE_BODY_BYTES,
             active_connections: Arc::new(AtomicUsize::new(0)),
             active_requests: Arc::new(AtomicUsize::new(0)),
-            #[cfg(feature = "compression")]
             compression: None,
         }
     }

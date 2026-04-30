@@ -3,7 +3,7 @@
 //! Closes the recommendation §5.1 of `reviews/2026-04-30-post-rework-review.md`
 //! (issue #169): the layer stack — compression, decompression, body limit,
 //! load-shed, timeout, layer-error handling — used to be assembled inline
-//! inside the accept loop with `#[cfg(feature = "compression")]` branches
+//! inside the accept loop with `` branches
 //! duplicated across the assembly. That logic now lives here as
 //! [`serve_bistream`], called once per accepted QUIC bi-stream from
 //! `server.rs`. The accept loop in `server.rs` is left with only the
@@ -33,7 +33,6 @@ use tower::{timeout::TimeoutLayer, ServiceBuilder};
 use crate::io::IrohStream;
 use crate::Body;
 
-#[cfg(feature = "compression")]
 use crate::CompressionOptions;
 
 /// Runtime knobs collected from [`crate::server::ServeOptions`] and the
@@ -49,9 +48,8 @@ pub(crate) struct PipelineParams {
     pub load_shed_enabled: bool,
     /// Effective hyper header limit (already clamped to the 8192 floor).
     pub effective_header_limit: usize,
-    /// Compression configuration, if the feature is on AND the operator
-    /// opted in.
-    #[cfg(feature = "compression")]
+    /// Operator's compression configuration. `None` ⇒ no compression on the
+    /// response side. Decompression on the request side is always-on.
     pub compression: Option<CompressionOptions>,
 }
 
@@ -150,15 +148,16 @@ pub(crate) fn serve_bistream(
         use tower_http::map_request_body::MapRequestBodyLayer;
         use tower_http::map_response_body::MapResponseBodyLayer;
 
-        // Cfg gates live at *layer construction* only — the chain below is
-        // a single uniform `ServiceBuilder` per ADR-014 D2 / #175. Adding a
+        // Per ADR-014 D2 / #175 the chain is one uniform `ServiceBuilder`.
+        // Each runtime-optional layer is gated by `option_layer`; adding a
         // future operator layer is one append between `from_incoming` and
         // `.service(core_stack)`.
         //
         // Compression bundle: `CompressionLayer` wraps the response body
         // to `CompressionBody<Body>`; the outer `MapResponseBodyLayer`
-        // renormalises it back to `Body` so the option_layer arms unify.
-        #[cfg(feature = "compression")]
+        // renormalises it back to `Body` so the `option_layer` arms unify.
+        // `params.compression` is `None` when the operator opted out at
+        // runtime; in that case `CompressionLayer` is omitted entirely.
         let comp_layer = params
             .compression
             .as_ref()
@@ -171,8 +170,6 @@ pub(crate) fn serve_bistream(
                     .layer(comp)
                     .into_inner()
             });
-        #[cfg(not(feature = "compression"))]
-        let comp_layer: Option<tower::layer::util::Identity> = None;
 
         // Decompression bundle: `RequestDecompressionLayer` wraps the
         // request body to `DecompressionBody<Body>` (renormalised on the
@@ -180,35 +177,30 @@ pub(crate) fn serve_bistream(
         // `tower_http::body::UnsyncBoxBody<Bytes, BoxError>` (renormalised
         // on the way out). The response renormaliser uses a bare `fn` item
         // (not a closure) so its signature exactly matches what tower-http's
-        // higher-ranked body type requires.
-        #[cfg(feature = "compression")]
+        // higher-ranked body type requires. Always-on: every server accepts
+        // compressed requests, even when it does not send compressed responses.
         fn box_to_body(
             b: tower_http::body::UnsyncBoxBody<bytes::Bytes, crate::body::BoxError>,
         ) -> Body {
             Body::new(b)
         }
-        #[cfg(feature = "compression")]
         let decomp_layer = {
             use tower_http::decompression::{DecompressionBody, RequestDecompressionLayer};
-            Some(
-                ServiceBuilder::new()
-                    .layer(MapResponseBodyLayer::new(box_to_body))
-                    .layer(RequestDecompressionLayer::new())
-                    .layer(MapRequestBodyLayer::new(|b: DecompressionBody<Body>| {
-                        Body::new(b)
-                    }))
-                    .into_inner(),
-            )
+            ServiceBuilder::new()
+                .layer(MapResponseBodyLayer::new(box_to_body))
+                .layer(RequestDecompressionLayer::new())
+                .layer(MapRequestBodyLayer::new(|b: DecompressionBody<Body>| {
+                    Body::new(b)
+                }))
+                .into_inner()
         };
-        #[cfg(not(feature = "compression"))]
-        let decomp_layer: Option<tower::layer::util::Identity> = None;
 
         let from_incoming = MapRequestBodyLayer::new(|b: hyper::body::Incoming| Body::new(b));
 
         let stack = ServiceBuilder::new()
             .layer(from_incoming)
             .option_layer(comp_layer)
-            .option_layer(decomp_layer)
+            .layer(decomp_layer)
             .service(core_stack);
 
         let result = builder
@@ -230,7 +222,6 @@ pub(crate) fn serve_bistream(
 /// 1. Skip if the response already carries `Content-Encoding` (handler
 ///    returned a pre-encoded body — re-compressing would double-encode).
 /// 2. Honour `Cache-Control: no-transform` per RFC 9111 §5.2.2.7.
-#[cfg(feature = "compression")]
 fn build_compression_layer(
     comp: &CompressionOptions,
 ) -> tower_http::compression::CompressionLayer<impl tower_http::compression::Predicate> {

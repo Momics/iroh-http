@@ -99,11 +99,8 @@ jobs:
 
       - name: cargo check (no-default-features)
         run: |
-          cargo check -p iroh-http-node --no-default-features --features compression
-          cargo check -p iroh-http-deno --no-default-features --features compression
-
-      - name: cargo test (compression feature)
-        run: cargo test -p iroh-http-core --features compression
+          cargo check -p iroh-http-node --no-default-features
+          cargo check -p iroh-http-deno --no-default-features
 
       # ── TypeScript ────────────────────────────────────────────────────────────
       - name: Build iroh-http-shared
