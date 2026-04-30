@@ -1,89 +1,129 @@
-//! Outgoing HTTP request — `fetch()` implementation.
+//! Outgoing HTTP request — pure-Rust `fetch()` implementation.
 //!
-//! HTTP/1.1 framing is delegated entirely to hyper.  Iroh's QUIC stream pair
+//! HTTP/1.1 framing is delegated entirely to hyper. Iroh's QUIC stream pair
 //! is wrapped in `IrohStream` and handed to hyper's client connection API.
+//!
+//! Slice D (#186) split the original FFI-shaped `fetch(endpoint, &str, ...)`
+//! into two layers:
+//!
+//! - [`fetch`] — pure-Rust API: takes a fully-formed [`hyper::Request<Body>`]
+//!   and an [`iroh::EndpointAddr`], returns [`hyper::Response<Body>`] with a
+//!   typed [`FetchError`]. No `u64` handles, no `BodyReader`, no string
+//!   parsing of error messages.
+//! - [`crate::ffi::fetch`] — FFI-shaped wrapper that builds the
+//!   `Request<Body>` from flat strings, calls [`fetch`], and translates
+//!   the response into a [`crate::FfiResponse`].
 
 use bytes::Bytes;
-use http::{HeaderName, HeaderValue, Method};
 use http_body_util::BodyExt;
 use hyper_util::rt::TokioIo;
 
 use crate::{
-    ffi::handles::{BodyReader, BodyWriter, HandleStore},
-    http::transport::io::IrohStream,
-    parse_node_addr, CoreError, FfiResponse, IrohEndpoint, ALPN,
+    ffi::handles::BodyWriter,
+    http::{server::stack::StackConfig, transport::io::IrohStream},
+    IrohEndpoint, ALPN,
 };
 
 // ── Body type ────────────────────────────────────────────────────────
 
 use crate::Body;
 
-// ── In-flight fetch cancellation ──────────────────────────────────────────────
+// ── Typed fetch error ────────────────────────────────────────────────────────
 
-// alloc_fetch_token / cancel_in_flight / get_fetch_cancel_notify / remove_fetch_token
-// are now in crate::ffi::handles (imported above).
-// ── Public fetch API ──────────────────────────────────────────────────────────
+/// Typed error returned by the pure-Rust [`fetch`] API.
+///
+/// Replaces the string-matched `classify_hyper_error` that the old FFI
+/// surface relied on (Slice D / #186). FFI callers translate variants
+/// into [`crate::CoreError`] codes at the boundary.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum FetchError {
+    /// Connection setup, hyper handshake, or send-request transport
+    /// failure that is *not* a header-size violation.
+    ConnectionFailed { detail: String },
+    /// Response head exceeded the endpoint's `max_header_size` budget,
+    /// detected either by hyper's parser or by the post-receive byte
+    /// count check in the FFI wrapper.
+    HeaderTooLarge { detail: String },
+    /// Response body exceeded the configured byte limit. Surfaced by the
+    /// FFI wrapper after the body is drained, never by [`fetch`] itself.
+    BodyTooLarge,
+    /// `cfg.timeout` elapsed before the response head arrived.
+    Timeout,
+    /// Caller dropped the future or signalled cancellation via the FFI
+    /// fetch token.
+    Cancelled,
+    /// Bug or unexpected internal failure (request build, body wrap, …).
+    Internal(String),
+}
 
-#[allow(clippy::too_many_arguments)]
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchError::ConnectionFailed { detail } => write!(f, "connection failed: {detail}"),
+            FetchError::HeaderTooLarge { detail } => {
+                write!(f, "response header too large: {detail}")
+            }
+            FetchError::BodyTooLarge => f.write_str("response body too large"),
+            FetchError::Timeout => f.write_str("request timed out"),
+            FetchError::Cancelled => f.write_str("request cancelled"),
+            FetchError::Internal(msg) => write!(f, "internal error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for FetchError {}
+
+/// Classify a hyper send-request or handshake error. hyper 1.x lumps
+/// header-parse failures into a single `Error::Parse` family; we
+/// substring-match on the description because hyper does not expose the
+/// underlying reason struct. This is the *only* place in the crate that
+/// inspects hyper error strings — kept inside the typed-error mapping so
+/// the public API never carries a string-coded error.
+fn hyper_to_fetch_error(e: hyper::Error, context: &str) -> FetchError {
+    let msg = format!("{context}: {e}");
+    let lower = e.to_string().to_ascii_lowercase();
+    if lower.contains("header") {
+        FetchError::HeaderTooLarge { detail: msg }
+    } else {
+        FetchError::ConnectionFailed { detail: msg }
+    }
+}
+
+// ── Pure-Rust fetch API ──────────────────────────────────────────────────────
+
+/// Pure-Rust outbound entry — the canonical client API.
+///
+/// Establishes (or reuses, via [`crate::http::transport::pool`]) an Iroh
+/// QUIC connection to `addr`, runs hyper's HTTP/1.1 client handshake on
+/// a freshly opened bidirectional stream, dispatches `req` through the
+/// shared client tower stack ([`crate::http::server::stack::build_client_stack`]),
+/// and returns the response.
+///
+/// The returned [`hyper::Response<Body>`] carries the response body as a
+/// streaming [`Body`]; the caller is responsible for draining it. The
+/// body's lifetime is bound to a background task that drives hyper's
+/// connection state machine — dropping the body without reading it is
+/// fine, hyper will close the stream cleanly.
+///
+/// # Errors
+///
+/// Returns [`FetchError::Timeout`] if `cfg.timeout` is set and elapsed
+/// before the response head arrived. Connection / handshake / transport
+/// failures map to [`FetchError::ConnectionFailed`]; response heads that
+/// exceed the endpoint's `max_header_size` map to
+/// [`FetchError::HeaderTooLarge`].
 pub async fn fetch(
     endpoint: &IrohEndpoint,
-    remote_node_id: &str,
-    url: &str,
-    method: &str,
-    headers: &[(String, String)],
-    req_body_reader: Option<BodyReader>,
-    fetch_token: Option<u64>,
-    direct_addrs: Option<&[std::net::SocketAddr]>,
-) -> Result<FfiResponse, CoreError> {
-    // Reject standard web schemes.
-    {
-        let lower = url.to_ascii_lowercase();
-        if lower.starts_with("https://") || lower.starts_with("http://") {
-            let scheme_end = lower
-                .find("://")
-                .map(|i| i.saturating_add(3))
-                .unwrap_or(lower.len());
-            return Err(CoreError::invalid_input(format!(
-                "iroh-http URLs must use the \"httpi://\" scheme, not \"{}\". \
-                 Example: httpi://nodeId/path",
-                &url[..scheme_end]
-            )));
-        }
-    }
-
-    // Validate method and headers at the FFI boundary.
-    let http_method = Method::from_bytes(method.as_bytes())
-        .map_err(|_| CoreError::invalid_input(format!("invalid HTTP method {:?}", method)))?;
-    for (name, value) in headers {
-        HeaderName::from_bytes(name.as_bytes())
-            .map_err(|_| CoreError::invalid_input(format!("invalid header name {:?}", name)))?;
-        HeaderValue::from_str(value).map_err(|_| {
-            CoreError::invalid_input(format!("invalid header value for {:?}", name))
-        })?;
-    }
-
-    let cancel_notify = fetch_token.and_then(|t| endpoint.handles().get_fetch_cancel_notify(t));
-    let handles = endpoint.handles();
-
-    // Wrap all fallible work so the cancel-token cleanup below always runs,
-    // even if connection setup returns early via `?`.
-    let out = async {
-        let parsed = parse_node_addr(remote_node_id)?;
-        let node_id = parsed.node_id;
-        let mut addr = iroh::EndpointAddr::new(node_id);
-        for a in &parsed.direct_addrs {
-            addr = addr.with_ip_addr(*a);
-        }
-        if let Some(addrs) = direct_addrs {
-            for a in addrs {
-                addr = addr.with_ip_addr(*a);
-            }
-        }
-
+    addr: &iroh::EndpointAddr,
+    req: hyper::Request<Body>,
+    cfg: &StackConfig,
+) -> Result<hyper::Response<Body>, FetchError> {
+    let work = async {
+        let node_id = addr.id;
         let ep_raw = endpoint.raw().clone();
         let addr_clone = addr.clone();
         let max_header_size = endpoint.max_header_size();
-        let max_response_body_bytes = endpoint.max_response_body_bytes();
 
         let pooled = endpoint
             .pool()
@@ -94,232 +134,50 @@ pub async fn fetch(
                     .map_err(|e| format!("connect: {e}"))
             })
             .await
-            .map_err(CoreError::connection_failed)?;
+            .map_err(|e| FetchError::ConnectionFailed { detail: e })?;
 
         let conn = pooled.conn.clone();
-        let remote_str = pooled.remote_id_str.clone();
 
-        let result = do_fetch(
-            handles,
-            conn,
-            &remote_str,
-            url,
-            http_method,
-            headers,
-            req_body_reader,
-            max_header_size,
-            max_response_body_bytes,
-        );
+        let (send, recv) = conn
+            .open_bi()
+            .await
+            .map_err(|e| FetchError::ConnectionFailed {
+                detail: format!("open_bi: {e}"),
+            })?;
+        let io = TokioIo::new(IrohStream::new(send, recv));
 
-        if let Some(notify) = cancel_notify {
-            tokio::select! {
-                _ = notify.notified() => Err(CoreError::cancelled()),
-                r = result => r,
-            }
-        } else {
-            result.await
-        }
-    }
-    .await;
+        let (sender, conn_task) = hyper::client::conn::http1::Builder::new()
+            // hyper requires max_buf_size >= 8192; clamp upward so small
+            // max_header_size values don't panic. Header-size enforcement
+            // happens via the response parsing error that hyper returns
+            // when the actual response head exceeds max_header_size bytes.
+            .max_buf_size(max_header_size.max(8192))
+            .max_headers(128)
+            .handshake::<_, Body>(io)
+            .await
+            .map_err(|e| hyper_to_fetch_error(e, "hyper handshake"))?;
 
-    // Clean up the cancellation token — always, even on early error.
-    if let Some(token) = fetch_token {
-        endpoint.handles().remove_fetch_token(token);
-    }
+        // Drive the connection state machine in the background.
+        tokio::spawn(conn_task);
 
-    out
-}
-
-/// Classify a hyper send-request or handshake error: if the error message
-/// indicates a header/buffer overflow (hyper emits "header" in its parse error
-/// descriptions), return `CoreError::HeaderTooLarge`; otherwise return
-/// `CoreError::ConnectionFailed`.  This gives callers consistent error types
-/// regardless of where hyper's internal buffer boundary falls relative to the
-/// configured `max_header_size`.
-fn classify_hyper_error(e: &impl std::fmt::Display, context: &str) -> CoreError {
-    let msg = e.to_string();
-    // hyper 1.x surfaces header-parse failures as e.g.
-    //   "error reading a body from connection: header too large"
-    //   "invalid HTTP method"
-    //   "header value is too long"
-    //   "too many headers"
-    // All of these mention "header" in the message.
-    if msg.to_ascii_lowercase().contains("header") {
-        CoreError::header_too_large(format!("{context}: {msg}"))
-    } else {
-        CoreError::connection_failed(format!("{context}: {msg}"))
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn do_fetch(
-    handles: &HandleStore,
-    conn: iroh::endpoint::Connection,
-    remote_str: &str,
-    url: &str,
-    method: Method,
-    headers: &[(String, String)],
-    req_body_reader: Option<BodyReader>,
-    max_header_size: usize,
-    max_response_body_bytes: usize,
-) -> Result<FfiResponse, CoreError> {
-    let (send, recv) = conn
-        .open_bi()
-        .await
-        .map_err(|e| CoreError::connection_failed(format!("open_bi: {e}")))?;
-
-    let io = TokioIo::new(IrohStream::new(send, recv));
-
-    let (sender, conn_task) = hyper::client::conn::http1::Builder::new()
-        // hyper requires max_buf_size >= 8192; clamp upward so small
-        // max_header_size values don't panic.  Header-size enforcement happens
-        // via the response parsing error that hyper returns when the actual
-        // response head exceeds max_header_size bytes.
-        .max_buf_size(max_header_size.max(8192))
-        .max_headers(128)
-        .handshake::<_, Body>(io)
-        .await
-        .map_err(|e| CoreError::connection_failed(format!("hyper handshake: {e}")))?;
-
-    // Drive the connection state machine in the background.
-    tokio::spawn(conn_task);
-
-    let path = extract_path(url);
-
-    // Build the hyper request.
-    let mut req_builder = hyper::Request::builder()
-        .method(method)
-        .uri(&path)
-        .header(hyper::header::HOST, remote_str);
-
-    // When compression is enabled, advertise zstd-only Accept-Encoding — but
-    // only if the caller has not already set Accept-Encoding.  A caller passing
-    // `Accept-Encoding: identity` is opting out of compression and must not be
-    // overridden.
-    {
-        let has_accept_encoding = headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("accept-encoding"));
-        if !has_accept_encoding {
-            req_builder = req_builder.header("accept-encoding", "zstd");
-        }
-    }
-
-    for (k, v) in headers {
-        req_builder = req_builder.header(k.as_str(), v.as_str());
-    }
-
-    let req_body: Body = if let Some(reader) = req_body_reader {
-        Body::new(reader)
-    } else {
-        Body::empty()
-    };
-
-    let req = req_builder
-        .body(req_body)
-        .map_err(|e| CoreError::internal(format!("build request: {e}")))?;
-
-    // Dispatch through the shared client stack (Slice B / #184). The
-    // construction of decompression + body normalisation lives in
-    // `http/server/stack.rs::build_client_stack`; both directions of the
-    // crate now share one composition function per direction.
-    let resp = {
+        // Dispatch through the shared client stack (Slice B / #184).
+        // Composition of decompression + body normalisation lives in
+        // [`crate::http::server::stack::build_client_stack`]; both
+        // directions of the crate share one composition function.
         use tower::ServiceExt;
-        // TODO(#186 / Slice D): map JS-side fetch options (timeout,
-        // max_response_body_bytes, decompression toggle) into `cfg`. Today
-        // `build_client_stack` ignores `cfg` entirely, so any FFI option
-        // that claims to affect the outbound stack is a silent no-op until
-        // the typed `http::fetch` lands.
-        let cfg = crate::http::server::stack::StackConfig::default();
-        let svc = crate::http::server::stack::build_client_stack(sender, &cfg);
+        let svc = crate::http::server::stack::build_client_stack(sender, cfg);
         svc.oneshot(req)
             .await
-            .map_err(|e| classify_hyper_error(&e, "send_request"))?
+            .map_err(|e| hyper_to_fetch_error(e, "send_request"))
     };
 
-    let status = resp.status().as_u16();
-    // ISS-011: measure header bytes using raw values before string conversion;
-    // reject non-UTF8 response header values deterministically.
-    let header_bytes: usize = resp
-        .headers()
-        .iter()
-        .map(|(k, v)| {
-            k.as_str()
-                .len()
-                .saturating_add(v.as_bytes().len())
-                .saturating_add(4) // "name: value\r\n"
-        })
-        .fold(16usize, |acc, x| acc.saturating_add(x)); // approximate status line
-    if header_bytes > max_header_size {
-        return Err(CoreError::header_too_large(format!(
-            "response header size {header_bytes} exceeds limit {max_header_size}"
-        )));
+    match cfg.timeout {
+        Some(t) => match tokio::time::timeout(t, work).await {
+            Ok(r) => r,
+            Err(_) => Err(FetchError::Timeout),
+        },
+        None => work.await,
     }
-
-    let mut resp_headers: Vec<(String, String)> = Vec::new();
-    for (k, v) in resp.headers().iter() {
-        match v.to_str() {
-            Ok(s) => resp_headers.push((k.as_str().to_string(), s.to_string())),
-            Err(_) => {
-                return Err(CoreError::invalid_input(format!(
-                    "non-UTF8 response header value for '{}'",
-                    k.as_str()
-                )));
-            }
-        }
-    }
-
-    let response_url = format!("httpi://{remote_str}{path}");
-
-    // RFC 9110 §6.3: responses with status 204, 205, or 304 MUST NOT carry a
-    // message body.  Skip channel allocation entirely and return the slotmap
-    // null sentinel (0) for body_handle so the JS layer can use
-    // `bodyHandle === 0n` as a clean structural check without re-encoding
-    // HTTP semantics in every adapter.
-    if is_null_body_status(status) {
-        // Dropping the body signals to hyper that we are done reading.
-        // For a spec-compliant server the body is already empty; this is a
-        // defensive drain for misbehaving peers.
-        drop(resp.into_body());
-        return Ok(FfiResponse {
-            status,
-            headers: resp_headers,
-            body_handle: 0,
-            url: response_url,
-        });
-    }
-
-    // Allocate channels for streaming the response body to JS.
-    let mut guard = handles.insert_guard();
-
-    let (res_writer, res_reader) = handles.make_body_channel();
-    let body = resp.into_body();
-    let frame_timeout = res_writer.drain_timeout;
-    tokio::spawn(pump_hyper_body_to_channel_limited(
-        body,
-        res_writer,
-        Some(max_response_body_bytes),
-        frame_timeout,
-        None,
-    ));
-
-    let body_handle = guard.insert_reader(res_reader)?;
-
-    guard.commit();
-    Ok(FfiResponse {
-        status,
-        headers: resp_headers,
-        body_handle,
-        url: response_url,
-    })
-}
-
-/// RFC 9110 §6.3 — responses with these status codes MUST NOT contain a
-/// message body.  Skipping body-channel allocation for them avoids wasting
-/// resources and keeps HTTP semantics in core instead of every adapter.
-#[inline]
-fn is_null_body_status(status: u16) -> bool {
-    status == 204 || status == 205 || status == 304
 }
 
 // ── Body bridge utilities ─────────────────────────────────────────────────────

@@ -32,7 +32,7 @@ pub mod registry {
 
 // ── Pure-Rust HTTP API surface (`mod http`) ───────────────────────────────────
 pub use http::body::{Body, BoxError};
-pub use http::client::fetch;
+pub use http::client::{fetch as fetch_request, FetchError};
 pub use http::server::{
     serve_service, serve_service_with_events, RemoteNodeId, ServeHandle, ServeOptions,
 };
@@ -40,6 +40,7 @@ pub use http::session::{CloseInfo, Session};
 
 // ── FFI bridge surface (`mod ffi`) ────────────────────────────────────────────
 pub use ffi::dispatcher::{respond, serve, serve_with_callback};
+pub use ffi::fetch::fetch;
 pub use ffi::handles::{
     make_body_channel, BodyReader, HandleStore, ResponseHeadEntry, StoreConfig,
 };
@@ -52,7 +53,7 @@ pub use endpoint::{
     StreamingOptions,
 };
 pub use events::TransportEvent;
-pub use http::server::stack::CompressionOptions;
+pub use http::server::stack::{CompressionOptions, StackConfig};
 pub use registry::{get_endpoint, insert_endpoint, remove_endpoint};
 
 // ── Structured error types ────────────────────────────────────────────────────

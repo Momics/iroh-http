@@ -126,8 +126,11 @@ pub(crate) type ClientService =
 /// from the type-soup of `Either<L::Service, S>` and `impl Layer<…>`
 /// return-position bound erasure (see Slice B (#184) carry-forward in
 /// Slice C (#185)).
+///
+/// Slice D (#186): made public so the pure-Rust
+/// [`crate::http::client::fetch`] can take `&StackConfig` directly.
 #[derive(Clone, Debug)]
-pub(crate) struct StackConfig {
+pub struct StackConfig {
     /// Per-request timeout. `None` ⇒ no `TimeoutLayer` is applied.
     pub timeout: Option<Duration>,
     /// Maximum decoded request body size before the server rejects with 413.
@@ -361,41 +364,17 @@ pub(crate) fn build_compression_layer(
 
 // ── Client pipeline ──────────────────────────────────────────────────────────
 
-/// Wraps `SendRequest<Body>` as a `tower::Service` so compression/decompression
-/// layers from `tower-http` can be composed around it.
-///
-/// Slice D (#186) deletes this wrapper outright in favour of a pure-Rust
-/// `http::fetch` returning `Response<Body>` with a typed `FetchError`.
-struct HyperClientSvc(hyper::client::conn::http1::SendRequest<Body>);
-
-impl tower::Service<hyper::Request<Body>> for HyperClientSvc {
-    type Response = hyper::Response<hyper::body::Incoming>;
-    type Error = hyper::Error;
-    type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
-    >;
-
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.0.poll_ready(cx)
-    }
-
-    fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
-        Box::pin(self.0.send_request(req))
-    }
-}
-
 /// Compose the outbound per-request tower stack.
 ///
 /// ```text
-///   decompression → incoming→Body → hyper SendRequest
+///   [timeout →] decompression → incoming→Body → hyper SendRequest
 /// ```
 ///
-/// Returns a [`ClientService`] — boxed once so the caller (`fetch`) does
-/// not have to spell the inner type. Honours `cfg.decompression`;
-/// timeout / body-limit / typed `FetchError` arrive in Slice D (#186).
+/// Returns a [`ClientService`] — boxed once so the caller
+/// ([`crate::http::client::fetch`]) does not have to spell the inner
+/// type. Honours `cfg.decompression` and `cfg.timeout`. Per Slice D
+/// (#186) the inner `SendRequest` wrapper that used to be a named
+/// `HyperClientSvc` lives inline below.
 pub(crate) fn build_client_stack(
     sender: hyper::client::conn::http1::SendRequest<Body>,
     cfg: &StackConfig,
@@ -403,17 +382,46 @@ pub(crate) fn build_client_stack(
     use tower::ServiceExt;
     use tower_http::map_response_body::MapResponseBodyLayer;
 
+    // Inline `SendRequest<Body> as tower::Service` adapter. Lives inside
+    // `build_client_stack` so the wrapper has no name outside this
+    // function (Slice D acceptance #3).
+    struct SendRequestSvc(hyper::client::conn::http1::SendRequest<Body>);
+
+    impl tower::Service<hyper::Request<Body>> for SendRequestSvc {
+        type Response = hyper::Response<hyper::body::Incoming>;
+        type Error = hyper::Error;
+        type Future = std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+        >;
+
+        fn poll_ready(
+            &mut self,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            self.0.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
+            Box::pin(self.0.send_request(req))
+        }
+    }
+
     // Step 1: normalise hyper's `Incoming` to `Body` so subsequent layers
     // operate on the canonical body type.
     let svc = ServiceBuilder::new()
         .layer(MapResponseBodyLayer::new(|b: hyper::body::Incoming| {
             Body::new(b)
         }))
-        .service(HyperClientSvc(sender))
+        .service(SendRequestSvc(sender))
         .boxed();
 
     // Step 2: optional response decompression (always-on by default).
     apply_client_decompression(svc, cfg.decompression)
+    // Per-request timeout is enforced by the caller in
+    // [`crate::http::client::fetch`] via `tokio::time::timeout` rather
+    // than a `TimeoutLayer` here, so the `ClientService` error type can
+    // stay `hyper::Error` and the timeout maps cleanly to
+    // `FetchError::Timeout` without going through `BoxError` downcasts.
 }
 
 /// Client-side equivalent of [`apply_decompression`]. No-op when

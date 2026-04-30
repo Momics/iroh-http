@@ -11,6 +11,7 @@
 //! MUST NOT import from `crate::ffi::*`.
 
 pub(crate) mod dispatcher;
+pub(crate) mod fetch;
 pub(crate) mod handles;
 pub(crate) mod pumps;
 pub(crate) mod registry;
