@@ -229,8 +229,10 @@ impl Drop for PeerConnectionGuard {
 //     rendezvous, and duplex upgrade hand-off. It is shared across every
 //     accepted connection and request via `Arc`.
 //   * `IrohHttpService` is the thin `tower::Service` shell. It clones cheaply
-//     (Arc bump + Option<String>), patches the per-connection `remote_node_id`
-//     in `serve_with_events`, and delegates each request to the dispatcher.
+//     (two Arc bumps) and delegates each request to the dispatcher. The
+//     per-connection `remote_node_id` is baked into the service once at
+//     construction time in `serve_with_events`, so the field is
+//     unconditionally present — there is no "unknown peer" state.
 //
 // The split keeps the tower::Service contract narrow (Infallible, generic over
 // any `http_body::Body`) and isolates the FFI logic so future tests can mock
@@ -247,7 +249,10 @@ struct FfiDispatcher {
 #[derive(Clone)]
 pub(crate) struct IrohHttpService {
     dispatcher: Arc<FfiDispatcher>,
-    remote_node_id: Option<String>,
+    /// Authenticated peer node id of the QUIC connection this service
+    /// instance was constructed for. Always present: baked in at boxing
+    /// time in `serve_with_events`.
+    remote_node_id: Arc<String>,
 }
 
 /// ADR-014 D2 / #175: service is concrete — not generic over `B`.
@@ -265,7 +270,7 @@ impl Service<hyper::Request<Body>> for IrohHttpService {
 
     fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
         let dispatcher = self.dispatcher.clone();
-        let remote_node_id = self.remote_node_id.clone().unwrap_or_default();
+        let remote_node_id = self.remote_node_id.clone();
         Box::pin(async move { Ok(dispatcher.dispatch(req, remote_node_id).await) })
     }
 }
@@ -277,7 +282,7 @@ impl FfiDispatcher {
     async fn dispatch(
         self: Arc<Self>,
         mut req: hyper::Request<Body>,
-        remote_node_id: String,
+        remote_node_id: Arc<String>,
     ) -> hyper::Response<Body> {
         let handles = self.endpoint.handles();
         let own_node_id = &*self.own_node_id;
@@ -349,7 +354,7 @@ impl FfiDispatcher {
                 }
             }
         }
-        req_headers.push(("peer-id".to_string(), remote_node_id.clone()));
+        req_headers.push(("peer-id".to_string(), (*remote_node_id).clone()));
 
         let url = format!("httpi://{own_node_id}{path_and_query}");
 
@@ -463,7 +468,7 @@ impl FfiDispatcher {
             method,
             url,
             req_headers,
-            remote_node_id,
+            Arc::unwrap_or_clone(remote_node_id),
             is_bidi,
         );
 
@@ -764,7 +769,7 @@ where
                 .layer(conc_layer.clone())
                 .service(IrohHttpService {
                     dispatcher: dispatcher_for_conn.clone(),
-                    remote_node_id: Some(remote_id),
+                    remote_node_id: Arc::new(remote_id),
                 })
                 .boxed_clone();
             let stack_compression = dispatcher_for_conn.compression.clone();
