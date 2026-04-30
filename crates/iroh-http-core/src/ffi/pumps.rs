@@ -1,8 +1,6 @@
 //! Shared pump helpers bridging QUIC streams and body channels.
 //!
-//! Used by the FFI session API (uni/bidi streams) and by the duplex
-//! upgrade path. After Slice E (#187) some of these may be deletable
-//! once the body type unification reaches every call site.
+//! Used by the FFI session API (uni/bidi streams).
 
 use super::handles::{BodyReader, BodyWriter};
 
@@ -46,50 +44,4 @@ pub(crate) async fn pump_body_to_quic_send(
         }
     }
     let _ = send.finish();
-}
-
-/// Bidirectional pump between a byte-level I/O object and a pair of body channels.
-///
-/// Reads from `io` → sends to `writer` (incoming data).
-/// Reads from `reader` → writes to `io` (outgoing data).
-///
-/// Used for both client-side and server-side duplex upgrade pumps.
-pub(crate) async fn pump_duplex<IO>(io: IO, writer: BodyWriter, reader: BodyReader)
-where
-    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-{
-    let (mut recv, mut send) = tokio::io::split(io);
-
-    tokio::join!(
-        async {
-            use bytes::BytesMut;
-            use tokio::io::AsyncReadExt;
-            let mut buf = BytesMut::with_capacity(PUMP_READ_BUF);
-            loop {
-                buf.clear();
-                match recv.read_buf(&mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {
-                        if writer.send_chunk(buf.split().freeze()).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        },
-        async {
-            use tokio::io::AsyncWriteExt;
-            loop {
-                match reader.next_chunk().await {
-                    None => break,
-                    Some(data) => {
-                        if send.write_all(&data).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-            let _ = send.shutdown().await;
-        },
-    );
 }

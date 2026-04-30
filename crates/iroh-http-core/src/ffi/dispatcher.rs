@@ -19,7 +19,6 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use http::StatusCode;
-use hyper_util::rt::TokioIo;
 use tower::Service;
 
 use crate::ffi::handles::ResponseHeadEntry;
@@ -127,7 +126,7 @@ impl Service<hyper::Request<Body>> for IrohHttpService {
 impl FfiDispatcher {
     async fn dispatch(
         self: Arc<Self>,
-        mut req: hyper::Request<Body>,
+        req: hyper::Request<Body>,
         remote_node_id: Arc<String>,
     ) -> hyper::Response<Body> {
         let handles = self.endpoint.handles();
@@ -205,40 +204,6 @@ impl FfiDispatcher {
 
         let url = format!("httpi://{own_node_id}{path_and_query}");
 
-        // ISS-015: strict duplex upgrade validation — require CONNECT method +
-        // Upgrade: iroh-duplex + Connection: upgrade headers.
-        let has_upgrade_header = req_headers.iter().any(|(k, v)| {
-            k.eq_ignore_ascii_case("upgrade") && v.eq_ignore_ascii_case("iroh-duplex")
-        });
-        let has_connection_upgrade = req_headers.iter().any(|(k, v)| {
-            k.eq_ignore_ascii_case("connection")
-                && v.split(',')
-                    .any(|tok| tok.trim().eq_ignore_ascii_case("upgrade"))
-        });
-        let is_connect = req.method() == http::Method::CONNECT;
-
-        let is_bidi = if has_upgrade_header {
-            if !has_connection_upgrade || !is_connect {
-                let resp = hyper::Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body(Body::full(Bytes::from_static(
-                        b"duplex upgrade requires CONNECT method with Connection: upgrade header",
-                    )))
-                    .expect("static response args are valid");
-                return resp;
-            }
-            true
-        } else {
-            false
-        };
-
-        // For duplex: capture the upgrade future BEFORE consuming the request.
-        let upgrade_future = if is_bidi {
-            Some(hyper::upgrade::on(&mut req))
-        } else {
-            None
-        };
-
         // ── Allocate channels ────────────────────────────────────────────────
 
         let mut guard = handles.insert_guard();
@@ -279,14 +244,8 @@ impl FfiDispatcher {
 
         // ── Pump request body ────────────────────────────────────────────────
 
-        let duplex_req_body_writer = if !is_bidi {
-            let body = req.into_body();
-            tokio::spawn(pump_hyper_body_to_channel(body, req_body_writer));
-            None
-        } else {
-            drop(req.into_body());
-            Some(req_body_writer)
-        };
+        let body = req.into_body();
+        tokio::spawn(pump_hyper_body_to_channel(body, req_body_writer));
 
         // ── Fire on_request callback ─────────────────────────────────────────
 
@@ -298,7 +257,7 @@ impl FfiDispatcher {
             url,
             headers: req_headers,
             remote_node_id: Arc::unwrap_or_clone(remote_node_id),
-            is_bidi,
+            is_bidi: false,
         });
 
         // ── Await response head from JS ──────────────────────────────────────
@@ -306,44 +265,6 @@ impl FfiDispatcher {
             Ok(h) => h,
             Err(_) => return internal_error(b"JS handler dropped without responding"),
         };
-
-        // ── Duplex path: honor handler status, upgrade only on 101 ──────────
-        if let Some(upgrade_fut) = upgrade_future {
-            let req_body_writer =
-                duplex_req_body_writer.expect("duplex path always has req_body_writer");
-
-            if response_head.status != StatusCode::SWITCHING_PROTOCOLS.as_u16() {
-                drop(upgrade_fut);
-                drop(req_body_writer);
-                let mut resp_builder = hyper::Response::builder().status(response_head.status);
-                for (k, v) in &response_head.headers {
-                    resp_builder = resp_builder.header(k.as_str(), v.as_str());
-                }
-                let resp = match resp_builder.body(Body::empty()) {
-                    Ok(r) => r,
-                    Err(_) => return internal_error(b"failed to build response head from JS"),
-                };
-                return resp;
-            }
-
-            tokio::spawn(async move {
-                match upgrade_fut.await {
-                    Err(e) => tracing::warn!("iroh-http: duplex upgrade error: {e}"),
-                    Ok(upgraded) => {
-                        let io = TokioIo::new(upgraded);
-                        crate::ffi::pumps::pump_duplex(io, req_body_writer, res_body_reader).await;
-                    }
-                }
-            });
-
-            let resp = hyper::Response::builder()
-                .status(StatusCode::SWITCHING_PROTOCOLS)
-                .header(hyper::header::CONNECTION, "Upgrade")
-                .header(hyper::header::UPGRADE, "iroh-duplex")
-                .body(Body::empty())
-                .expect("static response args are valid");
-            return resp;
-        }
 
         // ── Regular HTTP response ─────────────────────────────────────────────
 
