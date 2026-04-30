@@ -33,10 +33,10 @@ use crate::http::server::ServeHandle;
 use crate::http::transport::pool::ConnectionPool;
 use crate::{ALPN, ALPN_DUPLEX};
 
-pub use crate::config::CompressionOptions;
 pub use crate::config::{
     DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions,
 };
+pub use crate::http::server::stack::CompressionOptions;
 pub use crate::stats::{ConnectionEvent, EndpointStats, NodeAddrInfo, PathInfo, PeerStats};
 
 /// A shared Iroh endpoint.

@@ -5,6 +5,7 @@
 //! hyper and the existing body-channel + slab infrastructure.
 
 pub(crate) mod pipeline;
+pub(crate) mod stack;
 
 use std::{
     collections::HashMap,
@@ -245,7 +246,7 @@ struct FfiDispatcher {
     endpoint: IrohEndpoint,
     own_node_id: Arc<String>,
     max_header_size: Option<usize>,
-    compression: Option<crate::config::CompressionOptions>,
+    compression: Option<crate::http::server::stack::CompressionOptions>,
 }
 
 #[derive(Clone)]
@@ -845,18 +846,24 @@ where
                         // Build the per-bistream tower pipeline (compression,
                         // decompression, body limit, load-shed, timeout, layer-error
                         // handling) and serve the connection. The full assembly
-                        // lives in [`crate::http::server::pipeline::serve_bistream`] —
-                        // closes recommendation §5.1 of the post-rework review (#169).
+                        // lives in [`crate::http::server::stack::build_stack`] —
+                        // see Slice B of #182 (issue #184). The hyper seam plus
+                        // header-limit live in [`crate::http::server::pipeline`].
+                        let cfg = crate::http::server::stack::StackConfig {
+                            timeout: if timeout_dur == Duration::MAX {
+                                None
+                            } else {
+                                Some(timeout_dur)
+                            },
+                            max_request_body_bytes,
+                            load_shed: load_shed_enabled,
+                            compression: req_compression,
+                        };
                         crate::http::server::pipeline::serve_bistream(
                             io,
                             svc,
-                            crate::http::server::pipeline::PipelineParams {
-                                timeout: timeout_dur,
-                                max_request_body_bytes,
-                                load_shed_enabled,
-                                effective_header_limit,
-                                compression: req_compression,
-                            },
+                            effective_header_limit,
+                            &cfg,
                         )
                         .await;
                     });

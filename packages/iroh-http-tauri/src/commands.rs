@@ -3,7 +3,7 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use bytes::Bytes;
 use iroh_http_core::{
-    endpoint::NodeOptions, parse_direct_addrs, server::respond, ConnectionEvent, DiscoveryOptions,
+    endpoint::NodeOptions, parse_direct_addrs, respond, ConnectionEvent, DiscoveryOptions,
     NetworkingOptions, PoolOptions, RequestPayload, StreamingOptions,
 };
 use serde::{Deserialize, Serialize};

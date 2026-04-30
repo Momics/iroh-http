@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::http::transport::pool::ConnectionPool;
 
-use crate::config::CompressionOptions;
+use crate::http::server::stack::CompressionOptions;
 
 /// HTTP-layer runtime state.
 pub(crate) struct HttpRuntime {

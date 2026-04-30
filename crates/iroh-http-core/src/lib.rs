@@ -36,10 +36,10 @@ pub use ffi::handles::{
 pub use ffi::types::{FfiDuplexStream, FfiResponse, RequestPayload};
 
 // ── Other re-exports kept at crate root ───────────────────────────────────────
-pub use config::CompressionOptions;
 pub use config::{DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions};
 pub use endpoint::{parse_direct_addrs, IrohEndpoint};
 pub use events::TransportEvent;
+pub use http::server::stack::CompressionOptions;
 pub use registry::{get_endpoint, insert_endpoint, remove_endpoint};
 pub use stats::{ConnectionEvent, EndpointStats, NodeAddrInfo, PathInfo, PeerStats};
 

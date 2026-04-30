@@ -101,34 +101,5 @@ pub struct NodeOptions {
     /// outgoing `fetch()`.  Default: 256 MiB.  Protects against compression
     /// bombs from malicious peers.
     pub max_response_body_bytes: Option<usize>,
-    pub compression: Option<CompressionOptions>,
-}
-
-/// Compression options for response bodies.
-/// Only used when the `compression` feature is enabled.
-#[derive(Debug, Clone)]
-pub struct CompressionOptions {
-    /// Minimum body size in bytes before compression is applied.
-    /// Default: [`CompressionOptions::DEFAULT_MIN_BODY_BYTES`] (1 KiB).
-    pub min_body_bytes: usize,
-    /// Zstd compression level (1–22). `None` uses the zstd default (3).
-    pub level: Option<u32>,
-}
-
-impl CompressionOptions {
-    /// Default minimum body size before compression is applied.
-    ///
-    /// 1 KiB. Matches the documented default and the threshold most HTTP
-    /// servers tune to: below ~1 KiB the CPU cost of compression typically
-    /// outweighs the bandwidth savings on a single TCP/QUIC packet.
-    pub const DEFAULT_MIN_BODY_BYTES: usize = 1024;
-}
-
-impl Default for CompressionOptions {
-    fn default() -> Self {
-        Self {
-            min_body_bytes: Self::DEFAULT_MIN_BODY_BYTES,
-            level: None,
-        }
-    }
+    pub compression: Option<crate::http::server::stack::CompressionOptions>,
 }

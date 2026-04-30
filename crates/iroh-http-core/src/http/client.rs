@@ -18,31 +18,6 @@ use crate::{
 
 use crate::Body;
 
-// ── Compression: thin tower service wrapper around hyper SendRequest ─────────
-
-/// Wraps `SendRequest<Body>` as a `tower::Service` so compression/decompression
-/// layers from `tower-http` can be composed around it.
-struct HyperClientSvc(hyper::client::conn::http1::SendRequest<Body>);
-
-impl tower::Service<hyper::Request<Body>> for HyperClientSvc {
-    type Response = hyper::Response<hyper::body::Incoming>;
-    type Error = hyper::Error;
-    type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
-    >;
-
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.0.poll_ready(cx)
-    }
-
-    fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
-        Box::pin(self.0.send_request(req))
-    }
-}
-
 // ── In-flight fetch cancellation ──────────────────────────────────────────────
 
 // alloc_fetch_token / cancel_in_flight / get_fetch_cancel_notify / remove_fetch_token
@@ -244,13 +219,19 @@ async fn do_fetch(
         .body(req_body)
         .map_err(|e| CoreError::internal(format!("build request: {e}")))?;
 
-    // Dispatch: wrap sender in DecompressionLayer so the response body is
-    // transparently decompressed before reaching the channel pump.
+    // Dispatch through the shared client stack (Slice B / #184). The
+    // construction of decompression + body normalisation lives in
+    // `http/server/stack.rs::build_client_stack`; both directions of the
+    // crate now share one composition function per direction.
     let resp = {
         use tower::ServiceExt;
-        let svc = tower::ServiceBuilder::new()
-            .layer(tower_http::decompression::DecompressionLayer::new())
-            .service(HyperClientSvc(sender));
+        // TODO(#186 / Slice D): map JS-side fetch options (timeout,
+        // max_response_body_bytes, decompression toggle) into `cfg`. Today
+        // `build_client_stack` ignores `cfg` entirely, so any FFI option
+        // that claims to affect the outbound stack is a silent no-op until
+        // the typed `http::fetch` lands.
+        let cfg = crate::http::server::stack::StackConfig::default();
+        let svc = crate::http::server::stack::build_client_stack(sender, &cfg);
         svc.oneshot(req)
             .await
             .map_err(|e| classify_hyper_error(&e, "send_request"))?
