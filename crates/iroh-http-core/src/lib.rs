@@ -14,14 +14,21 @@
 //!   (enforced by `tests/architecture.rs`).
 #![deny(unsafe_code)]
 
-pub mod config;
 pub mod endpoint;
-pub mod events;
-pub mod registry;
-pub mod stats;
 
 pub(crate) mod ffi;
 pub(crate) mod http;
+
+// `events` and `registry` moved into `mod http` and `mod ffi` (Slice C.6
+// of #182). These thin alias modules keep external API paths
+// (`iroh_http_core::events::*`, `iroh_http_core::registry::*`) and
+// internal `crate::events::*` / `crate::registry::*` paths unchanged.
+pub mod events {
+    pub use crate::http::events::*;
+}
+pub mod registry {
+    pub use crate::ffi::registry::*;
+}
 
 // ── Pure-Rust HTTP API surface (`mod http`) ───────────────────────────────────
 pub use ffi::dispatcher::{respond, serve, serve_with_callback};
@@ -39,12 +46,14 @@ pub use ffi::handles::{
 pub use ffi::types::{FfiDuplexStream, FfiResponse, RequestPayload};
 
 // ── Other re-exports kept at crate root ───────────────────────────────────────
-pub use config::{DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions};
-pub use endpoint::{parse_direct_addrs, IrohEndpoint};
+pub use endpoint::{
+    parse_direct_addrs, ConnectionEvent, DiscoveryOptions, EndpointStats, IrohEndpoint,
+    NetworkingOptions, NodeAddrInfo, NodeOptions, PathInfo, PeerStats, PoolOptions,
+    StreamingOptions,
+};
 pub use events::TransportEvent;
 pub use http::server::stack::CompressionOptions;
 pub use registry::{get_endpoint, insert_endpoint, remove_endpoint};
-pub use stats::{ConnectionEvent, EndpointStats, NodeAddrInfo, PathInfo, PeerStats};
 
 // ── Structured error types ────────────────────────────────────────────────────
 

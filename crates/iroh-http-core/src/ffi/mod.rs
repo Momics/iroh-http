@@ -13,4 +13,5 @@
 pub(crate) mod dispatcher;
 pub(crate) mod handles;
 pub(crate) mod pumps;
+pub(crate) mod registry;
 pub(crate) mod types;

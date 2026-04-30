@@ -11,6 +11,7 @@
 
 pub(crate) mod body;
 pub(crate) mod client;
+pub(crate) mod events;
 pub(crate) mod server;
 pub(crate) mod session;
 pub(crate) mod transport;

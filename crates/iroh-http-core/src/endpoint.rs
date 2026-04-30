@@ -12,10 +12,88 @@
 //! No business logic lives in this module — only orchestration and the
 //! public API surface.
 
-pub(crate) mod ffi_bridge;
-pub(crate) mod http_runtime;
-pub(crate) mod session_runtime;
-pub(crate) mod transport;
+// ── Subsystems (inlined per Slice C.6 of #182) ────────────────────────────
+//
+// Per ADR-014 D1 the endpoint is composed of four named subsystems plus
+// configuration and observability types. Slice C.6 inlines the four
+// subsystem structs (formerly endpoint/{ffi_bridge,http_runtime,
+// session_runtime,transport}.rs) and the configuration / stats types
+// (formerly crate::config and crate::stats) into this single file so
+// `crates/iroh-http-core/src/` directly contains only `lib.rs`,
+// `endpoint.rs`, `http/`, `ffi/` (acceptance criterion #10 of #185).
+
+// ── Transport subsystem ───────────────────────────────────────────────────
+
+/// Raw QUIC transport state.
+pub(crate) struct Transport {
+    /// The bound iroh endpoint. Cloning is cheap (internally `Arc`).
+    pub ep: Endpoint,
+    /// The node's own base32-encoded public key. Stable for the lifetime
+    /// of the secret key.
+    pub node_id_str: String,
+}
+
+// ── HttpRuntime subsystem ────────────────────────────────────────────────
+
+/// HTTP-layer runtime state.
+pub(crate) struct HttpRuntime {
+    /// Connection pool for reusing QUIC connections across fetch/connect calls.
+    pub pool: ConnectionPool,
+    /// Maximum byte size of an HTTP/1.1 head (request or response).
+    pub max_header_size: usize,
+    /// Maximum decompressed response body bytes per fetch. Default: 256 MiB.
+    pub max_response_body_bytes: usize,
+    /// Number of currently active QUIC connections (incremented by serve loop,
+    /// decremented via RAII guard when each connection task exits).
+    pub active_connections: Arc<AtomicUsize>,
+    /// Number of currently in-flight HTTP requests.
+    pub active_requests: Arc<AtomicUsize>,
+    /// Body compression options, if the feature is enabled.
+    pub compression: Option<CompressionOptions>,
+}
+
+// ── SessionRuntime subsystem ─────────────────────────────────────────────
+//
+// Note (Slice E #187 carve-out): per #185 step 10 this could fold into
+// `http/session.rs`, but that module is on Slice E's docket and the
+// session-runtime types are tightly coupled to the IrohEndpoint facade
+// below. Kept here until #187 unifies the body type and the session API
+// move.
+
+/// Server-side runtime: the `serve()` task, lifecycle signals, and
+/// observability fan-out (transport events, per-peer path subscriptions).
+pub(crate) struct SessionRuntime {
+    /// Active serve handle, if `serve()` has been called.
+    pub serve_handle: std::sync::Mutex<Option<ServeHandle>>,
+    /// Done-signal receiver from the active serve task. Stored separately
+    /// so `wait_serve_stop()` can await without holding the `serve_handle` lock.
+    pub serve_done_rx: std::sync::Mutex<Option<tokio::sync::watch::Receiver<bool>>>,
+    /// Signals `true` when the endpoint has fully closed (either explicitly
+    /// or because the serve loop exited due to native shutdown).
+    pub closed_tx: tokio::sync::watch::Sender<bool>,
+    pub closed_rx: tokio::sync::watch::Receiver<bool>,
+    /// Sender for transport-level events (pool hits/misses, path changes, sweep).
+    pub event_tx: tokio::sync::mpsc::Sender<crate::http::events::TransportEvent>,
+    /// Receiver for transport-level events. Wrapped in Mutex+Option so
+    /// `subscribe_events()` can take it exactly once for the platform drain task.
+    pub event_rx:
+        std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<crate::http::events::TransportEvent>>>,
+    /// Per-peer path-change subscriptions. Key: `node_id_str`. Populated
+    /// lazily when `subscribe_path_changes` is called.
+    pub path_subs: dashmap::DashMap<String, tokio::sync::mpsc::UnboundedSender<PathInfo>>,
+}
+
+// ── FfiBridge subsystem ──────────────────────────────────────────────────
+
+/// FFI handle store and any future JS-facing token registries.
+///
+/// Kept as a thin wrapper today (one field) so future additions —
+/// fetch-cancel slabs, request-head slabs, etc. — have a named home.
+pub(crate) struct FfiBridge {
+    /// Per-endpoint handle store — owns all body readers, writers,
+    /// sessions, request-head channels, and fetch-cancel tokens.
+    pub handles: HandleStore,
+}
 
 use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
 use iroh::endpoint::{Builder, IdleTimeout, QuicTransportConfig, TransportAddrUsage};
@@ -24,20 +102,194 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use self::ffi_bridge::FfiBridge;
-use self::http_runtime::HttpRuntime;
-use self::session_runtime::SessionRuntime;
-use self::transport::Transport;
 use crate::ffi::handles::{HandleStore, StoreConfig};
 use crate::http::server::ServeHandle;
 use crate::http::transport::pool::ConnectionPool;
 use crate::{ALPN, ALPN_DUPLEX};
 
-pub use crate::config::{
-    DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions,
-};
 pub use crate::http::server::stack::CompressionOptions;
-pub use crate::stats::{ConnectionEvent, EndpointStats, NodeAddrInfo, PathInfo, PeerStats};
+
+// ── Configuration types (formerly `crate::config`) ─────────────────────────
+
+/// Networking / QUIC transport configuration.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkingOptions {
+    /// Relay server mode. `"default"`, `"staging"`, `"disabled"`, or `"custom"`. Default: `"default"`.
+    pub relay_mode: Option<String>,
+    /// Custom relay server URLs. Only used when `relay_mode` is `"custom"`.
+    pub relays: Vec<String>,
+    /// UDP socket addresses to bind. Empty means OS-assigned.
+    pub bind_addrs: Vec<String>,
+    /// Milliseconds before an idle QUIC connection is cleaned up.
+    pub idle_timeout_ms: Option<u64>,
+    /// HTTP proxy URL for relay traffic.
+    pub proxy_url: Option<String>,
+    /// Read `HTTP_PROXY` / `HTTPS_PROXY` env vars for proxy config.
+    pub proxy_from_env: bool,
+    /// Disable relay servers and DNS discovery entirely. Overrides `relay_mode`.
+    /// Useful for in-process tests where endpoints connect via direct addresses.
+    pub disabled: bool,
+}
+
+/// DNS-based peer discovery configuration.
+#[derive(Debug, Clone)]
+pub struct DiscoveryOptions {
+    /// DNS discovery server URL. Uses n0 DNS defaults when `None`.
+    pub dns_server: Option<String>,
+    /// Whether to enable DNS discovery. Default: `true`.
+    pub enabled: bool,
+}
+
+impl Default for DiscoveryOptions {
+    fn default() -> Self {
+        Self {
+            dns_server: None,
+            enabled: true,
+        }
+    }
+}
+
+/// Connection-pool tuning.
+#[derive(Debug, Clone, Default)]
+pub struct PoolOptions {
+    /// Maximum number of idle connections to keep in the pool.
+    pub max_connections: Option<usize>,
+    /// Milliseconds a pooled connection may remain idle before being evicted.
+    pub idle_timeout_ms: Option<u64>,
+}
+
+/// Body-streaming and handle-store configuration.
+#[derive(Debug, Clone, Default)]
+pub struct StreamingOptions {
+    /// Capacity (in chunks) of each body channel. Default: 32.
+    pub channel_capacity: Option<usize>,
+    /// Maximum byte length of a single chunk in `send_chunk`. Default: 65536.
+    pub max_chunk_size_bytes: Option<usize>,
+    /// Milliseconds to wait for a slow body reader. Default: 30000.
+    pub drain_timeout_ms: Option<u64>,
+    /// TTL in ms for slab handle entries. `0` disables sweeping. Default: 300000.
+    pub handle_ttl_ms: Option<u64>,
+    /// How often (in ms) the TTL sweep task runs. Default: 60000 (60 s).
+    /// Reducing this lowers the worst-case leaked-handle window at the cost of
+    /// more frequent write-lock acquisitions on every handle registry.
+    /// Useful for short-lived endpoints and test fixtures.
+    pub sweep_interval_ms: Option<u64>,
+}
+
+/// Configuration passed to [`crate::IrohEndpoint::bind`].
+#[derive(Debug, Clone, Default)]
+pub struct NodeOptions {
+    /// 32-byte Ed25519 secret key. Generate a fresh one when `None`.
+    pub key: Option<[u8; 32]>,
+    /// Networking / QUIC transport configuration.
+    pub networking: NetworkingOptions,
+    /// DNS-based peer discovery configuration.
+    pub discovery: DiscoveryOptions,
+    /// Connection-pool tuning.
+    pub pool: PoolOptions,
+    /// Body-streaming and handle-store configuration.
+    pub streaming: StreamingOptions,
+    /// ALPN capabilities to advertise.
+    ///
+    /// Valid values: [`ALPN_STR`](crate::ALPN_STR) (`"iroh-http/2"`) and
+    /// [`ALPN_DUPLEX_STR`](crate::ALPN_DUPLEX_STR) (`"iroh-http/2-duplex"`).
+    ///
+    /// When empty (the default), both protocols are advertised. When non-empty,
+    /// the base protocol (`iroh-http/2`) is automatically injected if not
+    /// already present. Unknown values cause [`crate::IrohEndpoint::bind`] to
+    /// return an error.
+    pub capabilities: Vec<String>,
+    /// Write TLS session keys to $SSLKEYLOGFILE. Dev/debug only.
+    pub keylog: bool,
+    /// Maximum byte size of the HTTP/1.1 request or response head.
+    /// `None` = 65536.  `Some(0)` is rejected.
+    pub max_header_size: Option<usize>,
+    /// Maximum decompressed response body bytes the client will accept per
+    /// outgoing `fetch()`.  Default: 256 MiB.  Protects against compression
+    /// bombs from malicious peers.
+    pub max_response_body_bytes: Option<usize>,
+    pub compression: Option<crate::http::server::stack::CompressionOptions>,
+}
+
+// ── Observability types (formerly `crate::stats`) ─────────────────────────
+
+use serde::{Deserialize, Serialize};
+
+/// Serialisable node address: node ID + relay and direct addresses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeAddrInfo {
+    /// Base32-encoded public key.
+    pub id: String,
+    /// Relay URLs and/or `ip:port` direct addresses.
+    pub addrs: Vec<String>,
+}
+
+/// Endpoint-level observability snapshot.
+///
+/// Returned by [`crate::IrohEndpoint::endpoint_stats`].  All counts are
+/// point-in-time reads and may change between calls.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EndpointStats {
+    /// Number of currently open body reader handles.
+    pub active_readers: usize,
+    /// Number of currently open body writer handles.
+    pub active_writers: usize,
+    /// Number of live QUIC sessions (WebTransport connections).
+    pub active_sessions: usize,
+    /// Total number of allocated (reader + writer + session + other) handles.
+    pub total_handles: usize,
+    /// Number of QUIC connections currently cached in the connection pool.
+    pub pool_size: usize,
+    /// Number of live QUIC connections accepted by the serve loop.
+    pub active_connections: usize,
+    /// Number of HTTP requests currently being processed.
+    pub active_requests: usize,
+}
+
+/// A connection lifecycle event fired when a QUIC peer connection opens or closes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionEvent {
+    /// Base32-encoded public key of the peer.
+    pub peer_id: String,
+    /// `true` when this is the first connection from the peer (0→1), `false` when the last one closes (1→0).
+    pub connected: bool,
+}
+
+/// Per-peer connection statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerStats {
+    /// Whether the peer is connected via a relay server (vs direct).
+    pub relay: bool,
+    /// Active relay URL, if any.
+    pub relay_url: Option<String>,
+    /// All known paths to this peer.
+    pub paths: Vec<PathInfo>,
+    /// Round-trip time in milliseconds.  `None` if no active QUIC connection is pooled.
+    pub rtt_ms: Option<f64>,
+    /// Total UDP bytes sent to this peer.  `None` if no active QUIC connection is pooled.
+    pub bytes_sent: Option<u64>,
+    /// Total UDP bytes received from this peer.  `None` if no active QUIC connection is pooled.
+    pub bytes_received: Option<u64>,
+    /// Total packets lost on the QUIC path.  `None` if no active QUIC connection is pooled.
+    pub lost_packets: Option<u64>,
+    /// Total packets sent on the QUIC path.  `None` if no active QUIC connection is pooled.
+    pub sent_packets: Option<u64>,
+    /// Current congestion window in bytes.  `None` if no active QUIC connection is pooled.
+    pub congestion_window: Option<u64>,
+}
+
+/// Network path information for a single transport address.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathInfo {
+    /// Whether this path goes through a relay server.
+    pub relay: bool,
+    /// The relay URL (if relay) or `ip:port` (if direct).
+    pub addr: String,
+    /// Whether this is the currently selected/active path.
+    pub active: bool,
+}
 
 /// A shared Iroh endpoint.
 ///
@@ -246,7 +498,8 @@ impl IrohEndpoint {
                 .unwrap_or(crate::ffi::handles::DEFAULT_SWEEP_INTERVAL_MS),
         );
         let (closed_tx, closed_rx) = tokio::sync::watch::channel(false);
-        let (event_tx, event_rx) = tokio::sync::mpsc::channel::<crate::events::TransportEvent>(256);
+        let (event_tx, event_rx) =
+            tokio::sync::mpsc::channel::<crate::http::events::TransportEvent>(256);
 
         let inner = Arc::new(EndpointInner {
             transport: Transport { ep, node_id_str },
@@ -627,7 +880,7 @@ impl IrohEndpoint {
     /// if the receiver was already taken (i.e. `subscribe_events` was called before).
     pub fn subscribe_events(
         &self,
-    ) -> Option<tokio::sync::mpsc::Receiver<crate::events::TransportEvent>> {
+    ) -> Option<tokio::sync::mpsc::Receiver<crate::http::events::TransportEvent>> {
         self.inner
             .session
             .event_rx
@@ -685,11 +938,13 @@ impl IrohEndpoint {
                             if let Some(sender) = ep.inner.session.path_subs.get(&nid) {
                                 let _ = sender.send(active.clone());
                             }
-                            let _ = event_tx.try_send(crate::events::TransportEvent::path_change(
-                                &nid,
-                                &active.addr,
-                                active.relay,
-                            ));
+                            let _ = event_tx.try_send(
+                                crate::http::events::TransportEvent::path_change(
+                                    &nid,
+                                    &active.addr,
+                                    active.relay,
+                                ),
+                            );
                         }
                     }
                 }
