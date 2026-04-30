@@ -13,9 +13,10 @@
 //! After this slice there is exactly one composition function per direction
 //! ([`build_stack`] for inbound, [`build_client_stack`] for outbound),
 //! both consume the same typed [`StackConfig`], and every middleware is
-//! driven by an [`Option`]/`bool` field through `option_layer` rather than
-//! a `cfg!` macro. Toggling `cfg.compression = None` produces a service
-//! whose runtime shape is identical to the layer never having been built.
+//! driven by a dedicated `apply_*` factory taking [`ServeService`] →
+//! [`ServeService`] (axum-style boxed-per-layer composition). Toggling
+//! a `cfg` field off produces a service whose runtime shape is identical
+//! to the layer never having been built (no-op early-return).
 //!
 //! Layer ordering (outermost first), inbound:
 //!
@@ -113,25 +114,21 @@ pub(crate) type ClientService =
 /// Tower stack configuration shared by [`build_stack`] and
 /// [`build_client_stack`].
 ///
-/// Compression, body-limit and load-shed are toggled at runtime via
-/// `option_layer` (zero overhead when `None`/`false`). Timeout uses
-/// `Duration::MAX` as the disabled sentinel: it always composes through
-/// the same `TimeoutLayer` arm, so the future type stays uniform across
-/// configurations and the resulting `Either` chain satisfies
-/// `Service<Request<Body>>` (see ADR-014 D2 stop-signal).
+/// Each field is consumed by a dedicated `apply_*` factory in this module
+/// (see [`build_stack`]'s body). Factories are no-ops when their field is
+/// `None`/`false`, so toggling a field off produces a service whose
+/// runtime shape is identical to the layer never having been built.
 ///
-/// Decompression on the server, and response decompression on the client,
-/// are not exposed as toggles here: the layer's `Service::Future` type is
-/// not uniform with the no-op arm, so an `option_layer` would fail to
-/// compose into a single boxed service. Both directions remain always-on
-/// in this slice; if a real opt-out becomes needed, the implementation is
-/// to branch [`build_stack`] into two pre-boxed flavours rather than
-/// fight `Either`'s `Service` bound.
-#[derive(Clone, Debug, Default)]
+/// Composition uses the axum-style boxed-per-layer pattern: every
+/// `apply_*` takes a [`ServeService`] and returns a [`ServeService`],
+/// performing its own `boxed_clone()`. This re-erases the inner
+/// `Service::Future` after each layer, so layer addition is decoupled
+/// from the type-soup of `Either<L::Service, S>` and `impl Layer<…>`
+/// return-position bound erasure (see Slice B (#184) carry-forward in
+/// Slice C (#185)).
+#[derive(Clone, Debug)]
 pub(crate) struct StackConfig {
-    /// Per-request timeout. `None` is treated as `Duration::MAX` (no
-    /// effective deadline); the `TimeoutLayer` itself is always applied so
-    /// the inner `Future` type is invariant under config changes.
+    /// Per-request timeout. `None` ⇒ no `TimeoutLayer` is applied.
     pub timeout: Option<Duration>,
     /// Maximum decoded request body size before the server rejects with 413.
     pub max_request_body_bytes: Option<usize>,
@@ -142,107 +139,171 @@ pub(crate) struct StackConfig {
     /// compression on the server side; ignored by [`build_client_stack`]
     /// (clients do not yet compress request bodies).
     pub compression: Option<CompressionOptions>,
+    /// `true` ⇒ apply `RequestDecompressionLayer` (server) /
+    /// `DecompressionLayer` (client). Defaults to `true` — every server
+    /// today accepts compressed requests, every client accepts compressed
+    /// responses.
+    pub decompression: bool,
+}
+
+impl Default for StackConfig {
+    fn default() -> Self {
+        Self {
+            timeout: None,
+            max_request_body_bytes: None,
+            load_shed: false,
+            compression: None,
+            decompression: true,
+        }
+    }
 }
 
 // ── Server pipeline ──────────────────────────────────────────────────────────
 
 /// Compose the inbound per-connection tower stack.
 ///
+/// Layer ordering (outermost first):
+///
 /// ```text
-///   request body limit  →  HandleLayerError  →  load shed
-///                       →  request timeout   →  compression (response)
+///   request body limit  →  load shed  →  request timeout
+///                       →  compression (response)
 ///                       →  decompression (request)
 ///                       →  svc
 /// ```
 ///
-/// Returns a fully-erased [`ServeService`] so the caller does not have to
-/// name the inner `Either<…, …>` chain produced by the `option_layer`s.
-/// `svc` is itself a [`ServeService`] — the per-connection wrapping
-/// (concurrency limiter + `IrohHttpService`) is applied upstream in
-/// `serve_with_events` before this function is called, so this signature is
-/// stable across changes to the inner service.
+/// Built bottom-up (innermost first) by chaining `apply_*` factories,
+/// each of which takes a [`ServeService`] and returns a [`ServeService`].
+/// Adding a new layer is a single line.
+///
+/// `HandleLayerError` is owned **by each layer that can produce a
+/// `BoxError`** (load-shed, timeout) rather than threaded as a separate
+/// outer wrap: this keeps every factory's signature uniformly
+/// `ServeService → ServeService` and the chain composable in any order.
+/// See Slice C carry-forward (#185) for the design rationale.
 pub(crate) fn build_stack(svc: ServeService, cfg: &StackConfig) -> ServeService {
-    use crate::http::server::HandleLayerErrorLayer;
+    let svc = apply_decompression(svc, cfg.decompression);
+    let svc = apply_compression(svc, cfg.compression.as_ref());
+    let svc = apply_timeout(svc, cfg.timeout);
+    let svc = apply_load_shed(svc, cfg.load_shed);
+    apply_body_limit(svc, cfg.max_request_body_bytes)
+}
+
+/// `RequestBodyLimitLayer` rejects oversize bodies with 413. Wrapped in
+/// matching `MapRequestBody` / `MapResponseBody` to renormalise both
+/// directions back to [`Body`] (ADR-014 D2 / #175).
+pub(crate) fn apply_body_limit(svc: ServeService, limit: Option<usize>) -> ServeService {
     use tower::ServiceExt;
+    use tower_http::limit::RequestBodyLimitLayer;
     use tower_http::map_request_body::MapRequestBodyLayer;
     use tower_http::map_response_body::MapResponseBodyLayer;
 
-    // ADR-013: enforce request body size with the standard tower-http
-    // layer rather than a hand-rolled byte counter in the dispatcher.
-    // `RequestBodyLimitLayer` wraps the request body to `Limited<B>` and
-    // changes the response body to `ResponseBody<S::ResBody>`. Per
-    // ADR-014 D2 / #175 we renormalise both directions back to `Body` so
-    // the inner service stays `Service<Request<Body>, Response = Response<Body>>`.
-    let body_limit_layer = cfg.max_request_body_bytes.map(|limit| {
-        ServiceBuilder::new()
-            .layer(MapResponseBodyLayer::new(
-                |b: tower_http::limit::ResponseBody<Body>| Body::new(b),
-            ))
-            .layer(tower_http::limit::RequestBodyLimitLayer::new(limit))
-            .layer(MapRequestBodyLayer::new(
-                |b: tower_http::body::Limited<Body>| Body::new(b),
-            ))
-            .into_inner()
-    });
-
-    let load_shed_layer = cfg.load_shed.then(tower::load_shed::LoadShedLayer::new);
-
-    let timeout = cfg.timeout.unwrap_or(Duration::MAX);
-    let timeout_layer = tower::timeout::TimeoutLayer::new(timeout);
-
-    // Compression bundle: `CompressionLayer` wraps the response body
-    // to `CompressionBody<Body>`; the outer `MapResponseBodyLayer`
-    // renormalises it back to `Body` so the `option_layer` arms unify.
-    let comp_layer = cfg
-        .compression
-        .as_ref()
-        .map(build_compression_layer)
-        .map(|comp| {
-            ServiceBuilder::new()
-                .layer(MapResponseBodyLayer::new(
-                    |b: tower_http::compression::CompressionBody<Body>| Body::new(b),
-                ))
-                .layer(comp)
-                .into_inner()
-        });
-
-    // Decompression bundle: `RequestDecompressionLayer` wraps the request
-    // body to `DecompressionBody<Body>` (renormalised on the way in) and
-    // unifies its response body to `tower_http::body::UnsyncBoxBody<Bytes,
-    // BoxError>` (renormalised on the way out). Always-on: every server
-    // accepts compressed requests, even when it does not send compressed
-    // responses. See [`StackConfig`] doc for why this is not toggleable.
-    //
-    // The bundle is inlined here rather than factored into a sibling
-    // `build_decompression_layer()` because returning the assembled
-    // `Stack<MapRequestBody<RequestDecompression<MapResponseBody<...>>>>`
-    // through an `impl Layer<ServeService>` erases the `Service::Future:
-    // Send + 'static` bound that `boxed_clone` later needs. Spelling the
-    // concrete `Stack<...>` type would be a 5-line type alias that has to
-    // be edited every time tower-http changes a body wrapper. Inline form
-    // keeps the layer ordering visible in one place; mirror this when the
-    // client side eventually grows real layers in Slice D.
-    fn box_to_body(b: tower_http::body::UnsyncBoxBody<Bytes, BoxError>) -> Body {
-        Body::new(b)
-    }
-    let decomp_layer = {
-        use tower_http::decompression::{DecompressionBody, RequestDecompressionLayer};
-        ServiceBuilder::new()
-            .layer(MapResponseBodyLayer::new(box_to_body))
-            .layer(RequestDecompressionLayer::new())
-            .layer(MapRequestBodyLayer::new(|b: DecompressionBody<Body>| {
-                Body::new(b)
-            }))
-            .into_inner()
+    let Some(limit) = limit else {
+        return svc;
     };
-
     ServiceBuilder::new()
-        .option_layer(body_limit_layer)
+        .layer(MapResponseBodyLayer::new(
+            |b: tower_http::limit::ResponseBody<Body>| Body::new(b),
+        ))
+        .layer(RequestBodyLimitLayer::new(limit))
+        .layer(MapRequestBodyLayer::new(
+            |b: tower_http::body::Limited<Body>| Body::new(b),
+        ))
+        .service(svc)
+        .boxed_clone()
+}
+
+/// Always-on: maps the inner `Service::Error` (`Infallible` after
+/// `HandleLayerError`, `BoxError` from upstream tower layers) into a
+/// proper HTTP response.
+///
+/// Not used by [`build_stack`] today: each error-producing layer
+/// (`apply_load_shed`, `apply_timeout`) bundles its own
+/// [`HandleLayerErrorLayer`] so the chain stays uniformly
+/// `ServeService → ServeService`. Exposed for hand-rolled stacks that
+/// produce a `Service` with `Error: Into<BoxError>` and need to box-erase
+/// it back to `Infallible`.
+#[allow(dead_code)]
+pub(crate) fn apply_handle_layer_error(svc: ServeService) -> ServeService {
+    use crate::http::server::HandleLayerErrorLayer;
+    use tower::ServiceExt;
+    ServiceBuilder::new()
         .layer(HandleLayerErrorLayer)
-        .option_layer(load_shed_layer)
-        .layer(timeout_layer)
-        .option_layer(comp_layer)
-        .layer(decomp_layer)
+        .service(svc)
+        .boxed_clone()
+}
+
+/// `LoadShedLayer` returns `Overloaded` immediately when the inner
+/// service reports `Poll::Pending` from `poll_ready`. The error is
+/// converted to a 503 response by an inner [`HandleLayerErrorLayer`] so
+/// the resulting service still has `Error = Infallible`. No-op when
+/// `enabled = false`.
+pub(crate) fn apply_load_shed(svc: ServeService, enabled: bool) -> ServeService {
+    use crate::http::server::HandleLayerErrorLayer;
+    use tower::ServiceExt;
+    if !enabled {
+        return svc;
+    }
+    ServiceBuilder::new()
+        .layer(HandleLayerErrorLayer)
+        .layer(tower::load_shed::LoadShedLayer::new())
+        .service(svc)
+        .boxed_clone()
+}
+
+/// Per-request timeout. The `Elapsed` error is converted to a 408
+/// response by an inner [`HandleLayerErrorLayer`] so the resulting
+/// service still has `Error = Infallible`. No-op when `timeout = None`.
+pub(crate) fn apply_timeout(svc: ServeService, timeout: Option<Duration>) -> ServeService {
+    use crate::http::server::HandleLayerErrorLayer;
+    use tower::ServiceExt;
+    let Some(timeout) = timeout else {
+        return svc;
+    };
+    ServiceBuilder::new()
+        .layer(HandleLayerErrorLayer)
+        .layer(tower::timeout::TimeoutLayer::new(timeout))
+        .service(svc)
+        .boxed_clone()
+}
+
+/// Response compression with project-specific predicates (see
+/// [`build_compression_layer`]). No-op when `comp = None`.
+pub(crate) fn apply_compression(svc: ServeService, comp: Option<&CompressionOptions>) -> ServeService {
+    use tower::ServiceExt;
+    use tower_http::map_response_body::MapResponseBodyLayer;
+
+    let Some(comp) = comp else {
+        return svc;
+    };
+    ServiceBuilder::new()
+        .layer(MapResponseBodyLayer::new(
+            |b: tower_http::compression::CompressionBody<Body>| Body::new(b),
+        ))
+        .layer(build_compression_layer(comp))
+        .service(svc)
+        .boxed_clone()
+}
+
+/// Request decompression. Wrapped in matching `MapRequestBody` /
+/// `MapResponseBody` to renormalise both body sides back to [`Body`].
+/// No-op when `enabled = false`.
+pub(crate) fn apply_decompression(svc: ServeService, enabled: bool) -> ServeService {
+    use tower::ServiceExt;
+    use tower_http::decompression::{DecompressionBody, RequestDecompressionLayer};
+    use tower_http::map_request_body::MapRequestBodyLayer;
+    use tower_http::map_response_body::MapResponseBodyLayer;
+
+    if !enabled {
+        return svc;
+    }
+    ServiceBuilder::new()
+        .layer(MapResponseBodyLayer::new(
+            |b: tower_http::body::UnsyncBoxBody<Bytes, BoxError>| Body::new(b),
+        ))
+        .layer(RequestDecompressionLayer::new())
+        .layer(MapRequestBodyLayer::new(|b: DecompressionBody<Body>| {
+            Body::new(b)
+        }))
         .service(svc)
         .boxed_clone()
 }
@@ -330,25 +391,44 @@ impl tower::Service<hyper::Request<Body>> for HyperClientSvc {
 /// ```
 ///
 /// Returns a [`ClientService`] — boxed once so the caller (`fetch`) does
-/// not have to spell the inner type. Currently honours none of
-/// [`StackConfig`]'s fields directly; the body-renormalisation +
-/// always-on decompression match the server's policy. Slice D introduces
-/// client-side timeout / body-limit / typed `FetchError` in the same
-/// shape.
+/// not have to spell the inner type. Honours `cfg.decompression`;
+/// timeout / body-limit / typed `FetchError` arrive in Slice D (#186).
 pub(crate) fn build_client_stack(
     sender: hyper::client::conn::http1::SendRequest<Body>,
-    _cfg: &StackConfig,
+    cfg: &StackConfig,
 ) -> ClientService {
+    use tower::ServiceExt;
+    use tower_http::map_response_body::MapResponseBodyLayer;
+
+    // Step 1: normalise hyper's `Incoming` to `Body` so subsequent layers
+    // operate on the canonical body type.
+    let svc = ServiceBuilder::new()
+        .layer(MapResponseBodyLayer::new(|b: hyper::body::Incoming| {
+            Body::new(b)
+        }))
+        .service(HyperClientSvc(sender))
+        .boxed();
+
+    // Step 2: optional response decompression (always-on by default).
+    apply_client_decompression(svc, cfg.decompression)
+}
+
+/// Client-side equivalent of [`apply_decompression`]. No-op when
+/// `enabled = false`.
+pub(crate) fn apply_client_decompression(svc: ClientService, enabled: bool) -> ClientService {
     use tower::ServiceExt;
     use tower_http::decompression::{DecompressionBody, DecompressionLayer};
     use tower_http::map_response_body::MapResponseBodyLayer;
 
+    if !enabled {
+        return svc;
+    }
     ServiceBuilder::new()
-        .layer(MapResponseBodyLayer::new(
-            |b: DecompressionBody<hyper::body::Incoming>| Body::new(b),
-        ))
+        .layer(MapResponseBodyLayer::new(|b: DecompressionBody<Body>| {
+            Body::new(b)
+        }))
         .layer(DecompressionLayer::new())
-        .service(HyperClientSvc(sender))
+        .service(svc)
         .boxed()
 }
 
@@ -412,6 +492,7 @@ mod tests {
             max_request_body_bytes: Some(1024 * 1024),
             load_shed: true,
             compression: None,
+            decompression: true,
         }
     }
 

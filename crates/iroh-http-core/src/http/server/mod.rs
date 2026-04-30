@@ -858,6 +858,7 @@ where
                             max_request_body_bytes,
                             load_shed: load_shed_enabled,
                             compression: req_compression,
+                            decompression: true,
                         };
                         crate::http::server::pipeline::serve_bistream(
                             io,
