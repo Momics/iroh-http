@@ -11,6 +11,7 @@
 //! `IrohHttpService` around the JS callback and hands it in like any
 //! other service.
 
+pub(crate) mod lifecycle;
 pub(crate) mod pipeline;
 pub(crate) mod stack;
 
@@ -32,6 +33,8 @@ use hyper_util::rt::TokioIo;
 use tower::Service;
 
 use crate::{base32_encode, http::transport::io::IrohStream, ConnectionEvent, IrohEndpoint};
+
+use self::lifecycle::{ConnectionTracker, RequestTracker};
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
 
@@ -112,72 +115,13 @@ impl ServeHandle {
     }
 }
 
-// ── PeerConnectionGuard ───────────────────────────────────────────────────────
+// ── Connection-event callback type ───────────────────────────────────────────
 
 pub(crate) type ConnectionEventFn = Arc<dyn Fn(ConnectionEvent) + Send + Sync>;
 
-struct PeerConnectionGuard {
-    counts: Arc<Mutex<HashMap<iroh::PublicKey, usize>>>,
-    peer: iroh::PublicKey,
-    peer_id_str: String,
-    on_event: Option<ConnectionEventFn>,
-}
-
-impl PeerConnectionGuard {
-    fn acquire(
-        counts: &Arc<Mutex<HashMap<iroh::PublicKey, usize>>>,
-        peer: iroh::PublicKey,
-        peer_id_str: String,
-        max: usize,
-        on_event: Option<ConnectionEventFn>,
-    ) -> Option<Self> {
-        let mut map = counts.lock().unwrap_or_else(|e| e.into_inner());
-        let count = map.entry(peer).or_insert(0);
-        if *count >= max {
-            return None;
-        }
-        let was_zero = *count == 0;
-        *count = count.saturating_add(1);
-        let guard = PeerConnectionGuard {
-            counts: counts.clone(),
-            peer,
-            peer_id_str: peer_id_str.clone(),
-            on_event: on_event.clone(),
-        };
-        // Fire connected event on 0 → 1 transition (first connection from this peer).
-        if was_zero {
-            if let Some(cb) = &on_event {
-                cb(ConnectionEvent {
-                    peer_id: peer_id_str,
-                    connected: true,
-                });
-            }
-        }
-        Some(guard)
-    }
-}
-
-impl Drop for PeerConnectionGuard {
-    fn drop(&mut self) {
-        let mut map = self.counts.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(c) = map.get_mut(&self.peer) {
-            *c = c.saturating_sub(1);
-            if *c == 0 {
-                map.remove(&self.peer);
-                // Fire disconnected event on 1 → 0 transition (last connection from this peer closed).
-                if let Some(cb) = &self.on_event {
-                    cb(ConnectionEvent {
-                        peer_id: self.peer_id_str.clone(),
-                        connected: false,
-                    });
-                }
-            }
-        }
-    }
-}
-
-// `RemoteNodeId` extension + `ConnectionEventFn` defined above; the
-// FFI dispatcher and respond() live in `crate::ffi::dispatcher`.
+// `ConnectionTracker` and `RequestTracker` (formerly inline
+// PeerConnectionGuard / TotalGuard / ReqGuard) live in `lifecycle.rs`.
+// The FFI dispatcher and respond() live in `crate::ffi::dispatcher`.
 
 /// Authenticated peer node id of the QUIC connection a request arrived
 /// on. Inserted as a request extension by the per-connection
@@ -347,12 +291,13 @@ where
 
             let remote_id = base32_encode(remote_pk.as_bytes());
 
-            let guard = match PeerConnectionGuard::acquire(
+            let conn_tracker = match ConnectionTracker::acquire(
                 &peer_counts,
                 remote_pk,
                 remote_id.clone(),
                 max_conns_per_peer,
                 conn_event_fn.clone(),
+                total_connections.clone(),
             ) {
                 Some(g) => g,
                 None => {
@@ -381,22 +326,15 @@ where
                 request_timeout
             };
 
-            let conn_total = total_connections.clone();
             let conn_requests = total_requests.clone();
             let in_flight_conn = in_flight.clone();
             let drain_notify_conn = drain_notify.clone();
             let stack_compression_conn = stack_compression.clone();
-            conn_total.fetch_add(1, Ordering::Relaxed);
             tokio::spawn(async move {
-                let _guard = guard;
-                // Decrement total connection count when this task exits.
-                struct TotalGuard(Arc<AtomicUsize>);
-                impl Drop for TotalGuard {
-                    fn drop(&mut self) {
-                        self.0.fetch_sub(1, Ordering::Relaxed);
-                    }
-                }
-                let _total_guard = TotalGuard(conn_total);
+                // Owns the per-peer count, total-connection counter, and
+                // connect/disconnect event firing for this connection's
+                // lifetime. See `lifecycle.rs`.
+                let _conn_tracker = conn_tracker;
 
                 loop {
                     let (send, recv) = match conn.accept_bi().await {
@@ -415,26 +353,11 @@ where
                     let req_compression = stack_compression_conn.clone();
 
                     tokio::spawn(async move {
-                        // Decrement request count when this task exits.
-                        struct ReqGuard {
-                            counter: Arc<AtomicUsize>,
-                            in_flight: Arc<AtomicUsize>,
-                            drain_notify: Arc<tokio::sync::Notify>,
-                        }
-                        impl Drop for ReqGuard {
-                            fn drop(&mut self) {
-                                self.counter.fetch_sub(1, Ordering::Relaxed);
-                                if self.in_flight.fetch_sub(1, Ordering::AcqRel) == 1 {
-                                    // Last in-flight request completed — signal drain.
-                                    self.drain_notify.notify_waiters();
-                                }
-                            }
-                        }
-                        let _req_guard = ReqGuard {
-                            counter: req_counter,
-                            in_flight: in_flight_req,
-                            drain_notify: drain_notify_req,
-                        };
+                        // Owns the per-connection and crate-wide in-flight
+                        // counters; notifies drain waiters when in-flight
+                        // reaches zero. See `lifecycle.rs`.
+                        let _req_tracker =
+                            RequestTracker::new(req_counter, in_flight_req, drain_notify_req);
                         // ISS-001: clamp to hyper's minimum safe buffer size of 8192.
                         // ISS-020: a stored value of 0 means "use the default" (64 KB).
                         let effective_header_limit = if max_header_size == 0 {

@@ -78,6 +78,23 @@ pub fn respond(
         .map_err(|_| CoreError::internal("serve task dropped before respond"))
 }
 
+// ── ReqHeadGuard ──────────────────────────────────────────────────────────
+//
+// RAII guard that removes the per-request slab entry from the handle
+// store on every dispatch exit path (success, error, panic). Lifted to
+// module scope from inline-in-`dispatch` per Slice C.4 of #182 (#178).
+
+struct ReqHeadGuard {
+    endpoint: IrohEndpoint,
+    req_handle: u64,
+}
+
+impl Drop for ReqHeadGuard {
+    fn drop(&mut self) {
+        self.endpoint.handles().take_req_sender(self.req_handle);
+    }
+}
+
 // ── FfiDispatcher + IrohHttpService ───────────────────────────────────────
 
 /// FFI-shaped tower service: allocates request/response handles, fires the
@@ -227,17 +244,7 @@ impl FfiDispatcher {
 
         guard.commit();
 
-        // RAII guard: remove the req_handle slab entry on all exit paths.
-        struct ReqHeadCleanup {
-            endpoint: IrohEndpoint,
-            req_handle: u64,
-        }
-        impl Drop for ReqHeadCleanup {
-            fn drop(&mut self) {
-                self.endpoint.handles().take_req_sender(self.req_handle);
-            }
-        }
-        let _req_head_cleanup = ReqHeadCleanup {
+        let _req_head_guard = ReqHeadGuard {
             endpoint: self.endpoint.clone(),
             req_handle,
         };
