@@ -2,37 +2,46 @@
 //!
 //! This crate owns the Iroh endpoint and wires HTTP/1.1 framing to QUIC
 //! streams via hyper.  Nothing in here knows about JavaScript.
+//!
+//! Per epic #182 the crate is split into two top-level modules with a
+//! one-way dependency:
+//!
+//! - [`http`] — pure-Rust HTTP-over-iroh primitives. No `u64` handles,
+//!   no callbacks. A pure-Rust application can call [`http::client::fetch`]
+//!   and [`http::server::serve`] without touching any FFI type.
+//! - [`ffi`] — FFI bridge: handle store, callback-shaped serve, flat
+//!   fetch. Wraps [`http`]; never imported in the reverse direction
+//!   (enforced by `tests/architecture.rs`).
 #![deny(unsafe_code)]
 
-pub mod body;
-pub mod client;
 pub mod config;
 pub mod endpoint;
 pub mod events;
-pub(crate) mod io;
-pub(crate) mod pool;
 pub mod registry;
-pub mod server;
-pub(crate) mod server_pipeline;
-pub mod session;
 pub mod stats;
-pub mod stream;
 
-pub use body::{Body, BoxError};
-pub use client::fetch;
+pub(crate) mod ffi;
+pub(crate) mod http;
+
+// ── Pure-Rust HTTP API surface (`mod http`) ───────────────────────────────────
+pub use http::body::{Body, BoxError};
+pub use http::client::fetch;
+pub use http::server::{respond, serve, serve_with_events, ServeHandle, ServeOptions};
+pub use http::session::{CloseInfo, Session};
+
+// ── FFI bridge surface (`mod ffi`) ────────────────────────────────────────────
+pub use ffi::handles::{
+    make_body_channel, BodyReader, HandleStore, ResponseHeadEntry, StoreConfig,
+};
+pub use ffi::types::{FfiDuplexStream, FfiResponse, RequestPayload};
+
+// ── Other re-exports kept at crate root ───────────────────────────────────────
 pub use config::CompressionOptions;
 pub use config::{DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions};
 pub use endpoint::{parse_direct_addrs, IrohEndpoint};
 pub use events::TransportEvent;
 pub use registry::{get_endpoint, insert_endpoint, remove_endpoint};
-pub use server::respond;
-pub use server::serve;
-pub use server::serve_with_events;
-pub use server::ServeHandle;
-pub use server::ServeOptions;
-pub use session::{CloseInfo, Session};
 pub use stats::{ConnectionEvent, EndpointStats, NodeAddrInfo, PathInfo, PeerStats};
-pub use stream::{BodyReader, HandleStore, StoreConfig};
 
 // ── Structured error types ────────────────────────────────────────────────────
 
@@ -143,7 +152,7 @@ pub const KNOWN_ALPNS: &[&str] = &[ALPN_STR, ALPN_DUPLEX_STR];
 
 // ── Shared body type ─────────────────────────────────────────────────────────
 //
-// The unified [`Body`] newtype lives in [`crate::body`]. It is re-exported
+// The unified [`Body`] newtype lives in [`crate::http::body`]. It is re-exported
 // from the crate root above so internal modules can write `crate::Body` and
 // downstream FFI adapters can name it without reaching into a submodule.
 
@@ -254,41 +263,9 @@ pub fn parse_node_addr(s: &str) -> Result<ParsedNodeAddr, CoreError> {
 }
 
 // ── FFI types ─────────────────────────────────────────────────────────────────
-
-/// Flat response-head struct that crosses the FFI boundary.
-///
-/// `body_handle` is `0` (the slotmap null sentinel) for null-body status codes
-/// (RFC 9110 §6.3: 204, 205, 304).  Adapters should treat `0` as "no body"
-/// rather than inspecting the status code themselves.
-#[derive(Debug, Clone)]
-pub struct FfiResponse {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    /// Handle to a [`BodyReader`] containing the response body.
-    pub body_handle: u64,
-    /// Full `httpi://` URL of the responding peer.
-    pub url: String,
-}
-
-/// Options passed to the JS serve callback per incoming request.
-#[derive(Debug)]
-pub struct RequestPayload {
-    pub req_handle: u64,
-    pub req_body_handle: u64,
-    pub res_body_handle: u64,
-    pub method: String,
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub remote_node_id: String,
-    pub is_bidi: bool,
-}
-
-/// Handles for the two sides of a full-duplex QUIC stream.
-#[derive(Debug)]
-pub struct FfiDuplexStream {
-    pub read_handle: u64,
-    pub write_handle: u64,
-}
+//
+// FFI-shaped types now live in [`crate::ffi::types`] (epic #182). They are
+// re-exported above under the FFI bridge surface block.
 
 #[cfg(test)]
 mod tests {

@@ -1,8 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use iroh_http_core::{
-    fetch, serve,
-    server::{respond, ServeOptions},
-    IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload,
+    fetch, respond, serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload,
+    ServeOptions,
 };
 
 fn local_opts() -> NodeOptions {

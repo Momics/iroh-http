@@ -8,7 +8,7 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use crate::pool::ConnectionPool;
+use crate::http::transport::pool::ConnectionPool;
 
 use crate::config::CompressionOptions;
 
@@ -37,7 +37,7 @@ impl HttpRuntime {
         Self {
             pool: ConnectionPool::new(Some(8), None, None),
             max_header_size: 64 * 1024,
-            max_response_body_bytes: crate::server::DEFAULT_MAX_RESPONSE_BODY_BYTES,
+            max_response_body_bytes: crate::http::server::DEFAULT_MAX_RESPONSE_BODY_BYTES,
             active_connections: Arc::new(AtomicUsize::new(0)),
             active_requests: Arc::new(AtomicUsize::new(0)),
             compression: None,

@@ -12,9 +12,9 @@ use iroh::endpoint::Connection;
 use serde::Serialize;
 
 use crate::{
-    parse_node_addr,
-    stream::{pump_body_to_quic_send, pump_quic_recv_to_body, HandleStore, SessionEntry},
-    CoreError, FfiDuplexStream, IrohEndpoint, ALPN_DUPLEX,
+    ffi::handles::{HandleStore, SessionEntry},
+    ffi::pumps::{pump_body_to_quic_send, pump_quic_recv_to_body},
+    parse_node_addr, CoreError, FfiDuplexStream, IrohEndpoint, ALPN_DUPLEX,
 };
 
 /// Returns `true` if the connection error means "connection ended" rather

@@ -17,10 +17,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
-    parse_direct_addrs, registry,
-    server::respond,
-    ConnectionEvent, DiscoveryOptions, NetworkingOptions, PoolOptions, RequestPayload,
-    StreamingOptions,
+    parse_direct_addrs, registry, respond, ConnectionEvent, DiscoveryOptions, NetworkingOptions,
+    PoolOptions, RequestPayload, StreamingOptions,
 };
 use napi::{
     bindgen_prelude::{BigInt, *},
@@ -1168,7 +1166,7 @@ pub fn raw_serve(
             if status != napi::Status::Ok {
                 tracing::warn!("iroh-http-node: TSFN enqueue failed ({status:?}), responding 503");
                 let _ = ep_ref.handles().take_req_sender(req_handle).map(|tx| {
-                    let _ = tx.send(iroh_http_core::stream::ResponseHeadEntry {
+                    let _ = tx.send(iroh_http_core::ResponseHeadEntry {
                         status: 503,
                         headers: vec![("content-length".to_string(), "0".to_string())],
                     });

@@ -5,7 +5,7 @@
 //! signals (closed_tx/rx, serve_done_rx), and the transport event channel
 //! plus path-change subscriptions.
 
-use crate::server::ServeHandle;
+use crate::http::server::ServeHandle;
 use crate::stats::PathInfo;
 
 /// Server-side runtime: the `serve()` task, lifecycle signals, and

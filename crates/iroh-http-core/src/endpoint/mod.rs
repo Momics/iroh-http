@@ -28,9 +28,9 @@ use self::ffi_bridge::FfiBridge;
 use self::http_runtime::HttpRuntime;
 use self::session_runtime::SessionRuntime;
 use self::transport::Transport;
-use crate::pool::ConnectionPool;
-use crate::server::ServeHandle;
-use crate::stream::{HandleStore, StoreConfig};
+use crate::ffi::handles::{HandleStore, StoreConfig};
+use crate::http::server::ServeHandle;
+use crate::http::transport::pool::ConnectionPool;
 use crate::{ALPN, ALPN_DUPLEX};
 
 pub use crate::config::CompressionOptions;
@@ -220,30 +220,30 @@ impl IrohEndpoint {
             channel_capacity: opts
                 .streaming
                 .channel_capacity
-                .unwrap_or(crate::stream::DEFAULT_CHANNEL_CAPACITY)
+                .unwrap_or(crate::ffi::handles::DEFAULT_CHANNEL_CAPACITY)
                 .max(1),
             max_chunk_size: opts
                 .streaming
                 .max_chunk_size_bytes
-                .unwrap_or(crate::stream::DEFAULT_MAX_CHUNK_SIZE)
+                .unwrap_or(crate::ffi::handles::DEFAULT_MAX_CHUNK_SIZE)
                 .max(1),
             drain_timeout: Duration::from_millis(
                 opts.streaming
                     .drain_timeout_ms
-                    .unwrap_or(crate::stream::DEFAULT_DRAIN_TIMEOUT_MS),
+                    .unwrap_or(crate::ffi::handles::DEFAULT_DRAIN_TIMEOUT_MS),
             ),
-            max_handles: crate::stream::DEFAULT_MAX_HANDLES,
+            max_handles: crate::ffi::handles::DEFAULT_MAX_HANDLES,
             ttl: Duration::from_millis(
                 opts.streaming
                     .handle_ttl_ms
-                    .unwrap_or(crate::stream::DEFAULT_SLAB_TTL_MS),
+                    .unwrap_or(crate::ffi::handles::DEFAULT_SLAB_TTL_MS),
             ),
         };
         let sweep_ttl = store_config.ttl;
         let sweep_interval = Duration::from_millis(
             opts.streaming
                 .sweep_interval_ms
-                .unwrap_or(crate::stream::DEFAULT_SWEEP_INTERVAL_MS),
+                .unwrap_or(crate::ffi::handles::DEFAULT_SWEEP_INTERVAL_MS),
         );
         let (closed_tx, closed_rx) = tokio::sync::watch::channel(false);
         let (event_tx, event_rx) = tokio::sync::mpsc::channel::<crate::events::TransportEvent>(256);
@@ -270,7 +270,7 @@ impl IrohEndpoint {
                 },
                 max_response_body_bytes: opts
                     .max_response_body_bytes
-                    .unwrap_or(crate::server::DEFAULT_MAX_RESPONSE_BODY_BYTES),
+                    .unwrap_or(crate::http::server::DEFAULT_MAX_RESPONSE_BODY_BYTES),
                 active_connections: Arc::new(AtomicUsize::new(0)),
                 active_requests: Arc::new(AtomicUsize::new(0)),
                 compression: opts.compression,

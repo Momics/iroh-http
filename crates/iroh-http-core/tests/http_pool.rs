@@ -1,9 +1,10 @@
+#![allow(clippy::redundant_pattern_matching)]
+
 mod common;
 
-use iroh_http_core::server::respond;
+use iroh_http_core::respond;
 use iroh_http_core::{
-    fetch, serve, server::ServeOptions, IrohEndpoint, NetworkingOptions, NodeOptions,
-    RequestPayload,
+    fetch, serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
 };
 
 // -- Connection pooling -------------------------------------------------------
@@ -148,7 +149,13 @@ async fn pool_concurrent_requests_share_connection() {
             .await
             .unwrap();
             assert_eq!(res.status, 200);
-            while let Some(_) = ep.handles().next_chunk(res.body_handle).await.unwrap() {}
+            while ep
+                .handles()
+                .next_chunk(res.body_handle)
+                .await
+                .unwrap()
+                .is_some()
+            {}
         }));
     }
 
@@ -210,7 +217,13 @@ async fn pool_different_peers_get_separate_connections() {
     .expect("fetch to server1 timed out")
     .expect("fetch to server1 failed");
     assert_eq!(r1.status, 200);
-    while let Some(_) = client.handles().next_chunk(r1.body_handle).await.unwrap() {}
+    while client
+        .handles()
+        .next_chunk(r1.body_handle)
+        .await
+        .unwrap()
+        .is_some()
+    {}
 
     let r2 = tokio::time::timeout(
         std::time::Duration::from_secs(10),
@@ -220,7 +233,13 @@ async fn pool_different_peers_get_separate_connections() {
     .expect("fetch to server2 timed out")
     .expect("fetch to server2 failed");
     assert_eq!(r2.status, 200);
-    while let Some(_) = client.handles().next_chunk(r2.body_handle).await.unwrap() {}
+    while client
+        .handles()
+        .next_chunk(r2.body_handle)
+        .await
+        .unwrap()
+        .is_some()
+    {}
 
     // Both succeeded with separate connections to different peers.
     assert_ne!(id1, id2);

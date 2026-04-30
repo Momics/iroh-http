@@ -9,10 +9,9 @@ use http_body_util::BodyExt;
 use hyper_util::rt::TokioIo;
 
 use crate::{
-    io::IrohStream,
-    parse_node_addr,
-    stream::{BodyReader, BodyWriter, HandleStore},
-    CoreError, FfiResponse, IrohEndpoint, ALPN,
+    ffi::handles::{BodyReader, BodyWriter, HandleStore},
+    http::transport::io::IrohStream,
+    parse_node_addr, CoreError, FfiResponse, IrohEndpoint, ALPN,
 };
 
 // ── Body type ────────────────────────────────────────────────────────
@@ -47,7 +46,7 @@ impl tower::Service<hyper::Request<Body>> for HyperClientSvc {
 // ── In-flight fetch cancellation ──────────────────────────────────────────────
 
 // alloc_fetch_token / cancel_in_flight / get_fetch_cancel_notify / remove_fetch_token
-// are now in crate::stream (imported above).
+// are now in crate::ffi::handles (imported above).
 // ── Public fetch API ──────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]

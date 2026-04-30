@@ -4,6 +4,8 @@
 //! server connection.  A `tower::Service` (`IrohHttpService`) bridges between
 //! hyper and the existing body-channel + slab infrastructure.
 
+pub(crate) mod pipeline;
+
 use std::{
     collections::HashMap,
     future::Future,
@@ -23,9 +25,9 @@ use tower::Service;
 
 use crate::{
     base32_encode,
-    client::pump_hyper_body_to_channel,
-    io::IrohStream,
-    stream::{HandleStore, ResponseHeadEntry},
+    ffi::handles::{HandleStore, ResponseHeadEntry},
+    http::client::pump_hyper_body_to_channel,
+    http::transport::io::IrohStream,
     ConnectionEvent, CoreError, IrohEndpoint, RequestPayload,
 };
 
@@ -518,7 +520,7 @@ impl FfiDispatcher {
                     Err(e) => tracing::warn!("iroh-http: duplex upgrade error: {e}"),
                     Ok(upgraded) => {
                         let io = TokioIo::new(upgraded);
-                        crate::stream::pump_duplex(io, req_body_writer, res_body_reader).await;
+                        crate::ffi::pumps::pump_duplex(io, req_body_writer, res_body_reader).await;
                     }
                 }
             });
@@ -670,7 +672,7 @@ where
     // SEC-002: build the concurrency limiter as a *layer* once so every
     // per-connection stack we wrap with it shares the same `Arc<Semaphore>`,
     // enforcing a true global request cap across all connections. Boxing
-    // each wrapped stack into a [`crate::server_pipeline::ServeService`]
+    // each wrapped stack into a [`crate::http::server::pipeline::ServeService`]
     // (a `BoxCloneService`) is what gives us the structural property
     // ADR-014 D2 / #175 calls for: adding a future layer is one append
     // here, not a new concrete type rippling through `serve_bistream`.
@@ -765,7 +767,7 @@ where
             // ADR-014 D2 / #175 this is the *only* place that names the
             // concrete inner stack \u2014 every downstream consumer sees the
             // box.
-            let conn_svc: crate::server_pipeline::ServeService = ServiceBuilder::new()
+            let conn_svc: crate::http::server::pipeline::ServeService = ServiceBuilder::new()
                 .layer(conc_layer.clone())
                 .service(IrohHttpService {
                     dispatcher: dispatcher_for_conn.clone(),
@@ -843,12 +845,12 @@ where
                         // Build the per-bistream tower pipeline (compression,
                         // decompression, body limit, load-shed, timeout, layer-error
                         // handling) and serve the connection. The full assembly
-                        // lives in [`crate::server_pipeline::serve_bistream`] —
+                        // lives in [`crate::http::server::pipeline::serve_bistream`] —
                         // closes recommendation §5.1 of the post-rework review (#169).
-                        crate::server_pipeline::serve_bistream(
+                        crate::http::server::pipeline::serve_bistream(
                             io,
                             svc,
-                            crate::server_pipeline::PipelineParams {
+                            crate::http::server::pipeline::PipelineParams {
                                 timeout: timeout_dur,
                                 max_request_body_bytes,
                                 load_shed_enabled,

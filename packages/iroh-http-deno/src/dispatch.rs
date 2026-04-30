@@ -22,10 +22,8 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use bytes::Bytes;
 use iroh_http_core::{
     endpoint::{IrohEndpoint, NodeOptions},
-    parse_direct_addrs, registry,
-    server::respond,
-    ConnectionEvent, DiscoveryOptions, NetworkingOptions, PoolOptions, RequestPayload,
-    StreamingOptions,
+    parse_direct_addrs, registry, respond, ConnectionEvent, DiscoveryOptions, NetworkingOptions,
+    PoolOptions, RequestPayload, StreamingOptions,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

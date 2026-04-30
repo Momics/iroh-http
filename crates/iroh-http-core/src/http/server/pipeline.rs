@@ -1,4 +1,4 @@
-//! Per-connection tower pipeline assembly for [`crate::server`].
+//! Per-connection tower pipeline assembly for [`crate::http::server`].
 //!
 //! Closes the recommendation §5.1 of `reviews/2026-04-30-post-rework-review.md`
 //! (issue #169): the layer stack — compression, decompression, body limit,
@@ -30,12 +30,12 @@ use hyper_util::rt::TokioIo;
 use hyper_util::service::TowerToHyperService;
 use tower::{timeout::TimeoutLayer, ServiceBuilder};
 
-use crate::io::IrohStream;
+use crate::http::transport::io::IrohStream;
 use crate::Body;
 
 use crate::CompressionOptions;
 
-/// Runtime knobs collected from [`crate::server::ServeOptions`] and the
+/// Runtime knobs collected from [`crate::http::server::ServeOptions`] and the
 /// owning endpoint, in the shape the pipeline needs.
 #[derive(Clone)]
 pub(crate) struct PipelineParams {
@@ -69,11 +69,11 @@ pub(crate) struct PipelineParams {
 /// `svc` is a fully type-erased [`ServeService`] (a [`BoxCloneService`]).
 /// The accept loop boxes the per-connection stack \u2014 [`IrohHttpService`]
 /// wrapped with `ConcurrencyLimitLayer` and any other operator layers \u2014
-/// once at construction time, so adding a new layer in [`crate::server`]
+/// once at construction time, so adding a new layer in [`crate::http::server`]
 /// does not change the signature seen here.
 ///
 /// [`BoxCloneService`]: tower::util::BoxCloneService
-/// [`IrohHttpService`]: crate::server::IrohHttpService
+/// [`IrohHttpService`]: crate::http::server::IrohHttpService
 /// Type-erased per-connection service handed to [`serve_bistream`].
 ///
 /// Boxing once at the construction site (in `server::serve_with_events`)
@@ -159,7 +159,7 @@ where
         + 'static,
     <L::Service as tower::Service<hyper::Request<Body>>>::Future: Send + 'static,
 {
-    use crate::server::HandleLayerErrorLayer;
+    use crate::http::server::HandleLayerErrorLayer;
     use tower::ServiceExt;
     use tower_http::map_request_body::MapRequestBodyLayer;
     use tower_http::map_response_body::MapResponseBodyLayer;
@@ -213,7 +213,7 @@ where
     // Always-on: every server accepts compressed requests, even when it
     // does not send compressed responses.
     fn box_to_body(
-        b: tower_http::body::UnsyncBoxBody<bytes::Bytes, crate::body::BoxError>,
+        b: tower_http::body::UnsyncBoxBody<bytes::Bytes, crate::http::body::BoxError>,
     ) -> Body {
         Body::new(b)
     }

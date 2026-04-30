@@ -9,10 +9,8 @@
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use iroh_http_core::{
-    fetch, serve,
-    server::{respond, ServeOptions},
-    stream::make_body_channel,
-    IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload,
+    fetch, make_body_channel, respond, serve, IrohEndpoint, NetworkingOptions, NodeOptions,
+    RequestPayload, ServeOptions,
 };
 
 // ── Fixture helpers ───────────────────────────────────────────────────────────

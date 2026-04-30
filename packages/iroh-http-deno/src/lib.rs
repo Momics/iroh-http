@@ -467,7 +467,7 @@ pub unsafe extern "C" fn iroh_http_respond(
         }
     };
 
-    match iroh_http_core::server::respond(ep.handles(), req_handle, status as u16, header_pairs) {
+    match iroh_http_core::respond(ep.handles(), req_handle, status as u16, header_pairs) {
         Ok(()) => 0,
         Err(_) => -1,
     }

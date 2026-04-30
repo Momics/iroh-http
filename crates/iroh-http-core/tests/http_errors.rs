@@ -1,10 +1,9 @@
 mod common;
 
 use bytes::Bytes;
-use iroh_http_core::server::respond;
+use iroh_http_core::respond;
 use iroh_http_core::{
-    fetch, serve, server::ServeOptions, IrohEndpoint, NetworkingOptions, NodeOptions,
-    RequestPayload,
+    fetch, serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
 };
 
 // -- Fetch cancellation -------------------------------------------------------

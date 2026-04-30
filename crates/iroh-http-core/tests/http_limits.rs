@@ -1,10 +1,9 @@
 mod common;
 
 use bytes::Bytes;
-use iroh_http_core::server::respond;
+use iroh_http_core::respond;
 use iroh_http_core::{
-    fetch, serve, server::ServeOptions, IrohEndpoint, NetworkingOptions, NodeOptions,
-    RequestPayload,
+    fetch, serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
 };
 
 // -- Security hardening (patch 14) --------------------------------------------
@@ -249,7 +248,7 @@ async fn body_limit_exceeded_resets_stream() {
     );
 
     // Send a 256-byte body, which exceeds the 64-byte limit.
-    let (writer, reader) = iroh_http_core::stream::make_body_channel();
+    let (writer, reader) = iroh_http_core::make_body_channel();
     let send_task = tokio::spawn(async move {
         let chunk = Bytes::from(vec![0x41u8; 256]);
         let _ = writer.send_chunk(chunk).await;

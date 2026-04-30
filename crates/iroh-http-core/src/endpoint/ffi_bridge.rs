@@ -5,7 +5,7 @@
 //! [`HandleStore`]; this subsystem is the entire universe of state JS can
 //! reach by handle.
 
-use crate::stream::HandleStore;
+use crate::ffi::handles::HandleStore;
 
 /// FFI handle store and any future JS-facing token registries.
 ///
@@ -23,7 +23,7 @@ impl FfiBridge {
     /// Construct a minimal `FfiBridge` for unit tests with default store config.
     pub fn new_for_test() -> Self {
         Self {
-            handles: HandleStore::new(crate::stream::StoreConfig::default()),
+            handles: HandleStore::new(crate::ffi::handles::StoreConfig::default()),
         }
     }
 }

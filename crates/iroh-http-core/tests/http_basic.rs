@@ -1,8 +1,8 @@
 mod common;
 
 use bytes::Bytes;
-use iroh_http_core::server::respond;
-use iroh_http_core::{fetch, serve, server::ServeOptions, RequestPayload};
+use iroh_http_core::respond;
+use iroh_http_core::{fetch, serve, RequestPayload, ServeOptions};
 
 // -- Basic fetch/serve --------------------------------------------------------
 

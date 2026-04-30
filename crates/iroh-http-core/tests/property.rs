@@ -57,7 +57,7 @@ proptest! {
         let sk_bytes = generate_secret_key().unwrap();
         let sig = secret_key_sign(&sk_bytes, &data).unwrap();
         let sk = iroh::SecretKey::from_bytes(&sk_bytes);
-        let pk_bytes = sk.public().as_bytes().clone();
+        let pk_bytes = *sk.public().as_bytes();
         prop_assert!(public_key_verify(&pk_bytes, &data, &sig));
     }
 
@@ -112,7 +112,7 @@ proptest! {
         values in prop::collection::vec("\\PC{0,64}", 0..8),
     ) {
         let store = HandleStore::new(StoreConfig::default());
-        let headers: Vec<_> = names.into_iter().zip(values).map(|(n, v)| (n, v)).collect();
+        let headers: Vec<_> = names.into_iter().zip(values).collect();
         let _ = respond(&store, 0, status, headers);
     }
 }

@@ -1,4 +1,4 @@
-use iroh_http_core::{server::ServeOptions, IrohEndpoint, NetworkingOptions, NodeOptions};
+use iroh_http_core::{IrohEndpoint, NetworkingOptions, NodeOptions, ServeOptions};
 
 // -- Endpoint basics ----------------------------------------------------------
 
