@@ -1,4 +1,21 @@
 //! Iroh endpoint lifecycle — create, share, and close.
+//!
+//! [`IrohEndpoint`] is a thin façade over [`EndpointInner`], which is
+//! composed of the four named subsystems from ADR-014 D1:
+//!
+//! - [`transport::Transport`] — raw QUIC endpoint and stable identity.
+//! - [`http_runtime::HttpRuntime`] — pool, HTTP limits, in-flight counters.
+//! - [`session_runtime::SessionRuntime`] — serve loop, lifecycle signals,
+//!   transport events, path subscriptions.
+//! - [`ffi_bridge::FfiBridge`] — the opaque-handle store reachable from JS.
+//!
+//! No business logic lives in this module — only orchestration and the
+//! public API surface.
+
+pub(crate) mod ffi_bridge;
+pub(crate) mod http_runtime;
+pub(crate) mod session_runtime;
+pub(crate) mod transport;
 
 use iroh::address_lookup::{DnsAddressLookup, PkarrPublisher};
 use iroh::endpoint::{Builder, IdleTimeout, QuicTransportConfig, TransportAddrUsage};
@@ -7,6 +24,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use self::ffi_bridge::FfiBridge;
+use self::http_runtime::HttpRuntime;
+use self::session_runtime::SessionRuntime;
+use self::transport::Transport;
 use crate::pool::ConnectionPool;
 use crate::server::ServeHandle;
 use crate::stream::{HandleStore, StoreConfig};
@@ -28,47 +49,13 @@ pub struct IrohEndpoint {
     pub(crate) inner: Arc<EndpointInner>,
 }
 
+/// Composition of the four ADR-014 D1 subsystems. No business logic; the
+/// public API on [`IrohEndpoint`] reaches into the appropriate subsystem.
 pub(crate) struct EndpointInner {
-    pub ep: Endpoint,
-    /// The node's own base32-encoded public key (stable for the lifetime of the key).
-    pub node_id_str: String,
-    /// Connection pool for reusing QUIC connections across fetch/connect calls.
-    pub pool: ConnectionPool,
-    /// Maximum byte size of an HTTP/1.1 head (request or response).
-    pub max_header_size: usize,
-    /// Maximum decompressed response body bytes per fetch.  Default: 256 MiB.
-    pub max_response_body_bytes: usize,
-    /// Per-endpoint handle store — owns all body readers, writers,
-    /// sessions, request-head channels, and fetch-cancel tokens.
-    pub handles: HandleStore,
-    /// Active serve handle, if `serve()` has been called.
-    pub serve_handle: std::sync::Mutex<Option<ServeHandle>>,
-    /// Done-signal receiver from the active serve task.
-    /// Stored separately so `wait_serve_stop()` can await it without holding
-    /// the `serve_handle` lock for the duration of the wait.
-    pub serve_done_rx: std::sync::Mutex<Option<tokio::sync::watch::Receiver<bool>>>,
-    /// Signals `true` when the endpoint has fully closed (either explicitly or
-    /// because the serve loop exited due to native shutdown).
-    pub closed_tx: tokio::sync::watch::Sender<bool>,
-    pub closed_rx: tokio::sync::watch::Receiver<bool>,
-    /// Number of currently active QUIC connections (incremented by serve loop,
-    /// decremented via RAII guard when each connection task exits).
-    pub active_connections: Arc<AtomicUsize>,
-    /// Number of currently in-flight HTTP requests (incremented when a
-    /// bi-stream is accepted, decremented when the request task exits).
-    pub active_requests: Arc<AtomicUsize>,
-    /// Sender for transport-level events (pool hits/misses, path changes, sweep).
-    pub event_tx: tokio::sync::mpsc::Sender<crate::events::TransportEvent>,
-    /// Receiver for transport-level events.  Wrapped in Mutex+Option so
-    /// `subscribe_events()` can take it exactly once for the platform drain task.
-    pub event_rx:
-        std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<crate::events::TransportEvent>>>,
-    /// Per-peer path-change subscriptions.
-    /// Key: node_id_str. Populated lazily when `subscribe_path_changes` is called.
-    pub path_subs: dashmap::DashMap<String, tokio::sync::mpsc::UnboundedSender<PathInfo>>,
-    /// Body compression options, if the feature is enabled.
-    #[cfg(feature = "compression")]
-    pub compression: Option<CompressionOptions>,
+    pub transport: Transport,
+    pub http: HttpRuntime,
+    pub session: SessionRuntime,
+    pub ffi: FfiBridge,
 }
 
 impl IrohEndpoint {
@@ -264,40 +251,45 @@ impl IrohEndpoint {
         let (event_tx, event_rx) = tokio::sync::mpsc::channel::<crate::events::TransportEvent>(256);
 
         let inner = Arc::new(EndpointInner {
-            ep,
-            node_id_str,
-            pool: ConnectionPool::new(
-                opts.pool.max_connections,
-                opts.pool
-                    .idle_timeout_ms
-                    .map(std::time::Duration::from_millis),
-                Some(event_tx.clone()),
-            ),
-            // ISS-020: treat 0 as an error — callers should use `None` for the default.
-            max_header_size: match opts.max_header_size {
-                Some(0) => {
-                    return Err(crate::CoreError::invalid_input(
-                        "max_header_size must be > 0; use None for the default (65536)",
-                    ));
-                }
-                None => 64 * 1024,
-                Some(n) => n,
+            transport: Transport { ep, node_id_str },
+            http: HttpRuntime {
+                pool: ConnectionPool::new(
+                    opts.pool.max_connections,
+                    opts.pool
+                        .idle_timeout_ms
+                        .map(std::time::Duration::from_millis),
+                    Some(event_tx.clone()),
+                ),
+                // ISS-020: treat 0 as an error — callers should use `None` for the default.
+                max_header_size: match opts.max_header_size {
+                    Some(0) => {
+                        return Err(crate::CoreError::invalid_input(
+                            "max_header_size must be > 0; use None for the default (65536)",
+                        ));
+                    }
+                    None => 64 * 1024,
+                    Some(n) => n,
+                },
+                max_response_body_bytes: opts
+                    .max_response_body_bytes
+                    .unwrap_or(crate::server::DEFAULT_MAX_RESPONSE_BODY_BYTES),
+                active_connections: Arc::new(AtomicUsize::new(0)),
+                active_requests: Arc::new(AtomicUsize::new(0)),
+                #[cfg(feature = "compression")]
+                compression: opts.compression,
             },
-            max_response_body_bytes: opts
-                .max_response_body_bytes
-                .unwrap_or(crate::server::DEFAULT_MAX_RESPONSE_BODY_BYTES),
-            handles: HandleStore::new(store_config),
-            serve_handle: std::sync::Mutex::new(None),
-            serve_done_rx: std::sync::Mutex::new(None),
-            closed_tx,
-            closed_rx,
-            active_connections: Arc::new(AtomicUsize::new(0)),
-            active_requests: Arc::new(AtomicUsize::new(0)),
-            event_tx,
-            event_rx: std::sync::Mutex::new(Some(event_rx)),
-            path_subs: dashmap::DashMap::new(),
-            #[cfg(feature = "compression")]
-            compression: opts.compression,
+            session: SessionRuntime {
+                serve_handle: std::sync::Mutex::new(None),
+                serve_done_rx: std::sync::Mutex::new(None),
+                closed_tx,
+                closed_rx,
+                event_tx,
+                event_rx: std::sync::Mutex::new(Some(event_rx)),
+                path_subs: dashmap::DashMap::new(),
+            },
+            ffi: FfiBridge {
+                handles: HandleStore::new(store_config),
+            },
         });
 
         // Start per-endpoint sweep task (held alive via Weak reference).
@@ -310,7 +302,7 @@ impl IrohEndpoint {
                     let Some(inner) = weak.upgrade() else {
                         break;
                     };
-                    inner.handles.sweep(sweep_ttl);
+                    inner.ffi.handles.sweep(sweep_ttl);
                     drop(inner); // release strong ref between ticks
                 }
             });
@@ -321,7 +313,7 @@ impl IrohEndpoint {
 
     /// The node's public key as a lowercase base32 string.
     pub fn node_id(&self) -> &str {
-        &self.inner.node_id_str
+        &self.inner.transport.node_id_str
     }
 
     /// Immediately run a TTL sweep on all handle registries, evicting any
@@ -334,9 +326,9 @@ impl IrohEndpoint {
     /// Returns immediately if the endpoint was created with `handle_ttl_ms: Some(0)`
     /// (sweeping disabled).
     pub fn sweep_now(&self) {
-        let ttl = self.inner.handles.config.ttl;
+        let ttl = self.inner.ffi.handles.config.ttl;
         if !ttl.is_zero() {
-            self.inner.handles.sweep(ttl);
+            self.inner.ffi.handles.sweep(ttl);
         }
     }
 
@@ -360,7 +352,7 @@ impl IrohEndpoint {
     /// - **Never include in network responses, crash dumps, or analytics.**
     #[must_use]
     pub fn secret_key_bytes(&self) -> [u8; 32] {
-        self.inner.ep.secret_key().to_bytes()
+        self.inner.transport.ep.secret_key().to_bytes()
     }
 
     /// Graceful close: signal the serve loop to stop accepting, wait for
@@ -376,6 +368,7 @@ impl IrohEndpoint {
         // during the drain window.
         let handle = self
             .inner
+            .session
             .serve_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -383,8 +376,8 @@ impl IrohEndpoint {
         if let Some(h) = handle {
             h.drain().await;
         }
-        self.inner.ep.close().await;
-        let _ = self.inner.closed_tx.send(true);
+        self.inner.transport.ep.close().await;
+        let _ = self.inner.session.closed_tx.send(true);
     }
 
     /// Immediate close: abort the serve loop and close the endpoint with
@@ -392,6 +385,7 @@ impl IrohEndpoint {
     pub async fn close_force(&self) {
         let handle = self
             .inner
+            .session
             .serve_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -399,8 +393,8 @@ impl IrohEndpoint {
         if let Some(h) = handle {
             h.abort();
         }
-        self.inner.ep.close().await;
-        let _ = self.inner.closed_tx.send(true);
+        self.inner.transport.ep.close().await;
+        let _ = self.inner.session.closed_tx.send(true);
     }
 
     /// Wait until this endpoint has been closed (either explicitly via `close()` /
@@ -408,7 +402,7 @@ impl IrohEndpoint {
     ///
     /// Returns immediately if already closed.
     pub async fn wait_closed(&self) {
-        let mut rx = self.inner.closed_rx.clone();
+        let mut rx = self.inner.session.closed_rx.clone();
         let _ = rx.wait_for(|v| *v).await;
     }
 
@@ -416,11 +410,13 @@ impl IrohEndpoint {
     pub fn set_serve_handle(&self, handle: ServeHandle) {
         *self
             .inner
+            .session
             .serve_done_rx
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(handle.subscribe_done());
         *self
             .inner
+            .session
             .serve_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(handle);
@@ -433,6 +429,7 @@ impl IrohEndpoint {
     pub fn stop_serve(&self) {
         if let Some(h) = self
             .inner
+            .session
             .serve_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -448,6 +445,7 @@ impl IrohEndpoint {
     pub async fn wait_serve_stop(&self) {
         let rx = self
             .inner
+            .session
             .serve_done_rx
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -460,27 +458,27 @@ impl IrohEndpoint {
     }
 
     pub fn raw(&self) -> &Endpoint {
-        &self.inner.ep
+        &self.inner.transport.ep
     }
 
     /// Per-endpoint handle store.
     pub fn handles(&self) -> &HandleStore {
-        &self.inner.handles
+        &self.inner.ffi.handles
     }
 
     /// Maximum byte size of an HTTP/1.1 head.
     pub fn max_header_size(&self) -> usize {
-        self.inner.max_header_size
+        self.inner.http.max_header_size
     }
 
     /// Maximum decompressed response-body bytes accepted per outgoing fetch.
     pub fn max_response_body_bytes(&self) -> usize {
-        self.inner.max_response_body_bytes
+        self.inner.http.max_response_body_bytes
     }
 
     /// Access the connection pool.
     pub(crate) fn pool(&self) -> &ConnectionPool {
-        &self.inner.pool
+        &self.inner.http.pool
     }
 
     /// Snapshot of current endpoint statistics.
@@ -488,10 +486,10 @@ impl IrohEndpoint {
     /// All fields are point-in-time reads and may change between calls.
     pub fn endpoint_stats(&self) -> EndpointStats {
         let (active_readers, active_writers, active_sessions, total_handles) =
-            self.inner.handles.count_handles();
-        let pool_size = self.inner.pool.entry_count_approx() as usize;
-        let active_connections = self.inner.active_connections.load(Ordering::Relaxed);
-        let active_requests = self.inner.active_requests.load(Ordering::Relaxed);
+            self.inner.ffi.handles.count_handles();
+        let pool_size = self.inner.http.pool.entry_count_approx() as usize;
+        let active_connections = self.inner.http.active_connections.load(Ordering::Relaxed);
+        let active_requests = self.inner.http.active_requests.load(Ordering::Relaxed);
         EndpointStats {
             active_readers,
             active_writers,
@@ -506,17 +504,17 @@ impl IrohEndpoint {
     /// Compression options, if the `compression` feature is enabled.
     #[cfg(feature = "compression")]
     pub fn compression(&self) -> Option<&CompressionOptions> {
-        self.inner.compression.as_ref()
+        self.inner.http.compression.as_ref()
     }
 
     /// Returns the local socket addresses this endpoint is bound to.
     pub fn bound_sockets(&self) -> Vec<std::net::SocketAddr> {
-        self.inner.ep.bound_sockets()
+        self.inner.transport.ep.bound_sockets()
     }
 
     /// Full node address: node ID + relay URL(s) + direct socket addresses.
     pub fn node_addr(&self) -> NodeAddrInfo {
-        let addr = self.inner.ep.addr();
+        let addr = self.inner.transport.ep.addr();
         let mut addrs = Vec::new();
         for relay in addr.relay_urls() {
             addrs.push(relay.to_string());
@@ -525,7 +523,7 @@ impl IrohEndpoint {
             addrs.push(da.to_string());
         }
         NodeAddrInfo {
-            id: self.inner.node_id_str.clone(),
+            id: self.inner.transport.node_id_str.clone(),
             addrs,
         }
     }
@@ -533,6 +531,7 @@ impl IrohEndpoint {
     /// Home relay URL, or `None` if not connected to a relay.
     pub fn home_relay(&self) -> Option<String> {
         self.inner
+            .transport
             .ep
             .addr()
             .relay_urls()
@@ -545,7 +544,7 @@ impl IrohEndpoint {
         let bytes = crate::base32_decode(node_id_b32).ok()?;
         let arr: [u8; 32] = bytes.try_into().ok()?;
         let pk = iroh::PublicKey::from_bytes(&arr).ok()?;
-        let info = self.inner.ep.remote_info(pk).await?;
+        let info = self.inner.transport.ep.remote_info(pk).await?;
         let id = crate::base32_encode(info.id().as_bytes());
         let mut addrs = Vec::new();
         for a in info.addrs() {
@@ -566,7 +565,7 @@ impl IrohEndpoint {
         let bytes = crate::base32_decode(node_id_b32).ok()?;
         let arr: [u8; 32] = bytes.try_into().ok()?;
         let pk = iroh::PublicKey::from_bytes(&arr).ok()?;
-        let info = self.inner.ep.remote_info(pk).await?;
+        let info = self.inner.transport.ep.remote_info(pk).await?;
 
         let mut paths = Vec::new();
         let mut has_active_relay = false;
@@ -597,7 +596,7 @@ impl IrohEndpoint {
 
         // Enrich with QUIC connection-level stats if a pooled connection exists.
         let (rtt_ms, bytes_sent, bytes_received, lost_packets, sent_packets, congestion_window) =
-            if let Some(pooled) = self.inner.pool.get_existing(pk, crate::ALPN).await {
+            if let Some(pooled) = self.inner.http.pool.get_existing(pk, crate::ALPN).await {
                 let s = pooled.conn.stats();
                 let rtt = pooled.conn.rtt(iroh::endpoint::PathId::ZERO);
                 (
@@ -634,6 +633,7 @@ impl IrohEndpoint {
         &self,
     ) -> Option<tokio::sync::mpsc::Receiver<crate::events::TransportEvent>> {
         self.inner
+            .session
             .event_rx
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -651,29 +651,33 @@ impl IrohEndpoint {
     ) -> tokio::sync::mpsc::UnboundedReceiver<PathInfo> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         // Replace any existing sender; old watcher exits when it detects is_closed().
-        self.inner.path_subs.insert(node_id_str.to_string(), tx);
+        self.inner
+            .session
+            .path_subs
+            .insert(node_id_str.to_string(), tx);
 
         let ep = self.clone();
         let nid = node_id_str.to_string();
-        let event_tx = self.inner.event_tx.clone();
+        let event_tx = self.inner.session.event_tx.clone();
 
         tokio::spawn(async move {
             let mut last_key: Option<String> = None;
-            let mut closed_rx = ep.inner.closed_rx.clone();
+            let mut closed_rx = ep.inner.session.closed_rx.clone();
             loop {
                 // Exit immediately if the endpoint has been closed.
                 if *closed_rx.borrow() {
-                    ep.inner.path_subs.remove(&nid);
+                    ep.inner.session.path_subs.remove(&nid);
                     break;
                 }
                 let is_closed = ep
                     .inner
+                    .session
                     .path_subs
                     .get(&nid)
                     .map(|s| s.is_closed())
                     .unwrap_or(true);
                 if is_closed {
-                    ep.inner.path_subs.remove(&nid);
+                    ep.inner.session.path_subs.remove(&nid);
                     break;
                 }
 
@@ -682,7 +686,7 @@ impl IrohEndpoint {
                         let key = format!("{}:{}", active.relay, active.addr);
                         if Some(&key) != last_key.as_ref() {
                             last_key = Some(key);
-                            if let Some(sender) = ep.inner.path_subs.get(&nid) {
+                            if let Some(sender) = ep.inner.session.path_subs.get(&nid) {
                                 let _ = sender.send(active.clone());
                             }
                             let _ = event_tx.try_send(crate::events::TransportEvent::path_change(
@@ -699,7 +703,7 @@ impl IrohEndpoint {
                     _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
                     result = closed_rx.wait_for(|v| *v) => {
                         let _ = result;
-                        ep.inner.path_subs.remove(&nid);
+                        ep.inner.session.path_subs.remove(&nid);
                         break;
                     }
                 }

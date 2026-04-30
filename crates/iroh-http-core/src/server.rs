@@ -680,10 +680,10 @@ where
     let drain_dur = drain_timeout;
     // Re-use the endpoint's shared counters so that endpoint_stats() reflects
     // the live connection and request counts at all times.
-    let total_connections = endpoint.inner.active_connections.clone();
-    let total_requests = endpoint.inner.active_requests.clone();
+    let total_connections = endpoint.inner.http.active_connections.clone();
+    let total_requests = endpoint.inner.http.active_requests.clone();
     let (done_tx, done_rx) = tokio::sync::watch::channel(false);
-    let endpoint_closed_tx = endpoint.inner.closed_tx.clone();
+    let endpoint_closed_tx = endpoint.inner.session.closed_tx.clone();
 
     let in_flight_drain = in_flight.clone();
     let drain_notify_drain = drain_notify.clone();
