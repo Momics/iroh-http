@@ -850,7 +850,7 @@ where
                         let compression_layer = {
                             use http::{Extensions, HeaderMap, Version};
                             use tower_http::compression::{
-                                predicate::{Predicate, SizeAbove},
+                                predicate::{NotForContentType, Predicate, SizeAbove},
                                 CompressionLayer, CompressionLevel,
                             };
                             svc.get_ref().dispatcher.compression.as_ref().map(|comp| {
@@ -858,6 +858,12 @@ where
                                 if let Some(level) = comp.level {
                                     layer = layer.quality(CompressionLevel::Precise(level as i32));
                                 }
+                                // Two custom predicates remain — tower-http does not ship
+                                // built-ins for either:
+                                //
+                                // 1. Skip if the response already carries Content-Encoding
+                                //    (handler returned a pre-encoded body).
+                                // 2. Honour Cache-Control: no-transform per RFC 9111 §5.2.2.7.
                                 let not_pre_compressed =
                                     |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
                                         !h.contains_key(http::header::CONTENT_ENCODING)
@@ -873,37 +879,20 @@ where
                                             })
                                             .unwrap_or(true)
                                     };
-                                let not_opaque_content_type =
-                                    |_: StatusCode, _: Version, h: &HeaderMap, _: &Extensions| {
-                                        let ct = match h
-                                            .get(http::header::CONTENT_TYPE)
-                                            .and_then(|v| v.to_str().ok())
-                                        {
-                                            Some(v) => v,
-                                            None => return true,
-                                        };
-                                        let media = ct.split(';').next().unwrap_or(ct).trim();
-                                        let skip = ["application/zstd", "application/octet-stream"];
-                                        if skip.iter().any(|s| media.eq_ignore_ascii_case(s)) {
-                                            return false;
-                                        }
-                                        if let Some(top) = media.split('/').next() {
-                                            let top = top.trim();
-                                            if top.eq_ignore_ascii_case("image")
-                                                || top.eq_ignore_ascii_case("audio")
-                                                || top.eq_ignore_ascii_case("video")
-                                            {
-                                                return false;
-                                            }
-                                        }
-                                        true
-                                    };
+                                // Opaque / pre-compressed media types — built-ins from
+                                // tower-http (`IMAGES` excludes `image/svg+xml` for free)
+                                // plus three additions that have no shipped constant.
                                 let predicate = SizeAbove::new(
                                     comp.min_body_bytes.min(u16::MAX as usize) as u16,
                                 )
+                                .and(NotForContentType::IMAGES)
+                                .and(NotForContentType::SSE)
+                                .and(NotForContentType::const_new("audio/"))
+                                .and(NotForContentType::const_new("video/"))
+                                .and(NotForContentType::const_new("application/zstd"))
+                                .and(NotForContentType::const_new("application/octet-stream"))
                                 .and(not_pre_compressed)
-                                .and(not_no_transform)
-                                .and(not_opaque_content_type);
+                                .and(not_no_transform);
                                 layer.compress_when(predicate)
                             })
                         };
