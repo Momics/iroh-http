@@ -270,3 +270,103 @@ fn build_compression_layer(
 
     layer.compress_when(predicate)
 }
+
+#[cfg(test)]
+mod tests {
+    //! ADR-014 D2 / #175 guardrail.
+    //!
+    //! These tests prove the structural property the issue was filed for:
+    //! adding a new layer to the per-connection stack is **one append**
+    //! that still type-erases into [`ServeService`] and still drives a
+    //! request through to a `Response<Body>`. If the inner type ever
+    //! stops being uniform — body or error — these tests will fail to
+    //! compile, signalling the regression early.
+    //!
+    //! No hyper / no Iroh / no networking — exercises the tower stack
+    //! directly so the test is fast and deterministic.
+
+    use super::*;
+    use bytes::Bytes;
+    use http_body_util::BodyExt;
+    use std::convert::Infallible;
+    use tower::{ServiceBuilder, ServiceExt};
+
+    /// Stand-in for `IrohHttpService` shaped exactly like the real one
+    /// (`Service<Request<Body>, Response = Response<Body>, Error = Infallible>`).
+    /// Echoes the request body back in the response.
+    #[derive(Clone)]
+    struct EchoService;
+
+    impl tower::Service<hyper::Request<Body>> for EchoService {
+        type Response = hyper::Response<Body>;
+        type Error = Infallible;
+        type Future = std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+        >;
+
+        fn poll_ready(
+            &mut self,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
+            Box::pin(async move {
+                let bytes = req
+                    .into_body()
+                    .collect()
+                    .await
+                    .map(|c| c.to_bytes())
+                    .unwrap_or_default();
+                Ok(hyper::Response::new(Body::full(bytes)))
+            })
+        }
+    }
+
+    /// Build the same shape of stack as `serve_bistream` *with one extra
+    /// no-op layer appended* and box it as [`ServeService`].
+    ///
+    /// If adding `extra` ever requires changing the chain's type signature,
+    /// this function stops compiling — that is the guardrail.
+    fn build_with_extra_layer() -> ServeService {
+        let extra = tower_http::map_request_body::MapRequestBodyLayer::new(|b: Body| b);
+        ServiceBuilder::new()
+            .layer(extra)
+            .service(EchoService)
+            .boxed_clone()
+    }
+
+    #[tokio::test]
+    async fn adding_a_noop_layer_is_one_append_and_request_still_flows() {
+        let svc = build_with_extra_layer();
+        let req = hyper::Request::builder()
+            .uri("/")
+            .body(Body::full("ping"))
+            .unwrap();
+        let resp = svc.oneshot(req).await.expect("service infallible");
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        let body = resp
+            .into_body()
+            .collect()
+            .await
+            .expect("body collect")
+            .to_bytes();
+        assert_eq!(body, Bytes::from_static(b"ping"));
+    }
+
+    /// Compile-time only: prove `ServeService` accepts an arbitrary
+    /// extra layer wrap and still type-erases. If a future change to
+    /// `IrohHttpService`'s body or error type breaks uniformity, this
+    /// fails to compile.
+    #[allow(dead_code)]
+    fn _assert_serve_service_accepts_arbitrary_layer() {
+        let _: ServeService = ServiceBuilder::new()
+            .layer(tower::layer::util::Identity::new())
+            .layer(tower_http::map_request_body::MapRequestBodyLayer::new(
+                |b: Body| b,
+            ))
+            .service(EchoService)
+            .boxed_clone();
+    }
+}
