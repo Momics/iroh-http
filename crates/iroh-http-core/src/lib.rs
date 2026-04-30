@@ -31,7 +31,6 @@ pub mod registry {
 }
 
 // ── Pure-Rust HTTP API surface (`mod http`) ───────────────────────────────────
-pub use ffi::dispatcher::{respond, serve, serve_with_callback};
 pub use http::body::{Body, BoxError};
 pub use http::client::fetch;
 pub use http::server::{
@@ -40,6 +39,7 @@ pub use http::server::{
 pub use http::session::{CloseInfo, Session};
 
 // ── FFI bridge surface (`mod ffi`) ────────────────────────────────────────────
+pub use ffi::dispatcher::{respond, serve, serve_with_callback};
 pub use ffi::handles::{
     make_body_channel, BodyReader, HandleStore, ResponseHeadEntry, StoreConfig,
 };
