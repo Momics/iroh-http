@@ -1,8 +1,6 @@
 //! Diagnostic test — captures iroh trace output during a connect timeout.
 
-use iroh_http_core::{
-    session_accept, session_connect, IrohEndpoint, NetworkingOptions, NodeOptions,
-};
+use iroh_http_core::{IrohEndpoint, NetworkingOptions, NodeOptions, Session};
 
 /// Reproduce exactly what bidi_stream.rs does, in this binary — NO tracing.
 ///
@@ -28,26 +26,32 @@ async fn diag_session_connect() {
 
     let b_clone = b.clone();
     let b_handle = tokio::spawn(async move {
-        let sess = session_accept(&b_clone).await.unwrap();
-        eprintln!("=== B: accepted session: {sess:?}");
+        let sess = Session::accept(b_clone).await.unwrap();
+        eprintln!(
+            "=== B: accepted session handle: {:?}",
+            sess.map(|s| s.handle())
+        );
     });
 
-    eprintln!("=== Attempting session_connect...");
+    eprintln!("=== Attempting Session::connect...");
     let connect_result = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        session_connect(&a, &b_id, Some(&b_addrs)),
+        Session::connect(a, &b_id, Some(&b_addrs)),
     )
     .await;
 
     match &connect_result {
-        Ok(Ok(handle)) => eprintln!("=== session_connect succeeded! handle={handle}"),
-        Ok(Err(e)) => eprintln!("=== session_connect FAILED: {e}"),
-        Err(_) => eprintln!("=== session_connect TIMED OUT after 10s"),
+        Ok(Ok(session)) => eprintln!(
+            "=== Session::connect succeeded! handle={}",
+            session.handle()
+        ),
+        Ok(Err(e)) => eprintln!("=== Session::connect FAILED: {e}"),
+        Err(_) => eprintln!("=== Session::connect TIMED OUT after 10s"),
     }
 
     assert!(
         connect_result.is_ok() && connect_result.unwrap().is_ok(),
-        "session_connect failed"
+        "Session::connect failed"
     );
     b_handle.abort();
 }

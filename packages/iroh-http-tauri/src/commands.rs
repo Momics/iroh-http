@@ -754,8 +754,9 @@ pub async fn session_connect(args: SessionConnectArgs) -> Result<u64, String> {
         }
     };
 
-    iroh_http_core::session_connect(&ep, &args.node_id, addrs.as_deref())
+    iroh_http_core::Session::connect(ep, &args.node_id, addrs.as_deref())
         .await
+        .map(|s| s.handle())
         .map_err(|e| core_error_to_json(&e))
 }
 
@@ -786,17 +787,18 @@ pub async fn session_accept(endpoint_handle: u64) -> Result<Option<SessionAccept
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
-    let handle = match iroh_http_core::session_accept(&ep)
+    let session = match iroh_http_core::Session::accept(ep)
         .await
         .map_err(|e| core_error_to_json(&e))?
     {
-        Some(h) => h,
+        Some(s) => s,
         None => return Ok(None),
     };
-    let node_id = iroh_http_core::session_remote_id(&ep, handle)
+    let node_id = session
+        .remote_id()
         .map(|pk| iroh_http_core::base32_encode(pk.as_bytes()))
         .unwrap_or_default();
-    Ok(Some(SessionAcceptedPayload { session_handle: handle, node_id }))
+    Ok(Some(SessionAcceptedPayload { session_handle: session.handle(), node_id }))
 }
 
 /// Open a new bidirectional stream on an existing session.
@@ -811,7 +813,9 @@ pub async fn session_create_bidi_stream(
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
-    let duplex = iroh_http_core::session_create_bidi_stream(&ep, session_handle)
+    let session = iroh_http_core::Session::from_handle(ep, session_handle);
+    let duplex = session
+        .create_bidi_stream()
         .await
         .map_err(|e| core_error_to_json(&e))?;
     Ok(SessionBidiStreamPayload {
@@ -833,7 +837,9 @@ pub async fn session_next_bidi_stream(
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
-    let result = iroh_http_core::session_next_bidi_stream(&ep, session_handle)
+    let session = iroh_http_core::Session::from_handle(ep, session_handle);
+    let result = session
+        .next_bidi_stream()
         .await
         .map_err(|e| core_error_to_json(&e))?;
     Ok(result.map(|d| SessionBidiStreamPayload {
@@ -856,13 +862,10 @@ pub async fn session_close(
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
-    iroh_http_core::session_close(
-        &ep,
-        session_handle,
-        close_code.unwrap_or(0),
-        reason.as_deref().unwrap_or(""),
-    )
-    .map_err(|e| core_error_to_json(&e))
+    let session = iroh_http_core::Session::from_handle(ep, session_handle);
+    session
+        .close(close_code.unwrap_or(0), reason.as_deref().unwrap_or(""))
+        .map_err(|e| core_error_to_json(&e))
 }
 
 /// Wait for a session to close. Returns { closeCode, reason }.
@@ -884,7 +887,9 @@ pub async fn session_closed(
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
-    let info = iroh_http_core::session_closed(&ep, session_handle)
+    let session = iroh_http_core::Session::from_handle(ep, session_handle);
+    let info = session
+        .closed()
         .await
         .map_err(|e| core_error_to_json(&e))?;
     Ok(CloseInfoPayload {
@@ -906,7 +911,9 @@ pub async fn session_create_uni_stream(
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
-    iroh_http_core::session_create_uni_stream(&ep, session_handle)
+    let session = iroh_http_core::Session::from_handle(ep, session_handle);
+    session
+        .create_uni_stream()
         .await
         .map_err(|e| core_error_to_json(&e))
 }
@@ -924,7 +931,9 @@ pub async fn session_next_uni_stream(
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
-    iroh_http_core::session_next_uni_stream(&ep, session_handle)
+    let session = iroh_http_core::Session::from_handle(ep, session_handle);
+    session
+        .next_uni_stream()
         .await
         .map_err(|e| core_error_to_json(&e))
 }
@@ -945,7 +954,9 @@ pub async fn session_send_datagram(
     let bytes = B64
         .decode(&data)
         .map_err(|e| format!("base64 decode: {e}"))?;
-    iroh_http_core::session_send_datagram(&ep, session_handle, &bytes)
+    let session = iroh_http_core::Session::from_handle(ep, session_handle);
+    session
+        .send_datagram(&bytes)
         .map_err(|e| core_error_to_json(&e))
 }
 
@@ -961,7 +972,9 @@ pub async fn session_recv_datagram(
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
-    let result = iroh_http_core::session_recv_datagram(&ep, session_handle)
+    let session = iroh_http_core::Session::from_handle(ep, session_handle);
+    let result = session
+        .recv_datagram()
         .await
         .map_err(|e| core_error_to_json(&e))?;
     Ok(result.map(|d| B64.encode(&d)))
@@ -979,7 +992,9 @@ pub fn session_max_datagram_size(
             format!("invalid endpoint handle: {endpoint_handle}"),
         )
     })?;
-    let result = iroh_http_core::session_max_datagram_size(&ep, session_handle)
+    let session = iroh_http_core::Session::from_handle(ep, session_handle);
+    let result = session
+        .max_datagram_size()
         .map_err(|e| core_error_to_json(&e))?;
     Ok(result.map(|s| s as u32))
 }

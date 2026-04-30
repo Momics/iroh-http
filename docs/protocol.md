@@ -78,7 +78,7 @@ Every request carries the peer's authenticated identity from the QUIC connection
 
 ### Bidirectional streaming
 
-Requests with `Upgrade: iroh-duplex` initiate a full-duplex stream. The server responds with `101 Switching Protocols`, and both sides can read and write independently. This is exposed as `session.createBidirectionalStream()` on the client (where `session` is the return value of `node.connect(peer)`) and `req.upgrade()` on the server.
+Requests with `Upgrade: iroh-duplex` initiate a full-duplex stream. The server responds with `101 Switching Protocols`, and both sides can read and write independently. This is exposed as `session.createBidirectionalStream()` on the client (where `session` is the return value of `node.dial(peer)`) and `req.upgrade()` on the server.
 
 ---
 

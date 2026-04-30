@@ -1,5 +1,5 @@
 /**
- * Session tests — node.connect(), node.sessions(), IrohSession properties,
+ * Session tests — node.dial(), node.incoming(), IrohSession properties,
  * bidirectional streams, unidirectional streams, datagrams.
  *
  * Shared across all runtimes.
@@ -10,7 +10,7 @@
 function acceptOne(server) {
   const ac = new AbortController();
   const promise = (async () => {
-    for await (const session of server.sessions({ signal: ac.signal })) {
+    for await (const session of server.incoming({ signal: ac.signal })) {
       ac.abort();
       return session;
     }
@@ -28,7 +28,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const accept = acceptOne(server);
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.dial(serverId, { directAddrs: serverAddrs });
     await accept.promise;
 
     assert(session != null, "session is null");
@@ -46,7 +46,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const accept = acceptOne(server);
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.dial(serverId, { directAddrs: serverAddrs });
     await accept.promise;
 
     assert(session.remoteId != null, "remoteId is null");
@@ -67,7 +67,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const accept = acceptOne(server);
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.dial(serverId, { directAddrs: serverAddrs });
     await accept.promise;
 
     await session.ready;
@@ -85,7 +85,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const accept = acceptOne(server);
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.dial(serverId, { directAddrs: serverAddrs });
     await accept.promise;
 
     session.close();
@@ -105,7 +105,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const accept = acceptOne(server);
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.dial(serverId, { directAddrs: serverAddrs });
     await accept.promise;
 
     session.close({ closeCode: 0, reason: "test" });
@@ -125,7 +125,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     const { id: clientId } = await client.addr();
 
     const accept = acceptOne(server);
-    const clientSession = await client.connect(serverId, { directAddrs: serverAddrs });
+    const clientSession = await client.dial(serverId, { directAddrs: serverAddrs });
     const serverSession = await accept.promise;
 
     assert(serverSession != null, "server should have accepted a session");
@@ -148,7 +148,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const accept = acceptOne(server);
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.dial(serverId, { directAddrs: serverAddrs });
     await accept.promise;
 
     const bidi = await session.createBidirectionalStream();
@@ -171,7 +171,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const accept = acceptOne(server);
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.dial(serverId, { directAddrs: serverAddrs });
     await accept.promise;
 
     const writable = await session.createUnidirectionalStream();
@@ -191,7 +191,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     const { id: serverId, addrs: serverAddrs } = await server.addr();
 
     const accept = acceptOne(server);
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.dial(serverId, { directAddrs: serverAddrs });
     await accept.promise;
 
     const dg = session.datagrams;
@@ -219,7 +219,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
 
     // Server: accept session, read from bidi stream, echo back
     const serverLoop = (async () => {
-      for await (const session of server.sessions({ signal: ac.signal })) {
+      for await (const session of server.incoming({ signal: ac.signal })) {
         const reader = session.incomingBidirectionalStreams.getReader();
         const { value: bidi } = await reader.read();
         if (!bidi) return;
@@ -238,7 +238,7 @@ export function sessionTests({ createNode, test, assert, assertEqual }) {
     })();
 
     // Client: connect, open bidi, send data, read echo
-    const session = await client.connect(serverId, { directAddrs: serverAddrs });
+    const session = await client.dial(serverId, { directAddrs: serverAddrs });
     const bidi = await session.createBidirectionalStream();
 
     const writer = bidi.writable.getWriter();

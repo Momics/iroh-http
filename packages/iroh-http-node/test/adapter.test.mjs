@@ -25,7 +25,7 @@ test("createNode via NAPI returns a node with expected API surface", async () =>
     assert.equal(typeof node.fetch, "function", "fetch must be a function");
     assert.equal(typeof node.serve, "function", "serve must be a function");
     assert.equal(typeof node.close, "function", "close must be a function");
-    assert.equal(typeof node.connect, "function", "connect must be a function");
+    assert.equal(typeof node.dial, "function", "dial must be a function");
     assert.equal(typeof node.addr, "function", "addr must be a function");
     assert.equal(typeof node.ticket, "function", "ticket must be a function");
   } finally {

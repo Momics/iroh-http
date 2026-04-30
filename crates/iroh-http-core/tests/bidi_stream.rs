@@ -1,13 +1,11 @@
 //! Session bidirectional stream tests.
 //!
-//! Exercises `session_connect`, `session_create_bidi_stream`,
-//! `session_next_bidi_stream`, and `session_close` over real QUIC connections.
+//! Exercises [`Session::connect`], [`Session::create_bidi_stream`],
+//! [`Session::next_bidi_stream`], and [`Session::close`] over real QUIC
+//! connections.
 
 use bytes::Bytes;
-use iroh_http_core::{
-    session_accept, session_close, session_connect, session_create_bidi_stream,
-    session_next_bidi_stream, IrohEndpoint, NetworkingOptions, NodeOptions,
-};
+use iroh_http_core::{IrohEndpoint, NetworkingOptions, NodeOptions, Session};
 
 /// Create a pair of locally-connected endpoints (relay disabled, loopback only).
 async fn make_pair() -> (IrohEndpoint, IrohEndpoint) {
@@ -44,11 +42,8 @@ async fn session_bidi_stream_round_trip() {
     // B does NOT close the session — A reads all data before the test ends.
     let b_ep_spawn = b_ep.clone();
     let b_handle = tokio::spawn(async move {
-        let session_b = session_accept(&b_ep_spawn).await.unwrap().unwrap();
-        let stream = session_next_bidi_stream(&b_ep_spawn, session_b)
-            .await
-            .unwrap()
-            .unwrap();
+        let session_b = Session::accept(b_ep_spawn.clone()).await.unwrap().unwrap();
+        let stream = session_b.next_bidi_stream().await.unwrap().unwrap();
 
         // Read all data from A.
         let mut received = Vec::new();
@@ -73,14 +68,16 @@ async fn session_bidi_stream_round_trip() {
             .finish_body(stream.write_handle)
             .unwrap();
 
-        // Do NOT session_close here — it abruptly kills the connection
+        // Do NOT close here — it abruptly kills the connection
         // before the pump task can flush. Let the test end naturally.
         (session_b, received)
     });
 
     // A connects and opens a bidi stream.
-    let session_a = session_connect(&a_ep, &b_id, Some(&b_addrs)).await.unwrap();
-    let stream_a = session_create_bidi_stream(&a_ep, session_a).await.unwrap();
+    let session_a = Session::connect(a_ep.clone(), &b_id, Some(&b_addrs))
+        .await
+        .unwrap();
+    let stream_a = session_a.create_bidi_stream().await.unwrap();
 
     // Write 3 chunks.
     let chunks: &[&[u8]] = &[b"hello", b" ", b"world"];
@@ -111,8 +108,8 @@ async fn session_bidi_stream_round_trip() {
     assert_eq!(b_received, expected);
 
     // Now it's safe to close — both sides have finished reading.
-    session_close(&b_ep, session_b, 0, "").ok();
-    session_close(&a_ep, session_a, 0, "").ok();
+    session_b.close(0, "").ok();
+    session_a.close(0, "").ok();
 }
 
 // -- Multiple streams on one session ------------------------------------------
@@ -125,13 +122,10 @@ async fn session_multiple_bidi_streams() {
 
     let b_ep_spawn = b_ep.clone();
     let b_handle = tokio::spawn(async move {
-        let session_b = session_accept(&b_ep_spawn).await.unwrap().unwrap();
+        let session_b = Session::accept(b_ep_spawn.clone()).await.unwrap().unwrap();
 
         for i in 0u8..3 {
-            let stream = session_next_bidi_stream(&b_ep_spawn, session_b)
-                .await
-                .unwrap()
-                .unwrap();
+            let stream = session_b.next_bidi_stream().await.unwrap().unwrap();
             let mut data = Vec::new();
             while let Some(chunk) = b_ep_spawn
                 .handles()
@@ -157,10 +151,12 @@ async fn session_multiple_bidi_streams() {
         session_b
     });
 
-    let session_a = session_connect(&a_ep, &b_id, Some(&b_addrs)).await.unwrap();
+    let session_a = Session::connect(a_ep.clone(), &b_id, Some(&b_addrs))
+        .await
+        .unwrap();
 
     for i in 0u8..3 {
-        let stream = session_create_bidi_stream(&a_ep, session_a).await.unwrap();
+        let stream = session_a.create_bidi_stream().await.unwrap();
         let msg = format!("stream-{i}");
         a_ep.handles()
             .send_chunk(stream.write_handle, Bytes::from(msg.clone().into_bytes()))
@@ -177,8 +173,8 @@ async fn session_multiple_bidi_streams() {
     }
 
     let session_b = b_handle.await.unwrap();
-    session_close(&b_ep, session_b, 0, "").ok();
-    session_close(&a_ep, session_a, 0, "").ok();
+    session_b.close(0, "").ok();
+    session_a.close(0, "").ok();
 }
 
 // -- Backpressure -------------------------------------------------------------
@@ -196,11 +192,8 @@ async fn session_bidi_stream_backpressure() {
 
     let b_ep_spawn = b_ep.clone();
     let b_handle = tokio::spawn(async move {
-        let session_b = session_accept(&b_ep_spawn).await.unwrap().unwrap();
-        let stream = session_next_bidi_stream(&b_ep_spawn, session_b)
-            .await
-            .unwrap()
-            .unwrap();
+        let session_b = Session::accept(b_ep_spawn.clone()).await.unwrap().unwrap();
+        let stream = session_b.next_bidi_stream().await.unwrap().unwrap();
 
         // Deliberately delay reading to create backpressure — but use a signal
         // rather than a sleep so the test completes as fast as the pipe allows.
@@ -223,8 +216,10 @@ async fn session_bidi_stream_backpressure() {
         (session_b, total)
     });
 
-    let session_a = session_connect(&a_ep, &b_id, Some(&b_addrs)).await.unwrap();
-    let stream = session_create_bidi_stream(&a_ep, session_a).await.unwrap();
+    let session_a = Session::connect(a_ep.clone(), &b_id, Some(&b_addrs))
+        .await
+        .unwrap();
+    let stream = session_a.create_bidi_stream().await.unwrap();
 
     // Write many chunks — this should not OOM or buffer unboundedly.
     let chunk = Bytes::from(vec![0xABu8; 1024]);
@@ -246,8 +241,8 @@ async fn session_bidi_stream_backpressure() {
     let eof = a_ep.handles().next_chunk(stream.read_handle).await.unwrap();
     assert!(eof.is_none());
 
-    session_close(&b_ep, session_b, 0, "").ok();
-    session_close(&a_ep, session_a, 0, "").ok();
+    session_b.close(0, "").ok();
+    session_a.close(0, "").ok();
 }
 
 // -- Clean close --------------------------------------------------------------
@@ -260,11 +255,8 @@ async fn session_bidi_stream_clean_close() {
 
     let b_ep_spawn = b_ep.clone();
     let b_handle = tokio::spawn(async move {
-        let session_b = session_accept(&b_ep_spawn).await.unwrap().unwrap();
-        let stream = session_next_bidi_stream(&b_ep_spawn, session_b)
-            .await
-            .unwrap()
-            .unwrap();
+        let session_b = Session::accept(b_ep_spawn.clone()).await.unwrap().unwrap();
+        let stream = session_b.next_bidi_stream().await.unwrap().unwrap();
 
         // Finish both sides.
         b_ep_spawn
@@ -281,14 +273,16 @@ async fn session_bidi_stream_clean_close() {
         session_b
     });
 
-    let session_a = session_connect(&a_ep, &b_id, Some(&b_addrs)).await.unwrap();
-    let stream = session_create_bidi_stream(&a_ep, session_a).await.unwrap();
+    let session_a = Session::connect(a_ep.clone(), &b_id, Some(&b_addrs))
+        .await
+        .unwrap();
+    let stream = session_a.create_bidi_stream().await.unwrap();
 
     a_ep.handles().finish_body(stream.write_handle).unwrap();
     let eof = a_ep.handles().next_chunk(stream.read_handle).await.unwrap();
     assert!(eof.is_none());
 
     let session_b = b_handle.await.unwrap();
-    session_close(&b_ep, session_b, 0, "").ok();
-    session_close(&a_ep, session_a, 0, "").ok();
+    session_b.close(0, "").ok();
+    session_a.close(0, "").ok();
 }

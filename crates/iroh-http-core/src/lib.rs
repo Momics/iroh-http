@@ -30,12 +30,7 @@ pub use server::serve;
 pub use server::serve_with_events;
 pub use server::ServeHandle;
 pub use server::ServeOptions;
-pub use session::{
-    session_accept, session_close, session_closed, session_connect, session_create_bidi_stream,
-    session_create_uni_stream, session_max_datagram_size, session_next_bidi_stream,
-    session_next_uni_stream, session_ready, session_recv_datagram, session_remote_id,
-    session_send_datagram, CloseInfo,
-};
+pub use session::{CloseInfo, Session};
 pub use stats::{ConnectionEvent, EndpointStats, NodeAddrInfo, PathInfo, PeerStats};
 pub use stream::{BodyReader, HandleStore, StoreConfig};
 

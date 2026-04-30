@@ -1217,10 +1217,10 @@ pub async fn session_connect(
     validate_direct_addrs_input(&direct_addrs).map_err(ffi_invalid_arg)?;
     let addrs =
         parse_direct_addrs(&direct_addrs).map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
-    let handle = iroh_http_core::session_connect(&ep, &node_id, addrs.as_deref())
+    let session = iroh_http_core::Session::connect(ep, &node_id, addrs.as_deref())
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
-    Ok(handle)
+    Ok(session.handle())
 }
 
 /// Accept an incoming session (QUIC connection) from a remote peer.
@@ -1236,18 +1236,19 @@ pub struct JsSessionAccepted {
 #[napi]
 pub async fn session_accept(endpoint_handle: u32) -> napi::Result<Option<JsSessionAccepted>> {
     let ep = get_endpoint(endpoint_handle)?;
-    let handle = match iroh_http_core::session_accept(&ep)
+    let session = match iroh_http_core::Session::accept(ep)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?
     {
-        Some(h) => h,
+        Some(s) => s,
         None => return Ok(None),
     };
-    let node_id = iroh_http_core::session_remote_id(&ep, handle)
+    let node_id = session
+        .remote_id()
         .map(|pk| iroh_http_core::base32_encode(pk.as_bytes()))
         .unwrap_or_default();
     Ok(Some(JsSessionAccepted {
-        session_handle: BigInt::from(handle),
+        session_handle: BigInt::from(session.handle()),
         node_id,
     }))
 }
@@ -1265,7 +1266,9 @@ pub async fn session_create_bidi_stream(
     session_handle: BigInt,
 ) -> napi::Result<JsSessionBidiStream> {
     let ep = get_endpoint(endpoint_handle)?;
-    let duplex = iroh_http_core::session_create_bidi_stream(&ep, get_handle(session_handle)?)
+    let session = iroh_http_core::Session::from_handle(ep, get_handle(session_handle)?);
+    let duplex = session
+        .create_bidi_stream()
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(JsSessionBidiStream {
@@ -1282,7 +1285,9 @@ pub async fn session_next_bidi_stream(
     session_handle: BigInt,
 ) -> napi::Result<Option<JsSessionBidiStream>> {
     let ep = get_endpoint(endpoint_handle)?;
-    let result = iroh_http_core::session_next_bidi_stream(&ep, get_handle(session_handle)?)
+    let session = iroh_http_core::Session::from_handle(ep, get_handle(session_handle)?);
+    let result = session
+        .next_bidi_stream()
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(result.map(|d| JsSessionBidiStream {
@@ -1304,13 +1309,10 @@ pub async fn session_close_handle(
     if let Some(ref reason) = reason {
         validate_bounded_string("reason", reason, MAX_URL_LEN).map_err(ffi_invalid_arg)?;
     }
-    iroh_http_core::session_close(
-        &ep,
-        get_handle(session_handle)?,
-        code,
-        reason.as_deref().unwrap_or(""),
-    )
-    .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
+    let session = iroh_http_core::Session::from_handle(ep, get_handle(session_handle)?);
+    session
+        .close(code, reason.as_deref().unwrap_or(""))
+        .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
 
 #[cfg(feature = "discovery")]
@@ -1345,7 +1347,9 @@ pub async fn session_closed(
     session_handle: BigInt,
 ) -> napi::Result<JsCloseInfo> {
     let ep = get_endpoint(endpoint_handle)?;
-    let info = iroh_http_core::session_closed(&ep, get_handle(session_handle)?)
+    let session = iroh_http_core::Session::from_handle(ep, get_handle(session_handle)?);
+    let info = session
+        .closed()
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(JsCloseInfo {
@@ -1362,7 +1366,9 @@ pub async fn session_create_uni_stream(
     session_handle: BigInt,
 ) -> napi::Result<u64> {
     let ep = get_endpoint(endpoint_handle)?;
-    iroh_http_core::session_create_uni_stream(&ep, get_handle(session_handle)?)
+    let session = iroh_http_core::Session::from_handle(ep, get_handle(session_handle)?);
+    session
+        .create_uni_stream()
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
@@ -1375,7 +1381,9 @@ pub async fn session_next_uni_stream(
     session_handle: BigInt,
 ) -> napi::Result<Option<u64>> {
     let ep = get_endpoint(endpoint_handle)?;
-    iroh_http_core::session_next_uni_stream(&ep, get_handle(session_handle)?)
+    let session = iroh_http_core::Session::from_handle(ep, get_handle(session_handle)?);
+    session
+        .next_uni_stream()
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
@@ -1388,7 +1396,9 @@ pub async fn session_send_datagram(
     data: Uint8Array,
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
-    iroh_http_core::session_send_datagram(&ep, get_handle(session_handle)?, data.as_ref())
+    let session = iroh_http_core::Session::from_handle(ep, get_handle(session_handle)?);
+    session
+        .send_datagram(data.as_ref())
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))
 }
 
@@ -1399,7 +1409,9 @@ pub async fn session_recv_datagram(
     session_handle: BigInt,
 ) -> napi::Result<Option<Buffer>> {
     let ep = get_endpoint(endpoint_handle)?;
-    let result = iroh_http_core::session_recv_datagram(&ep, get_handle(session_handle)?)
+    let session = iroh_http_core::Session::from_handle(ep, get_handle(session_handle)?);
+    let result = session
+        .recv_datagram()
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(result.map(Buffer::from))
@@ -1413,7 +1425,9 @@ pub fn session_max_datagram_size(
     session_handle: BigInt,
 ) -> napi::Result<Option<u32>> {
     let ep = get_endpoint(endpoint_handle)?;
-    let result = iroh_http_core::session_max_datagram_size(&ep, get_handle(session_handle)?)
+    let session = iroh_http_core::Session::from_handle(ep, get_handle(session_handle)?);
+    let result = session
+        .max_datagram_size()
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
     Ok(result.map(|s| s as u32))
 }

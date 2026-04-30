@@ -1,7 +1,7 @@
 /**
  * `IrohSession` — a WebTransport-compatible session to a single remote peer.
  *
- * Created via `node.connect(peer)`.  Wraps a QUIC connection and exposes
+ * Created via `node.dial(peer)`.  Wraps a QUIC connection and exposes
  * bidirectional streams, unidirectional streams, and datagrams through
  * the standard WebTransport interface.
  */

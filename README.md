@@ -55,11 +55,11 @@ Open a direct QUIC connection to any peer and exchange data over bidirectional s
 
 ```ts
 // Initiating side:
-const session = await node.connect("<peer-public-key>");
+const session = await node.dial("<peer-public-key>");
 const { readable, writable } = await session.createBidirectionalStream();
 
 // Receiving side:
-for await (const session of node.sessions()) {
+for await (const session of node.incoming()) {
   const stream = await session.incomingBidirectionalStreams.getReader().read();
   // ...handle stream
 }

@@ -1,11 +1,7 @@
 //! WebTransport session tests — datagrams, unidirectional streams, close info.
 
 use bytes::Bytes;
-use iroh_http_core::{
-    session_accept, session_close, session_closed, session_connect, session_create_uni_stream,
-    session_max_datagram_size, session_next_uni_stream, session_recv_datagram,
-    session_send_datagram, IrohEndpoint, NetworkingOptions, NodeOptions,
-};
+use iroh_http_core::{IrohEndpoint, NetworkingOptions, NodeOptions, Session};
 
 /// Create a pair of locally-connected endpoints (relay disabled).
 async fn make_pair() -> (IrohEndpoint, IrohEndpoint) {
@@ -41,11 +37,8 @@ async fn session_uni_stream_send_recv() {
     // B accepts a session and reads an incoming uni stream.
     let b_ep_spawn = b_ep.clone();
     let b_handle = tokio::spawn(async move {
-        let session_b = session_accept(&b_ep_spawn).await.unwrap().unwrap();
-        let read_handle = session_next_uni_stream(&b_ep_spawn, session_b)
-            .await
-            .unwrap()
-            .unwrap();
+        let session_b = Session::accept(b_ep_spawn.clone()).await.unwrap().unwrap();
+        let read_handle = session_b.next_uni_stream().await.unwrap().unwrap();
 
         let mut data = Vec::new();
         while let Some(chunk) = b_ep_spawn.handles().next_chunk(read_handle).await.unwrap() {
@@ -56,8 +49,10 @@ async fn session_uni_stream_send_recv() {
     });
 
     // A opens a uni stream and writes data.
-    let session_a = session_connect(&a_ep, &b_id, Some(&b_addrs)).await.unwrap();
-    let write_handle = session_create_uni_stream(&a_ep, session_a).await.unwrap();
+    let session_a = Session::connect(a_ep.clone(), &b_id, Some(&b_addrs))
+        .await
+        .unwrap();
+    let write_handle = session_a.create_uni_stream().await.unwrap();
 
     a_ep.handles()
         .send_chunk(write_handle, Bytes::from_static(b"uni-hello"))
@@ -68,8 +63,8 @@ async fn session_uni_stream_send_recv() {
     let (session_b, data) = b_handle.await.unwrap();
     assert_eq!(data, b"uni-hello");
 
-    session_close(&b_ep, session_b, 0, "").ok();
-    session_close(&a_ep, session_a, 0, "").ok();
+    session_b.close(0, "").ok();
+    session_a.close(0, "").ok();
 }
 
 #[tokio::test]
@@ -80,14 +75,11 @@ async fn session_multiple_uni_streams() {
 
     let b_ep_spawn = b_ep.clone();
     let b_handle = tokio::spawn(async move {
-        let session_b = session_accept(&b_ep_spawn).await.unwrap().unwrap();
+        let session_b = Session::accept(b_ep_spawn.clone()).await.unwrap().unwrap();
 
         let mut messages = Vec::new();
         for _ in 0..3 {
-            let read_handle = session_next_uni_stream(&b_ep_spawn, session_b)
-                .await
-                .unwrap()
-                .unwrap();
+            let read_handle = session_b.next_uni_stream().await.unwrap().unwrap();
             let mut data = Vec::new();
             while let Some(chunk) = b_ep_spawn.handles().next_chunk(read_handle).await.unwrap() {
                 data.extend_from_slice(&chunk);
@@ -98,10 +90,12 @@ async fn session_multiple_uni_streams() {
         (session_b, messages)
     });
 
-    let session_a = session_connect(&a_ep, &b_id, Some(&b_addrs)).await.unwrap();
+    let session_a = Session::connect(a_ep.clone(), &b_id, Some(&b_addrs))
+        .await
+        .unwrap();
 
     for i in 0..3u8 {
-        let write_handle = session_create_uni_stream(&a_ep, session_a).await.unwrap();
+        let write_handle = session_a.create_uni_stream().await.unwrap();
         let msg = format!("msg-{i}");
         a_ep.handles()
             .send_chunk(write_handle, Bytes::from(msg.into_bytes()))
@@ -120,8 +114,8 @@ async fn session_multiple_uni_streams() {
     sorted.sort();
     assert_eq!(sorted, vec!["msg-0", "msg-1", "msg-2"]);
 
-    session_close(&b_ep, session_b, 0, "").ok();
-    session_close(&a_ep, session_a, 0, "").ok();
+    session_b.close(0, "").ok();
+    session_a.close(0, "").ok();
 }
 
 // -- Datagrams ----------------------------------------------------------------
@@ -134,42 +128,38 @@ async fn session_datagram_round_trip() {
 
     let b_ep_spawn = b_ep.clone();
     let b_handle = tokio::spawn(async move {
-        let session_b = session_accept(&b_ep_spawn).await.unwrap().unwrap();
+        let session_b = Session::accept(b_ep_spawn).await.unwrap().unwrap();
 
         // Receive a datagram.
-        let data = session_recv_datagram(&b_ep_spawn, session_b)
-            .await
-            .unwrap()
-            .unwrap();
+        let data = session_b.recv_datagram().await.unwrap().unwrap();
 
         // Send one back.
-        session_send_datagram(&b_ep_spawn, session_b, b"pong").unwrap();
+        session_b.send_datagram(b"pong").unwrap();
 
         (session_b, data)
     });
 
-    let session_a = session_connect(&a_ep, &b_id, Some(&b_addrs)).await.unwrap();
+    let session_a = Session::connect(a_ep.clone(), &b_id, Some(&b_addrs))
+        .await
+        .unwrap();
 
     // Check max datagram size is available.
-    let max_size = session_max_datagram_size(&a_ep, session_a).unwrap();
+    let max_size = session_a.max_datagram_size().unwrap();
     assert!(max_size.is_some(), "datagrams should be supported");
     assert!(max_size.unwrap() > 0);
 
     // Send a datagram.
-    session_send_datagram(&a_ep, session_a, b"ping").unwrap();
+    session_a.send_datagram(b"ping").unwrap();
 
     // Receive the reply.
-    let reply = session_recv_datagram(&a_ep, session_a)
-        .await
-        .unwrap()
-        .unwrap();
+    let reply = session_a.recv_datagram().await.unwrap().unwrap();
     assert_eq!(reply, b"pong");
 
     let (session_b, received) = b_handle.await.unwrap();
     assert_eq!(received, b"ping");
 
-    session_close(&b_ep, session_b, 0, "").ok();
-    session_close(&a_ep, session_a, 0, "").ok();
+    session_b.close(0, "").ok();
+    session_a.close(0, "").ok();
 }
 
 // -- Close info ---------------------------------------------------------------
@@ -182,17 +172,18 @@ async fn session_close_with_code_and_reason() {
 
     let b_ep_spawn = b_ep.clone();
     let b_handle = tokio::spawn(async move {
-        let session_b = session_accept(&b_ep_spawn).await.unwrap().unwrap();
+        let session_b = Session::accept(b_ep_spawn).await.unwrap().unwrap();
 
         // Wait for session to be closed by A.
-        let info = session_closed(&b_ep_spawn, session_b).await.unwrap();
-        info
+        session_b.closed().await.unwrap()
     });
 
-    let session_a = session_connect(&a_ep, &b_id, Some(&b_addrs)).await.unwrap();
+    let session_a = Session::connect(a_ep.clone(), &b_id, Some(&b_addrs))
+        .await
+        .unwrap();
 
     // Close with a specific code and reason.
-    session_close(&a_ep, session_a, 42, "done").unwrap();
+    session_a.close(42, "done").unwrap();
 
     let info = b_handle.await.unwrap();
     assert_eq!(info.close_code, 42);

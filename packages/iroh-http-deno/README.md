@@ -56,7 +56,7 @@ Open a raw QUIC connection to any peer and exchange data over bidirectional stre
 **Connect to a peer:**
 
 ```ts
-const session = await node.connect("<peer-public-key>");
+const session = await node.dial("<peer-public-key>");
 await session.ready;
 
 const { readable, writable } = await session.createBidirectionalStream();
@@ -75,7 +75,7 @@ session.close();
 
 ```ts
 const ac = new AbortController();
-for await (const session of node.sessions({ signal: ac.signal })) {
+for await (const session of node.incoming({ signal: ac.signal })) {
   console.log("peer connected:", session.remoteId.toString());
   for await (const { readable, writable } of session.incomingBidirectionalStreams) {
     // handle stream
@@ -86,7 +86,7 @@ for await (const session of node.sessions({ signal: ac.signal })) {
 **Datagrams** (unreliable, low-latency):
 
 ```ts
-const session = await node.connect("<peer-public-key>");
+const session = await node.dial("<peer-public-key>");
 await session.datagrams.writable.getWriter()
   .write(new TextEncoder().encode("ping"));
 
@@ -182,7 +182,7 @@ node.serve({}, (req) => {
   return new Response("ok");
 });
 
-for await (const session of node.sessions()) {
+for await (const session of node.incoming()) {
   if (!ALLOWED_PEERS.has(session.remoteId.toString())) {
     session.close(403, "Forbidden");
     continue;

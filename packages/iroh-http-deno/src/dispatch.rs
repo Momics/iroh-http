@@ -1136,15 +1136,16 @@ async fn session_accept_dispatch(p: Value) -> Value {
             )
         }
     };
-    match iroh_http_core::session_accept(&ep).await {
+    match iroh_http_core::Session::accept(ep).await {
         Err(e) => err_core(e),
         Ok(None) => ok(json!(null)),
-        Ok(Some(handle)) => {
+        Ok(Some(session)) => {
             // Retrieve the remote peer's public key so JS can build a PublicKey.
-            let node_id = iroh_http_core::session_remote_id(&ep, handle)
+            let node_id = session
+                .remote_id()
                 .map(|pk| iroh_http_core::base32_encode(pk.as_bytes()))
                 .unwrap_or_default();
-            ok(json!({ "sessionHandle": handle, "nodeId": node_id }))
+            ok(json!({ "sessionHandle": session.handle(), "nodeId": node_id }))
         }
     }
 }
@@ -1175,9 +1176,9 @@ async fn session_connect_dispatch(p: Value) -> Value {
         Ok(a) => a,
         Err(e) => return err(e),
     };
-    match iroh_http_core::session_connect(&ep, &args.node_id, addrs.as_deref()).await {
+    match iroh_http_core::Session::connect(ep, &args.node_id, addrs.as_deref()).await {
         Err(e) => err_core(e),
-        Ok(handle) => ok(json!({ "sessionHandle": handle })),
+        Ok(session) => ok(json!({ "sessionHandle": session.handle() })),
     }
 }
 
@@ -1202,7 +1203,8 @@ async fn session_create_bidi_stream_dispatch(p: Value) -> Value {
             )
         }
     };
-    match iroh_http_core::session_create_bidi_stream(&ep, args.session_handle).await {
+    let session = iroh_http_core::Session::from_handle(ep, args.session_handle);
+    match session.create_bidi_stream().await {
         Err(e) => err_core(e),
         Ok(d) => ok(json!({ "readHandle": d.read_handle, "writeHandle": d.write_handle })),
     }
@@ -1222,7 +1224,8 @@ async fn session_next_bidi_stream_dispatch(p: Value) -> Value {
             )
         }
     };
-    match iroh_http_core::session_next_bidi_stream(&ep, args.session_handle).await {
+    let session = iroh_http_core::Session::from_handle(ep, args.session_handle);
+    match session.next_bidi_stream().await {
         Err(e) => err_core(e),
         Ok(None) => ok(json!(null)),
         Ok(Some(d)) => ok(json!({ "readHandle": d.read_handle, "writeHandle": d.write_handle })),
@@ -1252,9 +1255,8 @@ fn session_close_dispatch(p: Value) -> Value {
             )
         }
     };
-    match iroh_http_core::session_close(
-        &ep,
-        args.session_handle,
+    let session = iroh_http_core::Session::from_handle(ep, args.session_handle);
+    match session.close(
         args.close_code.unwrap_or(0),
         args.reason.as_deref().unwrap_or(""),
     ) {
@@ -1277,7 +1279,8 @@ async fn session_closed_dispatch(p: Value) -> Value {
             )
         }
     };
-    match iroh_http_core::session_closed(&ep, args.session_handle).await {
+    let session = iroh_http_core::Session::from_handle(ep, args.session_handle);
+    match session.closed().await {
         Err(e) => err_core(e),
         Ok(info) => ok(json!({ "closeCode": info.close_code, "reason": info.reason })),
     }
@@ -1297,7 +1300,8 @@ async fn session_create_uni_stream_dispatch(p: Value) -> Value {
             )
         }
     };
-    match iroh_http_core::session_create_uni_stream(&ep, args.session_handle).await {
+    let session = iroh_http_core::Session::from_handle(ep, args.session_handle);
+    match session.create_uni_stream().await {
         Err(e) => err_core(e),
         Ok(handle) => ok(json!({ "writeHandle": handle })),
     }
@@ -1317,7 +1321,8 @@ async fn session_next_uni_stream_dispatch(p: Value) -> Value {
             )
         }
     };
-    match iroh_http_core::session_next_uni_stream(&ep, args.session_handle).await {
+    let session = iroh_http_core::Session::from_handle(ep, args.session_handle);
+    match session.next_uni_stream().await {
         Err(e) => err_core(e),
         Ok(None) => ok(json!(null)),
         Ok(Some(handle)) => ok(json!({ "readHandle": handle })),
@@ -1350,7 +1355,8 @@ fn session_send_datagram_dispatch(p: Value) -> Value {
         Ok(d) => d,
         Err(e) => return err(format!("base64 decode: {e}")),
     };
-    match iroh_http_core::session_send_datagram(&ep, args.session_handle, &data) {
+    let session = iroh_http_core::Session::from_handle(ep, args.session_handle);
+    match session.send_datagram(&data) {
         Err(e) => err_core(e),
         Ok(()) => ok(json!({})),
     }
@@ -1370,7 +1376,8 @@ async fn session_recv_datagram_dispatch(p: Value) -> Value {
             )
         }
     };
-    match iroh_http_core::session_recv_datagram(&ep, args.session_handle).await {
+    let session = iroh_http_core::Session::from_handle(ep, args.session_handle);
+    match session.recv_datagram().await {
         Err(e) => err_core(e),
         Ok(None) => ok(json!(null)),
         Ok(Some(data)) => ok(json!({ "data": B64.encode(&data) })),
@@ -1391,7 +1398,8 @@ fn session_max_datagram_size_dispatch(p: Value) -> Value {
             )
         }
     };
-    match iroh_http_core::session_max_datagram_size(&ep, args.session_handle) {
+    let session = iroh_http_core::Session::from_handle(ep, args.session_handle);
+    match session.max_datagram_size() {
         Err(e) => err_core(e),
         Ok(size) => ok(json!({ "maxDatagramSize": size })),
     }

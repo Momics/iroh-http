@@ -57,7 +57,7 @@ Open a raw QUIC connection to any peer and exchange data over bidirectional stre
 
 ```ts
 // Connect to a peer:
-const session = await node.connect("<peer-public-key>");
+const session = await node.dial("<peer-public-key>");
 await session.ready;
 
 const { readable, writable } = await session.createBidirectionalStream();
@@ -66,7 +66,7 @@ await writer.write(new TextEncoder().encode("hello"));
 await writer.close();
 
 // Accept incoming sessions:
-for await (const session of node.sessions()) {
+for await (const session of node.incoming()) {
   console.log("peer connected:", session.remoteId.toString());
   for await (const { readable, writable } of session.incomingBidirectionalStreams) {
     // handle stream

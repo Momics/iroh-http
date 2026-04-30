@@ -227,7 +227,7 @@ pub(crate) struct InsertGuard<'a> {
 ///
 /// `Session` and `FetchCancel` are not tracked here because their lifecycles
 /// are managed outside of multi-handle allocation sequences:
-/// - Sessions are created and closed by `session_connect` / `session_close`
+/// - Sessions are created and closed by `Session::connect` / `Session::close`
 ///   independently and are never allocated inside a guard.
 /// - Fetch cancel tokens are allocated before a guard is opened and are
 ///   always cleaned up by `remove_fetch_token` after the fetch resolves.

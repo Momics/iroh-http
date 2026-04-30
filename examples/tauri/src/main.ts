@@ -330,7 +330,7 @@ sessionConnectBtn.addEventListener("click", async () => {
   sessionConnectBtn.disabled = true;
 
   try {
-    activeSession = await node.connect(peer);
+    activeSession = await node.dial(peer);
     setStatus(sessionStatus, `Connected to ${peer.slice(0, 20)}…`, "ok");
     appendLog(sessionLog, "Session open");
 

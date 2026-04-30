@@ -10,6 +10,7 @@
     "jsr:@std/msgpack@1": "1.0.3",
     "jsr:@std/path@1": "1.1.4",
     "jsr:@std/path@^1.1.4": "1.1.4",
+    "npm:@momics/iroh-http-shared@0.3": "0.3.4",
     "npm:@napi-rs/cli@2": "2.18.4",
     "npm:@tauri-apps/api@2": "2.10.1",
     "npm:@types/node@^25.6.0": "25.6.0",
@@ -22,7 +23,7 @@
     "@momics/iroh-http-deno@0.2.1": {
       "integrity": "6b26e945a5bd393aac742b67fe901cebebcef2764adcfba42edfac86220cc9ce",
       "dependencies": [
-        "jsr:@momics/iroh-http-shared",
+        "jsr:@momics/iroh-http-shared@0.2",
         "jsr:@std/path@1"
       ]
     },
@@ -156,6 +157,9 @@
     },
     "@jridgewell/sourcemap-codec@1.5.5": {
       "integrity": "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="
+    },
+    "@momics/iroh-http-shared@0.3.4": {
+      "integrity": "sha512-HxRLMX+bkJUCnl2KOR75wZSK1VFUgcPkH9iJCUeGCg9+ASABE1McWW1uxpByEeNDyjNVocPCc3jsajbndEFnIQ=="
     },
     "@napi-rs/cli@2.18.4": {
       "integrity": "sha512-SgJeA4df9DE2iAEpr3M2H0OKl/yjtg1BnRI5/JyowS71tUWhrfSu2LT0V3vlHET+g1hBVlrO60PmEXwUEKp8Mg==",

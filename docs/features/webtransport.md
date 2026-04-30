@@ -24,7 +24,7 @@ The mapping:
 ## Opening a session
 
 ```ts
-const session: IrohSession = await node.connect(peer);
+const session: IrohSession = await node.dial(peer);
 
 // IrohSession satisfies the full WebTransport interface:
 await session.ready;
@@ -50,13 +50,13 @@ full interface definition.
 ## `node.fetch` and `node.serve`
 
 `node.fetch(peer.toURL(url), init)` is a convenience method that internally calls
-`node.connect(peer)`, opens a bidirectional stream, sends an HTTP request over
+`node.dial(peer)`, opens a bidirectional stream, sends an HTTP request over
 it, and returns a standard `Response`. Sessions are managed transparently by
 the connection pool — the caller sees no difference.
 
 `node.serve` accepts incoming sessions and routes them to the HTTP handler.
 The HTTP layer is built on top of raw sessions; raw sessions are also directly
-accessible via `node.connect`.
+accessible via `node.dial`.
 
 ---
 
@@ -114,7 +114,7 @@ transparently.
 ## Datagrams
 
 ```ts
-const session = await node.connect(peer);
+const session = await node.dial(peer);
 
 // Send
 const writer = session.datagrams.writable.getWriter();

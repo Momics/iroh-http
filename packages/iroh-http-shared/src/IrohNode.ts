@@ -132,13 +132,13 @@ export class IrohNode extends EventTarget {
     return (this.#serveFn as (...a: unknown[]) => ServeHandle)(...args);
   }
 
-  async connect(
+  async dial(
     peer: PublicKey | string,
     init?: { directAddrs?: string[] },
   ): Promise<IrohSession> {
     const sessionFns = this.#adapter.sessionFns;
     if (!sessionFns) {
-      throw new Error("connect() not supported by this platform adapter");
+      throw new Error("dial() not supported by this platform adapter");
     }
     const nodeId = resolveNodeId(peer);
     const directAddrs = init?.directAddrs ?? null;
@@ -155,24 +155,24 @@ export class IrohNode extends EventTarget {
    * Accept incoming raw QUIC sessions from remote peers.
    *
    * Returns an async iterable that yields one `IrohSession` for each peer
-   * that calls `node.connect()`.  The iterable ends when the node closes or
+   * that calls `node.dial()`.  The iterable ends when the node closes or
    * the `signal` is aborted.
    *
    * ```ts
-   * for await (const session of node.sessions()) {
+   * for await (const session of node.incoming()) {
    *   console.log("peer connected:", session.remoteId.toString());
    * }
    *
    * // With shutdown signal:
    * const ac = new AbortController();
-   * for await (const session of node.sessions({ signal: ac.signal })) { ... }
+   * for await (const session of node.incoming({ signal: ac.signal })) { ... }
    * ac.abort();
    * ```
    */
-  sessions(options?: { signal?: AbortSignal }): AsyncIterable<IrohSession> {
+  incoming(options?: { signal?: AbortSignal }): AsyncIterable<IrohSession> {
     const sessionFns = this.#adapter.sessionFns;
     if (!sessionFns?.sessionAccept) {
-      throw new Error("sessions() not supported by this platform adapter");
+      throw new Error("incoming() not supported by this platform adapter");
     }
     const accept = sessionFns.sessionAccept.bind(sessionFns);
     const endpointHandle = this.#endpointHandle;
