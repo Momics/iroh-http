@@ -23,7 +23,7 @@ use tower::Service;
 
 use crate::{
     base32_encode,
-    client::{body_from_reader, pump_hyper_body_to_channel},
+    client::pump_hyper_body_to_channel,
     io::IrohStream,
     stream::{HandleStore, ResponseHeadEntry},
     ConnectionEvent, CoreError, IrohEndpoint, RequestPayload,
@@ -532,8 +532,6 @@ impl FfiDispatcher {
 
         // ── Regular HTTP response ─────────────────────────────────────────────
 
-        let body_stream = body_from_reader(res_body_reader);
-
         let mut resp_builder = hyper::Response::builder().status(response_head.status);
         for (k, v) in &response_head.headers {
             resp_builder = resp_builder.header(k.as_str(), v.as_str());
@@ -542,7 +540,7 @@ impl FfiDispatcher {
         #[cfg(feature = "compression")]
         let resp_builder = resp_builder; // CompressionLayer in ServiceBuilder handles this
 
-        match resp_builder.body(Body::new(body_stream)) {
+        match resp_builder.body(Body::new(res_body_reader)) {
             Ok(r) => r,
             Err(_) => internal_error(b"failed to build response head from JS"),
         }

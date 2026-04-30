@@ -7,11 +7,15 @@
 
 use std::{
     collections::HashMap,
+    future::Future,
+    pin::Pin,
     sync::{Arc, Mutex},
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
 use bytes::Bytes;
+use http_body::Frame;
 use slotmap::{KeyData, SlotMap};
 use tokio::sync::mpsc;
 
@@ -70,11 +74,27 @@ handle_to_key!(handle_to_fetch_cancel_key, FetchCancelKey);
 /// Consumer end — stored in the reader registry.
 /// Uses `tokio::sync::Mutex` so we can `.await` the receiver without holding
 /// the registry's `std::sync::Mutex`.
+///
+/// Per ADR-014 D4 this type implements [`http_body::Body`] directly so it can
+/// be wrapped into [`crate::Body`] without an intermediate `StreamBody`
+/// adapter. The two consumer paths are disjoint:
+///
+/// - **Internal hyper path** — the `Body` impl drives `poll_frame`. The
+///   [`BodyReader`] is moved into [`crate::Body::new`] and never registered
+///   in the FFI handle store.
+/// - **FFI path** — JS calls `next_chunk(handle)` via [`HandleStore`]; the
+///   [`Body`](http_body::Body) impl is never polled.
 pub struct BodyReader {
     pub(crate) rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Bytes>>>,
     /// ISS-010: cancellation signal — notified when `cancel_reader` is called
     /// so in-flight `next_chunk` awaits terminate promptly.
     pub(crate) cancel: Arc<tokio::sync::Notify>,
+    /// In-flight recv future for the [`http_body::Body`] poll path. `None`
+    /// when no poll is outstanding. mpsc::recv is cancellation-safe so it is
+    /// safe to recreate this future after a `Pending` drop. `Send + Sync`
+    /// preserves `BodyReader: Sync` (required by the channel-based pump
+    /// helpers that take `&BodyReader` across `.await`).
+    pending: Option<Pin<Box<dyn Future<Output = Option<Bytes>> + Send + Sync>>>,
 }
 
 /// Producer end — stored in the writer registry.
@@ -105,6 +125,7 @@ fn make_body_channel_with(capacity: usize, drain_timeout: Duration) -> (BodyWrit
         BodyReader {
             rx: Arc::new(tokio::sync::Mutex::new(rx)),
             cancel: Arc::new(tokio::sync::Notify::new()),
+            pending: None,
         },
     )
 }
@@ -133,6 +154,30 @@ impl BodyReader {
     /// or when the reader has been cancelled.
     pub async fn next_chunk(&self) -> Option<Bytes> {
         recv_with_cancel(self.rx.clone(), self.cancel.clone()).await
+    }
+}
+
+/// ADR-014 D4: `BodyReader` is itself an [`http_body::Body`] so callers can
+/// wrap it in [`crate::Body::new`] without a `StreamBody`/`unfold` adapter.
+impl http_body::Body for BodyReader {
+    type Data = Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        let this = self.get_mut();
+        let fut = this.pending.get_or_insert_with(|| {
+            Box::pin(recv_with_cancel(this.rx.clone(), this.cancel.clone()))
+        });
+        match fut.as_mut().poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(opt) => {
+                this.pending = None;
+                Poll::Ready(opt.map(|data| Ok(Frame::data(data))))
+            }
+        }
     }
 }
 

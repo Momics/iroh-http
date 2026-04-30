@@ -5,8 +5,7 @@
 
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, Method};
-use http_body_util::{BodyExt, StreamBody};
-use hyper::body::Frame;
+use http_body_util::BodyExt;
 use hyper_util::rt::TokioIo;
 
 use crate::{
@@ -241,7 +240,7 @@ async fn do_fetch(
     }
 
     let req_body: Body = if let Some(reader) = req_body_reader {
-        Body::new(body_from_reader(reader))
+        Body::new(reader)
     } else {
         Body::empty()
     };
@@ -436,23 +435,6 @@ pub(crate) async fn pump_hyper_body_to_channel_limited<B>(
     }
 
     drop(writer);
-}
-
-/// Adapt a `BodyReader` into a hyper-compatible body using `StreamBody`
-/// backed by a futures stream.
-pub(crate) fn body_from_reader(
-    reader: BodyReader,
-) -> StreamBody<impl futures::Stream<Item = Result<Frame<Bytes>, std::convert::Infallible>>> {
-    use futures::stream;
-
-    let s = stream::unfold(reader, |reader| async move {
-        reader
-            .next_chunk()
-            .await
-            .map(|data| (Ok(Frame::data(data)), reader))
-    });
-
-    StreamBody::new(s)
 }
 
 // ── Path extraction ───────────────────────────────────────────────────────────
