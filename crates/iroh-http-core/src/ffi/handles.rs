@@ -15,11 +15,12 @@ use std::{
 };
 
 use bytes::Bytes;
+use futures::sink::Sink;
 use http_body::Frame;
 use slotmap::{KeyData, SlotMap};
 use tokio::sync::mpsc;
 
-use crate::CoreError;
+use crate::{http::body::BoxError, CoreError};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -99,11 +100,32 @@ pub struct BodyReader {
 
 /// Producer end — stored in the writer registry.
 /// `mpsc::Sender` is `Clone`, so we clone it out of the registry for each call.
+///
+/// Per ADR-014 D4 this type implements [`futures::Sink<Bytes>`] so producers
+/// can pipe a `Stream<Item = Result<Bytes, _>>` into it via
+/// [`futures::StreamExt::forward`] without a hand-rolled pump loop. The two
+/// surfaces are disjoint:
+///
+/// - **Direct path** — call [`BodyWriter::send_chunk`] (`&self`, awaitable).
+///   Used by the FFI handle store and the limited hyper-body pump where we
+///   need byte-limit / frame-timeout policy that no stock adapter encodes.
+/// - **Sink path** — `.forward(writer)` from a `Stream`. The Sink owns a
+///   single in-flight send future at a time, cloned from `tx` so the
+///   underlying mpsc semantics (backpressure, drop-on-reader-gone, drain
+///   timeout) match `send_chunk` byte-for-byte.
 pub struct BodyWriter {
     pub(crate) tx: mpsc::Sender<Bytes>,
     /// Drain timeout baked in at channel-creation time from the endpoint config.
     pub(crate) drain_timeout: Duration,
+    /// In-flight `send_chunk` future driven by the [`Sink`] impl. `None`
+    /// when `start_send` has not been called since the last completion.
+    /// Owns a clone of `tx` so the future is `'static`.
+    sending: Option<BodyWriterSendFuture>,
 }
+
+/// Boxed in-flight `send_chunk` future used by the [`Sink<Bytes>`] impl on
+/// [`BodyWriter`]. Aliased to satisfy `clippy::type_complexity`.
+type BodyWriterSendFuture = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + Sync>>;
 
 /// Create a matched (writer, reader) pair backed by a bounded mpsc channel.
 ///
@@ -122,7 +144,11 @@ pub fn make_body_channel() -> (BodyWriter, BodyReader) {
 fn make_body_channel_with(capacity: usize, drain_timeout: Duration) -> (BodyWriter, BodyReader) {
     let (tx, rx) = mpsc::channel(capacity);
     (
-        BodyWriter { tx, drain_timeout },
+        BodyWriter {
+            tx,
+            drain_timeout,
+            sending: None,
+        },
         BodyReader {
             rx: Arc::new(tokio::sync::Mutex::new(rx)),
             cancel: Arc::new(tokio::sync::Notify::new()),
@@ -190,6 +216,55 @@ impl BodyWriter {
             .await
             .map_err(|_| "drain timeout: body reader is too slow".to_string())?
             .map_err(|_| "body reader dropped".to_string())
+    }
+}
+
+/// ADR-014 D4: `BodyWriter` is a [`Sink<Bytes>`] so producers can pipe a
+/// stream of chunks through `forward` instead of hand-rolling a pump loop.
+/// The Sink shares the underlying mpsc channel with [`BodyWriter::send_chunk`]
+/// and applies the same drain-timeout / reader-dropped semantics.
+impl Sink<Bytes> for BodyWriter {
+    type Error = BoxError;
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        let this = self.get_mut();
+        match this.sending.as_mut() {
+            None => Poll::Ready(Ok(())),
+            Some(fut) => match fut.as_mut().poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(res) => {
+                    this.sending = None;
+                    Poll::Ready(res)
+                }
+            },
+        }
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
+        // Sink contract requires poll_ready -> Ready(Ok) before start_send,
+        // so `sending` is None here. Build a fresh future that owns its own
+        // tx clone so it is 'static + Send + Sync.
+        let tx = self.tx.clone();
+        let drain_timeout = self.drain_timeout;
+        self.get_mut().sending = Some(Box::pin(async move {
+            tokio::time::timeout(drain_timeout, tx.send(item))
+                .await
+                .map_err(|_| -> BoxError { "drain timeout: body reader is too slow".into() })?
+                .map_err(|_| -> BoxError { "body reader dropped".into() })
+        }));
+        Ok(())
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        // Same as poll_ready: drain any in-flight send, then return Ready.
+        self.poll_ready(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        // Flush any in-flight send. EOF is signalled by dropping the
+        // BodyWriter (which drops `tx`); callers using `forward(writer)` own
+        // the writer and drop it on completion.
+        self.poll_flush(cx)
     }
 }
 
@@ -834,6 +909,69 @@ mod tests {
         drop(reader);
         let result = writer.send_chunk(Bytes::from("data")).await;
         assert!(result.is_err());
+    }
+
+    // ── BodyWriter Sink<Bytes> impl (ADR-014 D4 / #174) ─────────────────
+
+    #[tokio::test]
+    async fn body_writer_sink_forward_from_stream() {
+        use futures::{stream, StreamExt};
+        let (writer, reader) = make_body_channel();
+
+        let chunks = vec![
+            Ok::<_, BoxError>(Bytes::from("one")),
+            Ok(Bytes::from("two")),
+            Ok(Bytes::from("three")),
+        ];
+        let producer = tokio::spawn(async move {
+            stream::iter(chunks).forward(writer).await.unwrap();
+            // Forward drops `writer` on completion → reader sees EOF.
+        });
+
+        let mut collected = Vec::new();
+        while let Some(chunk) = reader.next_chunk().await {
+            collected.push(chunk);
+        }
+        producer.await.unwrap();
+
+        assert_eq!(
+            collected,
+            vec![Bytes::from("one"), Bytes::from("two"), Bytes::from("three")]
+        );
+    }
+
+    #[tokio::test]
+    async fn body_writer_sink_send_via_sinkext() {
+        use futures::SinkExt;
+        let (mut writer, reader) = make_body_channel();
+        writer.send(Bytes::from("a")).await.unwrap();
+        writer.send(Bytes::from("b")).await.unwrap();
+        writer.close().await.unwrap();
+        drop(writer);
+
+        let mut collected = Vec::new();
+        while let Some(chunk) = reader.next_chunk().await {
+            collected.push(chunk);
+        }
+        assert_eq!(collected, vec![Bytes::from("a"), Bytes::from("b")]);
+    }
+
+    #[tokio::test]
+    async fn body_writer_sink_propagates_reader_dropped() {
+        use futures::SinkExt;
+        let (mut writer, reader) = make_body_channel();
+        drop(reader);
+        // Channel capacity is DEFAULT_CHANNEL_CAPACITY = 32, so the first
+        // few sends accept into the buffer; one of them eventually surfaces
+        // the reader-dropped error. Push past capacity to force it.
+        let mut err = None;
+        for _ in 0..(DEFAULT_CHANNEL_CAPACITY + 1) {
+            if let Err(e) = writer.send(Bytes::from("x")).await {
+                err = Some(e);
+                break;
+            }
+        }
+        assert!(err.is_some(), "expected reader-dropped error from Sink");
     }
 
     // ── HandleStore operations ──────────────────────────────────────────
