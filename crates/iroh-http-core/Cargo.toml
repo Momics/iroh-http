@@ -60,3 +60,7 @@ harness = false
 [[bench]]
 name = "latency"
 harness = false
+
+[[bench]]
+name = "channel"
+harness = false
