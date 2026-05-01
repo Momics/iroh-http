@@ -20,12 +20,8 @@ use crate::http::transport::pool::ConnectionPool;
 use crate::{ALPN, ALPN_DUPLEX};
 
 use super::{
-    config::NodeOptions,
-    ffi_bridge::FfiBridge,
-    http_runtime::HttpRuntime,
-    session_runtime::SessionRuntime,
-    transport::Transport,
-    EndpointInner, IrohEndpoint,
+    config::NodeOptions, ffi_bridge::FfiBridge, http_runtime::HttpRuntime,
+    session_runtime::SessionRuntime, transport::Transport, EndpointInner, IrohEndpoint,
 };
 
 impl IrohEndpoint {

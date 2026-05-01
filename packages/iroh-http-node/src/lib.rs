@@ -1098,7 +1098,9 @@ pub fn raw_serve(
     // napi v3: accept ThreadsafeFunction directly; CALL_EH=false preserves
     // the single-arg (not error-first) JS calling convention from v2.
     handler: ThreadsafeFunction<JsCallArgs, (), JsCallArgs, Status, false>,
-    on_connection_event: Option<ThreadsafeFunction<JsConnectionEvent, (), JsConnectionEvent, Status, false>>,
+    on_connection_event: Option<
+        ThreadsafeFunction<JsConnectionEvent, (), JsConnectionEvent, Status, false>,
+    >,
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
 
@@ -1149,8 +1151,8 @@ pub fn raw_serve(
     let tsfn = Arc::new(handler);
 
     // Build an optional closure for connection events (peer connect/disconnect).
-    let conn_event_fn: Option<Arc<dyn Fn(ConnectionEvent) + Send + Sync>> =
-        on_connection_event.map(|conn_tsfn| {
+    let conn_event_fn: Option<Arc<dyn Fn(ConnectionEvent) + Send + Sync>> = on_connection_event
+        .map(|conn_tsfn| {
             let conn_tsfn = Arc::new(conn_tsfn);
             Arc::new(move |ev: ConnectionEvent| {
                 conn_tsfn.call(

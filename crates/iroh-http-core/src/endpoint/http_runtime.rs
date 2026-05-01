@@ -1,9 +1,6 @@
 //! HttpRuntime subsystem — connection pool, HTTP limits, in-flight counters.
 
-use std::sync::{
-    atomic::AtomicUsize,
-    Arc,
-};
+use std::sync::{atomic::AtomicUsize, Arc};
 
 use crate::http::server::stack::CompressionOptions;
 use crate::http::transport::pool::ConnectionPool;

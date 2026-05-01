@@ -34,9 +34,7 @@ pub mod config;
 pub mod stats;
 
 pub use bind::parse_direct_addrs;
-pub use config::{
-    DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions,
-};
+pub use config::{DiscoveryOptions, NetworkingOptions, NodeOptions, PoolOptions, StreamingOptions};
 pub use http::server::stack::CompressionOptions;
 pub use stats::{ConnectionEvent, EndpointStats, NodeAddrInfo, PathInfo, PeerStats};
 
