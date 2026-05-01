@@ -20,13 +20,13 @@ pub struct ServeOptions {
     pub request_timeout_ms: Option<u64>,
     /// Maximum connections from a single peer.  Default: 8.
     pub max_connections_per_peer: Option<usize>,
-  /// Reject request bodies larger than this many **wire** bytes (compressed).
-  /// Default: 16 MiB.
-  pub max_request_body_wire_bytes: Option<usize>,
-  /// Reject request bodies larger than this many **decoded** bytes (after
-  /// decompression). This is the primary compression-bomb guard.
-  /// Default: 16 MiB.
-  pub max_request_body_decoded_bytes: Option<usize>,
+    /// Reject request bodies larger than this many **wire** bytes (compressed).
+    /// Default: 16 MiB.
+    pub max_request_body_wire_bytes: Option<usize>,
+    /// Reject request bodies larger than this many **decoded** bytes (after
+    /// decompression). This is the primary compression-bomb guard.
+    /// Default: 16 MiB.
+    pub max_request_body_decoded_bytes: Option<usize>,
     /// Graceful shutdown drain window in milliseconds.  Default: 30 000.
     pub drain_timeout_ms: Option<u64>,
     /// Maximum total QUIC connections the server will accept.  Default: unlimited.
@@ -41,7 +41,8 @@ pub(crate) const DEFAULT_CONCURRENCY: usize = 1024;
 pub(crate) const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
 pub(crate) const DEFAULT_MAX_CONNECTIONS_PER_PEER: usize = 8;
 pub(crate) const DEFAULT_DRAIN_TIMEOUT_MS: u64 = 30_000;
-/// 16 MiB — applied when `max_request_body_bytes` is not explicitly set.
+/// 16 MiB — applied when `max_request_body_wire_bytes` or
+/// `max_request_body_decoded_bytes` is not explicitly set.
 /// Prevents memory exhaustion from unbounded request bodies.
 pub(crate) const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// 256 MiB — applied when `max_response_body_bytes` is not explicitly set.

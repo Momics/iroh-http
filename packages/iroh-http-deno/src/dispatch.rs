@@ -640,7 +640,9 @@ async fn serve_start(p: Value) -> Value {
         max_connections_per_peer: p["maxConnectionsPerPeer"].as_u64().map(|v| v as usize),
         request_timeout_ms: p["requestTimeout"].as_u64(),
         max_request_body_wire_bytes: p["maxRequestBodyWireBytes"].as_u64().map(|v| v as usize),
-        max_request_body_decoded_bytes: p["maxRequestBodyDecodedBytes"].as_u64().map(|v| v as usize),
+        max_request_body_decoded_bytes: p["maxRequestBodyDecodedBytes"]
+            .as_u64()
+            .map(|v| v as usize),
         max_total_connections: p["maxTotalConnections"].as_u64().map(|v| v as usize),
         max_serve_errors: p["maxServeErrors"].as_u64().map(|v| v as usize),
         drain_timeout_ms: p["drainTimeout"].as_u64(),

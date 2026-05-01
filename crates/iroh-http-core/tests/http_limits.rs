@@ -741,7 +741,10 @@ async fn zstd_bomb_rejected_by_decoded_body_limit() {
         "/bomb",
         "POST",
         &[
-            ("content-type".to_string(), "application/octet-stream".to_string()),
+            (
+                "content-type".to_string(),
+                "application/octet-stream".to_string(),
+            ),
             ("content-encoding".to_string(), "zstd".to_string()),
         ],
         Some(body_reader),
@@ -777,7 +780,7 @@ async fn zstd_bomb_rejected_by_decoded_body_limit() {
 #[tokio::test]
 async fn wire_limit_rejects_large_uncompressed_body() {
     const WIRE_LIMIT: usize = 1024; // 1 KiB
-    const BODY_SIZE: usize = 2048;  // 2 KiB
+    const BODY_SIZE: usize = 2048; // 2 KiB
 
     let (server_ep, client_ep) = common::make_pair().await;
     let server_id = common::node_id(&server_ep);
@@ -820,7 +823,9 @@ async fn wire_limit_rejects_large_uncompressed_body() {
     // Send a 2 KiB raw (uncompressed) body — exceeds the 1 KiB wire limit.
     let (writer, body_reader) = iroh_http_core::make_body_channel();
     tokio::spawn(async move {
-        let _ = writer.send_chunk(Bytes::from(vec![0x41u8; BODY_SIZE])).await;
+        let _ = writer
+            .send_chunk(Bytes::from(vec![0x41u8; BODY_SIZE]))
+            .await;
         drop(writer);
     });
 
@@ -865,7 +870,7 @@ async fn wire_limit_rejects_large_uncompressed_body() {
 #[tokio::test]
 async fn request_within_both_limits_succeeds() {
     const BOTH_LIMITS: usize = 64 * 1024; // 64 KiB
-    const PLAINTEXT_SIZE: usize = 512;    // 512 B
+    const PLAINTEXT_SIZE: usize = 512; // 512 B
 
     let (server_ep, client_ep) = common::make_pair().await;
     let server_id = common::node_id(&server_ep);
