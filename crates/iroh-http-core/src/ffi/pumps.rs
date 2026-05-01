@@ -8,6 +8,8 @@
 //! the channel-backed handle world that the JS adapters consume. The
 //! pure-Rust `http::client::fetch` does not need them; it returns a
 //! [`hyper::Response<Body>`] and lets the caller consume the body
+// Legitimate FFI wiring — uses the disallowed types intentionally.
+#![allow(clippy::disallowed_types)]
 //! directly. Slice D (#186) moved them out of `http/client.rs` to remove
 //! the last `crate::ffi` import from `mod http`.
 

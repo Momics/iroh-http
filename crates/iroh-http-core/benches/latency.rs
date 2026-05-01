@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_types)] // test/bench file — RequestPayload and friends are valid here
 use criterion::{criterion_group, criterion_main, Criterion};
 use iroh_http_core::{
     fetch, respond, serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload,

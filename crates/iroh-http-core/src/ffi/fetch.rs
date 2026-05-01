@@ -7,6 +7,8 @@
 //! response as a [`FfiResponse`] with a slotmap body handle. Maps
 //! [`crate::http::client::FetchError`] variants onto [`crate::CoreError`]
 //! codes for the FFI boundary.
+// Legitimate FFI wiring — uses the disallowed types intentionally.
+#![allow(clippy::disallowed_types)]
 
 use std::time::Duration;
 

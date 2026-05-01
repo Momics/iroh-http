@@ -4,6 +4,9 @@
 //! These are FFI primitives, not HTTP primitives — `mod http` MUST NOT
 //! depend on them. Per epic #182 they were extracted from `lib.rs` so
 //! the dependency direction is enforceable.
+// Definition site — the disallowed_types lint would fire on the definitions
+// themselves; allow it here so the lint only catches imports in mod http.
+#![allow(clippy::disallowed_types)]
 
 /// Flat response-head struct that crosses the FFI boundary.
 ///

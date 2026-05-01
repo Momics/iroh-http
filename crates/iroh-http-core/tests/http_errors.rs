@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_types)] // test/bench file u2014 FFI types valid here
 mod common;
 
 use bytes::Bytes;

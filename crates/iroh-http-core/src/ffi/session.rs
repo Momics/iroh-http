@@ -8,6 +8,8 @@
 //! The shape mirrors W3C WebTransport: every method has a direct counterpart
 //! on the `WebTransport` interface.
 //!
+// Legitimate FFI wiring — uses the disallowed types intentionally.
+#![allow(clippy::disallowed_types)]
 //! Lives under `mod ffi` (Slice E, #187) because `Session` is `u64`-handle-
 //! shaped: it wraps a slotmap entry in [`crate::ffi::handles::HandleStore`]
 //! and returns [`crate::FfiDuplexStream`]. A pure-Rust QUIC session API would

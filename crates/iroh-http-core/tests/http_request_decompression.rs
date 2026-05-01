@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_types)] // test/bench file — RequestPayload and friends are valid here
 //! Inbound request body decompression — `Content-Encoding: zstd` round-trip.
 //!
 //! Closes #153 — verifies that a peer-supplied compressed request body is

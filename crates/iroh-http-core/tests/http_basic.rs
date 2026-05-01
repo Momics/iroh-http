@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_types)] // test/bench file — RequestPayload and friends are valid here
 mod common;
 
 use bytes::Bytes;

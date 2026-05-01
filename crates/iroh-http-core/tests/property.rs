@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_types)] // test/bench file — RequestPayload and friends are valid here
 //! Property-based tests for iroh-http-core.
 //!
 //! Each section targets a different module boundary. When adding new public

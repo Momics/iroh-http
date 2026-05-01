@@ -8,6 +8,8 @@
 //! serve entry — handed in via [`serve_with_callback`].
 //!
 //! Architecture-test guarantee: this file may import from `crate::http`
+// Legitimate FFI wiring — uses the disallowed types intentionally.
+#![allow(clippy::disallowed_types)]
 //! (the `ffi → http` direction is allowed); `crate::http::*` must NOT
 //! import from here.
 

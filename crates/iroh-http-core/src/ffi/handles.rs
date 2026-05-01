@@ -4,6 +4,8 @@
 //! Each `IrohEndpoint` has its own `HandleStore` — no process-global registries.
 //! Handles are `u64` values equal to `key.data().as_ffi()`, unique within the
 //! owning endpoint's slot-map.
+// This module IS the definition site of the disallowed types — allow is correct here.
+#![allow(clippy::disallowed_types)]
 
 use std::{
     collections::HashMap,

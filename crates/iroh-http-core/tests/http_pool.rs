@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_types)] // test/bench file — RequestPayload and friends are valid here
 #![allow(clippy::redundant_pattern_matching)]
 
 mod common;

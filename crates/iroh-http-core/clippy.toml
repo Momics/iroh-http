@@ -1,0 +1,17 @@
+# Belt-and-braces enforcement for the `mod http` → `mod ffi` one-way rule
+# (epic #182). These types are FFI-only; they must not appear inside mod http.
+# The architecture test in tests/architecture.rs provides a complementary
+# substring-scan guard; clippy.toml enforces by type identity so alias-based
+# imports (e.g. `use crate::ffi as f; f::handles::HandleStore`) are also caught.
+#
+# Enabled by: cargo clippy --workspace -- -D warnings  (runs in npm run ci)
+# Reference:  https://rust-lang.github.io/rust-clippy/master/index.html#disallowed_types
+
+disallowed-types = [
+    { path = "iroh_http_core::ffi::handles::HandleStore",    reason = "FFI-only; must not appear in mod http — epic #182 / issue #191" },
+    { path = "iroh_http_core::ffi::handles::BodyReader",     reason = "FFI-only; must not appear in mod http — epic #182 / issue #191" },
+    { path = "iroh_http_core::ffi::handles::BodyWriter",     reason = "FFI-only; must not appear in mod http — epic #182 / issue #191" },
+    { path = "iroh_http_core::ffi::types::FfiResponse",      reason = "FFI-only; must not appear in mod http — epic #182 / issue #191" },
+    { path = "iroh_http_core::ffi::types::FfiDuplexStream",  reason = "FFI-only; must not appear in mod http — epic #182 / issue #191" },
+    { path = "iroh_http_core::ffi::types::RequestPayload",   reason = "FFI-only; must not appear in mod http — epic #182 / issue #191" },
+]

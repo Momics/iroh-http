@@ -8,6 +8,8 @@
 //! - [`session_runtime::SessionRuntime`] — serve loop, lifecycle signals,
 //!   transport events, path subscriptions.
 //! - [`ffi_bridge::FfiBridge`] — the opaque-handle store reachable from JS.
+// endpoint.rs holds the FfiBridge subsystem which legitimately references FFI types.
+#![allow(clippy::disallowed_types)]
 //!
 //! No business logic lives in this module — only orchestration and the
 //! public API surface.

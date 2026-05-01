@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_types)] // test/bench file u2014 FFI types valid here
 //! Throughput and latency benchmarks for iroh-http-core.
 //!
 //! Run:

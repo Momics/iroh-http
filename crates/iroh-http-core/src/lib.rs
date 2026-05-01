@@ -40,13 +40,14 @@ pub use http::server::{
 // ── FFI bridge surface (`mod ffi`) ────────────────────────────────
 pub use ffi::dispatcher::{respond, serve, serve_with_callback};
 pub use ffi::fetch::fetch;
-pub use ffi::handles::{
-    make_body_channel, BodyReader, HandleStore, ResponseHeadEntry, StoreConfig,
-};
+#[allow(clippy::disallowed_types)] // re-exporting FFI types at crate root — not a mod http violation
+pub use ffi::handles::
+    {make_body_channel, BodyReader, HandleStore, ResponseHeadEntry, StoreConfig};
 // `Session` is `u64`-handle-shaped (it wraps a slotmap entry and returns
 // `FfiDuplexStream`), so it lives under `mod ffi` and is re-exported here
 // alongside the other FFI types — not the pure-Rust HTTP surface above.
 pub use ffi::session::{CloseInfo, Session};
+#[allow(clippy::disallowed_types)] // re-exporting FFI types at crate root — not a mod http violation
 pub use ffi::types::{FfiDuplexStream, FfiResponse, RequestPayload};
 
 // ── Other re-exports kept at crate root ───────────────────────────────────────

@@ -60,16 +60,29 @@ where
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // If ConcurrencyLimitLayer is saturated AND LoadShed is present, it
-        // returns Pending from poll_ready — LoadShed converts that to an
-        // immediate Err(Overloaded). If LoadShed is absent, poll_ready blocks
-        // until a slot opens. In both cases the inner service signals readiness
-        // here; layer errors are handled in `call`, never surfaced via
-        // `poll_ready`.
+        // `poll_ready` signals *backpressure readiness*, not request-time
+        // capacity. Layer errors produced at request time (Overloaded, Elapsed)
+        // arrive in `call()` and are converted to HTTP responses there.
+        //
+        // If the inner service returns `Err` from `poll_ready` the service is
+        // in a broken state. Returning `Ok(())` here would be a lie — the next
+        // `call()` would fail in unexpected ways. Instead we log, schedule an
+        // immediate re-poll, and return `Pending` so the connection's own
+        // request-timeout can eventually close it cleanly.
         match self.0.poll_ready(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(_)) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(e)) => {
+                let e: BoxError = e.into();
+                tracing::error!(
+                    "iroh-http: inner service poll_ready failed ({e}); \
+                     treating as not-ready so the request timeout can close the connection"
+                );
+                // Wake immediately — caller will re-poll until the request
+                // timeout fires or the connection is dropped.
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
         }
     }
 
@@ -100,5 +113,55 @@ where
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+    use std::future::{ready, Ready};
+    use std::task::{Context, Poll};
+
+    use super::*;
+
+    /// A service whose `poll_ready` always returns `Err`.
+    struct AlwaysErrorReady;
+
+    impl Service<hyper::Request<Body>> for AlwaysErrorReady {
+        type Response = hyper::Response<Body>;
+        type Error = BoxError;
+        type Future = Ready<Result<Self::Response, Self::Error>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Err("simulated inner poll_ready failure".into()))
+        }
+
+        fn call(&mut self, _req: hyper::Request<Body>) -> Self::Future {
+            ready(Ok(hyper::Response::new(Body::empty())))
+        }
+    }
+
+    /// Regression for #179: `HandleLayerError::poll_ready` must NOT return
+    /// `Poll::Ready(Ok(()))` when the inner service returns `Err` from
+    /// `poll_ready`. Before the fix it silently reported "I'm ready" —
+    /// lying to the caller and deferring the broken state to `call()`.
+    ///
+    /// The current fix returns `Poll::Pending` (+ wakeup) so the connection
+    /// can time out rather than proceeding into a broken `call`.
+    #[test]
+    fn poll_ready_error_is_not_silently_swallowed() {
+        let inner = AlwaysErrorReady;
+        let mut svc: HandleLayerError<AlwaysErrorReady> = HandleLayerError(inner);
+
+        let waker = futures::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let result: Poll<Result<(), Infallible>> = svc.poll_ready(&mut cx);
+
+        assert!(
+            matches!(result, Poll::Pending),
+            "poll_ready must return Poll::Pending (not Poll::Ready(Ok(()))) \
+             when the inner service errors — regression for #179"
+        );
     }
 }
