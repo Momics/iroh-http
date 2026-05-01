@@ -387,7 +387,7 @@ class NodeAdapter extends IrohAdapter {
     endpointHandle: number,
     callback: (event: TransportEventPayload) => void,
   ): void {
-    napiStartTransportEvents(endpointHandle, (json: string) => {
+    void napiStartTransportEvents(endpointHandle, (json: string) => {
       try {
         callback(JSON.parse(json) as TransportEventPayload);
       } catch (err) {

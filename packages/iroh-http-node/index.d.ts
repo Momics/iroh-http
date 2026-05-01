@@ -396,7 +396,7 @@ export declare function sessionSendDatagram(endpointHandle: number, sessionHandl
  * The task exits automatically when the endpoint closes (all senders drop).
  * Call at most once per endpoint; subsequent calls return an error.
  */
-export declare function startTransportEvents(endpointHandle: number, handler: ((arg: string) => void)): void
+export declare function startTransportEvents(endpointHandle: number, handler: ((arg: string) => void)): Promise<void>
 
 /**
  * Stop the serve loop for the given endpoint (graceful shutdown).

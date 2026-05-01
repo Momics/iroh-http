@@ -780,7 +780,7 @@ pub struct JsConnectionEvent {
 /// The task exits automatically when the endpoint closes (all senders drop).
 /// Call at most once per endpoint; subsequent calls return an error.
 #[napi]
-pub fn start_transport_events(
+pub async fn start_transport_events(
     endpoint_handle: u32,
     // napi v3: accept ThreadsafeFunction directly; napi boxes the JS Function
     // before our code runs so there is no 'env lifetime to escape.
