@@ -1036,8 +1036,13 @@ pub struct JsServeOptions {
     pub max_connections_per_peer: Option<u32>,
     /// Per-request timeout in milliseconds.  Default: 60 000.  0 = disabled.
     pub request_timeout: Option<f64>,
-    /// Reject request bodies larger than this many bytes.  Default: unlimited.
-    pub max_request_body_bytes: Option<f64>,
+    /// Reject request bodies larger than this many wire (compressed) bytes.
+    /// Default: 16 MiB when not set.
+    pub max_request_body_wire_bytes: Option<f64>,
+    /// Reject request bodies larger than this many decoded bytes (after
+    /// decompression). This is the compression-bomb guard.
+    /// Default: 16 MiB when not set.
+    pub max_request_body_decoded_bytes: Option<f64>,
     /// Maximum total QUIC connections the server will accept.  Default: unlimited.
     pub max_total_connections: Option<f64>,
     /// Maximum serve errors before shutdown.  Default: 5.
@@ -1062,7 +1067,8 @@ pub fn raw_serve(
             max_concurrency: None,
             max_connections_per_peer: None,
             request_timeout: None,
-            max_request_body_bytes: None,
+            max_request_body_wire_bytes: None,
+            max_request_body_decoded_bytes: None,
             max_total_connections: None,
             max_serve_errors: None,
             drain_timeout: None,
@@ -1075,9 +1081,13 @@ pub fn raw_serve(
                 .request_timeout
                 .map(|v| safe_f64_to_u64(v, "requestTimeout", MAX_TIMEOUT_MS))
                 .transpose()?,
-            max_request_body_bytes: o
-                .max_request_body_bytes
-                .map(|v| safe_f64_to_usize(v, "maxRequestBodyBytes", MAX_BODY_BYTES))
+            max_request_body_wire_bytes: o
+                .max_request_body_wire_bytes
+                .map(|v| safe_f64_to_usize(v, "maxRequestBodyWireBytes", MAX_BODY_BYTES))
+                .transpose()?,
+            max_request_body_decoded_bytes: o
+                .max_request_body_decoded_bytes
+                .map(|v| safe_f64_to_usize(v, "maxRequestBodyDecodedBytes", MAX_BODY_BYTES))
                 .transpose()?,
             max_total_connections: o
                 .max_total_connections

@@ -32,7 +32,8 @@ pub(super) struct AcceptConfig {
     pub max_errors: usize,
     pub request_timeout: Duration,
     pub max_conns_per_peer: usize,
-    pub max_request_body_bytes: Option<usize>,
+    pub max_request_body_wire_bytes: Option<usize>,
+    pub max_request_body_decoded_bytes: Option<usize>,
     pub max_total_connections: Option<usize>,
     pub drain_timeout: Duration,
     pub load_shed_enabled: bool,
@@ -172,7 +173,8 @@ pub(super) async fn accept_loop<S>(
         let drain_notify_conn = drain_notify.clone();
         let stack_compression_conn = cfg.stack_compression.clone();
         let max_header_size = cfg.max_header_size;
-        let max_request_body_bytes = cfg.max_request_body_bytes;
+        let max_request_body_wire_bytes = cfg.max_request_body_wire_bytes;
+        let max_request_body_decoded_bytes = cfg.max_request_body_decoded_bytes;
         let load_shed_enabled = cfg.load_shed_enabled;
 
         tokio::spawn(async move {
@@ -223,7 +225,8 @@ pub(super) async fn accept_loop<S>(
                         } else {
                             Some(timeout_dur)
                         },
-                        max_request_body_bytes,
+                        max_request_body_wire_bytes,
+                        max_request_body_decoded_bytes,
                         load_shed: load_shed_enabled,
                         compression: req_compression,
                         decompression: true,

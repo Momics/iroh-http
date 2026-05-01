@@ -126,8 +126,11 @@ where
         max_conns_per_peer: options
             .max_connections_per_peer
             .unwrap_or(DEFAULT_MAX_CONNECTIONS_PER_PEER),
-        max_request_body_bytes: options
-            .max_request_body_bytes
+        max_request_body_wire_bytes: options
+            .max_request_body_wire_bytes
+            .or(Some(DEFAULT_MAX_REQUEST_BODY_BYTES)),
+        max_request_body_decoded_bytes: options
+            .max_request_body_decoded_bytes
             .or(Some(DEFAULT_MAX_REQUEST_BODY_BYTES)),
         max_total_connections: options.max_total_connections,
         drain_timeout: Duration::from_millis(

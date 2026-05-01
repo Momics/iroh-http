@@ -232,8 +232,10 @@ export interface JsServeOptions {
   maxConnectionsPerPeer?: number
   /** Per-request timeout in milliseconds.  Default: 60 000.  0 = disabled. */
   requestTimeout?: number
-  /** Reject request bodies larger than this many bytes.  Default: unlimited. */
-  maxRequestBodyBytes?: number
+  /** Reject request bodies larger than this many wire (compressed) bytes.  Default: 16 MiB. */
+  maxRequestBodyWireBytes?: number
+  /** Reject request bodies larger than this many decoded bytes (after decompression). Compression-bomb guard.  Default: 16 MiB. */
+  maxRequestBodyDecodedBytes?: number
   /** Maximum total QUIC connections the server will accept.  Default: unlimited. */
   maxTotalConnections?: number
   /** Maximum serve errors before shutdown.  Default: 5. */

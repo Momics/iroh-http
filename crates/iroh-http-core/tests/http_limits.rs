@@ -220,7 +220,7 @@ async fn body_limit_exceeded_resets_stream() {
     serve(
         server_ep.clone(),
         ServeOptions {
-            max_request_body_bytes: Some(64), // very small
+            max_request_body_wire_bytes: Some(64), // very small
             ..Default::default()
         },
         move |payload: RequestPayload| {
@@ -301,12 +301,12 @@ async fn per_peer_connection_limit_config() {
     let opts = ServeOptions {
         max_connections_per_peer: Some(2),
         request_timeout_ms: Some(30_000),
-        max_request_body_bytes: Some(1024 * 1024),
+        max_request_body_wire_bytes: Some(1024 * 1024),
         ..Default::default()
     };
     assert_eq!(opts.max_connections_per_peer, Some(2));
     assert_eq!(opts.request_timeout_ms, Some(30_000));
-    assert_eq!(opts.max_request_body_bytes, Some(1024 * 1024));
+    assert_eq!(opts.max_request_body_wire_bytes, Some(1024 * 1024));
 }
 
 /// Verify that max_header_size is configurable via NodeOptions and defaults to 64KB.
@@ -436,7 +436,7 @@ async fn serve_concurrency_limit() {
     drop(gate);
 }
 
-/// Request body exceeding `max_request_body_bytes` causes the stream to be
+/// Request body exceeding the wire limit causes the stream to be
 /// reset — the fetch returns an error.
 #[tokio::test]
 async fn body_exceeds_limit_resets_stream() {
@@ -447,7 +447,7 @@ async fn body_exceeds_limit_resets_stream() {
     serve(
         server_ep.clone(),
         ServeOptions {
-            max_request_body_bytes: Some(100),
+            max_request_body_wire_bytes: Some(100),
             ..Default::default()
         },
         move |payload: RequestPayload| {
@@ -592,7 +592,7 @@ async fn concurrent_requests_under_tight_concurrency() {
     );
 }
 
-/// When `max_request_body_bytes` is exceeded, the pump loop must drain the
+/// When the wire limit is exceeded, the pump loop must drain the
 /// remaining body frames so the peer's QUIC send stream can close cleanly.
 /// The client write task should complete well within 500 ms of receiving the
 /// 413 response — not stall until the QUIC idle timeout (ISS-015).
@@ -605,8 +605,8 @@ async fn body_overflow_drains_quic_stream() {
     serve(
         server_ep.clone(),
         ServeOptions {
-            // 100-byte limit; client will send 50 KB.
-            max_request_body_bytes: Some(100),
+            // 100-byte wire limit; client will send 50 KB.
+            max_request_body_wire_bytes: Some(100),
             ..Default::default()
         },
         move |_payload: RequestPayload| {
@@ -657,4 +657,294 @@ async fn body_overflow_drains_quic_stream() {
         deadline.is_ok(),
         "client write task stalled after body overflow — QUIC stream was not drained"
     );
+}
+
+// ── Regression tests for #190 (decoded body limit / zstd-bomb) ─────────────
+
+/// Regression #190-A: a zstd-compressed payload that is small on the wire but
+/// large when decompressed must be truncated by `max_request_body_decoded_bytes`.
+///
+/// Before #190 was fixed, `RequestBodyLimitLayer` was placed outside the
+/// decompression layer so it only counted compressed wire bytes.  A ~50 B
+/// zstd payload (100 KiB plaintext) would bypass the 64 KiB wire limit and
+/// the handler would read the full 100 KiB.  `max_request_body_decoded_bytes`
+/// is now applied inside `RequestDecompressionLayer` and closes this gap.
+#[tokio::test]
+async fn zstd_bomb_rejected_by_decoded_body_limit() {
+    const DECODED_LIMIT: usize = 8 * 1024; // 8 KiB
+    const PLAINTEXT_SIZE: usize = 100 * 1024; // 100 KiB
+
+    // 100 KiB of zeros compresses to ~50 bytes with zstd.
+    let plaintext = vec![0u8; PLAINTEXT_SIZE];
+    let compressed =
+        zstd::stream::encode_all(plaintext.as_slice(), 3).expect("zstd encode succeeds");
+    // Sanity: verify the compression ratio is high enough for the test to be
+    // meaningful (compressed must fit within the 64 KiB wire limit).
+    assert!(
+        compressed.len() < DECODED_LIMIT,
+        "expected compressed payload < {DECODED_LIMIT} B, got {} B",
+        compressed.len()
+    );
+
+    let (server_ep, client_ep) = common::make_pair().await;
+    let server_id = common::node_id(&server_ep);
+    let addrs = common::server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions {
+            // Wire limit: 64 KiB — well above the compressed payload (~50 B)
+            // so the wire check must NOT fire here.
+            max_request_body_wire_bytes: Some(64 * 1024),
+            // Decoded limit: 8 KiB — the 100 KiB plaintext must be truncated.
+            max_request_body_decoded_bytes: Some(DECODED_LIMIT),
+            ..Default::default()
+        },
+        move |payload: RequestPayload| {
+            // Read the (decompressed) body and count bytes received.
+            // The decoded limit must cut off reading before 100 KiB.
+            let body_h = payload.req_body_handle;
+            let res_h = payload.res_body_handle;
+            let req_h = payload.req_handle;
+            let server_ep = server_ep.clone();
+            tokio::spawn(async move {
+                let mut total = 0usize;
+                while let Ok(Some(chunk)) = server_ep.handles().next_chunk(body_h).await {
+                    total += chunk.len();
+                }
+                let count_str = format!("{total}");
+                respond(
+                    server_ep.handles(),
+                    req_h,
+                    200,
+                    vec![("content-type".into(), "text/plain".into())],
+                )
+                .unwrap();
+                let _ = server_ep
+                    .handles()
+                    .send_chunk(res_h, Bytes::from(count_str))
+                    .await;
+                let _ = server_ep.handles().finish_body(res_h);
+            });
+        },
+    );
+
+    let (writer, body_reader) = iroh_http_core::make_body_channel();
+    tokio::spawn(async move {
+        let _ = writer.send_chunk(Bytes::from(compressed)).await;
+        drop(writer);
+    });
+
+    let result = fetch(
+        &client_ep,
+        &server_id,
+        "/bomb",
+        "POST",
+        &[
+            ("content-type".to_string(), "application/octet-stream".to_string()),
+            ("content-encoding".to_string(), "zstd".to_string()),
+        ],
+        Some(body_reader),
+        None,
+        Some(&addrs),
+        None,
+        true,
+    )
+    .await;
+
+    // The transport must succeed (server responds 200 after truncation).
+    if let Ok(res) = result {
+        if let Ok(Some(chunk)) = client_ep.handles().next_chunk(res.body_handle).await {
+            let received: usize = std::str::from_utf8(&chunk)
+                .unwrap_or("0")
+                .trim()
+                .parse()
+                .unwrap_or(0);
+            assert!(
+                received <= DECODED_LIMIT,
+                "decoded-body limit = {DECODED_LIMIT} B but handler saw {received} B; \
+                 decoded limit is not being enforced inside decompression (regression #190)"
+            );
+        }
+    }
+    // If the fetch errored entirely (stream reset), the limit fired — also acceptable.
+}
+
+/// Regression #190-B: the wire limit still fires for large uncompressed bodies.
+///
+/// Ensures the rename of `max_request_body_bytes` → `max_request_body_wire_bytes`
+/// did not accidentally disable the pre-existing wire-level guard.
+#[tokio::test]
+async fn wire_limit_rejects_large_uncompressed_body() {
+    const WIRE_LIMIT: usize = 1024; // 1 KiB
+    const BODY_SIZE: usize = 2048;  // 2 KiB
+
+    let (server_ep, client_ep) = common::make_pair().await;
+    let server_id = common::node_id(&server_ep);
+    let addrs = common::server_addrs(&server_ep);
+
+    serve(
+        server_ep.clone(),
+        ServeOptions {
+            max_request_body_wire_bytes: Some(WIRE_LIMIT),
+            max_request_body_decoded_bytes: None, // decoded limit disabled
+            ..Default::default()
+        },
+        move |payload: RequestPayload| {
+            let body_h = payload.req_body_handle;
+            let res_h = payload.res_body_handle;
+            let req_h = payload.req_handle;
+            let server_ep = server_ep.clone();
+            tokio::spawn(async move {
+                let mut total = 0usize;
+                while let Ok(Some(chunk)) = server_ep.handles().next_chunk(body_h).await {
+                    total += chunk.len();
+                }
+                let count_str = format!("{total}");
+                respond(
+                    server_ep.handles(),
+                    req_h,
+                    200,
+                    vec![("content-type".into(), "text/plain".into())],
+                )
+                .unwrap();
+                let _ = server_ep
+                    .handles()
+                    .send_chunk(res_h, Bytes::from(count_str))
+                    .await;
+                let _ = server_ep.handles().finish_body(res_h);
+            });
+        },
+    );
+
+    // Send a 2 KiB raw (uncompressed) body — exceeds the 1 KiB wire limit.
+    let (writer, body_reader) = iroh_http_core::make_body_channel();
+    tokio::spawn(async move {
+        let _ = writer.send_chunk(Bytes::from(vec![0x41u8; BODY_SIZE])).await;
+        drop(writer);
+    });
+
+    let result = fetch(
+        &client_ep,
+        &server_id,
+        "/upload",
+        "POST",
+        &[],
+        Some(body_reader),
+        None,
+        Some(&addrs),
+        None,
+        true,
+    )
+    .await;
+
+    match result {
+        Ok(res) => {
+            if let Ok(Some(chunk)) = client_ep.handles().next_chunk(res.body_handle).await {
+                let received: usize = std::str::from_utf8(&chunk)
+                    .unwrap_or("0")
+                    .trim()
+                    .parse()
+                    .unwrap_or(0);
+                assert!(
+                    received <= WIRE_LIMIT,
+                    "wire limit = {WIRE_LIMIT} B but handler saw {received} B; \
+                     wire limit is not being enforced (regression #190)"
+                );
+            }
+        }
+        Err(_) => { /* stream reset is also acceptable — limit fired */ }
+    }
+}
+
+/// Regression #190-C: a request within both limits must reach the handler intact.
+///
+/// Validates that the two-limit design doesn't accidentally drop normal traffic:
+/// a small compressed body within both the wire and decoded limits must arrive
+/// fully decompressed at the handler.
+#[tokio::test]
+async fn request_within_both_limits_succeeds() {
+    const BOTH_LIMITS: usize = 64 * 1024; // 64 KiB
+    const PLAINTEXT_SIZE: usize = 512;    // 512 B
+
+    let (server_ep, client_ep) = common::make_pair().await;
+    let server_id = common::node_id(&server_ep);
+    let addrs = common::server_addrs(&server_ep);
+
+    // Encode 512 bytes — decompresses to 512 bytes, well within both limits.
+    let plaintext = vec![0x42u8; PLAINTEXT_SIZE];
+    let compressed =
+        zstd::stream::encode_all(plaintext.as_slice(), 3).expect("zstd encode succeeds");
+
+    serve(
+        server_ep.clone(),
+        ServeOptions {
+            max_request_body_wire_bytes: Some(BOTH_LIMITS),
+            max_request_body_decoded_bytes: Some(BOTH_LIMITS),
+            ..Default::default()
+        },
+        move |payload: RequestPayload| {
+            let body_h = payload.req_body_handle;
+            let res_h = payload.res_body_handle;
+            let req_h = payload.req_handle;
+            let server_ep = server_ep.clone();
+            tokio::spawn(async move {
+                let mut total = 0usize;
+                while let Ok(Some(chunk)) = server_ep.handles().next_chunk(body_h).await {
+                    total += chunk.len();
+                }
+                let count_str = format!("{total}");
+                respond(
+                    server_ep.handles(),
+                    req_h,
+                    200,
+                    vec![("content-type".into(), "text/plain".into())],
+                )
+                .unwrap();
+                let _ = server_ep
+                    .handles()
+                    .send_chunk(res_h, Bytes::from(count_str))
+                    .await;
+                let _ = server_ep.handles().finish_body(res_h);
+            });
+        },
+    );
+
+    let (writer, body_reader) = iroh_http_core::make_body_channel();
+    tokio::spawn(async move {
+        let _ = writer.send_chunk(Bytes::from(compressed)).await;
+        drop(writer);
+    });
+
+    let res = fetch(
+        &client_ep,
+        &server_id,
+        "/upload",
+        "POST",
+        &[
+            ("content-type".into(), "application/octet-stream".into()),
+            ("content-encoding".into(), "zstd".into()),
+        ],
+        Some(body_reader),
+        None,
+        Some(&addrs),
+        None,
+        true,
+    )
+    .await
+    .expect("fetch must succeed for a body within both limits");
+
+    assert_eq!(res.status, 200, "expected 200, got {}", res.status);
+
+    if let Ok(Some(chunk)) = client_ep.handles().next_chunk(res.body_handle).await {
+        let received: usize = std::str::from_utf8(&chunk)
+            .unwrap_or("0")
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        assert_eq!(
+            received, PLAINTEXT_SIZE,
+            "expected handler to receive {PLAINTEXT_SIZE} decoded bytes, got {received}"
+        );
+    }
 }

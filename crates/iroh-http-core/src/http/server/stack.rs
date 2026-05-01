@@ -137,8 +137,24 @@ pub(crate) type ClientService =
 pub struct StackConfig {
     /// Per-request timeout. `None` ⇒ no `TimeoutLayer` is applied.
     pub timeout: Option<Duration>,
-    /// Maximum decoded request body size before the server rejects with 413.
-    pub max_request_body_bytes: Option<usize>,
+    /// Maximum **wire** request body size before the server rejects with 413.
+    ///
+    /// This limit is applied **before** decompression, i.e. it counts compressed
+    /// bytes as they arrive from the QUIC stream. It is an effective guard
+    /// against network-level DoS (high-bandwidth senders), but it does **not**
+    /// protect against a compression bomb (a small compressed body that
+    /// decompresses to many GB). Use [`Self::max_request_body_decoded_bytes`]
+    /// for that.
+    pub max_request_body_wire_bytes: Option<usize>,
+    /// Maximum **decoded** request body size before the server rejects with 413.
+    ///
+    /// This limit is applied **after** decompression. It is the primary guard
+    /// against compression bombs: a zstd payload that is tiny on the wire but
+    /// expands to GB in memory is rejected once the decoded byte count crosses
+    /// this threshold. The default at the [`super::serve_service`] entry point
+    /// is 16 MiB (matching the documented behaviour that the old single-limit
+    /// field `max_request_body_bytes` had always promised but never delivered).
+    pub max_request_body_decoded_bytes: Option<usize>,
     /// `true` ⇒ wrap with `LoadShedLayer` so saturated capacity returns 503
     /// immediately rather than blocking the caller.
     pub load_shed: bool,
@@ -157,7 +173,8 @@ impl Default for StackConfig {
     fn default() -> Self {
         Self {
             timeout: None,
-            max_request_body_bytes: None,
+            max_request_body_wire_bytes: None,
+            max_request_body_decoded_bytes: None,
             load_shed: false,
             compression: None,
             decompression: true,
@@ -192,15 +209,23 @@ impl StackConfig {
 /// Layer ordering (outermost first):
 ///
 /// ```text
-///   request body limit  →  load shed  →  request timeout
-///                       →  compression (response)
-///                       →  decompression (request)
-///                       →  svc
+///   wire body limit  →  load shed  →  request timeout
+///                    →  compression (response)
+///                    →  decompression (request)
+///                    →  decoded body limit
+///                    →  svc
 /// ```
 ///
 /// Built bottom-up (innermost first) by chaining `apply_*` factories,
 /// each of which takes a [`ServeService`] and returns a [`ServeService`].
 /// Adding a new layer is a single line.
+///
+/// The two body-limit layers enforce different semantic guarantees:
+/// - **wire limit** (outermost): counts compressed bytes from the QUIC
+///   stream. Guards against high-bandwidth network floods.
+/// - **decoded limit** (inside decompression): counts bytes after
+///   `RequestDecompressionLayer` expands them. Guards against zstd/gzip
+///   compression bombs (#190).
 ///
 /// `HandleLayerError` is owned **by each layer that can produce a
 /// `BoxError`** (load-shed, timeout) rather than threaded as a separate
@@ -208,11 +233,12 @@ impl StackConfig {
 /// `ServeService → ServeService` and the chain composable in any order.
 /// See Slice C carry-forward (#185) for the design rationale.
 pub(crate) fn build_stack(svc: ServeService, cfg: &StackConfig) -> ServeService {
+    let svc = apply_body_limit(svc, cfg.max_request_body_decoded_bytes); // inside decompression
     let svc = apply_decompression(svc, cfg.decompression);
     let svc = apply_compression(svc, cfg.compression.as_ref());
     let svc = apply_timeout(svc, cfg.timeout);
     let svc = apply_load_shed(svc, cfg.load_shed);
-    apply_body_limit(svc, cfg.max_request_body_bytes)
+    apply_body_limit(svc, cfg.max_request_body_wire_bytes) // outermost: wire bytes
 }
 
 /// `RequestBodyLimitLayer` rejects oversize bodies with 413. Wrapped in
@@ -528,7 +554,8 @@ mod tests {
     fn default_cfg() -> StackConfig {
         StackConfig {
             timeout: None,
-            max_request_body_bytes: Some(1024 * 1024),
+            max_request_body_wire_bytes: Some(1024 * 1024),
+            max_request_body_decoded_bytes: Some(1024 * 1024),
             load_shed: true,
             compression: None,
             decompression: true,
