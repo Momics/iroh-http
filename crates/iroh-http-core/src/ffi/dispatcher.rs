@@ -5,7 +5,7 @@
 //! handles, fires the [`RequestPayload`] callback, and rendezvous on the
 //! response head from JS. Everything below is one specific implementation
 //! of the generic `tower::Service<Request<Body>>` accepted by the pure-Rust
-//! serve entry — handed in via [`serve_with_callback`].
+//! serve entry — handed in via [`ffi_serve_with_callback`].
 //!
 //! Architecture-test guarantee: this file may import from `crate::http`
 // Legitimate FFI wiring — uses the disallowed types intentionally.
@@ -289,7 +289,7 @@ impl FfiDispatcher {
     }
 }
 
-// ── serve_with_callback ────────────────────────────────────────────────────
+// ── ffi_serve_with_callback ───────────────────────────────────────────────
 
 /// FFI-shaped serve entry. Constructs an [`IrohHttpService`] around the
 /// supplied callback and delegates to the pure-Rust

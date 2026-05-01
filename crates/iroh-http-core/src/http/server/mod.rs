@@ -13,7 +13,7 @@
 //! [`pipeline`] / [`stack`] / [`lifecycle`] (per-bistream chain and RAII
 //! guards).
 //!
-//! The FFI-shaped callback API ([`crate::ffi::dispatcher::serve_with_callback`])
+//! The FFI-shaped callback API ([`crate::ffi::dispatcher::ffi_serve_with_callback`])
 //! is one specific consumer of this entry — it constructs an
 //! `IrohHttpService` around the JS callback and hands it in like any
 //! other service.
