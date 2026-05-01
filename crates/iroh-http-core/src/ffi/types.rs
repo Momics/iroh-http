@@ -26,8 +26,15 @@ pub struct FfiResponse {
 /// Options passed to the JS serve callback per incoming request.
 #[derive(Debug)]
 pub struct RequestPayload {
+    /// Handle to the [`crate::ffi::handles::ResponseHeadEntry`] slot the adapter
+    /// must call [`crate::ffi::dispatcher::respond`] with. Source: `HandleStore`.
+    /// `0` is the slotmap null sentinel and must never appear here at runtime.
     pub req_handle: u64,
+    /// Handle to a [`crate::ffi::handles::BodyReader`] for the *inbound* request
+    /// body (source — adapters read from this). `0` = no request body.
     pub req_body_handle: u64,
+    /// Handle to a [`crate::ffi::handles::BodyWriter`] for the *outbound* response
+    /// body (sink — adapters write into this). `0` = response body already closed.
     pub res_body_handle: u64,
     pub method: String,
     pub url: String,
