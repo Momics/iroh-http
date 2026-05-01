@@ -77,9 +77,9 @@ pub(super) async fn accept_loop<S>(
 
     // Re-use the endpoint's shared counters so that endpoint_stats() reflects
     // the live connection and request counts at all times.
-    let total_connections = endpoint.inner.http.active_connections.clone();
-    let total_requests = endpoint.inner.http.active_requests.clone();
-    let endpoint_closed_tx = endpoint.inner.session.closed_tx.clone();
+    let total_connections = endpoint.active_connections_arc();
+    let total_requests = endpoint.active_requests_arc();
+    let endpoint_closed_tx = endpoint.connection_closed_tx();
 
     let ep = endpoint.raw().clone();
     let mut consecutive_errors: usize = 0;

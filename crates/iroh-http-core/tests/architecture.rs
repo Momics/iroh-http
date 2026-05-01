@@ -99,7 +99,7 @@ fn walk(dir: &Path, f: &mut impl FnMut(&Path)) {
 /// epic acceptance criteria — that intentional friction is the point.
 #[test]
 fn crate_root_has_canonical_layout() {
-    const ALLOWED: &[&str] = &["lib.rs", "endpoint.rs", "http", "ffi"];
+    const ALLOWED: &[&str] = &["lib.rs", "endpoint", "http", "ffi"];
 
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_dir = Path::new(manifest_dir).join("src");
