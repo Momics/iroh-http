@@ -1092,7 +1092,7 @@ pub struct JsServeOptions {
 }
 
 #[napi]
-pub fn raw_serve(
+pub async fn raw_serve(
     endpoint_handle: u32,
     serve_options: Option<JsServeOptions>,
     // napi v3: accept ThreadsafeFunction directly; CALL_EH=false preserves

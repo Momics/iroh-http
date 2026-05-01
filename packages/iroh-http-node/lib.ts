@@ -241,7 +241,7 @@ class NodeAdapter extends IrohAdapter {
     } satisfies FfiResponse;
   }
 
-  rawServe(
+  async rawServe(
     endpointHandle: number,
     options: {
       onConnectionEvent?: (event: PeerConnectionEvent) => void;
@@ -251,15 +251,10 @@ class NodeAdapter extends IrohAdapter {
   ): Promise<void> {
     // #119: Track in-flight handler tasks so waitServeStop drains them before resolving.
     const pending = new Set<Promise<void>>();
-    (napiRawServe as unknown as (
-      handle: number,
-      serveOpts: Record<string, unknown> | null,
-      cb: (payload: Record<string, unknown>) => void,
-      onConnEv: ((ev: { peerId: string; connected: boolean }) => void) | null,
-    ) => void)(
+    await napiRawServe(
       endpointHandle,
-      options.serveOptions ?? null,
-      (payload: Record<string, unknown>) => {
+      (options.serveOptions ?? null) as Parameters<typeof napiRawServe>[1],
+      (payload: Parameters<typeof napiRawServe>[2] extends (arg: infer A) => void ? A : never) => {
         const typed = payload as unknown as RequestPayload;
         const task = callback(typed)
           .then((head) => {

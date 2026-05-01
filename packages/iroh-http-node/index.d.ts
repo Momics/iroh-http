@@ -335,7 +335,7 @@ export declare function rawFetch(endpointHandle: number, nodeId: string, url: st
  */
 export declare function rawRespond(endpointHandle: number, reqHandle: bigint, status: number, headers: Array<Array<string>>): void
 
-export declare function rawServe(endpointHandle: number, serveOptions: JsServeOptions | undefined | null, handler: ((arg: JsCallArgs) => void), onConnectionEvent?: (((arg: JsConnectionEvent) => void)) | undefined | null): void
+export declare function rawServe(endpointHandle: number, serveOptions: JsServeOptions | undefined | null, handler: ((arg: JsCallArgs) => void), onConnectionEvent?: (((arg: JsConnectionEvent) => void)) | undefined | null): Promise<void>
 
 /**
  * Sign arbitrary bytes with a 32-byte Ed25519 secret key.
