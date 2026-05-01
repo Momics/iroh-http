@@ -2,6 +2,7 @@ export type {
   BidirectionalStream,
   CloseOptions,
   EndpointInfo,
+  FetchOptions,
   FfiDuplexStream,
   FfiServeOptions,
   IrohFetchInit,
