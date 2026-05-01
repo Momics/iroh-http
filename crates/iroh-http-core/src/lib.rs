@@ -31,19 +31,22 @@ pub mod registry {
 }
 
 // ── Pure-Rust HTTP API surface (`mod http`) ───────────────────────────────────
-pub use ffi::session::{CloseInfo, Session};
 pub use http::body::{Body, BoxError};
 pub use http::client::{fetch_request, FetchError};
 pub use http::server::{
     serve_service, serve_service_with_events, RemoteNodeId, ServeHandle, ServeOptions,
 };
 
-// ── FFI bridge surface (`mod ffi`) ────────────────────────────────────────────
+// ── FFI bridge surface (`mod ffi`) ────────────────────────────────
 pub use ffi::dispatcher::{respond, serve, serve_with_callback};
 pub use ffi::fetch::fetch;
 pub use ffi::handles::{
     make_body_channel, BodyReader, HandleStore, ResponseHeadEntry, StoreConfig,
 };
+// `Session` is `u64`-handle-shaped (it wraps a slotmap entry and returns
+// `FfiDuplexStream`), so it lives under `mod ffi` and is re-exported here
+// alongside the other FFI types — not the pure-Rust HTTP surface above.
+pub use ffi::session::{CloseInfo, Session};
 pub use ffi::types::{FfiDuplexStream, FfiResponse, RequestPayload};
 
 // ── Other re-exports kept at crate root ───────────────────────────────────────

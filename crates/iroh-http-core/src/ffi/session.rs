@@ -7,6 +7,12 @@
 //!
 //! The shape mirrors W3C WebTransport: every method has a direct counterpart
 //! on the `WebTransport` interface.
+//!
+//! Lives under `mod ffi` (Slice E, #187) because `Session` is `u64`-handle-
+//! shaped: it wraps a slotmap entry in [`crate::ffi::handles::HandleStore`]
+//! and returns [`crate::FfiDuplexStream`]. A pure-Rust QUIC session API would
+//! sit under `mod http` and yield typed stream values directly; that is not
+//! today's API. Until it is, this module belongs on the FFI side.
 
 use iroh::endpoint::Connection;
 use serde::Serialize;

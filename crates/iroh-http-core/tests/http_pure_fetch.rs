@@ -224,11 +224,14 @@ impl Service<hyper::Request<Body>> for LargeEchoService {
     }
 }
 
-/// Streams a 10 MiB body request → response with a typed
-/// `BodyReader`-driven hyper body. Exercises the `BodyReader: http_body::Body`
-/// path on the request side and the channel-pump on the response side
-/// end-to-end. Failure modes this catches: channel-capacity deadlocks,
-/// `poll_frame` cancellation bugs, hyper-body type mismatches under load.
+/// Streams a 10 MiB body request → response and asserts byte-exact
+/// roundtrip. This verifies *correctness* end-to-end (request body flows
+/// in via `BodyReader: http_body::Body`; response body flows out via the
+/// channel pump in `ffi::pumps`) but not bounded memory — both ends use
+/// `Body::full` and `BodyExt::collect`, so the full 10 MiB is materialised
+/// in memory by design. A real backpressure / peak-memory test would need
+/// a slow-yielding stream body and an explicit memory probe; tracked
+/// separately.
 #[tokio::test]
 async fn pure_rust_fetch_round_trips_10mib_body() {
     let (server_ep, client_ep) = common::make_pair().await;
