@@ -2,6 +2,7 @@ export { IrohAdapter } from "./IrohAdapter.js";
 export type {
   AllocBodyWriterFn,
   BidirectionalStream,
+  FetchOptions,
   FfiDuplexStream,
   FfiRequest,
   FfiResponse,
