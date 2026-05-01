@@ -22,8 +22,7 @@ use iroh_http_core::{
 };
 use napi::{
     bindgen_prelude::{BigInt, *},
-    threadsafe_function::{ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction},
-    JsFunction,
+    threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode},
 };
 use napi_derive::napi;
 
@@ -749,6 +748,31 @@ pub fn endpoint_stats(endpoint_handle: u32) -> napi::Result<JsEndpointStats> {
 
 // ── Transport events ──────────────────────────────────────────────────────────
 
+/// napi v3 payload for `rawServe` handler callbacks.
+///
+/// Replaces manual `env.create_*()` construction from napi v2.
+/// Fields mirror `RequestPayload` but use napi-compatible types:
+/// `BigInt` for opaque u64 handles, `Vec<Vec<String>>` for headers.
+#[napi(object)]
+pub struct JsCallArgs {
+    pub req_handle: BigInt,
+    pub req_body_handle: BigInt,
+    pub res_body_handle: BigInt,
+    pub is_bidi: bool,
+    pub method: String,
+    pub url: String,
+    pub remote_node_id: String,
+    /// `[[name, value], ...]`
+    pub headers: Vec<Vec<String>>,
+}
+
+/// napi v3 payload for `rawServe` connection-event callbacks.
+#[napi(object)]
+pub struct JsConnectionEvent {
+    pub peer_id: String,
+    pub connected: bool,
+}
+
 /// Register a push callback for transport-level events.
 ///
 /// Spawns a Tokio task that drains the endpoint's event channel and calls
@@ -756,8 +780,13 @@ pub fn endpoint_stats(endpoint_handle: u32) -> napi::Result<JsEndpointStats> {
 /// The task exits automatically when the endpoint closes (all senders drop).
 /// Call at most once per endpoint; subsequent calls return an error.
 #[napi]
-pub fn start_transport_events(endpoint_handle: u32, handler: JsFunction) -> napi::Result<()> {
-    use napi::threadsafe_function::ThreadsafeFunctionCallMode;
+pub fn start_transport_events(
+    endpoint_handle: u32,
+    // napi v3: accept ThreadsafeFunction directly; napi boxes the JS Function
+    // before our code runs so there is no 'env lifetime to escape.
+    // CALL_EH=false preserves the single-arg (not error-first) JS convention.
+    handler: ThreadsafeFunction<String, (), String, Status, false>,
+) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
     let rx = ep.subscribe_events().ok_or_else(|| {
         napi::Error::new(
@@ -765,10 +794,7 @@ pub fn start_transport_events(endpoint_handle: u32, handler: JsFunction) -> napi
             "transport event receiver already taken; startTransportEvents called twice",
         )
     })?;
-    let tsfn: ThreadsafeFunction<String, ErrorStrategy::Fatal> = handler
-        .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
-            Ok(vec![ctx.env.create_string(&ctx.value)?])
-        })?;
+    let tsfn = Arc::new(handler);
     tokio::spawn(async move {
         let mut rx = rx;
         while let Some(ev) = rx.recv().await {
@@ -1069,8 +1095,10 @@ pub struct JsServeOptions {
 pub fn raw_serve(
     endpoint_handle: u32,
     serve_options: Option<JsServeOptions>,
-    handler: JsFunction,
-    on_connection_event: Option<JsFunction>,
+    // napi v3: accept ThreadsafeFunction directly; CALL_EH=false preserves
+    // the single-arg (not error-first) JS calling convention from v2.
+    handler: ThreadsafeFunction<JsCallArgs, (), JsCallArgs, Status, false>,
+    on_connection_event: Option<ThreadsafeFunction<JsConnectionEvent, (), JsConnectionEvent, Status, false>>,
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
 
@@ -1116,64 +1144,24 @@ pub fn raw_serve(
         }
     };
 
-    type CallArgs = RequestPayload;
-    // Use ErrorStrategy::Fatal but do NOT rely on the return value — the JS
-    // handler is async and calls `rawRespond` explicitly when ready.
-    let tsfn: ThreadsafeFunction<CallArgs, ErrorStrategy::Fatal> = handler
-        .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<CallArgs>| {
-            let env = ctx.env;
-            let p = ctx.value;
+    // napi v3: no compat-mode env.create_*() calls needed — construct
+    // JsCallArgs directly; napi auto-converts the #[napi(object)] struct.
+    let tsfn = Arc::new(handler);
 
-            let mut obj = env.create_object()?;
-            obj.set("reqHandle", env.create_bigint_from_u64(p.req_handle)?)?;
-            obj.set(
-                "reqBodyHandle",
-                env.create_bigint_from_u64(p.req_body_handle)?,
-            )?;
-            obj.set(
-                "resBodyHandle",
-                env.create_bigint_from_u64(p.res_body_handle)?,
-            )?;
-            obj.set("isBidi", env.get_boolean(p.is_bidi)?)?;
-            obj.set("method", env.create_string(&p.method)?)?;
-            obj.set("url", env.create_string(&p.url)?)?;
-            obj.set("remoteNodeId", env.create_string(&p.remote_node_id)?)?;
-
-            let mut headers_arr = env.create_array(p.headers.len() as u32)?;
-            for (i, (k, v)) in p.headers.iter().enumerate() {
-                let mut pair = env.create_array(2)?;
-                pair.set(0, env.create_string(k)?)?;
-                pair.set(1, env.create_string(v)?)?;
-                headers_arr.set(i as u32, pair)?;
-            }
-            obj.set("headers", headers_arr)?;
-
-            Ok(vec![obj.into_unknown()])
-        })?;
-
-    let tsfn = Arc::new(tsfn);
-
-    // Build an optional TSFN for connection events (peer connect/disconnect).
+    // Build an optional closure for connection events (peer connect/disconnect).
     let conn_event_fn: Option<Arc<dyn Fn(ConnectionEvent) + Send + Sync>> =
-        if let Some(cb) = on_connection_event {
-            let conn_tsfn: ThreadsafeFunction<ConnectionEvent, ErrorStrategy::Fatal> = cb
-                .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<ConnectionEvent>| {
-                    let env = ctx.env;
-                    let ev = ctx.value;
-                    let mut obj = env.create_object()?;
-                    obj.set("peerId", env.create_string(&ev.peer_id)?)?;
-                    obj.set("connected", env.get_boolean(ev.connected)?)?;
-                    Ok(vec![obj.into_unknown()])
-                })?;
-            Some(Arc::new(move |ev: ConnectionEvent| {
+        on_connection_event.map(|conn_tsfn| {
+            let conn_tsfn = Arc::new(conn_tsfn);
+            Arc::new(move |ev: ConnectionEvent| {
                 conn_tsfn.call(
-                    ev,
-                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                    JsConnectionEvent {
+                        peer_id: ev.peer_id,
+                        connected: ev.connected,
+                    },
+                    ThreadsafeFunctionCallMode::NonBlocking,
                 );
-            }))
-        } else {
-            None
-        };
+            }) as Arc<dyn Fn(ConnectionEvent) + Send + Sync>
+        });
 
     let ep_clone = ep.clone();
     let handle = iroh_http_core::ffi_serve_with_callback(
@@ -1183,12 +1171,32 @@ pub fn raw_serve(
             let tsfn = Arc::clone(&tsfn);
             let ep_ref = ep_clone.clone();
             let req_handle = payload.req_handle;
+            let js_args = JsCallArgs {
+                req_handle: BigInt {
+                    sign_bit: false,
+                    words: vec![payload.req_handle],
+                },
+                req_body_handle: BigInt {
+                    sign_bit: false,
+                    words: vec![payload.req_body_handle],
+                },
+                res_body_handle: BigInt {
+                    sign_bit: false,
+                    words: vec![payload.res_body_handle],
+                },
+                is_bidi: payload.is_bidi,
+                method: payload.method,
+                url: payload.url,
+                remote_node_id: payload.remote_node_id,
+                headers: payload
+                    .headers
+                    .into_iter()
+                    .map(|(k, v)| vec![k, v])
+                    .collect(),
+            };
             // ISS-019: check TSFN enqueue status; on failure respond with 503
             // immediately so the request doesn't stall until timeout.
-            let status = tsfn.call(
-                payload,
-                napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
-            );
+            let status = tsfn.call(js_args, ThreadsafeFunctionCallMode::NonBlocking);
             if status != napi::Status::Ok {
                 tracing::warn!("iroh-http-node: TSFN enqueue failed ({status:?}), responding 503");
                 let _ = ep_ref.handles().take_req_sender(req_handle).map(|tx| {

@@ -232,9 +232,16 @@ export interface JsServeOptions {
   maxConnectionsPerPeer?: number
   /** Per-request timeout in milliseconds.  Default: 60 000.  0 = disabled. */
   requestTimeout?: number
-  /** Reject request bodies larger than this many wire (compressed) bytes.  Default: 16 MiB. */
+  /**
+   * Reject request bodies larger than this many wire (compressed) bytes.
+   * Default: 16 MiB when not set.
+   */
   maxRequestBodyWireBytes?: number
-  /** Reject request bodies larger than this many decoded bytes (after decompression). Compression-bomb guard.  Default: 16 MiB. */
+  /**
+   * Reject request bodies larger than this many decoded bytes (after
+   * decompression). This is the compression-bomb guard.
+   * Default: 16 MiB when not set.
+   */
   maxRequestBodyDecodedBytes?: number
   /** Maximum total QUIC connections the server will accept.  Default: unlimited. */
   maxTotalConnections?: number
@@ -244,7 +251,10 @@ export interface JsServeOptions {
   drainTimeout?: number
   /** Enable load-shedding (reject with 503 when at capacity). */
   loadShed?: boolean
-  /** When `false`, request bodies are forwarded raw (no decompression). Default: true */
+  /**
+   * When `true` (the default), automatically decompress compressed request
+   * bodies.  Set to `false` to receive raw wire bytes (proxy use-cases).
+   */
   decompress?: boolean
 }
 export declare function rawServe(endpointHandle: number, serveOptions: JsServeOptions | undefined | null, handler: (...args: any[]) => any, onConnectionEvent?: (...args: any[]) => any | undefined | null): void
