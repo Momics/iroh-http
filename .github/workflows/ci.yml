@@ -209,3 +209,52 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (iroh-http-core)
         run: cargo test -p iroh-http-core
+
+  # ── Version-bump policy: only chore: release commits may touch version fields ─
+  version-bump-policy:
+    name: Version-bump policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Fetch enough history to diff against the base branch / previous push.
+          fetch-depth: 0
+
+      - name: Enforce version bumps only in chore-release commits
+        shell: bash
+        run: |
+          # Determine the comparison base: for PRs use the target branch;
+          # for pushes to main use the previous commit SHA.
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+            # On the very first push the before SHA is all zeros — nothing to diff.
+            if [[ "$BASE" == "0000000000000000000000000000000000000000" ]]; then
+              echo "Initial push — skipping version-bump policy check."
+              exit 0
+            fi
+          fi
+
+          # Walk every commit in this push / PR range.
+          while IFS= read -r sha; do
+            CHANGED=$(git diff-tree --no-commit-id -r --name-only "$sha" 2>/dev/null || true)
+            # Does this commit touch any version-bearing file?
+            if echo "$CHANGED" | grep -qE '(Cargo\.toml|package\.json|deno\.jsonc?)$'; then
+              SUBJECT=$(git log -1 --format=%s "$sha")
+              case "$SUBJECT" in
+                "chore: release "*|"chore(release): "*)
+                  # Allowed — this is a release commit produced by scripts/release.sh.
+                  ;;
+                *)
+                  echo "::error::Commit $sha touches a version file but is not a 'chore: release' commit."
+                  echo "  Subject : $SUBJECT"
+                  echo "  Files   : $(echo "$CHANGED" | grep -E '(Cargo\.toml|package\.json|deno\.jsonc?)$' | tr '\n' ' ')"
+                  echo "  Fix     : Only scripts/release.sh should bump versions. See CONTRIBUTING.md."
+                  exit 1
+                  ;;
+              esac
+            fi
+          done < <(git log --format=%H "$BASE"..HEAD)
+
+          echo "Version-bump policy: OK"

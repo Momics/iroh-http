@@ -68,6 +68,16 @@ npm run bench:deno:report
 4. Run `cargo check --workspace` to verify Rust compiles
 5. Submit a pull request
 
+## Versioning and releases
+
+**Do not bump version fields manually.** This includes `Cargo.toml`, `package.json`, `deno.json`, and `deno.jsonc`.
+
+Version fields are managed exclusively by `scripts/release.sh`, which bumps all manifests atomically, regenerates lock files, and produces a `chore: release X.Y.Z` commit immediately before tagging and publishing. Bumping versions inside a feature or fix commit breaks CI: the new version's platform binaries don't exist on npm until the tag is published, so `npm ci` crashes on every platform for the entire window between the bump and the release.
+
+CI enforces this via the `version-bump-policy` job, which rejects any commit that touches a version-bearing file unless the commit subject starts with `chore: release`.
+
+**To cut a release:** `bash scripts/release.sh X.Y.Z`
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under

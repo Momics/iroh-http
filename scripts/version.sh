@@ -22,6 +22,19 @@ fi
 
 NEW="$1"
 
+# ── Dirty-tree guard ──────────────────────────────────────────────────────────
+# version.sh must only be invoked via scripts/release.sh from a clean tree.
+# A dirty tree means either (a) uncommitted work would get tangled with the
+# release commit, or (b) someone is bumping versions manually mid-feature,
+# which is exactly the pattern that breaks CI (see #196).
+if [[ -n "$(git -C "$ROOT" status --porcelain)" ]] && [[ -z "${ALLOW_DIRTY:-}" ]]; then
+  echo "Error: working tree is dirty. version.sh should only run from a clean tree," >&2
+  echo "       typically via scripts/release.sh." >&2
+  echo "       Do NOT bump versions manually inside a feature commit — see CONTRIBUTING.md." >&2
+  echo "       Set ALLOW_DIRTY=1 to override (testing only)." >&2
+  exit 1
+fi
+
 # Validate semver-ish format
 if ! [[ "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
   echo "Error: '$NEW' doesn't look like a valid version (expected X.Y.Z or X.Y.Z-pre)"
