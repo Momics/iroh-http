@@ -91,3 +91,100 @@ async fn pure_rust_fetch_round_trips_typed_request_response() {
     assert!(body.contains("path=/hello-typed"), "body: {body}");
     assert!(body.contains(&format!("peer={client_id}")), "body: {body}");
 }
+
+// ── F9: negative tests for FetchError variants ────────────────────────
+
+#[derive(Clone)]
+struct SlowPeerService;
+
+impl Service<hyper::Request<Body>> for SlowPeerService {
+    type Response = hyper::Response<Body>;
+    type Error = Infallible;
+    type Future =
+        Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, _req: hyper::Request<Body>) -> Self::Future {
+        Box::pin(async {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            Ok(hyper::Response::builder()
+                .status(200)
+                .body(Body::empty())
+                .expect("valid response"))
+        })
+    }
+}
+
+/// `cfg.timeout` elapses before the slow peer responds → typed `Timeout`.
+#[tokio::test]
+async fn pure_rust_fetch_timeout_returns_typed_error() {
+    use iroh_http_core::FetchError;
+
+    let (server_ep, client_ep) = common::make_pair().await;
+    let server_pk = server_ep.raw().id();
+    let addrs = common::server_addrs(&server_ep);
+
+    let _handle = serve_service(server_ep.clone(), ServeOptions::default(), SlowPeerService);
+
+    let mut addr = iroh::EndpointAddr::new(server_pk);
+    for a in &addrs {
+        addr = addr.with_ip_addr(*a);
+    }
+
+    let req = hyper::Request::builder()
+        .method("GET")
+        .uri("/slow")
+        .body(Body::empty())
+        .expect("valid request");
+
+    let cfg = StackConfig::default().with_timeout(Some(std::time::Duration::from_millis(100)));
+    let err = fetch_request(&client_ep, &addr, req, &cfg)
+        .await
+        .err()
+        .expect("expected timeout");
+    assert!(
+        matches!(err, FetchError::Timeout),
+        "expected FetchError::Timeout, got {err:?}"
+    );
+}
+
+/// Connecting to a node id with no reachable direct addrs surfaces the
+/// transport failure as `ConnectionFailed`, never as a stringly-typed
+/// `Internal` (regression guard for the substring-classifier removal).
+#[tokio::test]
+async fn pure_rust_fetch_unreachable_addr_returns_connection_failed() {
+    use iroh_http_core::FetchError;
+
+    let (_server_ep, client_ep) = common::make_pair().await;
+
+    // Random node id with a bogus, definitely-unreachable address. We need a
+    // PublicKey we don't have a connection to, so generate a throwaway key.
+    let bogus_secret = iroh::SecretKey::generate();
+    let bogus_pk = bogus_secret.public();
+
+    let mut addr = iroh::EndpointAddr::new(bogus_pk);
+    addr = addr.with_ip_addr("127.0.0.1:1".parse().expect("valid socket addr"));
+
+    let req = hyper::Request::builder()
+        .method("GET")
+        .uri("/nope")
+        .body(Body::empty())
+        .expect("valid request");
+
+    // Short timeout so the test does not block on dial retries.
+    let cfg = StackConfig::default().with_timeout(Some(std::time::Duration::from_secs(2)));
+    let err = fetch_request(&client_ep, &addr, req, &cfg)
+        .await
+        .err()
+        .expect("expected connection failure");
+    assert!(
+        matches!(
+            err,
+            FetchError::ConnectionFailed { .. } | FetchError::Timeout
+        ),
+        "expected FetchError::ConnectionFailed (or Timeout if dial slow), got {err:?}"
+    );
+}

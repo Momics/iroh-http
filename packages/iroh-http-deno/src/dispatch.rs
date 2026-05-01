@@ -598,6 +598,8 @@ async fn raw_fetch(p: Value) -> Value {
         reader,
         fetch_token,
         addrs.as_deref(),
+        None,
+        true,
     )
     .await
     {

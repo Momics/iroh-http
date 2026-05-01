@@ -62,7 +62,19 @@ async fn graceful_shutdown_drains_in_flight() {
         let sid = server_id.clone();
         let a = addrs.clone();
         tokio::spawn(async move {
-            fetch(&client, &sid, "/slow", "GET", &[], None, None, Some(&a)).await
+            fetch(
+                &client,
+                &sid,
+                "/slow",
+                "GET",
+                &[],
+                None,
+                None,
+                Some(&a),
+                None,
+                true,
+            )
+            .await
         })
     };
 
@@ -185,6 +197,8 @@ async fn shutdown_rejects_new_requests() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -207,6 +221,8 @@ async fn shutdown_rejects_new_requests() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await;
     assert!(
@@ -287,6 +303,8 @@ async fn node_close_drains_in_flight() {
                 None,
                 None,
                 Some(&addrs),
+                None,
+                true,
             )
             .await
         }

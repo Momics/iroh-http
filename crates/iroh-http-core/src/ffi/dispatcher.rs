@@ -22,7 +22,7 @@ use http::StatusCode;
 use tower::Service;
 
 use crate::ffi::handles::ResponseHeadEntry;
-use crate::http::client::pump_hyper_body_to_channel;
+use crate::ffi::pumps::pump_hyper_body_to_channel;
 use crate::http::server::{
     serve_service_with_events, ConnectionEventFn, RemoteNodeId, ServeHandle, ServeOptions,
 };

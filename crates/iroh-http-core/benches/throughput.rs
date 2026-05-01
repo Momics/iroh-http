@@ -96,6 +96,8 @@ fn bench_fetch_get_latency(c: &mut Criterion) {
                 None, // no request body
                 None, // no fetch token
                 Some(&server_addrs),
+                None,
+                true,
             )
             .await
             .unwrap();
@@ -164,6 +166,8 @@ fn bench_post_body_throughput(c: &mut Criterion) {
                         Some(reader),
                         None, // no fetch token
                         Some(&addrs),
+                        None,
+                        true,
                     )
                     .await
                     .unwrap();
@@ -240,9 +244,20 @@ fn bench_response_body_streaming(c: &mut Criterion) {
                 let addrs = addrs.clone();
                 async move {
                     let url = format!("/bench/{sz}");
-                    let res = fetch(&client, &id, &url, "GET", &[], None, None, Some(&addrs))
-                        .await
-                        .unwrap();
+                    let res = fetch(
+                        &client,
+                        &id,
+                        &url,
+                        "GET",
+                        &[],
+                        None,
+                        None,
+                        Some(&addrs),
+                        None,
+                        true,
+                    )
+                    .await
+                    .unwrap();
                     // Drain the full response body.
                     while client
                         .handles()
@@ -302,6 +317,8 @@ fn bench_multiplex(c: &mut Criterion) {
                                         None,
                                         None,
                                         Some(&addrs),
+                                        None,
+                                        true,
                                     )
                                     .await
                                     .unwrap();

@@ -8,7 +8,7 @@
 //! call sites yet. The constants below allowlist the files that still
 //! carry FFI imports; subsequent slices remove their entries:
 //!
-//! - `http/client.rs` sheds FFI imports in Slice D (#186).
+//! - `http/client.rs` shed FFI imports in Slice D (#186) — entry removed.
 //! - `http/server/mod.rs` shed FFI imports in Slice C (#185) — entry
 //!   removed.
 //! - `http/session.rs` sheds FFI imports in Slice E (#187) when the
@@ -21,7 +21,6 @@ use std::{fs, path::Path};
 /// Files temporarily exempt from the `mod http` → `mod ffi` ban.
 /// Each entry must be eliminated by the slice listed in its comment.
 const TEMPORARY_EXCEPTIONS: &[&str] = &[
-    "http/client.rs",  // Slice D (#186)
     "http/session.rs", // Slice E (#187)
 ];
 

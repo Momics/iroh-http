@@ -7,7 +7,7 @@
 //! one-way dependency:
 //!
 //! - [`http`] — pure-Rust HTTP-over-iroh primitives. No `u64` handles,
-//!   no callbacks. A pure-Rust application can call [`http::client::fetch`]
+//!   no callbacks. A pure-Rust application can call [`http::client::fetch_request`]
 //!   and [`http::server::serve`] without touching any FFI type.
 //! - [`ffi`] — FFI bridge: handle store, callback-shaped serve, flat
 //!   fetch. Wraps [`http`]; never imported in the reverse direction
@@ -32,7 +32,7 @@ pub mod registry {
 
 // ── Pure-Rust HTTP API surface (`mod http`) ───────────────────────────────────
 pub use http::body::{Body, BoxError};
-pub use http::client::{fetch as fetch_request, FetchError};
+pub use http::client::{fetch_request, FetchError};
 pub use http::server::{
     serve_service, serve_service_with_events, RemoteNodeId, ServeHandle, ServeOptions,
 };

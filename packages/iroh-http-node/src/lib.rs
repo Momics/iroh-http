@@ -985,6 +985,8 @@ pub async fn raw_fetch(
         req_body_reader,
         Some(get_handle(fetch_token)?),
         addrs.as_deref(),
+        None,
+        true,
     )
     .await
     .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;

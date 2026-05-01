@@ -55,6 +55,8 @@ async fn header_bomb_rejected() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await;
 
@@ -124,6 +126,8 @@ async fn response_header_bomb_rejected() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await;
 
@@ -184,6 +188,8 @@ async fn default_limits_allow_normal_traffic() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -264,6 +270,8 @@ async fn body_limit_exceeded_resets_stream() {
         Some(reader),
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await;
 
@@ -393,7 +401,9 @@ async fn serve_concurrency_limit() {
             &[],
             None,
             None,
-            Some(&addrs)
+            Some(&addrs),
+            None,
+            true,
         ),
         fetch(
             &client_ep,
@@ -403,7 +413,9 @@ async fn serve_concurrency_limit() {
             &[],
             None,
             None,
-            Some(&addrs)
+            Some(&addrs),
+            None,
+            true,
         ),
         fetch(
             &client_ep,
@@ -413,7 +425,9 @@ async fn serve_concurrency_limit() {
             &[],
             None,
             None,
-            Some(&addrs)
+            Some(&addrs),
+            None,
+            true,
         ),
     );
     assert_eq!(r1.unwrap().status, 200);
@@ -472,6 +486,8 @@ async fn body_exceeds_limit_resets_stream() {
         Some(body_reader),
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await;
 
@@ -541,7 +557,19 @@ async fn concurrent_requests_under_tight_concurrency() {
         let a = addrs.clone();
         handles.push(tokio::spawn(async move {
             let path = format!("/stress/{i}");
-            fetch(&client, &id, &path, "GET", &[], None, None, Some(&a)).await
+            fetch(
+                &client,
+                &id,
+                &path,
+                "GET",
+                &[],
+                None,
+                None,
+                Some(&a),
+                None,
+                true,
+            )
+            .await
         }));
     }
 
@@ -613,6 +641,8 @@ async fn body_overflow_drains_quic_stream() {
         Some(body_reader),
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await;
 

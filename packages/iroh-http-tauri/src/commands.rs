@@ -510,6 +510,8 @@ pub async fn fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String> {
         req_body_reader,
         args.fetch_token,
         addrs.as_deref(),
+        None,
+        true,
     )
     .await
     .map_err(|e| core_error_to_json(&e))?;

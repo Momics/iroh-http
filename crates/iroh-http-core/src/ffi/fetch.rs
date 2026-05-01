@@ -1,22 +1,20 @@
 //! FFI-shaped `fetch` — flat-string wrapper around the pure-Rust
-//! [`crate::http::client::fetch`].
+//! [`crate::http::client::fetch_request`].
 //!
-//! Slice D (#186): translates the JS adapter calling convention
-//! (`(endpoint, &str, &str, &str, &[(String, String)], Option<BodyReader>,
-//! Option<u64>, Option<&[SocketAddr]>) -> FfiResponse`) into a typed
-//! [`hyper::Request<Body>`] / [`iroh::EndpointAddr`] pair, hands them to
-//! [`crate::http::client::fetch`], and re-packages the response as a
-//! [`FfiResponse`] with a slotmap body handle. Maps
-//! [`crate::http::client::FetchError`] variants onto
-//! [`crate::CoreError`] codes for the FFI boundary.
+//! Slice D (#186): translates the JS adapter calling convention into a
+//! typed [`hyper::Request<Body>`] / [`iroh::EndpointAddr`] pair, hands
+//! them to [`crate::http::client::fetch_request`], and re-packages the
+//! response as a [`FfiResponse`] with a slotmap body handle. Maps
+//! [`crate::http::client::FetchError`] variants onto [`crate::CoreError`]
+//! codes for the FFI boundary.
+
+use std::time::Duration;
 
 use http::{HeaderName, HeaderValue, Method};
 
 use crate::{
-    ffi::handles::BodyReader,
-    http::client::{
-        extract_path, fetch as http_fetch, pump_hyper_body_to_channel_limited, FetchError,
-    },
+    ffi::{handles::BodyReader, pumps::pump_hyper_body_to_channel_limited},
+    http::client::{fetch_request, FetchError},
     parse_node_addr, Body, CoreError, FfiResponse, IrohEndpoint,
 };
 
@@ -34,6 +32,8 @@ pub async fn fetch(
     req_body_reader: Option<BodyReader>,
     fetch_token: Option<u64>,
     direct_addrs: Option<&[std::net::SocketAddr]>,
+    timeout: Option<Duration>,
+    decompress: bool,
 ) -> Result<FfiResponse, CoreError> {
     // Reject standard web schemes.
     {
@@ -110,12 +110,19 @@ pub async fn fetch(
 
     let cancel_notify = fetch_token.and_then(|t| endpoint.handles().get_fetch_cancel_notify(t));
 
-    // StackConfig defaults: client-side timeout / body limit are enforced
-    // by the post-fetch loop below (per-frame) and by the optional
-    // cancel-token select; the tower stack only handles decompression.
-    let cfg = crate::http::server::stack::StackConfig::default();
+    // Wire FFI-supplied knobs into the shared stack config.
+    // - `timeout` bounds time-to-response-head inside `fetch_request`.
+    // - `decompress` toggles the tower-http Decompression layer.
+    // Per-frame body-read timeout and the response-body byte limit are
+    // enforced below by `pump_hyper_body_to_channel_limited`; cancellation
+    // is handled by the `tokio::select!` on the cancel-token notifier.
+    let cfg = crate::http::server::stack::StackConfig {
+        timeout,
+        decompression: decompress,
+        ..crate::http::server::stack::StackConfig::default()
+    };
 
-    let fetch_fut = http_fetch(endpoint, &addr, req, &cfg);
+    let fetch_fut = fetch_request(endpoint, &addr, req, &cfg);
     let resp = match cancel_notify {
         Some(notify) => tokio::select! {
             _ = notify.notified() => {
@@ -143,13 +150,30 @@ pub async fn fetch(
 /// [`CoreError`] the FFI boundary expects.
 fn fetch_error_to_core(e: FetchError) -> CoreError {
     match e {
-        FetchError::ConnectionFailed { detail } => CoreError::connection_failed(detail),
+        FetchError::ConnectionFailed { detail, .. } => CoreError::connection_failed(detail),
         FetchError::HeaderTooLarge { detail } => CoreError::header_too_large(detail),
         FetchError::BodyTooLarge => CoreError::body_too_large("response body too large"),
         FetchError::Timeout => CoreError::timeout("request timed out"),
         FetchError::Cancelled => CoreError::cancelled(),
         FetchError::Internal(msg) => CoreError::internal(msg),
     }
+}
+
+/// Extract the path portion from an `httpi://nodeId/path?query#frag` URL.
+///
+/// Lives next to [`fetch`] because that is the sole caller — it constructs
+/// the request-target line for the outgoing HTTP/1.1 request.
+pub(crate) fn extract_path(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("httpi://") {
+        if let Some(slash) = rest.find('/') {
+            return rest[slash..].to_string();
+        }
+        return "/".to_string();
+    }
+    if url.starts_with('/') {
+        return url.to_string();
+    }
+    format!("/{url}")
 }
 
 /// Validate response head, allocate body channel, and assemble [`FfiResponse`].

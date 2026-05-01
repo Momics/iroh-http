@@ -39,6 +39,8 @@ async fn basic_get_200() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -103,6 +105,8 @@ async fn get_with_body() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -185,6 +189,8 @@ async fn post_with_request_body() {
         Some(body_reader),
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -244,6 +250,8 @@ async fn custom_response_headers() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -290,6 +298,8 @@ async fn request_headers_and_method() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -329,6 +339,8 @@ async fn url_uses_httpi_scheme() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -383,6 +395,8 @@ async fn remote_node_id_is_populated() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -432,6 +446,8 @@ async fn multiple_sequential_requests() {
             None,
             None,
             Some(&addrs),
+            None,
+            true,
         )
         .await
         .unwrap();
@@ -496,6 +512,8 @@ async fn post_empty_body() {
         Some(body_reader),
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -544,6 +562,8 @@ async fn concurrent_requests() {
                 None,
                 None,
                 Some(&a),
+                None,
+                true,
             )
             .await
             .unwrap();
@@ -599,6 +619,8 @@ async fn url_with_query_params() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -680,6 +702,8 @@ async fn large_body_round_trip() {
         Some(body_reader),
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -726,8 +750,30 @@ async fn mutual_fetch() {
 
     // A fetches from B, B fetches from A — concurrently.
     let (res_ab, res_ba) = tokio::join!(
-        fetch(&ep_a, &id_b, "/who", "GET", &[], None, None, Some(&addrs_b)),
-        fetch(&ep_b, &id_a, "/who", "GET", &[], None, None, Some(&addrs_a)),
+        fetch(
+            &ep_a,
+            &id_b,
+            "/who",
+            "GET",
+            &[],
+            None,
+            None,
+            Some(&addrs_b),
+            None,
+            true
+        ),
+        fetch(
+            &ep_b,
+            &id_a,
+            "/who",
+            "GET",
+            &[],
+            None,
+            None,
+            Some(&addrs_a),
+            None,
+            true
+        ),
     );
 
     let res_ab = res_ab.unwrap();
@@ -822,6 +868,8 @@ async fn fetch_json_post() {
         Some(body_reader),
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -856,6 +904,8 @@ async fn fetch_rejects_https_scheme() {
         None,
         None,
         None,
+        None,
+        true,
     )
     .await
     .unwrap_err();
@@ -877,6 +927,8 @@ async fn fetch_rejects_http_scheme() {
         None,
         None,
         None,
+        None,
+        true,
     )
     .await
     .unwrap_err();

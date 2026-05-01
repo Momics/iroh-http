@@ -47,6 +47,8 @@ async fn pool_reuses_connection_for_sequential_requests() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -69,6 +71,8 @@ async fn pool_reuses_connection_for_sequential_requests() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -90,6 +94,8 @@ async fn pool_reuses_connection_for_sequential_requests() {
         None,
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .unwrap();
@@ -145,6 +151,8 @@ async fn pool_concurrent_requests_share_connection() {
                 None,
                 None,
                 Some(&a),
+                None,
+                true,
             )
             .await
             .unwrap();
@@ -211,7 +219,18 @@ async fn pool_different_peers_get_separate_connections() {
     // Fetch with a generous timeout instead of retry/sleep loops.
     let r1 = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        fetch(&client, &id1, "/", "GET", &[], None, None, Some(&addrs1)),
+        fetch(
+            &client,
+            &id1,
+            "/",
+            "GET",
+            &[],
+            None,
+            None,
+            Some(&addrs1),
+            None,
+            true,
+        ),
     )
     .await
     .expect("fetch to server1 timed out")
@@ -227,7 +246,18 @@ async fn pool_different_peers_get_separate_connections() {
 
     let r2 = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        fetch(&client, &id2, "/", "GET", &[], None, None, Some(&addrs2)),
+        fetch(
+            &client,
+            &id2,
+            "/",
+            "GET",
+            &[],
+            None,
+            None,
+            Some(&addrs2),
+            None,
+            true,
+        ),
     )
     .await
     .expect("fetch to server2 timed out")
@@ -304,6 +334,8 @@ async fn pool_eviction_single_slot() {
             None,
             None,
             Some(&addrs),
+            None,
+            true,
         )
         .await
         .unwrap();

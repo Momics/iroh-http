@@ -47,6 +47,8 @@ async fn fetch_cancelled_via_token() {
         None,
         Some(token),
         Some(&addrs),
+        None,
+        true,
     )
     .await;
     assert!(result.is_err());
@@ -85,7 +87,19 @@ async fn fetch_bad_node_id_returns_error() {
         ..Default::default()
     };
     let client = IrohEndpoint::bind(opts).await.unwrap();
-    let result = fetch(&client, "!!!invalid!!!", "/", "GET", &[], None, None, None).await;
+    let result = fetch(
+        &client,
+        "!!!invalid!!!",
+        "/",
+        "GET",
+        &[],
+        None,
+        None,
+        None,
+        None,
+        true,
+    )
+    .await;
     assert!(result.is_err());
 }
 
@@ -108,7 +122,18 @@ async fn fetch_unknown_peer() {
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        fetch(&client_ep, &fake_id, "/", "GET", &[], None, None, None),
+        fetch(
+            &client_ep,
+            &fake_id,
+            "/",
+            "GET",
+            &[],
+            None,
+            None,
+            None,
+            None,
+            true,
+        ),
     )
     .await;
 
@@ -165,6 +190,8 @@ async fn request_timeout_fires() {
             None,
             None,
             Some(&addrs),
+            None,
+            true,
         ),
     )
     .await;
@@ -237,6 +264,8 @@ async fn cancel_mid_stream_no_panic() {
         None,
         Some(token),
         Some(&addrs),
+        None,
+        true,
     )
     .await;
 

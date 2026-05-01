@@ -98,6 +98,8 @@ async fn request_body_with_content_encoding_zstd_is_decompressed() {
         Some(body_reader),
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .expect("fetch succeeds");
@@ -191,6 +193,8 @@ async fn request_body_without_content_encoding_passes_through() {
         Some(body_reader),
         None,
         Some(&addrs),
+        None,
+        true,
     )
     .await
     .expect("fetch succeeds");

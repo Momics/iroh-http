@@ -128,8 +128,12 @@ pub(crate) type ClientService =
 /// Slice C (#185)).
 ///
 /// Slice D (#186): made public so the pure-Rust
-/// [`crate::http::client::fetch`] can take `&StackConfig` directly.
+/// [`crate::http::client::fetch_request`] can take `&StackConfig` directly.
+/// `#[non_exhaustive]` so adapters constructing literal `StackConfig`
+/// values (`StackConfig { timeout, decompression, ..default() }`) opt in
+/// explicitly and future fields don't break them.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct StackConfig {
     /// Per-request timeout. `None` ⇒ no `TimeoutLayer` is applied.
     pub timeout: Option<Duration>,
@@ -158,6 +162,26 @@ impl Default for StackConfig {
             compression: None,
             decompression: true,
         }
+    }
+}
+
+impl StackConfig {
+    /// Set [`Self::timeout`] using the builder pattern.
+    ///
+    /// Convenience constructor for external callers — `#[non_exhaustive]`
+    /// blocks struct-literal construction outside this crate, so use
+    /// `StackConfig::default().with_timeout(...)`.
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Set [`Self::decompression`] using the builder pattern.
+    #[must_use]
+    pub fn with_decompression(mut self, decompression: bool) -> Self {
+        self.decompression = decompression;
+        self
     }
 }
 
@@ -372,7 +396,11 @@ pub(crate) fn build_compression_layer(
 ///
 /// Returns a [`ClientService`] — boxed once so the caller
 /// ([`crate::http::client::fetch`]) does not have to spell the inner
-/// type. Honours `cfg.decompression` and `cfg.timeout`. Per Slice D
+/// type. Honours `cfg.decompression`. `cfg.timeout` is **not** wired into
+/// this stack — enforcing it as a tower layer would change the service
+/// error type away from `hyper::Error`. The pure-Rust caller
+/// [`crate::http::client::fetch_request`] applies `cfg.timeout` with an
+/// outer `tokio::time::timeout` instead. Per Slice D
 /// (#186) the inner `SendRequest` wrapper that used to be a named
 /// `HyperClientSvc` lives inline below.
 pub(crate) fn build_client_stack(

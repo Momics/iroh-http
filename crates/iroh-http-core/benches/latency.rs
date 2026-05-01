@@ -68,6 +68,8 @@ fn bench_latency(c: &mut Criterion) {
                 None,
                 None,
                 Some(&server_addrs),
+                None,
+                true,
             )
             .await
             .unwrap();
