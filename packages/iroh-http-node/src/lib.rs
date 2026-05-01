@@ -1176,7 +1176,7 @@ pub fn raw_serve(
         };
 
     let ep_clone = ep.clone();
-    let handle = iroh_http_core::serve_with_callback(
+    let handle = iroh_http_core::ffi_serve_with_callback(
         ep.clone(),
         serve_opts,
         move |payload: RequestPayload| {

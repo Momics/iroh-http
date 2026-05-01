@@ -4,7 +4,7 @@ mod common;
 use bytes::Bytes;
 use iroh_http_core::respond;
 use iroh_http_core::{
-    fetch, serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
+    fetch, ffi_serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
 };
 
 // -- Graceful shutdown (patch 15) ---------------------------------------------
@@ -23,7 +23,7 @@ async fn graceful_shutdown_drains_in_flight() {
     let handler_proceed = std::sync::Arc::new(tokio::sync::Notify::new());
     let handler_proceed_rx = handler_proceed.clone();
 
-    let handle = serve(
+    let handle = ffi_serve(
         server_ep.clone(),
         ServeOptions {
             drain_timeout_ms: Some(10_000),
@@ -122,7 +122,7 @@ async fn graceful_shutdown_drains_in_flight() {
 async fn force_close_aborts_immediately() {
     let (server_ep, _client_ep) = common::make_pair().await;
 
-    let _handle = serve(
+    let _handle = ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |_payload: RequestPayload| {},
@@ -171,7 +171,7 @@ async fn shutdown_rejects_new_requests() {
     let addrs = common::server_addrs(&server_ep);
 
     let server_ep_handler = server_ep.clone();
-    let handle = serve(
+    let handle = ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -241,7 +241,7 @@ async fn shutdown_rejects_new_requests() {
 async fn shutdown_returns_immediately() {
     let (server_ep, _client_ep) = common::make_pair().await;
 
-    let handle = serve(
+    let handle = ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |_payload: RequestPayload| {},
@@ -270,7 +270,7 @@ async fn node_close_drains_in_flight() {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     let tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx)));
 
-    let handle = serve(
+    let handle = ffi_serve(
         server_ep.clone(),
         ServeOptions {
             drain_timeout_ms: Some(5_000),

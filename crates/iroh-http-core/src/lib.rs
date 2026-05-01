@@ -33,12 +33,10 @@ pub mod registry {
 // ── Pure-Rust HTTP API surface (`mod http`) ───────────────────────────────────
 pub use http::body::{Body, BoxError};
 pub use http::client::{fetch_request, FetchError};
-pub use http::server::{
-    serve_service, serve_service_with_events, RemoteNodeId, ServeHandle, ServeOptions,
-};
+pub use http::server::{serve, serve_with_events, RemoteNodeId, ServeHandle, ServeOptions};
 
 // ── FFI bridge surface (`mod ffi`) ────────────────────────────────
-pub use ffi::dispatcher::{respond, serve, serve_with_callback};
+pub use ffi::dispatcher::{ffi_serve, ffi_serve_with_callback, respond};
 pub use ffi::fetch::fetch;
 #[allow(clippy::disallowed_types)]
 // re-exporting FFI types at crate root — not a mod http violation

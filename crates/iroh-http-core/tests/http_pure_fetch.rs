@@ -1,6 +1,6 @@
 //! Slice D of #182 (issue #186) — acceptance criterion #1: pure-Rust
 //! [`iroh_http_core::fetch_request`] round-trips a [`hyper::Request<Body>`]
-//! through [`iroh_http_core::serve_service`] and returns
+//! through [`iroh_http_core::serve`] and returns
 //! [`hyper::Response<Body>`] with a typed [`iroh_http_core::FetchError`].
 //!
 //! No `u64` body handles, no `BodyReader`, no `FfiResponse`. Just `tower`
@@ -15,7 +15,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
-use iroh_http_core::{fetch_request, serve_service, Body, RemoteNodeId, ServeOptions, StackConfig};
+use iroh_http_core::{fetch_request, serve, Body, RemoteNodeId, ServeOptions, StackConfig};
 use tower::Service;
 
 #[derive(Clone)]
@@ -57,7 +57,7 @@ async fn pure_rust_fetch_round_trips_typed_request_response() {
     let addrs = common::server_addrs(&server_ep);
     let client_id = common::node_id(&client_ep);
 
-    let _handle = serve_service(server_ep.clone(), ServeOptions::default(), EchoPeerService);
+    let _handle = serve(server_ep.clone(), ServeOptions::default(), EchoPeerService);
 
     // Build the EndpointAddr by hand — this is the typed contract the
     // pure-Rust API takes. No flat strings, no tickets.
@@ -127,7 +127,7 @@ async fn pure_rust_fetch_timeout_returns_typed_error() {
     let server_pk = server_ep.raw().id();
     let addrs = common::server_addrs(&server_ep);
 
-    let _handle = serve_service(server_ep.clone(), ServeOptions::default(), SlowPeerService);
+    let _handle = serve(server_ep.clone(), ServeOptions::default(), SlowPeerService);
 
     let mut addr = iroh::EndpointAddr::new(server_pk);
     for a in &addrs {
@@ -239,7 +239,7 @@ async fn pure_rust_fetch_round_trips_10mib_body() {
     let server_id_str = server_ep.node_id().to_string();
     let addrs = common::server_addrs(&server_ep);
 
-    let _handle = serve_service(server_ep.clone(), ServeOptions::default(), LargeEchoService);
+    let _handle = serve(server_ep.clone(), ServeOptions::default(), LargeEchoService);
 
     let mut addr = iroh::EndpointAddr::new(server_pk);
     for a in &addrs {

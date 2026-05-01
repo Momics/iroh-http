@@ -665,7 +665,7 @@ async fn serve_start(p: Value) -> Value {
                 "connected": ev.connected,
             }));
         }));
-    let serve_handle = iroh_http_core::serve_with_callback(
+    let serve_handle = iroh_http_core::ffi_serve_with_callback(
         ep.clone(),
         serve_opts,
         move |payload: RequestPayload| {

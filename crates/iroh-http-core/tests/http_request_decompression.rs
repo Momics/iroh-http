@@ -8,7 +8,7 @@ mod common;
 
 use bytes::Bytes;
 use iroh_http_core::respond;
-use iroh_http_core::{fetch, serve, RequestPayload, ServeOptions};
+use iroh_http_core::{fetch, ffi_serve, RequestPayload, ServeOptions};
 
 #[tokio::test]
 async fn request_body_with_content_encoding_zstd_is_decompressed() {
@@ -20,7 +20,7 @@ async fn request_body_with_content_encoding_zstd_is_decompressed() {
     let plaintext_len = plaintext.len();
 
     let server_ep_handler = server_ep.clone();
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -134,7 +134,7 @@ async fn request_body_without_content_encoding_passes_through() {
     let plaintext_len = plaintext.len();
 
     let server_ep_handler = server_ep.clone();
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {

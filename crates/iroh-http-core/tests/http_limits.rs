@@ -4,7 +4,7 @@ mod common;
 use bytes::Bytes;
 use iroh_http_core::respond;
 use iroh_http_core::{
-    fetch, serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
+    fetch, ffi_serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
 };
 
 // -- Security hardening (patch 14) --------------------------------------------
@@ -25,7 +25,7 @@ async fn header_bomb_rejected() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -99,7 +99,7 @@ async fn response_header_bomb_rejected() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -156,7 +156,7 @@ async fn default_limits_allow_normal_traffic() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -221,7 +221,7 @@ async fn body_limit_exceeded_resets_stream() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions {
             max_request_body_wire_bytes: Some(64), // very small
@@ -381,7 +381,7 @@ async fn serve_concurrency_limit() {
     // Gate controls when the server handler completes.
     let gate = std::sync::Arc::new(tokio::sync::Barrier::new(1));
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions {
             max_concurrency: Some(2),
@@ -452,7 +452,7 @@ async fn body_exceeds_limit_resets_stream() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions {
             max_request_body_wire_bytes: Some(100),
@@ -534,7 +534,7 @@ async fn concurrent_requests_under_tight_concurrency() {
     let addrs = common::server_addrs(&server_ep);
 
     // Fire 20 requests concurrently — they must all complete despite max_concurrency=2.
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions {
             max_concurrency: Some(2),
@@ -612,7 +612,7 @@ async fn body_overflow_drains_quic_stream() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions {
             // 100-byte wire limit; client will send 50 KB.
@@ -701,7 +701,7 @@ async fn zstd_bomb_rejected_by_decoded_body_limit() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions {
             // Wire limit: 64 KiB — well above the compressed payload (~50 B)
@@ -798,7 +798,7 @@ async fn wire_limit_rejects_large_uncompressed_body() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions {
             max_request_body_wire_bytes: Some(WIRE_LIMIT),
@@ -894,7 +894,7 @@ async fn request_within_both_limits_succeeds() {
     let compressed =
         zstd::stream::encode_all(plaintext.as_slice(), 3).expect("zstd encode succeeds");
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions {
             max_request_body_wire_bytes: Some(BOTH_LIMITS),

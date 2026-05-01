@@ -1,13 +1,13 @@
 //! `ServeOptions` and the default tunables consumed by
-//! [`crate::http::server::serve_service_with_events`].
+//! [`crate::http::server::serve_with_events`].
 //!
 //! Split out of `mod.rs` per Slice C.7 of #182 so the accept loop in
 //! `mod.rs` stays close to the axum reference shape (≤ 200 LoC).
 
 /// Options for the HTTP serve loop.
 ///
-/// Passed directly to [`crate::http::server::serve_service`] or
-/// [`crate::http::server::serve_service_with_events`]. These govern
+/// Passed directly to [`crate::http::server::serve`] or
+/// [`crate::http::server::serve_with_events`]. These govern
 /// per-request middleware (Tower layers), inbound connection caps, and
 /// serve-loop lifecycle — they do **not** affect outgoing fetch calls.
 #[derive(Debug, Clone, Default)]

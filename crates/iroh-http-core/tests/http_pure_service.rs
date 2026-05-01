@@ -1,5 +1,5 @@
 //! Slice C.1 of #182 — acceptance criterion #1: the pure-Rust serve entry
-//! ([`iroh_http_core::serve_service`] / [`iroh_http_core::serve_service_with_events`]) is callable from a
+//! ([`iroh_http_core::serve`] / [`iroh_http_core::serve_with_events`]) is callable from a
 //! Rust integration test with a hand-rolled
 //! `Service<Request<Body>, Response = Response<Body>, Error = Infallible>`.
 //!
@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
-use iroh_http_core::{fetch, serve_service, Body, RemoteNodeId, ServeOptions};
+use iroh_http_core::{fetch, serve, Body, RemoteNodeId, ServeOptions};
 use tower::Service;
 
 #[derive(Clone)]
@@ -61,7 +61,7 @@ async fn pure_rust_serve_round_trips_with_peer_id_extension() {
     let addrs = common::server_addrs(&server_ep);
     let client_id = common::node_id(&client_ep);
 
-    let _handle = serve_service(server_ep.clone(), ServeOptions::default(), EchoPeerService);
+    let _handle = serve(server_ep.clone(), ServeOptions::default(), EchoPeerService);
 
     let res = fetch(
         &client_ep,

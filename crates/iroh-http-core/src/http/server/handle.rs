@@ -1,5 +1,5 @@
 //! `ServeHandle` — the join handle / shutdown switch returned by
-//! [`crate::http::server::serve_service_with_events`].
+//! [`crate::http::server::serve_with_events`].
 //!
 //! Split out of `mod.rs` per Slice C.7 of #182.
 

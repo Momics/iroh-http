@@ -1,4 +1,4 @@
-//! Accept loop body extracted from `serve_service_with_events` so the
+//! Accept loop body extracted from `serve_with_events` so the
 //! public entry stays close to the axum reference shape (≤ 200 LoC).
 //!
 //! `accept_loop` owns the per-endpoint loop: pull the next incoming

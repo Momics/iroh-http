@@ -5,7 +5,7 @@ mod common;
 
 use iroh_http_core::respond;
 use iroh_http_core::{
-    fetch, serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
+    fetch, ffi_serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
 };
 
 // -- Connection pooling -------------------------------------------------------
@@ -19,7 +19,7 @@ async fn pool_reuses_connection_for_sequential_requests() {
     let request_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
     let rc = request_count.clone();
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -121,7 +121,7 @@ async fn pool_concurrent_requests_share_connection() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -202,7 +202,7 @@ async fn pool_different_peers_get_separate_connections() {
 
     for ep in [server1.clone(), server2.clone()] {
         let ep_handler = ep.clone();
-        serve(
+        ffi_serve(
             ep,
             ServeOptions::default(),
             move |payload: RequestPayload| {
@@ -317,7 +317,7 @@ async fn pool_eviction_single_slot() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {

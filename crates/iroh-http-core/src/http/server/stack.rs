@@ -151,7 +151,7 @@ pub struct StackConfig {
     /// This limit is applied **after** decompression. It is the primary guard
     /// against compression bombs: a zstd payload that is tiny on the wire but
     /// expands to GB in memory is rejected once the decoded byte count crosses
-    /// this threshold. The default at the [`super::serve_service`] entry point
+    /// this threshold. The default at the [`super::serve`] entry point
     /// is 16 MiB (matching the documented behaviour that the old single-limit
     /// field `max_request_body_bytes` had always promised but never delivered).
     pub max_request_body_decoded_bytes: Option<usize>,

@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use iroh_http_core::respond;
-use iroh_http_core::{fetch, serve, RequestPayload, ServeOptions};
+use iroh_http_core::{fetch, ffi_serve, RequestPayload, ServeOptions};
 
 // ── AC#1: per-call fetch timeout ─────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ async fn fetch_timeout_fires_against_hung_server() {
     let addrs = common::server_addrs(&server_ep);
 
     // Server receives the request but parks forever — never calls `respond`.
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -88,7 +88,7 @@ async fn fetch_decompress_false_returns_raw_zstd_bytes() {
     );
 
     let compressed_for_server = compressed.clone();
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -177,7 +177,7 @@ async fn serve_decompression_false_passes_raw_compressed_body_to_handler() {
         "compressed body should be smaller"
     );
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions {
             // Opt out of server-side decompression.
@@ -317,7 +317,7 @@ async fn per_call_max_response_body_bytes_overrides_endpoint_default() {
 
     let server_ep_clone = server_ep.clone();
     let payload_clone = payload_5mib.clone();
-    serve(
+    ffi_serve(
         server_ep,
         ServeOptions::default(),
         move |payload: RequestPayload| {

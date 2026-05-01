@@ -3,7 +3,7 @@ mod common;
 
 use bytes::Bytes;
 use iroh_http_core::respond;
-use iroh_http_core::{fetch, serve, RequestPayload, ServeOptions};
+use iroh_http_core::{fetch, ffi_serve, RequestPayload, ServeOptions};
 
 // -- Basic fetch/serve --------------------------------------------------------
 
@@ -13,7 +13,7 @@ async fn basic_get_200() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -64,7 +64,7 @@ async fn get_with_body() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -135,7 +135,7 @@ async fn post_with_request_body() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -224,7 +224,7 @@ async fn custom_response_headers() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -275,7 +275,7 @@ async fn request_headers_and_method() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -323,7 +323,7 @@ async fn url_uses_httpi_scheme() {
     let captured_url = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let captured = captured_url.clone();
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -380,7 +380,7 @@ async fn remote_node_id_is_populated() {
     let captured_remote = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let captured = captured_remote.clone();
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -424,7 +424,7 @@ async fn multiple_sequential_requests() {
     let counter = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
     let counter_clone = counter.clone();
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -483,7 +483,7 @@ async fn post_empty_body() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -538,7 +538,7 @@ async fn concurrent_requests() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -602,7 +602,7 @@ async fn url_with_query_params() {
     let captured_url = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let captured = captured_url.clone();
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -660,7 +660,7 @@ async fn large_body_round_trip() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -744,7 +744,7 @@ async fn mutual_fetch() {
     for (ep, id) in [(ep_a.clone(), id_a.clone()), (ep_b.clone(), id_b.clone())] {
         let my_id = id.clone();
         let ep_handler = ep.clone();
-        serve(
+        ffi_serve(
             ep,
             ServeOptions::default(),
             move |payload: RequestPayload| {
@@ -816,7 +816,7 @@ async fn fetch_json_post() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {

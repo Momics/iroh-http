@@ -4,7 +4,7 @@ mod common;
 use bytes::Bytes;
 use iroh_http_core::respond;
 use iroh_http_core::{
-    fetch, serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
+    fetch, ffi_serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload, ServeOptions,
 };
 
 // -- Fetch cancellation -------------------------------------------------------
@@ -19,7 +19,7 @@ async fn fetch_cancelled_via_token() {
     let (request_arrived_tx, request_arrived_rx) = tokio::sync::oneshot::channel::<()>();
     let request_arrived_tx = std::sync::Mutex::new(Some(request_arrived_tx));
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |_payload: RequestPayload| {
@@ -160,7 +160,7 @@ async fn request_timeout_fires() {
     let server_id = common::node_id(&server_ep);
     let addrs = common::server_addrs(&server_ep);
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions {
             request_timeout_ms: Some(100), // 100ms timeout
@@ -219,7 +219,7 @@ async fn cancel_mid_stream_no_panic() {
     let (request_arrived_tx, request_arrived_rx) = tokio::sync::oneshot::channel::<()>();
     let request_arrived_tx = std::sync::Mutex::new(Some(request_arrived_tx));
 
-    serve(
+    ffi_serve(
         server_ep.clone(),
         ServeOptions::default(),
         move |payload: RequestPayload| {

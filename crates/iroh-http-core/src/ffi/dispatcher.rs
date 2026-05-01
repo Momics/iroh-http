@@ -26,7 +26,7 @@ use tower::Service;
 use crate::ffi::handles::ResponseHeadEntry;
 use crate::ffi::pumps::pump_hyper_body_to_channel;
 use crate::http::server::{
-    serve_service_with_events, ConnectionEventFn, RemoteNodeId, ServeHandle, ServeOptions,
+    serve_with_events, ConnectionEventFn, RemoteNodeId, ServeHandle, ServeOptions,
 };
 use crate::{Body, CoreError, IrohEndpoint, RequestPayload};
 
@@ -305,7 +305,7 @@ impl FfiDispatcher {
 /// and send requests. Iroh QUIC authenticates the peer's *identity*
 /// cryptographically, but does not enforce *authorization*. Always
 /// inspect [`RequestPayload::remote_node_id`] and reject untrusted peers.
-pub fn serve_with_callback<F>(
+pub fn ffi_serve_with_callback<F>(
     endpoint: IrohEndpoint,
     options: ServeOptions,
     on_request: F,
@@ -330,15 +330,15 @@ where
     });
     let svc = IrohHttpService { dispatcher };
 
-    serve_service_with_events(endpoint, options, svc, on_connection_event)
+    serve_with_events(endpoint, options, svc, on_connection_event)
 }
 
 /// Back-compat 3-arg FFI serve entry: equivalent to
-/// [`serve_with_callback`] with `on_connection_event = None`. The Node /
+/// [`ffi_serve_with_callback`] with `on_connection_event = None`. The Node /
 /// Deno / Tauri adapters call this directly.
-pub fn serve<F>(endpoint: IrohEndpoint, options: ServeOptions, on_request: F) -> ServeHandle
+pub fn ffi_serve<F>(endpoint: IrohEndpoint, options: ServeOptions, on_request: F) -> ServeHandle
 where
     F: Fn(RequestPayload) + Send + Sync + 'static,
 {
-    serve_with_callback(endpoint, options, on_request, None)
+    ffi_serve_with_callback(endpoint, options, on_request, None)
 }

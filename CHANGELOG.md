@@ -2,8 +2,7 @@
 
 ### � Breaking Changes
 
-- *(core)* Remove `raw_connect` from the public Rust surface and the `connect` Tauri command. The session API (`node.dial`/sessions) covers the same use case with a WebTransport-shaped surface; the JS adapters never wired the legacy upgrade entrypoint. Server-side `req.upgrade()` is unchanged.
-
+- *(core)* Remove `raw_connect` from the public Rust surface and the `connect` Tauri command. The session API (`node.dial`/sessions) covers the same use case with a WebTransport-shaped surface; the JS adapters never wired the legacy upgrade entrypoint. Server-side `req.upgrade()` is unchanged.- *(core)* Rename pure-Rust serve entries: `serve_service` → `serve`, `serve_service_with_events` → `serve_with_events` (ADR-014 D5). The FFI entries are demoted: `serve` → `ffi_serve`, `serve_with_callback` → `ffi_serve_with_callback`. All platform adapters (Node, Deno, Tauri) are updated. Pure-Rust callers should replace `iroh_http_core::serve_service(…)` with `iroh_http_core::serve(…)` and `iroh_http_core::serve_with_callback(…)` with `iroh_http_core::ffi_serve_with_callback(…)`.
 ### �🚀 Features
 
 - *(node)* Napi-rs platform package split

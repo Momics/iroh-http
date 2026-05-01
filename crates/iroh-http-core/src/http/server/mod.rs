@@ -54,7 +54,7 @@ pub(crate) type ConnectionEventFn = Arc<dyn Fn(ConnectionEvent) + Send + Sync>;
 /// Authenticated peer node id of the QUIC connection a request arrived
 /// on. Inserted as a request extension by the per-connection
 /// [`tower_http::add_extension::AddExtensionLayer`] in
-/// [`serve_service_with_events`].
+/// [`serve_with_events`].
 ///
 /// User-facing pure-Rust services consume it with
 /// `req.extensions().get::<RemoteNodeId>()`. Closes #177.
@@ -62,9 +62,9 @@ pub(crate) type ConnectionEventFn = Arc<dyn Fn(ConnectionEvent) + Send + Sync>;
 pub struct RemoteNodeId(pub Arc<String>);
 
 /// Pure-Rust serve entry — convenience 3-arg wrapper that omits the
-/// connection-event callback. Equivalent to `serve_service_with_events(ep,
+/// connection-event callback. Equivalent to `serve_with_events(ep,
 /// opts, svc, None)`.
-pub fn serve_service<S>(endpoint: IrohEndpoint, options: ServeOptions, svc: S) -> ServeHandle
+pub fn serve<S>(endpoint: IrohEndpoint, options: ServeOptions, svc: S) -> ServeHandle
 where
     S: Service<
             hyper::Request<Body>,
@@ -76,7 +76,7 @@ where
         + 'static,
     S::Future: Send + 'static,
 {
-    serve_service_with_events(endpoint, options, svc, None)
+    serve_with_events(endpoint, options, svc, None)
 }
 
 /// Pure-Rust serve entry — the canonical inbound API.
@@ -99,7 +99,7 @@ where
 /// and send requests. Iroh QUIC authenticates the peer's *identity*
 /// cryptographically, but does not enforce *authorization*. Inspect
 /// [`RemoteNodeId`] in your service and reject untrusted peers.
-pub fn serve_service_with_events<S>(
+pub fn serve_with_events<S>(
     endpoint: IrohEndpoint,
     options: ServeOptions,
     svc: S,
