@@ -1,5 +1,5 @@
 //! Tower stack composition shared by [`crate::http::serve`] (server) and
-//! [`crate::http::client::fetch`] (client).
+//! [`crate::http::client::fetch_request`] (client).
 //!
 //! Closes Slice B of #182.
 //!
@@ -265,26 +265,6 @@ pub(crate) fn apply_body_limit(svc: ServeService, limit: Option<usize>) -> Serve
         .boxed_clone()
 }
 
-/// Always-on: maps the inner `Service::Error` (`Infallible` after
-/// `HandleLayerError`, `BoxError` from upstream tower layers) into a
-/// proper HTTP response.
-///
-/// Not used by [`build_stack`] today: each error-producing layer
-/// (`apply_load_shed`, `apply_timeout`) bundles its own
-/// [`HandleLayerErrorLayer`] so the chain stays uniformly
-/// `ServeService → ServeService`. Exposed for hand-rolled stacks that
-/// produce a `Service` with `Error: Into<BoxError>` and need to box-erase
-/// it back to `Infallible`.
-#[allow(dead_code)]
-pub(crate) fn apply_handle_layer_error(svc: ServeService) -> ServeService {
-    use crate::http::server::HandleLayerErrorLayer;
-    use tower::ServiceExt;
-    ServiceBuilder::new()
-        .layer(HandleLayerErrorLayer)
-        .service(svc)
-        .boxed_clone()
-}
-
 /// `LoadShedLayer` returns `Overloaded` immediately when the inner
 /// service reports `Poll::Pending` from `poll_ready`. The error is
 /// converted to a 503 response by an inner [`HandleLayerErrorLayer`] so
@@ -421,7 +401,7 @@ pub(crate) fn build_compression_layer(
 /// ```
 ///
 /// Returns a [`ClientService`] — boxed once so the caller
-/// ([`crate::http::client::fetch`]) does not have to spell the inner
+/// ([`crate::http::client::fetch_request`]) does not have to spell the inner
 /// type. Honours `cfg.decompression`. `cfg.timeout` is **not** wired into
 /// this stack — enforcing it as a tower layer would change the service
 /// error type away from `hyper::Error`. The pure-Rust caller
@@ -472,7 +452,7 @@ pub(crate) fn build_client_stack(
     // Step 2: optional response decompression (always-on by default).
     apply_client_decompression(svc, cfg.decompression)
     // Per-request timeout is enforced by the caller in
-    // [`crate::http::client::fetch`] via `tokio::time::timeout` rather
+    // [`crate::http::client::fetch_request`] via `tokio::time::timeout` rather
     // than a `TimeoutLayer` here, so the `ClientService` error type can
     // stay `hyper::Error` and the timeout maps cleanly to
     // `FetchError::Timeout` without going through `BoxError` downcasts.

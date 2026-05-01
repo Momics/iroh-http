@@ -6,7 +6,7 @@
 //!
 //! These helpers are FFI plumbing — they translate streaming bodies into
 //! the channel-backed handle world that the JS adapters consume. The
-//! pure-Rust `http::client::fetch` does not need them; it returns a
+//! pure-Rust `http::client::fetch_request` does not need them; it returns a
 //! [`hyper::Response<Body>`] and lets the caller consume the body
 // Legitimate FFI wiring — uses the disallowed types intentionally.
 #![allow(clippy::disallowed_types)]

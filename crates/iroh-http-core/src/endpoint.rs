@@ -57,11 +57,9 @@ pub(crate) struct HttpRuntime {
 
 // ── SessionRuntime subsystem ─────────────────────────────────────────────
 //
-// Note (Slice E #187 carve-out): per #185 step 10 this could fold into
-// `http/session.rs`, but that module is on Slice E's docket and the
-// session-runtime types are tightly coupled to the IrohEndpoint facade
-// below. Kept here until #187 unifies the body type and the session API
-// move.
+// Slice E (#187) is complete: session.rs moved into mod ffi, not http/.
+// SessionRuntime intentionally stays here alongside IrohEndpoint (tight
+// lifecycle coupling; no further move is planned).
 
 /// Server-side runtime: the `serve()` task, lifecycle signals, and
 /// observability fan-out (transport events, per-peer path subscriptions).

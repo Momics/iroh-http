@@ -23,7 +23,7 @@ use crate::{
 /// FFI-shaped fetch — re-exported as `iroh_http_core::fetch` for FFI
 /// binary compatibility (Slice D acceptance #5). Composition mirrors the
 /// pre-Slice-D function exactly; the moving parts that became pure Rust
-/// live in [`crate::http::client::fetch`].
+/// live in [`crate::http::client::fetch_request`].
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch(
     endpoint: &IrohEndpoint,

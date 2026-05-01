@@ -35,6 +35,9 @@ use crate::{Body, BoxError};
 /// `Layer` form: insert in any `tower::ServiceBuilder` pipeline that contains
 /// a `TimeoutLayer` and/or `LoadShedLayer` to convert their errors into HTTP
 /// responses. Wraps the inner service with [`HandleLayerError`].
+///
+/// For hand-rolled stacks that produce a `Service` with `Error: Into<BoxError>`,
+/// wrap with this layer to box-erase the error type back to `Infallible`.
 #[derive(Clone, Default)]
 pub(crate) struct HandleLayerErrorLayer;
 
