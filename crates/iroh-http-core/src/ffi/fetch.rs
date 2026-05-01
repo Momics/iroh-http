@@ -36,6 +36,7 @@ pub async fn fetch(
     direct_addrs: Option<&[std::net::SocketAddr]>,
     timeout: Option<Duration>,
     decompress: bool,
+    max_response_body_bytes: Option<usize>,
 ) -> Result<FfiResponse, CoreError> {
     // Reject standard web schemes.
     {
@@ -145,7 +146,7 @@ pub async fn fetch(
 
     let resp = resp.map_err(fetch_error_to_core)?;
 
-    package_response(endpoint, resp, &remote_str, &path).await
+    package_response(endpoint, resp, &remote_str, &path, max_response_body_bytes).await
 }
 
 /// Translate the typed [`FetchError`] surface into the flat
@@ -190,9 +191,12 @@ async fn package_response(
     resp: hyper::Response<Body>,
     remote_str: &str,
     path: &str,
+    max_response_body_bytes: Option<usize>,
 ) -> Result<FfiResponse, CoreError> {
     let max_header_size = endpoint.max_header_size();
-    let max_response_body_bytes = endpoint.max_response_body_bytes();
+    // Per-call limit takes precedence; fall back to the endpoint-wide default.
+    let max_response_body_bytes =
+        max_response_body_bytes.unwrap_or_else(|| endpoint.max_response_body_bytes());
     let handles = endpoint.handles();
 
     let status = resp.status().as_u16();

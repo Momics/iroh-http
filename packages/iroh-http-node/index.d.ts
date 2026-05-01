@@ -214,7 +214,7 @@ export interface JsFfiResponse {
  *
  * Low-level function — the shared TS layer wraps this in `makeFetch`.
  */
-export declare function rawFetch(endpointHandle: number, nodeId: string, url: string, method: string, headers: Array<Array<string>>, reqBodyHandle: bigint | undefined | null, fetchToken: bigint, directAddrs?: Array<string> | undefined | null): Promise<JsFfiResponse>
+export declare function rawFetch(endpointHandle: number, nodeId: string, url: string, method: string, headers: Array<Array<string>>, reqBodyHandle: bigint | undefined | null, fetchToken: bigint, directAddrs?: Array<string> | undefined | null, timeoutMs?: number | undefined | null, decompress?: boolean | undefined | null, maxResponseBodyBytes?: number | undefined | null): Promise<JsFfiResponse>
 /**
  * Call once per request from the JS handler to send the response head.
  *
@@ -244,6 +244,8 @@ export interface JsServeOptions {
   drainTimeout?: number
   /** Enable load-shedding (reject with 503 when at capacity). */
   loadShed?: boolean
+  /** When `false`, request bodies are forwarded raw (no decompression). Default: true */
+  decompress?: boolean
 }
 export declare function rawServe(endpointHandle: number, serveOptions: JsServeOptions | undefined | null, handler: (...args: any[]) => any, onConnectionEvent?: (...args: any[]) => any | undefined | null): void
 /**

@@ -462,6 +462,9 @@ pub struct RawFetchArgs {
     pub req_body_handle: Option<u64>,
     pub fetch_token: Option<u64>,
     pub direct_addrs: Option<Vec<String>>,
+    pub timeout_ms: Option<u64>,
+    pub decompress: Option<bool>,
+    pub max_response_body_bytes: Option<u64>,
 }
 
 /// Response payload returned by `rawFetch`.
@@ -510,8 +513,9 @@ pub async fn fetch(args: RawFetchArgs) -> Result<FfiResponsePayload, String> {
         req_body_reader,
         args.fetch_token,
         addrs.as_deref(),
-        None,
-        true,
+        args.timeout_ms.map(std::time::Duration::from_millis),
+        args.decompress.unwrap_or(true),
+        args.max_response_body_bytes.map(|b| b as usize),
     )
     .await
     .map_err(|e| core_error_to_json(&e))?;
@@ -556,6 +560,7 @@ pub struct ServeArgs {
     pub max_serve_errors: Option<usize>,
     pub drain_timeout: Option<u64>,
     pub load_shed: Option<bool>,
+    pub decompress: Option<bool>,
 }
 
 /// Start the serve accept loop, streaming incoming requests via a Tauri Channel.
@@ -582,6 +587,7 @@ pub async fn serve(
         max_serve_errors: args.max_serve_errors,
         drain_timeout_ms: args.drain_timeout,
         load_shed: args.load_shed,
+        decompression: args.decompress,
     };
 
     let conn_event_fn: Option<std::sync::Arc<dyn Fn(ConnectionEvent) + Send + Sync>> = {

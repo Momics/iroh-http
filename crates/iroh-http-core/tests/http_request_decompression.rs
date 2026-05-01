@@ -101,6 +101,7 @@ async fn request_body_with_content_encoding_zstd_is_decompressed() {
         Some(&addrs),
         None,
         true,
+                None, // max_response_body_bytes
     )
     .await
     .expect("fetch succeeds");
@@ -196,6 +197,7 @@ async fn request_body_without_content_encoding_passes_through() {
         Some(&addrs),
         None,
         true,
+                None, // max_response_body_bytes
     )
     .await
     .expect("fetch succeeds");

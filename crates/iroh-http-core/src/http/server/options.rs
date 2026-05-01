@@ -35,6 +35,11 @@ pub struct ServeOptions {
     /// Service Unavailable` when `max_concurrency` is already reached rather
     /// than queuing them.  Prevents thundering-herd on recovery.
     pub load_shed: Option<bool>,
+    /// When `true` (the default), automatically decompress compressed request
+    /// bodies before handing them to the handler.  Set to `false` to receive
+    /// the raw wire bytes (e.g. for relay/proxy use-cases that forward the
+    /// body downstream without inspecting it).
+    pub decompression: Option<bool>,
 }
 
 pub(crate) const DEFAULT_CONCURRENCY: usize = 1024;

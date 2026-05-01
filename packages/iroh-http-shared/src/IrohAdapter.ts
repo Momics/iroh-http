@@ -62,10 +62,34 @@ export interface IrohFetchInit extends RequestInit {
    * whose address is already known out-of-band.
    */
   directAddrs?: string[];
+  /** Per-request timeout in milliseconds.  Overrides the endpoint-wide default. */
+  requestTimeout?: number;
+  /**
+   * When `false`, the response body bytes are returned exactly as received
+   * (no decompression layer).  Useful when forwarding a compressed payload
+   * downstream or when the caller wants to decompress itself.
+   * @default true
+   */
+  decompress?: boolean;
+  /**
+   * Per-call response body byte limit.  When set, overrides the endpoint-wide
+   * `maxResponseBodyBytes` default for this single request.
+   */
+  maxResponseBodyBytes?: number;
 }
 
 export interface CloseOptions {
   force?: boolean;
+}
+
+/** Per-call fetch knobs threaded through rawFetch to the Rust stack. */
+export interface FetchOptions {
+  /** Per-request timeout in milliseconds.  Overrides endpoint default. */
+  timeoutMs?: number;
+  /** When `false`, the response body is not decompressed. @default true */
+  decompress?: boolean;
+  /** Per-call response body byte limit.  Overrides endpoint default. */
+  maxResponseBodyBytes?: number;
 }
 
 export type RawFetchFn = (
@@ -77,6 +101,7 @@ export type RawFetchFn = (
   reqBodyHandle: bigint | null,
   fetchToken: bigint,
   directAddrs: string[] | null,
+  fetchOptions?: FetchOptions,
 ) => Promise<FfiResponse>;
 
 export type AllocBodyWriterFn = () => bigint | Promise<bigint>;
@@ -91,6 +116,8 @@ export interface FfiServeOptions {
   maxServeErrors?: number;
   drainTimeout?: number;
   loadShed?: boolean;
+  /** When `false`, request bodies are forwarded raw (no decompression). @default true */
+  decompress?: boolean;
 }
 
 export type RawServeFn = (
@@ -122,6 +149,7 @@ export abstract class IrohAdapter {
     reqBodyHandle: bigint | null,
     fetchToken: bigint,
     directAddrs: string[] | null,
+    fetchOptions?: FetchOptions,
   ): Promise<FfiResponse>;
 
   abstract rawServe(

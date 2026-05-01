@@ -42,6 +42,7 @@ async fn basic_get_200() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -108,6 +109,7 @@ async fn get_with_body() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -192,6 +194,7 @@ async fn post_with_request_body() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -253,6 +256,7 @@ async fn custom_response_headers() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -301,6 +305,7 @@ async fn request_headers_and_method() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -342,6 +347,7 @@ async fn url_uses_httpi_scheme() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -398,6 +404,7 @@ async fn remote_node_id_is_populated() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -449,6 +456,7 @@ async fn multiple_sequential_requests() {
             Some(&addrs),
             None,
             true,
+None, // max_response_body_bytes
         )
         .await
         .unwrap();
@@ -515,6 +523,7 @@ async fn post_empty_body() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -565,6 +574,7 @@ async fn concurrent_requests() {
                 Some(&a),
                 None,
                 true,
+None, // max_response_body_bytes
             )
             .await
             .unwrap();
@@ -622,6 +632,7 @@ async fn url_with_query_params() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -705,6 +716,7 @@ async fn large_body_round_trip() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -761,7 +773,8 @@ async fn mutual_fetch() {
             None,
             Some(&addrs_b),
             None,
-            true
+            true,
+            None, // max_response_body_bytes
         ),
         fetch(
             &ep_b,
@@ -773,7 +786,8 @@ async fn mutual_fetch() {
             None,
             Some(&addrs_a),
             None,
-            true
+            true,
+            None, // max_response_body_bytes
         ),
     );
 
@@ -871,6 +885,7 @@ async fn fetch_json_post() {
         Some(&addrs),
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -907,6 +922,7 @@ async fn fetch_rejects_https_scheme() {
         None,
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap_err();
@@ -930,6 +946,7 @@ async fn fetch_rejects_http_scheme() {
         None,
         None,
         true,
+None, // max_response_body_bytes
     )
     .await
     .unwrap_err();

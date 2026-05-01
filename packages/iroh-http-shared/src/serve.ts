@@ -126,6 +126,14 @@ export interface ServeOptions {
    */
   loadShed?: boolean;
 
+  /**
+   * When `false`, request bodies are forwarded raw to the handler without
+   * decompression.  Useful for relay/proxy nodes that forward bodies
+   * downstream without inspecting them.
+   * @default true
+   */
+  decompress?: boolean;
+
 }
 
 /**
@@ -229,6 +237,7 @@ export function makeServe(
       maxServeErrors: options.maxServeErrors,
       drainTimeout: options.drainTimeout,
       loadShed: options.loadShed,
+      decompress: options.decompress,
     };
 
     // rawServe returns a Promise<void> that resolves when its internal polling

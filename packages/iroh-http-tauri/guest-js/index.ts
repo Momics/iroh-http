@@ -126,6 +126,7 @@ class TauriAdapter extends IrohAdapter {
     reqBodyHandle: bigint | null,
     fetchToken: bigint,
     directAddrs: string[] | null,
+    fetchOptions?: import("@momics/iroh-http-shared").FetchOptions,
   ): Promise<FfiResponse> {
     const res = await invoke<{
       status: number;
@@ -142,6 +143,9 @@ class TauriAdapter extends IrohAdapter {
         reqBodyHandle: reqBodyHandle != null ? Number(reqBodyHandle) : null,
         fetchToken: fetchToken != null ? Number(fetchToken) : null,
         directAddrs: directAddrs ?? null,
+        timeoutMs: fetchOptions?.timeoutMs ?? null,
+        decompress: fetchOptions?.decompress ?? null,
+        maxResponseBodyBytes: fetchOptions?.maxResponseBodyBytes ?? null,
       },
     });
     return {
@@ -217,6 +221,7 @@ class TauriAdapter extends IrohAdapter {
         maxServeErrors: options.serveOptions?.maxServeErrors ?? null,
         drainTimeout: options.serveOptions?.drainTimeout ?? null,
         loadShed: options.serveOptions?.loadShed ?? null,
+        decompress: options.serveOptions?.decompress ?? null,
       },
       channel,
       connChannel,

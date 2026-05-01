@@ -39,6 +39,7 @@ pub(super) struct AcceptConfig {
     pub load_shed_enabled: bool,
     pub max_header_size: usize,
     pub stack_compression: Option<CompressionOptions>,
+    pub decompression: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -176,6 +177,7 @@ pub(super) async fn accept_loop<S>(
         let max_request_body_wire_bytes = cfg.max_request_body_wire_bytes;
         let max_request_body_decoded_bytes = cfg.max_request_body_decoded_bytes;
         let load_shed_enabled = cfg.load_shed_enabled;
+        let cfg_decompression = cfg.decompression;
 
         tokio::spawn(async move {
             // Owns the per-peer count, total-connection counter, and
@@ -229,7 +231,7 @@ pub(super) async fn accept_loop<S>(
                         max_request_body_decoded_bytes,
                         load_shed: load_shed_enabled,
                         compression: req_compression,
-                        decompression: true,
+                        decompression: cfg_decompression,
                     };
                     super::pipeline::serve_bistream(io, svc, effective_header_limit, &stack_cfg)
                         .await;

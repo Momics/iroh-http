@@ -140,6 +140,8 @@ where
         load_shed_enabled: options.load_shed.unwrap_or(true),
         max_header_size: endpoint.max_header_size(),
         stack_compression: endpoint.compression().cloned(),
+        // Decompression is opt-out — default `true`.
+        decompression: options.decompression.unwrap_or(true),
     };
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());

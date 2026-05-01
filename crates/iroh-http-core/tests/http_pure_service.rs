@@ -74,6 +74,7 @@ async fn pure_rust_serve_round_trips_with_peer_id_extension() {
         Some(&addrs),
         None,
         true,
+                None, // max_response_body_bytes
     )
     .await
     .expect("fetch ok");

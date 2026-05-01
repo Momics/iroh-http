@@ -547,6 +547,9 @@ struct RawFetchPayload {
     req_body_handle: Option<u64>,
     fetch_token: Option<u64>,
     direct_addrs: Option<Vec<String>>,
+    timeout_ms: Option<u64>,
+    decompress: Option<bool>,
+    max_response_body_bytes: Option<u64>,
 }
 
 async fn raw_fetch(p: Value) -> Value {
@@ -598,8 +601,9 @@ async fn raw_fetch(p: Value) -> Value {
         reader,
         fetch_token,
         addrs.as_deref(),
-        None,
-        true,
+        args.timeout_ms.map(std::time::Duration::from_millis),
+        args.decompress.unwrap_or(true),
+        args.max_response_body_bytes.map(|b| b as usize),
     )
     .await
     {
@@ -647,6 +651,7 @@ async fn serve_start(p: Value) -> Value {
         max_serve_errors: p["maxServeErrors"].as_u64().map(|v| v as usize),
         drain_timeout_ms: p["drainTimeout"].as_u64(),
         load_shed: p["loadShed"].as_bool(),
+        decompression: p["decompress"].as_bool(),
     };
 
     let queue = serve_registry::register(handle);

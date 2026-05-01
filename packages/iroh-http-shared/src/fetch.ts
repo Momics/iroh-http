@@ -63,6 +63,11 @@ export function makeFetch(
     const method = init?.method ?? "GET";
     const signal = init?.signal ?? null;
     const directAddrs = init?.directAddrs ?? null;
+    const fetchOptions = {
+      timeoutMs: init?.requestTimeout,
+      decompress: init?.decompress,
+      maxResponseBodyBytes: init?.maxResponseBodyBytes,
+    };
 
     // Reject GET and HEAD request bodies — matches web-platform fetch semantics
     // (https://fetch.spec.whatwg.org/#concept-method-normalize, issue-58).
@@ -139,6 +144,7 @@ export function makeFetch(
       reqBodyHandle,
       fetchToken,
       directAddrs,
+      fetchOptions,
     );
 
     // NOW start the body pipe — rawFetch has been dispatched to Rust, so the

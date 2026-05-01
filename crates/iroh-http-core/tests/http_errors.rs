@@ -50,6 +50,7 @@ async fn fetch_cancelled_via_token() {
         Some(&addrs),
         None,
         true,
+                None, // max_response_body_bytes
     )
     .await;
     assert!(result.is_err());
@@ -99,6 +100,7 @@ async fn fetch_bad_node_id_returns_error() {
         None,
         None,
         true,
+                None, // max_response_body_bytes
     )
     .await;
     assert!(result.is_err());
@@ -134,6 +136,7 @@ async fn fetch_unknown_peer() {
             None,
             None,
             true,
+None, // max_response_body_bytes
         ),
     )
     .await;
@@ -193,6 +196,7 @@ async fn request_timeout_fires() {
             Some(&addrs),
             None,
             true,
+None, // max_response_body_bytes
         ),
     )
     .await;
@@ -267,6 +271,7 @@ async fn cancel_mid_stream_no_panic() {
         Some(&addrs),
         None,
         true,
+                None, // max_response_body_bytes
     )
     .await;
 

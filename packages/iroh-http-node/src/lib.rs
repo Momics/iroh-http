@@ -960,6 +960,9 @@ pub async fn raw_fetch(
     req_body_handle: Option<BigInt>,
     fetch_token: BigInt,
     direct_addrs: Option<Vec<String>>,
+    timeout_ms: Option<f64>,
+    decompress: Option<bool>,
+    max_response_body_bytes: Option<f64>,
 ) -> napi::Result<JsFfiResponse> {
     let ep = get_endpoint(endpoint_handle)?;
     validate_node_id_input(&node_id).map_err(ffi_invalid_arg)?;
@@ -976,6 +979,11 @@ pub async fn raw_fetch(
 
     let addrs =
         parse_direct_addrs(&direct_addrs).map_err(|e| napi::Error::new(Status::InvalidArg, e))?;
+    let timeout = timeout_ms
+        .and_then(|ms| safe_f64_to_u64(ms, "timeoutMs", MAX_TIMEOUT_MS).ok())
+        .map(std::time::Duration::from_millis);
+    let max_resp = max_response_body_bytes
+        .and_then(|b| safe_f64_to_usize(b, "maxResponseBodyBytes", MAX_BODY_BYTES).ok());
     let res = iroh_http_core::fetch(
         &ep,
         &node_id,
@@ -985,8 +993,9 @@ pub async fn raw_fetch(
         req_body_reader,
         Some(get_handle(fetch_token)?),
         addrs.as_deref(),
-        None,
-        true,
+        timeout,
+        decompress.unwrap_or(true),
+        max_resp,
     )
     .await
     .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
@@ -1051,6 +1060,9 @@ pub struct JsServeOptions {
     pub drain_timeout: Option<f64>,
     /// Enable load-shedding (reject with 503 when at capacity).
     pub load_shed: Option<bool>,
+    /// When `true` (the default), automatically decompress compressed request
+    /// bodies.  Set to `false` to receive raw wire bytes (proxy use-cases).
+    pub decompress: Option<bool>,
 }
 
 #[napi]
@@ -1073,6 +1085,7 @@ pub fn raw_serve(
             max_serve_errors: None,
             drain_timeout: None,
             load_shed: None,
+            decompress: None,
         });
         iroh_http_core::ServeOptions {
             max_concurrency: o.max_concurrency.map(|v| v as usize),
@@ -1099,6 +1112,7 @@ pub fn raw_serve(
                 .map(|v| safe_f64_to_u64(v, "drainTimeout", MAX_TIMEOUT_MS))
                 .transpose()?,
             load_shed: o.load_shed,
+            decompression: o.decompress,
         }
     };
 
