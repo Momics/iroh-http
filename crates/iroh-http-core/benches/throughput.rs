@@ -10,7 +10,7 @@
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use iroh_http_core::{
-    fetch, make_body_channel, respond, serve, IrohEndpoint, NetworkingOptions, NodeOptions,
+    fetch, ffi_serve, make_body_channel, respond, IrohEndpoint, NetworkingOptions, NodeOptions,
     RequestPayload, ServeOptions,
 };
 
@@ -40,7 +40,7 @@ fn direct_addrs(ep: &IrohEndpoint) -> Vec<std::net::SocketAddr> {
 /// Set up a minimal echo server: reads the request body and returns 200.
 fn start_echo_server(server_ep: IrohEndpoint) {
     let sep = server_ep.clone();
-    serve(
+    ffi_serve(
         server_ep,
         ServeOptions::default(),
         move |payload: RequestPayload| {
@@ -198,7 +198,7 @@ fn bench_response_body_streaming(c: &mut Criterion) {
     // Server sends a fixed-size response body
     let _guard = rt.enter();
     let sep = server_ep.clone();
-    serve(
+    ffi_serve(
         server_ep,
         ServeOptions::default(),
         move |payload: RequestPayload| {

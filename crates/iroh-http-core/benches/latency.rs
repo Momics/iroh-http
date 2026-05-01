@@ -1,7 +1,7 @@
 #![allow(clippy::disallowed_types)] // test/bench file — RequestPayload and friends are valid here
 use criterion::{criterion_group, criterion_main, Criterion};
 use iroh_http_core::{
-    fetch, respond, serve, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload,
+    fetch, ffi_serve, respond, IrohEndpoint, NetworkingOptions, NodeOptions, RequestPayload,
     ServeOptions,
 };
 
@@ -35,7 +35,7 @@ fn bench_latency(c: &mut Criterion) {
     let _guard = rt.enter();
     let body = bytes::Bytes::from(vec![0x61; 1024]);
     let sep = server_ep.clone();
-    serve(
+    ffi_serve(
         server_ep,
         ServeOptions::default(),
         move |payload: RequestPayload| {
