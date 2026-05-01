@@ -104,14 +104,23 @@ Everything else should be ecosystem code, not bespoke.
 
 > **Status update (post-epic #182; 2026-05).**
 > The four subsystems (`Transport`, `HttpRuntime`, `SessionRuntime`,
-> `FfiBridge`) were delivered as inline `pub(crate) struct`s inside
-> `endpoint.rs` rather than as named sub-modules. The structural
+> `FfiBridge`) were initially delivered as inline `pub(crate) struct`s
+> inside `endpoint.rs` rather than as named sub-modules. The structural
 > boundary ADR-014 D1 prescribed ("`endpoint/transport.rs`", etc.)
-> does not exist: callers reach fields directly (e.g.
+> did not exist: callers reached fields directly (e.g.
 > `endpoint.inner.http.active_connections`). The `IrohEndpoint` facade
-> is also named `IrohEndpoint` rather than `Node` — the D5 rename
-> was deferred. See #192 for the plan to complete the subsystem split
-> and #195 for the LoC recalibration that records realistic targets.
+> was also named `IrohEndpoint` rather than `Node` — the D5 rename
+> was deferred.
+>
+> **The subsystem split is now complete (commit `a804e92`, 2026-05).**
+> `endpoint.rs` has been replaced by an `endpoint/` folder with nine
+> files: `mod.rs`, `bind.rs`, `lifecycle.rs`, `observe.rs`,
+> `config.rs`, `stats.rs`, `transport.rs`, `http_runtime.rs`,
+> `session_runtime.rs`, and `ffi_bridge.rs`. Every subsystem struct
+> and its fields carry `pub(in crate::endpoint)` — the compiler
+> enforces the boundary; no direct `.inner.*` access exists outside
+> `endpoint/`. See #195 for the LoC recalibration that records
+> realistic targets.
 >
 > Additionally, the axum-comparison LoC target ("`mod http ≈ 600`,
 > `mod ffi ≈ 500`") proved unrealistic once the iroh-specific surface

@@ -1,8 +1,10 @@
 //! `IrohEndpoint::bind` constructor and related helpers.
 //!
 //! Split from `mod.rs` so the facade stays ≤ 200 LoC. All other
-//! `IrohEndpoint` methods live in `mod.rs` (lifecycle) and `observe.rs`
-//! (observability / peer info).
+//! `IrohEndpoint` methods live in `mod.rs` (accessors), `lifecycle.rs`
+//! (close / drain / serve wiring), and `observe.rs` (peer info).
+// bind constructs HandleStore directly; endpoint/ is neither mod http nor
+// mod ffi, so this allow is correct here (same rationale as mod.rs lines 20-22).
 #![allow(clippy::disallowed_types)]
 
 use std::{sync::Arc, time::Duration};
