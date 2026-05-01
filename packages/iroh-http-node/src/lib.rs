@@ -864,7 +864,10 @@ pub async fn js_next_chunk(endpoint_handle: u32, handle: BigInt) -> napi::Result
         .next_chunk(get_handle(handle)?)
         .await
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
-    Ok(chunk.map(|b| Buffer::from(b.to_vec())))
+    // Vec::from(Bytes) is zero-copy when the Bytes is the sole owner of its
+    // backing buffer (refcount == 1), which is the common case for chunks
+    // received from an mpsc channel.
+    Ok(chunk.map(|b| Buffer::from(Vec::from(b))))
 }
 
 /// Non-blocking body read fast path.
@@ -880,7 +883,7 @@ pub fn js_try_next_chunk(endpoint_handle: u32, handle: BigInt) -> napi::Result<O
         .handles()
         .try_next_chunk(get_handle(handle)?)
         .map_err(|e| napi::Error::new(Status::GenericFailure, core_error_to_json(&e)))?;
-    Ok(chunk.map(|b| Buffer::from(b.to_vec())))
+    Ok(chunk.map(|b| Buffer::from(Vec::from(b))))
 }
 
 /// Push a chunk into a body writer handle.
@@ -893,7 +896,9 @@ pub async fn js_send_chunk(
     chunk: Uint8Array,
 ) -> napi::Result<()> {
     let ep = get_endpoint(endpoint_handle)?;
-    let bytes = Bytes::from(chunk.to_vec());
+    // copy_from_slice avoids an intermediate Vec allocation — one memcpy
+    // directly into the Bytes backing store.
+    let bytes = Bytes::copy_from_slice(chunk.as_ref());
     ep.handles()
         .send_chunk(get_handle(handle)?, bytes)
         .await
