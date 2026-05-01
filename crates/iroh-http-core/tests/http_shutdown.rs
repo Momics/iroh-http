@@ -74,7 +74,7 @@ async fn graceful_shutdown_drains_in_flight() {
                 Some(&a),
                 None,
                 true,
-None, // max_response_body_bytes
+                None, // max_response_body_bytes
             )
             .await
         })
@@ -201,7 +201,7 @@ async fn shutdown_rejects_new_requests() {
         Some(&addrs),
         None,
         true,
-                None, // max_response_body_bytes
+        None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -226,7 +226,7 @@ async fn shutdown_rejects_new_requests() {
         Some(&addrs),
         None,
         true,
-                None, // max_response_body_bytes
+        None, // max_response_body_bytes
     )
     .await;
     assert!(
@@ -309,7 +309,7 @@ async fn node_close_drains_in_flight() {
                 Some(&addrs),
                 None,
                 true,
-None, // max_response_body_bytes
+                None, // max_response_body_bytes
             )
             .await
         }

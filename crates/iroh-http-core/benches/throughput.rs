@@ -99,7 +99,7 @@ fn bench_fetch_get_latency(c: &mut Criterion) {
                 Some(&server_addrs),
                 None,
                 true,
-None, // max_response_body_bytes
+                None, // max_response_body_bytes
             )
             .await
             .unwrap();
@@ -170,7 +170,7 @@ fn bench_post_body_throughput(c: &mut Criterion) {
                         Some(&addrs),
                         None,
                         true,
-None, // max_response_body_bytes
+                        None, // max_response_body_bytes
                     )
                     .await
                     .unwrap();
@@ -258,7 +258,7 @@ fn bench_response_body_streaming(c: &mut Criterion) {
                         Some(&addrs),
                         None,
                         true,
-None, // max_response_body_bytes
+                        None, // max_response_body_bytes
                     )
                     .await
                     .unwrap();
@@ -323,7 +323,7 @@ fn bench_multiplex(c: &mut Criterion) {
                                         Some(&addrs),
                                         None,
                                         true,
-None, // max_response_body_bytes
+                                        None, // max_response_body_bytes
                                     )
                                     .await
                                     .unwrap();

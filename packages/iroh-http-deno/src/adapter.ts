@@ -18,6 +18,7 @@ import type {
 import { IrohAdapter } from "@momics/iroh-http-shared/adapter";
 import type {
   AllocBodyWriterFn,
+  FetchOptions,
   FfiDuplexStream,
   FfiResponse,
   FfiResponseHead,
@@ -512,6 +513,7 @@ export const rawFetch: RawFetchFn = async (
   reqBodyHandle: bigint | null,
   fetchToken: bigint,
   directAddrs: string[] | null,
+  fetchOptions?: FetchOptions,
 ) => {
   // #126: Callback-based fetch — Rust notifies via UnsafeCallback when done,
   // then we call poll_fetch once to retrieve the result.  This avoids both
@@ -527,6 +529,9 @@ export const rawFetch: RawFetchFn = async (
       reqBodyHandle: reqBodyHandle != null ? Number(reqBodyHandle) : null,
       fetchToken: fetchToken !== 0n ? Number(fetchToken) : null,
       directAddrs: directAddrs ?? null,
+      timeout_ms: fetchOptions?.timeoutMs ?? null,
+      decompress: fetchOptions?.decompress ?? null,
+      max_response_body_bytes: fetchOptions?.maxResponseBodyBytes ?? null,
     },
     (_k, v) => (typeof v === "bigint" ? Number(v) : v),
   );
@@ -1232,6 +1237,7 @@ export class DenoAdapter extends IrohAdapter {
     reqBodyHandle: bigint | null,
     fetchToken: bigint,
     directAddrs: string[] | null,
+    fetchOptions?: FetchOptions,
   ): Promise<FfiResponse> {
     // Delegate to the module-level rawFetch which uses the split-fetch
     // pattern (#126) — sync start + sync poll — bypassing spawn_blocking.
@@ -1244,6 +1250,7 @@ export class DenoAdapter extends IrohAdapter {
       reqBodyHandle,
       fetchToken,
       directAddrs,
+      fetchOptions,
     );
   }
 

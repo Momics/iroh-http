@@ -58,6 +58,7 @@ import {
   type FfiResponse,
   type FfiResponseHead,
   IrohAdapter,
+  type FetchOptions,
   type PeerConnectionEvent,
   type RequestPayload,
   type TransportEventPayload,
@@ -200,6 +201,7 @@ class NodeAdapter extends IrohAdapter {
     reqBodyHandle: bigint | null,
     fetchToken: bigint,
     directAddrs: string[] | null,
+    fetchOptions?: FetchOptions,
   ): Promise<FfiResponse> {
     const res = await (napiRawFetch as (
       endpointHandle: number,
@@ -210,6 +212,9 @@ class NodeAdapter extends IrohAdapter {
       reqBodyHandle: bigint | null,
       fetchToken: bigint,
       directAddrs: string[] | null,
+      timeoutMs?: number | null,
+      decompress?: boolean | null,
+      maxResponseBodyBytes?: number | null,
     ) => Promise<{
       status: number;
       headers: string[][];
@@ -224,6 +229,9 @@ class NodeAdapter extends IrohAdapter {
       reqBodyHandle ?? null,
       fetchToken,
       directAddrs ?? null,
+      fetchOptions?.timeoutMs ?? undefined,
+      fetchOptions?.decompress ?? undefined,
+      fetchOptions?.maxResponseBodyBytes ?? undefined,
     );
     return {
       status: res.status,

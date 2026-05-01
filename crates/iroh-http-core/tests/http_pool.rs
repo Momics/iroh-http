@@ -50,7 +50,7 @@ async fn pool_reuses_connection_for_sequential_requests() {
         Some(&addrs),
         None,
         true,
-None, // max_response_body_bytes
+        None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -75,7 +75,7 @@ None, // max_response_body_bytes
         Some(&addrs),
         None,
         true,
-None, // max_response_body_bytes
+        None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -99,7 +99,7 @@ None, // max_response_body_bytes
         Some(&addrs),
         None,
         true,
-None, // max_response_body_bytes
+        None, // max_response_body_bytes
     )
     .await
     .unwrap();
@@ -157,7 +157,7 @@ async fn pool_concurrent_requests_share_connection() {
                 Some(&a),
                 None,
                 true,
-None, // max_response_body_bytes
+                None, // max_response_body_bytes
             )
             .await
             .unwrap();
@@ -235,7 +235,7 @@ async fn pool_different_peers_get_separate_connections() {
             Some(&addrs1),
             None,
             true,
-None, // max_response_body_bytes
+            None, // max_response_body_bytes
         ),
     )
     .await
@@ -263,7 +263,7 @@ None, // max_response_body_bytes
             Some(&addrs2),
             None,
             true,
-None, // max_response_body_bytes
+            None, // max_response_body_bytes
         ),
     )
     .await
@@ -343,7 +343,7 @@ async fn pool_eviction_single_slot() {
             Some(&addrs),
             None,
             true,
-None, // max_response_body_bytes
+            None, // max_response_body_bytes
         )
         .await
         .unwrap();

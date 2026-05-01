@@ -71,7 +71,7 @@ fn bench_latency(c: &mut Criterion) {
                 Some(&server_addrs),
                 None,
                 true,
-None, // max_response_body_bytes
+                None, // max_response_body_bytes
             )
             .await
             .unwrap();
