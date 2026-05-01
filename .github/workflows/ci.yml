@@ -241,13 +241,21 @@ jobs:
             CHANGED=$(git diff-tree --no-commit-id -r --name-only "$sha" 2>/dev/null || true)
             # Does this commit touch any version-bearing file?
             if echo "$CHANGED" | grep -qE '(Cargo\.toml|package\.json|deno\.jsonc?)$'; then
+              # Narrow to actual version-field changes: a dep bump or script
+              # addition is not a version bump and should not be blocked.
+              # Match `version = "X.Y.Z"` (Cargo) or `"version": "X.Y.Z"` (JSON).
+              VERSION_DIFF=$(git diff-tree --no-commit-id -r -p "$sha" -- \
+                '*.toml' '*.json' '*.jsonc' 2>/dev/null \
+                | grep -E '^\+[^+].*(^|\s)version = "|"version": "' || true)
+              [[ -z "$VERSION_DIFF" ]] && continue
+
               SUBJECT=$(git log -1 --format=%s "$sha")
               case "$SUBJECT" in
                 "chore: release "*|"chore(release): "*)
                   # Allowed — this is a release commit produced by scripts/release.sh.
                   ;;
                 *)
-                  echo "::error::Commit $sha touches a version file but is not a 'chore: release' commit."
+                  echo "::error::Commit $sha bumps a version field but is not a 'chore: release' commit."
                   echo "  Subject : $SUBJECT"
                   echo "  Files   : $(echo "$CHANGED" | grep -E '(Cargo\.toml|package\.json|deno\.jsonc?)$' | tr '\n' ' ')"
                   echo "  Fix     : Only scripts/release.sh should bump versions. See CONTRIBUTING.md."
