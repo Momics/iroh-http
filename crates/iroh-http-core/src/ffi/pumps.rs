@@ -58,6 +58,16 @@ pub(crate) async fn pump_body_to_quic_send(
 }
 
 // ── Hyper body → BodyWriter pumps ─────────────────────────────────────────────
+//
+// Slice E (#187): `pump_hyper_body_to_channel{,_limited}` are kept
+// intentionally. They are the FFI contract — JS adapters consume the
+// response/request body via a slotmap `body_handle`, so the hyper body
+// has to land in a `BodyWriter`-backed channel before JS can read it.
+// The reverse direction (channel → hyper) does not need a pump because
+// `BodyReader: http_body::Body` (commit `6fb9c1b`) — `Body::new(reader)`
+// flows directly into hyper. See [`crate::ffi::fetch::package_response`]
+// and [`crate::ffi::dispatcher`] for the only call sites; both are
+// inside `mod ffi` and remain there per the epic-#182 layering rule.
 
 /// Drain a hyper body into `BodyWriter`.
 /// Generic over any body type with `Data = Bytes` (e.g. `Incoming`, `DecompressionBody`).

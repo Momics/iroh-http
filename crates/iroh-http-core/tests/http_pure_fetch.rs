@@ -188,3 +188,86 @@ async fn pure_rust_fetch_unreachable_addr_returns_connection_failed() {
         "expected FetchError::ConnectionFailed (or Timeout if dial slow), got {err:?}"
     );
 }
+
+// ── Slice E (#187) acceptance #4: large-body streaming roundtrip ───────
+
+#[derive(Clone)]
+struct LargeEchoService;
+
+impl Service<hyper::Request<Body>> for LargeEchoService {
+    type Response = hyper::Response<Body>;
+    type Error = Infallible;
+    type Future =
+        Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
+        Box::pin(async move {
+            // Drain the request body, then send it back. Echo proves the
+            // body flowed through hyper → channel → service → channel →
+            // hyper without dropping bytes.
+            let collected = req
+                .into_body()
+                .collect()
+                .await
+                .expect("collect req body")
+                .to_bytes();
+            Ok(hyper::Response::builder()
+                .status(200)
+                .header("content-type", "application/octet-stream")
+                .body(Body::full(collected))
+                .expect("static response args are valid"))
+        })
+    }
+}
+
+/// Streams a 10 MiB body request → response with a typed
+/// `BodyReader`-driven hyper body. Exercises the `BodyReader: http_body::Body`
+/// path on the request side and the channel-pump on the response side
+/// end-to-end. Failure modes this catches: channel-capacity deadlocks,
+/// `poll_frame` cancellation bugs, hyper-body type mismatches under load.
+#[tokio::test]
+async fn pure_rust_fetch_round_trips_10mib_body() {
+    let (server_ep, client_ep) = common::make_pair().await;
+    let server_pk = server_ep.raw().id();
+    let server_id_str = server_ep.node_id().to_string();
+    let addrs = common::server_addrs(&server_ep);
+
+    let _handle = serve_service(server_ep.clone(), ServeOptions::default(), LargeEchoService);
+
+    let mut addr = iroh::EndpointAddr::new(server_pk);
+    for a in &addrs {
+        addr = addr.with_ip_addr(*a);
+    }
+
+    // 10 MiB — bigger than the channel buffer so the test exercises
+    // backpressure rather than fitting in a single chunk.
+    let payload: Bytes = Bytes::from(vec![0xAB; 10 * 1024 * 1024]);
+
+    let req = hyper::Request::builder()
+        .method("POST")
+        .uri("/echo")
+        .header(hyper::header::HOST, &server_id_str)
+        .header(hyper::header::CONTENT_LENGTH, payload.len())
+        .body(Body::full(payload.clone()))
+        .expect("valid request");
+
+    // Generous outer timeout to avoid hanging CI on a real bug.
+    let cfg = StackConfig::default().with_timeout(Some(std::time::Duration::from_secs(60)));
+    let resp = fetch_request(&client_ep, &addr, req, &cfg)
+        .await
+        .expect("typed fetch ok");
+    assert_eq!(resp.status().as_u16(), 200);
+
+    let collected = resp
+        .into_body()
+        .collect()
+        .await
+        .expect("collect body")
+        .to_bytes();
+    assert_eq!(collected.len(), payload.len(), "echo length mismatch");
+    assert_eq!(collected, payload, "echo content mismatch");
+}

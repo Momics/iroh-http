@@ -31,12 +31,12 @@ pub mod registry {
 }
 
 // ── Pure-Rust HTTP API surface (`mod http`) ───────────────────────────────────
+pub use ffi::session::{CloseInfo, Session};
 pub use http::body::{Body, BoxError};
 pub use http::client::{fetch_request, FetchError};
 pub use http::server::{
     serve_service, serve_service_with_events, RemoteNodeId, ServeHandle, ServeOptions,
 };
-pub use http::session::{CloseInfo, Session};
 
 // ── FFI bridge surface (`mod ffi`) ────────────────────────────────────────────
 pub use ffi::dispatcher::{respond, serve, serve_with_callback};

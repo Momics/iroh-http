@@ -1,28 +1,34 @@
-//! Architectural invariant: `mod http` MUST NOT depend on `mod ffi`.
+//! Architectural invariants for epic #182:
 //!
-//! Per epic #182 the crate is split into two top-level modules with a
-//! one-way dependency. This test fails if any source file under
-//! `src/http/` imports from `crate::ffi::` or `super::ffi`.
+//! 1. **One-way dependency.** Code under `crate::http::*` MUST NOT import
+//!    from `crate::ffi::*`. The FFI bridge wraps the pure-Rust HTTP
+//!    layer, never the reverse.
+//! 2. **Canonical root layout.** The only entries directly under
+//!    `crates/iroh-http-core/src/` are `lib.rs`, `endpoint.rs`,
+//!    `http/`, and `ffi/`. Every other file declares a side. This
+//!    prevents the kind of drift that produced the original 979-LoC
+//!    `server.rs` and 998-LoC `stream.rs`.
 //!
-//! Slice A introduced the file split without rewriting the FFI-coupled
-//! call sites yet. The constants below allowlist the files that still
-//! carry FFI imports; subsequent slices remove their entries:
+//! Slice history (TEMPORARY_EXCEPTIONS evolution):
 //!
-//! - `http/client.rs` shed FFI imports in Slice D (#186) — entry removed.
-//! - `http/server/mod.rs` shed FFI imports in Slice C (#185) — entry
-//!   removed.
-//! - `http/session.rs` sheds FFI imports in Slice E (#187) when the
-//!   session API moves under `mod ffi`.
+//! - `http/server/mod.rs` shed FFI imports in Slice C (#185).
+//! - `http/client.rs` shed FFI imports in Slice D (#186).
+//! - `http/session.rs` moved into `mod ffi` in Slice E (#187) — the
+//!   session API is fundamentally `u64`-handle-shaped (`Session` wraps
+//!   slotmap entries, returns `FfiDuplexStream`), so it belongs on the
+//!   FFI side. With it gone, `TEMPORARY_EXCEPTIONS` is empty and stays
+//!   empty — any future slice that needs an exception must extend the
+//!   list explicitly and justify it in the diff.
 //!
 //! No external dev-dep needed — `std::fs` walks the source tree.
 
 use std::{fs, path::Path};
 
 /// Files temporarily exempt from the `mod http` → `mod ffi` ban.
-/// Each entry must be eliminated by the slice listed in its comment.
-const TEMPORARY_EXCEPTIONS: &[&str] = &[
-    "http/session.rs", // Slice E (#187)
-];
+/// **Empty as of Slice E (#187).** Adding an entry here is a structural
+/// regression — the reviewer should ask whether the file belongs in
+/// `mod ffi` instead.
+const TEMPORARY_EXCEPTIONS: &[&str] = &[];
 
 #[test]
 fn http_module_does_not_depend_on_ffi() {
@@ -82,4 +88,33 @@ fn walk(dir: &Path, f: &mut impl FnMut(&Path)) {
             }
         }
     }
+}
+
+/// Slice E (#187) acceptance #6: assert the canonical root layout.
+///
+/// Only `lib.rs`, `endpoint.rs`, `http/`, and `ffi/` may live directly
+/// under `crates/iroh-http-core/src/`. Any other file or folder is a
+/// structural drift that the reviewer should have flagged. Adding new
+/// top-level modules requires editing both this allowlist *and* the
+/// epic acceptance criteria — that intentional friction is the point.
+#[test]
+fn crate_root_has_canonical_layout() {
+    const ALLOWED: &[&str] = &["lib.rs", "endpoint.rs", "http", "ffi"];
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let src_dir = Path::new(manifest_dir).join("src");
+
+    let mut unexpected: Vec<String> = Vec::new();
+    for entry in fs::read_dir(&src_dir).expect("src/ exists").flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !ALLOWED.contains(&name.as_str()) {
+            unexpected.push(name);
+        }
+    }
+
+    assert!(
+        unexpected.is_empty(),
+        "unexpected entries directly under src/ — only {ALLOWED:?} are allowed (epic #182):\n  {}",
+        unexpected.join("\n  ")
+    );
 }
