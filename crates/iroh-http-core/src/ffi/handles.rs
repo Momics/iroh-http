@@ -244,6 +244,10 @@ impl Sink<Bytes> for BodyWriter {
         // Sink contract requires poll_ready -> Ready(Ok) before start_send,
         // so `sending` is None here. Build a fresh future that owns its own
         // tx clone so it is 'static + Send + Sync.
+        debug_assert!(
+            self.sending.is_none(),
+            "Sink contract: poll_ready must return Ready(Ok) before start_send"
+        );
         let tx = self.tx.clone();
         let drain_timeout = self.drain_timeout;
         self.get_mut().sending = Some(Box::pin(async move {

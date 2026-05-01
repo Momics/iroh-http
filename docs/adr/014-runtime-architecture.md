@@ -128,21 +128,34 @@ Tracked in a separate follow-up issue so it lands as its own commit.
 
 Net effect: ~150 lines of bespoke glue removed from `stream.rs`, behaviour preserved.
 
-> **Status update (post-Slice E, epic #182).** The `BodyReader: http_body::Body`
-> half landed in `6fb9c1b`; hyper now polls `BodyReader` directly on both serve
-> and fetch paths. The `pump_duplex` half landed when `raw_connect` was dropped.
-> The `BodyWriter: Sink<Bytes>` half is still outstanding and tracked in #174.
+> **Status update (post-Slice E, epic #182; resolved 2026-05).** The
+> `BodyReader: http_body::Body` half landed in `6fb9c1b`; hyper now
+> polls `BodyReader` directly on both serve and fetch paths. The
+> `pump_duplex` half landed when `raw_connect` was dropped. The
+> `BodyWriter: Sink<Bytes>` half landed in `26adf78` — producers now
+> compose with stock `futures` combinators via `forward`.
 >
 > The original perf motivation for D4 (eliminating a channel hop on the
 > *internal* hyper path) was overtaken by Slices C/D: the surviving pumps
-> (`pump_body_to_quic_send`, `pump_quic_recv_to_body`) only run on FFI session
-> streams where JS adapters explicitly observe the channel boundary, so lazy
-> insertion saves no work. What remains is the *elegance* argument — a
-> `Sink<Bytes>` impl lets both raw-byte pumps collapse into one-line
-> `forward()` adapter calls, removing ~80 LoC of bespoke loops from
-> `ffi/pumps.rs`. `pump_hyper_body_to_channel_limited` stays as-is: it carries
-> real FFI policy (byte-limit overflow oneshot, per-frame timeout) that no
-> stock adapter encodes. Quality work, not a bug — P2.
+> (`pump_body_to_quic_send`, `pump_quic_recv_to_body`) only run on FFI
+> session streams where JS adapters explicitly observe the channel
+> boundary, so lazy insertion saves no work.
+>
+> The remaining *elegance* half — replacing the two raw-byte pumps with
+> `Sink`/`Stream` adapters over `iroh::endpoint::SendStream` /
+> `RecvStream` — was prototyped end-to-end and **rejected**: net +74 LoC
+> vs the bespoke pumps, with less-readable call sites. `SendStream` is
+> `&mut`-bound and stream-sequential, so a `Sink<Bytes>` impl has to
+> invent the shape (Option-slot for ownership shuffling + boxed
+> in-flight `write_all`) rather than expose one that is already there —
+> the structural opposite of `mpsc::Sender` + `PollSender`. ADR-013
+> ("lean on the ecosystem") applies when the shape exists; here it does
+> not. The two pumps stay as imperative loops with backlinks to #174's
+> closing comment for the LoC analysis.
+>
+> `pump_hyper_body_to_channel_limited` also stays as-is: it carries real
+> FFI policy (byte-limit overflow oneshot, per-frame timeout) that no
+> stock adapter encodes.
 
 ### D5 — Naming
 

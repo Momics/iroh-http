@@ -24,6 +24,12 @@ pub(crate) const PUMP_READ_BUF: usize = 64 * 1024;
 ///
 /// Reads `PUMP_READ_BUF`-sized chunks and forwards them through the body
 /// channel.  Stops when the stream ends or the writer is dropped.
+///
+/// Kept as an imperative loop, not a `Sink`-based `forward()`. A
+/// stream-adapter prototype was evaluated and rejected in #174 — see the
+/// closing comment for the LoC analysis. `iroh::endpoint::RecvStream`
+/// has no built-in `Stream<Item = Result<Bytes, _>>` shape, so wrapping
+/// it costs more code than this loop.
 pub(crate) async fn pump_quic_recv_to_body(
     mut recv: iroh::endpoint::RecvStream,
     writer: BodyWriter,
@@ -40,6 +46,13 @@ pub(crate) async fn pump_quic_recv_to_body(
 ///
 /// Reads chunks from the body channel and writes them to the stream.
 /// Finishes the stream when the reader reaches EOF.
+///
+/// Kept as an imperative loop, not a `Sink`-based `forward()`. A
+/// `QuicSendSink` wrapper was prototyped and rejected in #174 — see the
+/// closing comment for the LoC analysis. `iroh::endpoint::SendStream`
+/// is `&mut`-bound and stream-sequential, so a `Sink<Bytes>` impl has
+/// to invent the shape (Option-slot for ownership shuffling + boxed
+/// in-flight `write_all`); that wrapper is bigger than this loop.
 pub(crate) async fn pump_body_to_quic_send(
     reader: BodyReader,
     mut send: iroh::endpoint::SendStream,
