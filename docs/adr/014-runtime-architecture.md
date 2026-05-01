@@ -128,6 +128,22 @@ Tracked in a separate follow-up issue so it lands as its own commit.
 
 Net effect: ~150 lines of bespoke glue removed from `stream.rs`, behaviour preserved.
 
+> **Status update (post-Slice E, epic #182).** The `BodyReader: http_body::Body`
+> half landed in `6fb9c1b`; hyper now polls `BodyReader` directly on both serve
+> and fetch paths. The `pump_duplex` half landed when `raw_connect` was dropped.
+> The `BodyWriter: Sink<Bytes>` half is still outstanding and tracked in #174.
+>
+> The original perf motivation for D4 (eliminating a channel hop on the
+> *internal* hyper path) was overtaken by Slices C/D: the surviving pumps
+> (`pump_body_to_quic_send`, `pump_quic_recv_to_body`) only run on FFI session
+> streams where JS adapters explicitly observe the channel boundary, so lazy
+> insertion saves no work. What remains is the *elegance* argument — a
+> `Sink<Bytes>` impl lets both raw-byte pumps collapse into one-line
+> `forward()` adapter calls, removing ~80 LoC of bespoke loops from
+> `ffi/pumps.rs`. `pump_hyper_body_to_channel_limited` stays as-is: it carries
+> real FFI policy (byte-limit overflow oneshot, per-frame timeout) that no
+> stock adapter encodes. Quality work, not a bug — P2.
+
 ### D5 — Naming
 
 **Rust core (idiomatic Rust, mirrors Quinn / tokio / libp2p):**
