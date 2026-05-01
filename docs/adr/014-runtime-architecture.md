@@ -102,6 +102,24 @@ Everything else should be ecosystem code, not bespoke.
 
 **`Node`** is a thin facade that holds `Transport` + optional `HttpRuntime` + optional `SessionRuntime` + `FfiBridge`. Each subsystem is testable in isolation. The crate stays as one crate with strict module boundaries (publishing overhead of multiple crates outweighs the compile-time enforcement benefit at this stage).
 
+> **Status update (post-epic #182; 2026-05).**
+> The four subsystems (`Transport`, `HttpRuntime`, `SessionRuntime`,
+> `FfiBridge`) were delivered as inline `pub(crate) struct`s inside
+> `endpoint.rs` rather than as named sub-modules. The structural
+> boundary ADR-014 D1 prescribed ("`endpoint/transport.rs`", etc.)
+> does not exist: callers reach fields directly (e.g.
+> `endpoint.inner.http.active_connections`). The `IrohEndpoint` facade
+> is also named `IrohEndpoint` rather than `Node` — the D5 rename
+> was deferred. See #192 for the plan to complete the subsystem split
+> and #195 for the LoC recalibration that records realistic targets.
+>
+> Additionally, the axum-comparison LoC target ("`mod http ≈ 600`,
+> `mod ffi ≈ 500`") proved unrealistic once the iroh-specific surface
+> area was fully accounted for. Final shape: `mod http` 2119 LoC,
+> `mod ffi` 2365 LoC — both ~20–25% above the realistic floor, which
+> is normal for a young crate and not worth a targeted refactor. See
+> the recalibration comment on #182 for the per-module breakdown.
+
 ### D2 — Single `Body` newtype, axum-shaped service contract
 
 - Define one internal `Body` newtype: `pub(crate) struct Body(UnsyncBoxBody<Bytes, BoxError>);` with `impl http_body::Body`.
