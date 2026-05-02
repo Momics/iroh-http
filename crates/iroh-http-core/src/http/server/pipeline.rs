@@ -14,12 +14,11 @@ use hyper_util::service::TowerToHyperService;
 use tower::ServiceBuilder;
 
 pub(crate) use super::stack::ServeService;
-use super::stack::{build_stack, StackConfig};
 use crate::http::transport::io::IrohStream;
 use crate::Body;
 
-/// Drive a single hyper HTTP/1.1 connection over `io` with `svc` wrapped
-/// in the tower stack composed from `cfg`.
+/// Drive a single hyper HTTP/1.1 connection over `io` with a pre-built
+/// tower stack.
 ///
 /// Returns the future. The accept loop spawns it; this function neither
 /// spawns nor logs any lifecycle event of its own (drop guards live in the
@@ -32,13 +31,12 @@ use crate::Body;
 /// structured HTTP responses before they ever reach this point.
 ///
 /// `effective_header_limit` configures the hyper `http1::Builder`'s
-/// `max_buf_size`; it is **not** part of [`StackConfig`] because it is a
-/// hyper framing knob, not a tower layer.
+/// `max_buf_size`; it is **not** part of [`super::stack::StackConfig`]
+/// because it is a hyper framing knob, not a tower layer.
 pub(crate) async fn serve_bistream(
     io: TokioIo<IrohStream>,
-    svc: ServeService,
+    stack: ServeService,
     effective_header_limit: usize,
-    cfg: &StackConfig,
 ) {
     let mut builder = hyper::server::conn::http1::Builder::new();
     builder
@@ -56,11 +54,10 @@ pub(crate) async fn serve_bistream(
     use tower_http::map_request_body::MapRequestBodyLayer;
     let from_incoming = MapRequestBodyLayer::new(|b: hyper::body::Incoming| Body::new(b));
 
-    let inner = build_stack(svc, cfg);
-    let stack = ServiceBuilder::new().layer(from_incoming).service(inner);
+    let full_stack = ServiceBuilder::new().layer(from_incoming).service(stack);
 
     let result = builder
-        .serve_connection(io, TowerToHyperService::new(stack))
+        .serve_connection(io, TowerToHyperService::new(full_stack))
         .with_upgrades()
         .await;
 

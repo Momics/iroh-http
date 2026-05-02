@@ -241,6 +241,24 @@ pub(crate) fn build_stack(svc: ServeService, cfg: &StackConfig) -> ServeService 
     apply_body_limit(svc, cfg.max_request_body_wire_bytes) // outermost: wire bytes
 }
 
+// ── Renormalisation helper ───────────────────────────────────────────────────
+
+/// Convert any body type back to [`Body`].
+///
+/// Used as the mapping function in `MapResponseBodyLayer` / `MapRequestBodyLayer`
+/// after every layer that changes the body type. Since [`Body::new`] already
+/// short-circuits via `try_downcast` when the input is already a `Body`, the
+/// cost of using this at every seam is essentially free for pass-through layers.
+fn renormalize_body<B>(body: B) -> Body
+where
+    B: http_body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<BoxError>,
+{
+    Body::new(body)
+}
+
+// ── Layer factories ──────────────────────────────────────────────────────────
+
 /// `RequestBodyLimitLayer` rejects oversize bodies with 413. Wrapped in
 /// matching `MapRequestBody` / `MapResponseBody` to renormalise both
 /// directions back to [`Body`] (ADR-014 D2 / #175).
@@ -254,13 +272,9 @@ pub(crate) fn apply_body_limit(svc: ServeService, limit: Option<usize>) -> Serve
         return svc;
     };
     ServiceBuilder::new()
-        .layer(MapResponseBodyLayer::new(
-            |b: tower_http::limit::ResponseBody<Body>| Body::new(b),
-        ))
+        .layer(MapResponseBodyLayer::new(renormalize_body))
         .layer(RequestBodyLimitLayer::new(limit))
-        .layer(MapRequestBodyLayer::new(
-            |b: tower_http::body::Limited<Body>| Body::new(b),
-        ))
+        .layer(MapRequestBodyLayer::new(renormalize_body))
         .service(svc)
         .boxed_clone()
 }
@@ -312,9 +326,7 @@ pub(crate) fn apply_compression(
         return svc;
     };
     ServiceBuilder::new()
-        .layer(MapResponseBodyLayer::new(
-            |b: tower_http::compression::CompressionBody<Body>| Body::new(b),
-        ))
+        .layer(MapResponseBodyLayer::new(renormalize_body))
         .layer(build_compression_layer(comp))
         .service(svc)
         .boxed_clone()
@@ -325,7 +337,7 @@ pub(crate) fn apply_compression(
 /// No-op when `enabled = false`.
 pub(crate) fn apply_decompression(svc: ServeService, enabled: bool) -> ServeService {
     use tower::ServiceExt;
-    use tower_http::decompression::{DecompressionBody, RequestDecompressionLayer};
+    use tower_http::decompression::RequestDecompressionLayer;
     use tower_http::map_request_body::MapRequestBodyLayer;
     use tower_http::map_response_body::MapResponseBodyLayer;
 
@@ -333,13 +345,9 @@ pub(crate) fn apply_decompression(svc: ServeService, enabled: bool) -> ServeServ
         return svc;
     }
     ServiceBuilder::new()
-        .layer(MapResponseBodyLayer::new(
-            |b: tower_http::body::UnsyncBoxBody<Bytes, BoxError>| Body::new(b),
-        ))
+        .layer(MapResponseBodyLayer::new(renormalize_body))
         .layer(RequestDecompressionLayer::new())
-        .layer(MapRequestBodyLayer::new(|b: DecompressionBody<Body>| {
-            Body::new(b)
-        }))
+        .layer(MapRequestBodyLayer::new(renormalize_body))
         .service(svc)
         .boxed_clone()
 }
@@ -443,9 +451,7 @@ pub(crate) fn build_client_stack(
     // Step 1: normalise hyper's `Incoming` to `Body` so subsequent layers
     // operate on the canonical body type.
     let svc = ServiceBuilder::new()
-        .layer(MapResponseBodyLayer::new(|b: hyper::body::Incoming| {
-            Body::new(b)
-        }))
+        .layer(MapResponseBodyLayer::new(renormalize_body))
         .service(SendRequestSvc(sender))
         .boxed();
 
@@ -462,16 +468,14 @@ pub(crate) fn build_client_stack(
 /// `enabled = false`.
 pub(crate) fn apply_client_decompression(svc: ClientService, enabled: bool) -> ClientService {
     use tower::ServiceExt;
-    use tower_http::decompression::{DecompressionBody, DecompressionLayer};
+    use tower_http::decompression::DecompressionLayer;
     use tower_http::map_response_body::MapResponseBodyLayer;
 
     if !enabled {
         return svc;
     }
     ServiceBuilder::new()
-        .layer(MapResponseBodyLayer::new(|b: DecompressionBody<Body>| {
-            Body::new(b)
-        }))
+        .layer(MapResponseBodyLayer::new(renormalize_body))
         .layer(DecompressionLayer::new())
         .service(svc)
         .boxed()

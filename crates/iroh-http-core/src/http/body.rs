@@ -45,12 +45,27 @@ impl Body {
 
     /// Wrap any `http_body::Body` whose data are [`Bytes`] and whose error
     /// converts into [`BoxError`].
+    ///
+    /// If the input is already a [`Body`], it is returned as-is without
+    /// an additional layer of boxing (fast path via [`try_downcast`]).
     pub fn new<B>(body: B) -> Self
     where
         B: http_body::Body<Data = Bytes> + Send + 'static,
         B::Error: Into<BoxError>,
     {
-        Self(body.map_err(Into::into).boxed_unsync())
+        try_downcast(body).unwrap_or_else(|body| Self(body.map_err(Into::into).boxed_unsync()))
+    }
+}
+
+/// Attempt to downcast a value of type `K` to type `T` using `Any`.
+/// Returns `Ok(T)` if the types match, `Err(K)` otherwise.
+#[allow(clippy::unwrap_used)] // Safety: both arms guarantee Some
+fn try_downcast<T: 'static, K: Send + 'static>(k: K) -> Result<T, K> {
+    let mut k = Some(k);
+    if let Some(k) = <dyn std::any::Any>::downcast_mut::<Option<T>>(&mut k) {
+        Ok(k.take().expect("downcast succeeded but value was None"))
+    } else {
+        Err(k.expect("downcast failed but value was None"))
     }
 }
 

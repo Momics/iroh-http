@@ -118,7 +118,6 @@ where
 {
     let cfg = AcceptConfig {
         max: options.max_concurrency.unwrap_or(DEFAULT_CONCURRENCY),
-        max_errors: options.max_serve_errors.unwrap_or(5),
         request_timeout: options
             .request_timeout_ms
             .map(Duration::from_millis)

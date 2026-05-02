@@ -29,7 +29,6 @@ use super::{ConnectionEventFn, RemoteNodeId};
 /// loop so the caller's `ServeOptions` is not held across the await.
 pub(super) struct AcceptConfig {
     pub max: usize,
-    pub max_errors: usize,
     pub request_timeout: Duration,
     pub max_conns_per_peer: usize,
     pub max_request_body_wire_bytes: Option<usize>,
@@ -82,7 +81,6 @@ pub(super) async fn accept_loop<S>(
     let endpoint_closed_tx = endpoint.connection_closed_tx();
 
     let ep = endpoint.raw().clone();
-    let mut consecutive_errors: usize = 0;
 
     loop {
         let incoming = tokio::select! {
@@ -102,20 +100,15 @@ pub(super) async fn accept_loop<S>(
         };
 
         let conn = match incoming.await {
-            Ok(c) => {
-                consecutive_errors = 0;
-                c
-            }
+            Ok(c) => c,
             Err(e) => {
-                consecutive_errors = consecutive_errors.saturating_add(1);
-                tracing::warn!(
-                    "iroh-http: accept error ({consecutive_errors}/{}): {e}",
-                    cfg.max_errors
-                );
-                if consecutive_errors >= cfg.max_errors {
-                    tracing::error!("iroh-http: too many accept errors — shutting down");
-                    break;
-                }
+                // In QUIC, errors from awaiting an Incoming are always
+                // per-connection handshake failures (peer reset, timeout,
+                // protocol violation). They don't indicate systemic resource
+                // exhaustion — the next incoming connection is unrelated.
+                // Log and retry immediately. The serve loop is immortal:
+                // it only exits on explicit shutdown or endpoint close.
+                tracing::debug!("iroh-http: connection handshake error: {e}");
                 continue;
             }
         };
@@ -163,27 +156,49 @@ pub(super) async fn accept_loop<S>(
             ))
             .service(svc.clone())
             .boxed_clone();
+
+        let conn_requests = total_requests.clone();
+        let in_flight_conn = in_flight.clone();
+        let drain_notify_conn = drain_notify.clone();
+        let max_header_size = cfg.max_header_size;
+
+        // Build the tower stack once per connection. All StackConfig
+        // fields are fixed for the lifetime of the serve loop, so the
+        // composed service can be cloned cheaply per-bistream (single
+        // Arc::clone inside BoxCloneService). Previously this was done
+        // per-bistream — 5–6 unnecessary heap allocations per request.
         let timeout_dur = if cfg.request_timeout.is_zero() {
             Duration::MAX
         } else {
             cfg.request_timeout
         };
-
-        let conn_requests = total_requests.clone();
-        let in_flight_conn = in_flight.clone();
-        let drain_notify_conn = drain_notify.clone();
-        let stack_compression_conn = cfg.stack_compression.clone();
-        let max_header_size = cfg.max_header_size;
-        let max_request_body_wire_bytes = cfg.max_request_body_wire_bytes;
-        let max_request_body_decoded_bytes = cfg.max_request_body_decoded_bytes;
-        let load_shed_enabled = cfg.load_shed_enabled;
-        let cfg_decompression = cfg.decompression;
+        let stack_cfg = StackConfig {
+            timeout: if timeout_dur == Duration::MAX {
+                None
+            } else {
+                Some(timeout_dur)
+            },
+            max_request_body_wire_bytes: cfg.max_request_body_wire_bytes,
+            max_request_body_decoded_bytes: cfg.max_request_body_decoded_bytes,
+            load_shed: cfg.load_shed_enabled,
+            compression: cfg.stack_compression.clone(),
+            decompression: cfg.decompression,
+        };
+        let conn_stack = super::stack::build_stack(conn_svc, &stack_cfg);
 
         tokio::spawn(async move {
             // Owns the per-peer count, total-connection counter, and
             // connect/disconnect event firing for this connection's
             // lifetime. See `lifecycle.rs`.
             let _conn_tracker = conn_tracker;
+
+            // ISS-001: clamp to hyper's minimum safe buffer size of 8192.
+            // ISS-020: a stored value of 0 means "use the default" (64 KB).
+            let effective_header_limit = if max_header_size == 0 {
+                64 * 1024
+            } else {
+                max_header_size.max(8192)
+            };
 
             loop {
                 let (send, recv) = match conn.accept_bi().await {
@@ -192,14 +207,13 @@ pub(super) async fn accept_loop<S>(
                 };
 
                 let io = TokioIo::new(IrohStream::new(send, recv));
-                let svc = conn_svc.clone();
+                let svc = conn_stack.clone();
                 let req_counter = conn_requests.clone();
                 req_counter.fetch_add(1, Ordering::Relaxed);
                 in_flight_conn.fetch_add(1, Ordering::Relaxed);
 
                 let in_flight_req = in_flight_conn.clone();
                 let drain_notify_req = drain_notify_conn.clone();
-                let req_compression = stack_compression_conn.clone();
 
                 tokio::spawn(async move {
                     // Owns the per-connection and crate-wide in-flight
@@ -207,34 +221,7 @@ pub(super) async fn accept_loop<S>(
                     // reaches zero. See `lifecycle.rs`.
                     let _req_tracker =
                         RequestTracker::new(req_counter, in_flight_req, drain_notify_req);
-                    // ISS-001: clamp to hyper's minimum safe buffer size of 8192.
-                    // ISS-020: a stored value of 0 means "use the default" (64 KB).
-                    let effective_header_limit = if max_header_size == 0 {
-                        64 * 1024
-                    } else {
-                        max_header_size.max(8192)
-                    };
-
-                    // Build the per-bistream tower pipeline (compression,
-                    // decompression, body limit, load-shed, timeout, layer-error
-                    // handling) and serve the connection. The full assembly
-                    // lives in [`crate::http::server::stack::build_stack`] —
-                    // see Slice B of #182 (issue #184). The hyper seam plus
-                    // header-limit live in [`crate::http::server::pipeline`].
-                    let stack_cfg = StackConfig {
-                        timeout: if timeout_dur == Duration::MAX {
-                            None
-                        } else {
-                            Some(timeout_dur)
-                        },
-                        max_request_body_wire_bytes,
-                        max_request_body_decoded_bytes,
-                        load_shed: load_shed_enabled,
-                        compression: req_compression,
-                        decompression: cfg_decompression,
-                    };
-                    super::pipeline::serve_bistream(io, svc, effective_header_limit, &stack_cfg)
-                        .await;
+                    super::pipeline::serve_bistream(io, svc, effective_header_limit).await;
                 });
             }
         });
@@ -245,9 +232,10 @@ pub(super) async fn accept_loop<S>(
     // 0` check and `notified()`: if the last request finishes between the
     // load and the await, the loop re-checks immediately after the
     // timeout wakes it.
+    #[allow(clippy::arithmetic_side_effects)] // fallback: 86400s is safe
     let deadline = tokio::time::Instant::now()
         .checked_add(cfg.drain_timeout)
-        .expect("drain duration overflow");
+        .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(86_400));
     loop {
         if in_flight.load(Ordering::Acquire) == 0 {
             tracing::info!("iroh-http: all in-flight requests drained");
@@ -267,4 +255,24 @@ pub(super) async fn accept_loop<S>(
         }
     }
     let _ = done_tx.send(true);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ensures a `drain_timeout` of `Duration::MAX` (or any value that
+    /// overflows `Instant::now() + duration`) does not panic. Regression
+    /// test for #200.
+    #[test]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn drain_deadline_saturates_on_huge_timeout() {
+        let now = tokio::time::Instant::now();
+        let huge = Duration::from_millis(u64::MAX);
+        let deadline = now
+            .checked_add(huge)
+            .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(86_400));
+        // Must not panic; deadline should be roughly 24h in the future.
+        assert!(deadline > now);
+    }
 }

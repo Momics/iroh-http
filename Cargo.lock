@@ -1859,6 +1859,7 @@ dependencies = [
  "serde",
  "serde_json",
  "slotmap",
+ "thiserror",
  "tokio",
  "tower",
  "tower-http",

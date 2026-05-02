@@ -19,10 +19,7 @@ pub mod endpoint;
 pub(crate) mod ffi;
 pub(crate) mod http;
 
-// `events` and `registry` moved into `mod http` and `mod ffi` (Slice C.6
-// of #182). These thin alias modules keep external API paths
-// (`iroh_http_core::events::*`, `iroh_http_core::registry::*`) and
-// internal `crate::events::*` / `crate::registry::*` paths unchanged.
+// Thin re-export modules preserving external API paths.
 pub mod events {
     pub use crate::http::events::*;
 }
@@ -38,17 +35,12 @@ pub use http::server::{serve, serve_with_events, RemoteNodeId, ServeHandle, Serv
 // ── FFI bridge surface (`mod ffi`) ────────────────────────────────
 pub use ffi::dispatcher::{ffi_serve, ffi_serve_with_callback, respond};
 pub use ffi::fetch::fetch;
-#[allow(clippy::disallowed_types)]
-// re-exporting FFI types at crate root — not a mod http violation
+#[allow(clippy::disallowed_types)] // FFI re-exports at crate root
 pub use ffi::handles::{
     make_body_channel, BodyReader, HandleStore, ResponseHeadEntry, StoreConfig,
 };
-// `Session` is `u64`-handle-shaped (it wraps a slotmap entry and returns
-// `FfiDuplexStream`), so it lives under `mod ffi` and is re-exported here
-// alongside the other FFI types — not the pure-Rust HTTP surface above.
 pub use ffi::session::{CloseInfo, Session};
-#[allow(clippy::disallowed_types)]
-// re-exporting FFI types at crate root — not a mod http violation
+#[allow(clippy::disallowed_types)] // FFI re-exports at crate root
 pub use ffi::types::{FfiDuplexStream, FfiResponse, RequestPayload};
 
 // ── Other re-exports kept at crate root ───────────────────────────────────────
@@ -82,7 +74,8 @@ pub enum ErrorCode {
 /// Structured error returned by core functions.
 ///
 /// `code` is machine-readable. `message` carries human-readable detail.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{code:?}: {message}")]
 pub struct CoreError {
     pub code: ErrorCode,
     pub message: String,
@@ -145,14 +138,6 @@ impl CoreError {
     }
 }
 
-impl std::fmt::Display for CoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}: {}", self.code, self.message)
-    }
-}
-
-impl std::error::Error for CoreError {}
-
 // ── ALPN protocol identifiers ─────────────────────────────────────────────────
 
 /// ALPN for the HTTP/1.1-over-QUIC protocol (version 2 wire format).
@@ -167,12 +152,6 @@ pub const ALPN_DUPLEX_STR: &str = "iroh-http/2-duplex";
 
 /// All recognised ALPN capability strings.
 pub const KNOWN_ALPNS: &[&str] = &[ALPN_STR, ALPN_DUPLEX_STR];
-
-// ── Shared body type ─────────────────────────────────────────────────────────
-//
-// The unified [`Body`] newtype lives in [`crate::http::body`]. It is re-exported
-// from the crate root above so internal modules can write `crate::Body` and
-// downstream FFI adapters can name it without reaching into a submodule.
 
 // ── Key operations ───────────────────────────────────────────────────────────
 
@@ -279,11 +258,6 @@ pub fn parse_node_addr(s: &str) -> Result<ParsedNodeAddr, CoreError> {
         direct_addrs: Vec::new(),
     })
 }
-
-// ── FFI types ─────────────────────────────────────────────────────────────────
-//
-// FFI-shaped types now live in [`crate::ffi::types`] (epic #182). They are
-// re-exported above under the FFI bridge surface block.
 
 #[cfg(test)]
 mod tests {
