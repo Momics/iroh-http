@@ -179,8 +179,7 @@ fn bench_raw_quic_stream(c: &mut Criterion) {
     let (server_ep, client_ep, server_addrs) = rt.block_on(async {
         let server = IrohEndpoint::bind(local_opts()).await.unwrap();
         let client = IrohEndpoint::bind(local_opts()).await.unwrap();
-        let addrs: Vec<std::net::SocketAddr> =
-            server.raw().addr().ip_addrs().cloned().collect();
+        let addrs: Vec<std::net::SocketAddr> = server.raw().addr().ip_addrs().cloned().collect();
         (server, client, addrs)
     });
 
@@ -315,12 +314,27 @@ fn bench_http_over_quic(c: &mut Criterion) {
                 async move {
                     let url = format!("/bench/{sz}");
                     let res = iroh_http_core::fetch(
-                        &client, &id, &url, "GET", &[], None, None,
-                        Some(&addrs), None, true, None,
+                        &client,
+                        &id,
+                        &url,
+                        "GET",
+                        &[],
+                        None,
+                        None,
+                        Some(&addrs),
+                        None,
+                        true,
+                        None,
                     )
                     .await
                     .unwrap();
-                    while client.handles().next_chunk(res.body_handle).await.unwrap().is_some() {}
+                    while client
+                        .handles()
+                        .next_chunk(res.body_handle)
+                        .await
+                        .unwrap()
+                        .is_some()
+                    {}
                 }
             });
         });
