@@ -189,7 +189,7 @@ jobs:
 
       - name: Move artifacts into platform package dirs
         working-directory: packages/iroh-http-node
-        run: npx napi artifacts --dir artifacts/ --dist npm/
+        run: npx napi artifacts --build-output-dir artifacts/ --npm-dir npm/
 
       - name: Publish platform packages
         run: |
