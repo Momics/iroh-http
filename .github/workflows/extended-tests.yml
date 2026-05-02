@@ -20,6 +20,7 @@ jobs:
   test-node:
     name: "Node.js"
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -43,11 +44,12 @@ jobs:
           npx tsc --skipLibCheck
 
       - name: Run tests
-        run: node --test tests/runners/node.mjs
+        run: node --test --test-force-exit tests/runners/node.mjs
 
   test-deno:
     name: "Deno"
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
