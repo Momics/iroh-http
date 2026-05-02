@@ -307,7 +307,7 @@ async fn close_endpoint(p: Value) -> Value {
     };
     let force = p["force"].as_bool().unwrap_or(false);
     serve_registry::remove(handle);
-    match remove_endpoint(handle) {
+    match get_endpoint(handle) {
         None => err_code(
             "INVALID_HANDLE",
             format!("node closed or not found (handle {handle})"),
@@ -318,6 +318,8 @@ async fn close_endpoint(p: Value) -> Value {
             } else {
                 ep.close().await;
             }
+            // Remove from registry only after close completes.
+            remove_endpoint(handle);
             ok(json!({}))
         }
     }

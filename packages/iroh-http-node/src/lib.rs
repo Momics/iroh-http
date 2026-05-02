@@ -472,9 +472,13 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
 ///
 /// If `force` is `true`, aborts immediately without draining in-flight
 /// requests.  Otherwise performs a graceful shutdown.
+///
+/// The endpoint is removed from the registry **after** closing, not before.
+/// This ensures that background tasks (transport events, serve callbacks)
+/// that need the endpoint handle during the drain period can still look it up.
 #[napi]
 pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> napi::Result<()> {
-    let ep = registry::remove_endpoint(endpoint_handle as u64).ok_or_else(|| {
+    let ep = registry::get_endpoint(endpoint_handle as u64).ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
             format_error_json("INVALID_HANDLE", "node closed or not found"),
@@ -485,6 +489,9 @@ pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> napi::
     } else {
         ep.close().await;
     }
+    // Remove from registry only after close completes — all background tasks
+    // using this handle have drained by this point.
+    registry::remove_endpoint(endpoint_handle as u64);
     Ok(())
 }
 

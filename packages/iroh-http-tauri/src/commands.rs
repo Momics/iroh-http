@@ -140,9 +140,11 @@ pub async fn create_endpoint(
 /// Close an Iroh endpoint.
 ///
 /// If `force` is `true`, aborts immediately.  Otherwise drains in-flight requests.
+/// The endpoint is removed from the registry **after** closing to avoid
+/// INVALID_HANDLE errors from background tasks during drain.
 #[command]
 pub async fn close_endpoint(endpoint_handle: u64, force: Option<bool>) -> Result<(), String> {
-    let ep = state::remove_endpoint(endpoint_handle).ok_or_else(|| {
+    let ep = state::get_endpoint(endpoint_handle).ok_or_else(|| {
         format_error_json(
             "INVALID_HANDLE",
             format!("node closed or not found (handle {endpoint_handle})"),
@@ -153,6 +155,7 @@ pub async fn close_endpoint(endpoint_handle: u64, force: Option<bool>) -> Result
     } else {
         ep.close().await;
     }
+    state::remove_endpoint(endpoint_handle);
     Ok(())
 }
 
