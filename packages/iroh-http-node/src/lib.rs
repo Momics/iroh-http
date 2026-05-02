@@ -214,8 +214,46 @@ fn validate_header_rows(headers: Vec<Vec<String>>) -> napi::Result<Vec<(String, 
     Ok(pairs)
 }
 
+// ── Local handle indirection ──────────────────────────────────────────────────
+//
+// The global registry uses slotmap u64 handles where idx occupies the upper
+// 32 bits and a generation version the lower 32.  napi does not support u64
+// scalar params, so we maintain a local monotonic u32 counter that maps to the
+// real u64 handle.  This avoids truncation bugs when multiple endpoints coexist.
+
+use std::sync::atomic::{AtomicU32, Ordering};
+
+static HANDLE_COUNTER: AtomicU32 = AtomicU32::new(1);
+static HANDLE_MAP: std::sync::OnceLock<dashmap::DashMap<u32, u64>> = std::sync::OnceLock::new();
+
+fn handle_map() -> &'static dashmap::DashMap<u32, u64> {
+    HANDLE_MAP.get_or_init(dashmap::DashMap::new)
+}
+
+/// Allocate a new local u32 handle for the given registry u64 handle.
+fn alloc_local_handle(registry_handle: u64) -> u32 {
+    let local = HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    handle_map().insert(local, registry_handle);
+    local
+}
+
+/// Remove a local handle, returning the registry u64 if it existed.
+fn remove_local_handle(local: u32) -> Option<u64> {
+    handle_map().remove(&local).map(|(_, v)| v)
+}
+
+/// Resolve a local u32 handle to the real endpoint from the global registry.
 fn get_endpoint(handle: u32) -> napi::Result<IrohEndpoint> {
-    registry::get_endpoint(handle as u64).ok_or_else(|| {
+    let registry_handle = handle_map().get(&handle).map(|r| *r).ok_or_else(|| {
+        napi::Error::new(
+            Status::InvalidArg,
+            format_error_json(
+                "INVALID_HANDLE",
+                format!("node closed or not found (handle {handle})"),
+            ),
+        )
+    })?;
+    registry::get_endpoint(registry_handle).ok_or_else(|| {
         napi::Error::new(
             Status::InvalidArg,
             format_error_json(
@@ -450,16 +488,7 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
     // Never log, include in error payloads, or pass to untrusted code.
     let keypair = ep.secret_key_bytes().to_vec();
     let handle_u64 = registry::insert_endpoint(ep);
-    // registry::insert_endpoint returns a slab index (usize), which in
-    // practice is 0, 1, 2, … and never approaches u32::MAX.  Assert in debug
-    // builds to catch any future regression if the registry is ever replaced
-    // with a slotmap (whose keys embed a generation counter in the upper 32 bits).
-    debug_assert!(
-        handle_u64 <= u32::MAX as u64,
-        "endpoint slab index {handle_u64} overflowed u32 — \
-         switch JsEndpointInfo.endpoint_handle to u64/BigInt"
-    );
-    let handle = handle_u64 as u32;
+    let handle = alloc_local_handle(handle_u64);
 
     Ok(JsEndpointInfo {
         endpoint_handle: handle,
@@ -478,20 +507,16 @@ pub async fn create_endpoint(options: Option<JsNodeOptions>) -> napi::Result<JsE
 /// that need the endpoint handle during the drain period can still look it up.
 #[napi]
 pub async fn close_endpoint(endpoint_handle: u32, force: Option<bool>) -> napi::Result<()> {
-    let ep = registry::get_endpoint(endpoint_handle as u64).ok_or_else(|| {
-        napi::Error::new(
-            Status::InvalidArg,
-            format_error_json("INVALID_HANDLE", "node closed or not found"),
-        )
-    })?;
+    let ep = get_endpoint(endpoint_handle)?;
     if force.unwrap_or(false) {
         ep.close_force().await;
     } else {
         ep.close().await;
     }
-    // Remove from registry only after close completes — all background tasks
-    // using this handle have drained by this point.
-    registry::remove_endpoint(endpoint_handle as u64);
+    // Remove from both the local handle map and the global registry.
+    if let Some(registry_handle) = remove_local_handle(endpoint_handle) {
+        registry::remove_endpoint(registry_handle);
+    }
     Ok(())
 }
 
