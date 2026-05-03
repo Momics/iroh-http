@@ -5,6 +5,7 @@
 //! SessionRuntime intentionally stays here alongside IrohEndpoint (tight
 //! lifecycle coupling; no further move is planned).
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
 use dashmap::DashMap;
@@ -20,6 +21,11 @@ use super::stats::PathInfo;
 pub(in crate::endpoint) struct SessionRuntime {
     /// Active serve handle, if `serve()` has been called.
     pub(in crate::endpoint) serve_handle: Mutex<Option<ServeHandle>>,
+    /// Set to `true` when `stop_serve()` is called before the serve handle is
+    /// registered. `set_serve_handle` checks this and immediately shuts down
+    /// the new handle if the flag is set — prevents a race when JS calls
+    /// `signal.abort()` before the napi async `rawServe` resolves.
+    pub(in crate::endpoint) serve_stopped_early: AtomicBool,
     /// Done-signal receiver from the active serve task. Stored separately
     /// so `wait_serve_stop()` can await without holding the `serve_handle` lock.
     pub(in crate::endpoint) serve_done_rx: Mutex<Option<watch::Receiver<bool>>>,

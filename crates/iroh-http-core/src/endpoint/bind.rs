@@ -243,6 +243,7 @@ impl IrohEndpoint {
             },
             session: SessionRuntime {
                 serve_handle: std::sync::Mutex::new(None),
+                serve_stopped_early: std::sync::atomic::AtomicBool::new(false),
                 serve_done_rx: std::sync::Mutex::new(None),
                 closed_tx,
                 closed_rx,

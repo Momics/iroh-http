@@ -47,13 +47,29 @@ impl IrohEndpoint {
     }
 
     /// Store a serve handle so that `close()` can drain it.
+    ///
+    /// If `stop_serve()` was called before this (the JS abort raced ahead of
+    /// the napi async setup), the handle is immediately shut down so the
+    /// serve loop drains without a second `stop_serve()` call.
     pub fn set_serve_handle(&self, handle: crate::http::server::ServeHandle) {
+        // Clear the early-stop flag and check if it was set.
+        let was_stopped = self
+            .inner
+            .session
+            .serve_stopped_early
+            .swap(false, std::sync::atomic::Ordering::AcqRel);
+
         *self
             .inner
             .session
             .serve_done_rx
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(handle.subscribe_done());
+
+        if was_stopped {
+            handle.shutdown();
+        }
+
         *self
             .inner
             .session
@@ -64,15 +80,21 @@ impl IrohEndpoint {
 
     /// Signal the serve loop to stop accepting new connections.
     pub fn stop_serve(&self) {
-        if let Some(h) = self
+        let guard = self
             .inner
             .session
             .serve_handle
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-        {
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(h) = guard.as_ref() {
             h.shutdown();
+        } else {
+            // Handle not registered yet — set a flag so that
+            // `set_serve_handle` will shut down as soon as it arrives.
+            self.inner
+                .session
+                .serve_stopped_early
+                .store(true, std::sync::atomic::Ordering::Release);
         }
     }
 
