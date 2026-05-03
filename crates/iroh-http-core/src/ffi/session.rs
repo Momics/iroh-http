@@ -165,22 +165,23 @@ impl Session {
         }
     }
 
-    /// Close this session and remove it from the registry.
+    /// Close this session's QUIC connection.
+    ///
+    /// The session handle is **not** removed here — [`closed`](Self::closed)
+    /// does the cleanup after `conn.closed()` resolves.  This avoids a race
+    /// where `close()` removes the handle before a concurrently-running
+    /// `closed()` future can look it up.
     ///
     /// `close_code` is an application-level error code (maps to QUIC VarInt).
     /// `reason` is a human-readable string sent to the peer.
     pub fn close(&self, close_code: u64, reason: &str) -> Result<(), CoreError> {
-        let entry = self
-            .endpoint
-            .handles()
-            .remove_session(self.handle)
-            .ok_or_else(|| CoreError::invalid_handle(self.handle))?;
+        let conn = self.conn()?;
         let code = iroh::endpoint::VarInt::from_u64(close_code).map_err(|_| {
             CoreError::invalid_input(format!(
                 "close_code {close_code} exceeds QUIC VarInt max (2^62 - 1)"
             ))
         })?;
-        entry.conn.close(code, reason.as_bytes());
+        conn.close(code, reason.as_bytes());
         Ok(())
     }
 
@@ -199,8 +200,21 @@ impl Session {
     ///
     /// Blocks until the connection is closed by either side.  Removes the
     /// session from the registry so resources are freed.
+    ///
+    /// If the handle has already been removed (e.g. by a concurrent
+    /// `closed()` call), returns a default `CloseInfo` instead of an error.
     pub async fn closed(&self) -> Result<CloseInfo, CoreError> {
-        let conn = self.conn()?;
+        let conn = match self.conn() {
+            Ok(c) => c,
+            Err(_) => {
+                // Handle already removed — another `closed()` or endpoint
+                // shutdown beat us to it.
+                return Ok(CloseInfo {
+                    close_code: 0,
+                    reason: String::new(),
+                });
+            }
+        };
         let err = conn.closed().await;
         // Connection is dead — clean up the registry entry.
         self.endpoint.handles().remove_session(self.handle);
