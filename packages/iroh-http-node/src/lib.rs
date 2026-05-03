@@ -1291,10 +1291,14 @@ pub async fn raw_serve(
 /// This signals the accept loop to stop but does NOT close the endpoint or
 /// drain in-flight requests.  Call `closeEndpoint` afterwards if you want
 /// a full teardown.
+///
+/// If the endpoint handle is already gone (e.g. the node was closed), this
+/// is a no-op — the serve loop is already stopped.
 #[napi]
 pub fn stop_serve(endpoint_handle: u32) -> napi::Result<()> {
-    let ep = get_endpoint(endpoint_handle)?;
-    ep.stop_serve();
+    if let Ok(ep) = get_endpoint(endpoint_handle) {
+        ep.stop_serve();
+    }
     Ok(())
 }
 
@@ -1302,10 +1306,14 @@ pub fn stop_serve(endpoint_handle: u32) -> napi::Result<()> {
 ///
 /// Resolves immediately if `rawServe` was never called on this endpoint.
 /// Call this after `stopServe` to confirm the loop has actually terminated.
+///
+/// If the endpoint handle is already gone (e.g. the node was closed), this
+/// resolves immediately — the serve loop is already stopped.
 #[napi]
 pub async fn wait_serve_stop(endpoint_handle: u32) -> napi::Result<()> {
-    let ep = get_endpoint(endpoint_handle)?;
-    ep.wait_serve_stop().await;
+    if let Ok(ep) = get_endpoint(endpoint_handle) {
+        ep.wait_serve_stop().await;
+    }
     Ok(())
 }
 
