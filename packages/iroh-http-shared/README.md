@@ -1,10 +1,8 @@
 # @momics/iroh-http-shared
 
-> **Experimental.** This package is in an early, unstable state. APIs may change or break without notice between any releases. Do not depend on it for production use.
+> Pre-v1.0. APIs may change between minor releases.
 
-Shared TypeScript layer for [iroh-http](https://github.com/momics/iroh-http). Pure TypeScript, no native dependencies.
-
-This package contains the platform-agnostic logic that reconstructs web-standard `Request`/`Response` objects from raw FFI data, and implements the high-level `IrohNode` class used by all adapters. It is a transitive dependency of the platform adapters (Node.js, Tauri, Deno) and is not intended to be imported directly.
+Shared TypeScript layer for [iroh-http](https://github.com/momics/iroh-http). Pure TypeScript, no native dependencies. This is a transitive dependency of the platform adapters (Node.js, Deno, Tauri) and is not intended for direct import.
 
 ## What's inside
 

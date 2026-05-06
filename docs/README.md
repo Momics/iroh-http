@@ -2,20 +2,21 @@
 
 ## Start Here
 
-- [Architecture](architecture.md) — layer diagram, components, scope boundaries, concurrency model
-- [Principles](principles.md) — engineering values, design philosophy, self-evaluation checklist
-- [Protocol](protocol.md) — wire format, `httpi://` URL scheme, ALPN versioning
-- [Threat model](threat-model.md) — what the transport guarantees, what it does not, and required operator mitigations
+- [API overview](api-overview.md): full API reference for fetch, serve, sessions, crypto, mDNS (all runtimes)
+- [Architecture](architecture.md): layer diagram, components, scope boundaries, concurrency model
+- [Principles](principles.md): engineering values, design philosophy, self-evaluation checklist
+- [Protocol](protocol.md): wire format, `httpi://` URL scheme, ALPN versioning
+- [Threat model](threat-model.md): what the transport guarantees, what it does not, and required operator mitigations
 
 ## Specification
 
-- [Adapter specification](specification.md) — normative interface contract for all adapters (core types, error hierarchy, handle lifecycle, feature interfaces, conformance)
+- [Adapter specification](specification.md): normative interface contract for all adapters (core types, error hierarchy, handle lifecycle, feature interfaces, conformance)
 
 ## Coding Guidelines
 
-- [Rust](guidelines/rust.md) — naming, visibility, error handling, async, testing for `iroh-http-core`
-- [JavaScript / TypeScript](guidelines/javascript.md) — types, errors, streaming, serve/fetch for adapters
-- [Tauri](guidelines/tauri.md) — invoke commands, channels for `iroh-http-tauri`
+- [Rust](guidelines/rust.md): naming, visibility, error handling, async, testing for `iroh-http-core`
+- [JavaScript / TypeScript](guidelines/javascript.md): types, errors, streaming, serve/fetch for adapters
+- [Tauri](guidelines/tauri.md): invoke commands, channels for `iroh-http-tauri`
 
 ## Features
 
@@ -41,10 +42,10 @@ Group messaging · Offline-first · and more.
 
 ## Reference
 
-- [Architecture Decision Records](adr/) — design decisions, resolved questions, and open investigations
-- [Build & test](build-and-test.md) — commands, CI gates, E2E test setup
-- [Troubleshooting](troubleshooting.md) — common errors, handle lifecycle diagnostics, mDNS issues, error code reference
-- [Performance tuning](tuning.md) — per-scenario `NodeOptions` guidance, memory sizing, compression settings
-- [Design decisions](internals/design-decisions.md) — rationale for hyper, slotmap, moka, compression, wire format
-- [Roadmap](roadmap.md) — v1.0 release checklist, embedded and HTTP/3 horizons
+- [Architecture Decision Records](adr/): design decisions, resolved questions, and open investigations
+- [Build & test](build-and-test.md): commands, CI gates, E2E test setup
+- [Troubleshooting](troubleshooting.md): common errors, handle lifecycle diagnostics, mDNS issues, error code reference
+- [Performance tuning](tuning.md): per-scenario `NodeOptions` guidance, memory sizing, compression settings
+- [Design decisions](internals/design-decisions.md): rationale for hyper, slotmap, moka, compression, wire format
+- [Roadmap](roadmap.md): v1.0 release checklist, embedded and HTTP/3 horizons
 

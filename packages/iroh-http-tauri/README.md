@@ -4,22 +4,24 @@
 
 > Pre-v1.0. APIs may change between minor releases.
 
-Tauri v2 plugin for [iroh-http](https://github.com/momics/iroh-http): peer-to-peer networking over [Iroh](https://iroh.computer) QUIC. Nodes are addressed by Ed25519 public key, with no DNS, no TLS certificates, and no intermediate servers.
+Tauri v2 plugin for [iroh-http](https://github.com/momics/iroh-http). Runs as a Rust plugin with capability-based permissions. Your frontend JS only gets the network access you grant.
 
 ## Install
+
+**Frontend:**
 
 ```sh
 npm install @momics/iroh-http-tauri
 ```
 
-Add the Rust plugin to your Tauri app's `Cargo.toml`:
+**Rust plugin** in `src-tauri/Cargo.toml`:
 
 ```toml
 [dependencies]
 tauri-plugin-iroh-http = "0.3"
 ```
 
-Register in `src-tauri/src/lib.rs`:
+**Register** in `src-tauri/src/lib.rs`:
 
 ```rust
 fn main() {
@@ -30,114 +32,40 @@ fn main() {
 }
 ```
 
-## HTTP: serve and fetch
-
-Send and receive HTTP requests over QUIC using the standard WHATWG `Request`/`Response` interface.
+## Quick start
 
 ```ts
 import { createNode } from "@momics/iroh-http-tauri";
 
 const node = await createNode();
-console.log("Node ID:", node.publicKey.toString()); // share out-of-band
+console.log("Node ID:", node.publicKey.toString());
 
-const ALLOWED_PEERS = new Set(["<remote-node-public-key>"]);
 node.serve({}, (req) => {
-  const peerId = req.headers.get("Peer-Id");
-  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
-  return new Response("Hello from Tauri!");
+  if (req.headers.get("Peer-Id") !== ALLOWED_PEER)
+    return new Response("Forbidden", { status: 403 });
+  return new Response("hello");
 });
 
-const res = await node.fetch("httpi://<remote-node-public-key>/");
+const res = await node.fetch("httpi://<peer-public-key>/");
 console.log(await res.text());
 ```
 
-## Raw QUIC sessions
+## Full API
 
-Open a raw QUIC connection to any peer and exchange data over bidirectional streams, unidirectional streams, or datagrams. The API mirrors [WebTransport](https://developer.mozilla.org/en-US/docs/Web/API/WebTransport).
-
-```ts
-// Connect to a peer:
-const session = await node.dial("<peer-public-key>");
-await session.ready;
-
-const { readable, writable } = await session.createBidirectionalStream();
-const writer = writable.getWriter();
-await writer.write(new TextEncoder().encode("hello"));
-await writer.close();
-
-// Accept incoming sessions:
-for await (const session of node.incoming()) {
-  console.log("peer connected:", session.remoteId.toString());
-  for await (const { readable, writable } of session.incomingBidirectionalStreams) {
-    // handle stream
-  }
-}
-```
-
-Requires the `iroh-http:connect` permission (see [Permissions](#permissions) below).
-
-## Cryptographic utilities
-
-Every node has an Ed25519 keypair. Key generation, signing, and verification are also available as standalone functions.
-
-```ts
-import { generateSecretKey, secretKeySign, publicKeyVerify } from "@momics/iroh-http-tauri";
-
-const sk = generateSecretKey();                              // 32-byte Uint8Array
-const data = new TextEncoder().encode("hello");
-const sig = await secretKeySign(sk, data);                   // 64-byte Uint8Array
-const ok  = await publicKeyVerify(node.publicKey.bytes, data, sig); // boolean
-```
-
-Class API on a live node:
-
-```ts
-const sig = await node.secretKey.sign(data);
-const ok  = await node.publicKey.verify(data, sig);
-const saved = node.secretKey.toBytes(); // persist and restore identity
-const restored = await createNode({ key: saved });
-```
-
-Requires the `iroh-http:crypto` permission.
-
-## mDNS peer discovery
-
-```ts
-await node.advertise("my-app.iroh-http");
-
-for await (const event of node.browse({ serviceName: "my-app.iroh-http" })) {
-  if (event.type === "discovered") {
-    const res = await node.fetch(`httpi://${event.nodeId}/api`);
-  }
-}
-```
-
-Requires the `iroh-http:mdns` permission.
-
-## Security
-
-Any peer that knows your node's public key can connect and send requests. Iroh QUIC authenticates peer *identity* cryptographically, but not *authorization*. Use `req.headers.get('Peer-Id')` in your HTTP handler, and `session.remoteId` for raw sessions, to implement allowlists:
-
-```ts
-node.serve({}, (req) => {
-  const peerId = req.headers.get("Peer-Id");
-  if (!ALLOWED_PEERS.has(peerId)) return new Response("Forbidden", { status: 403 });
-  return new Response("ok");
-});
-```
+The API is identical across Node.js, Deno, and Tauri: HTTP fetch/serve, QUIC sessions, mDNS discovery, and Ed25519 crypto. See the [API overview](../../docs/api-overview.md) for the complete reference.
 
 ## Permissions
 
-Permissions are declared in your app's `capabilities/default.json`. They are split by capability so you only grant what your app actually uses.
+Tauri's capability system controls what the frontend can access. Declare permissions in `capabilities/default.json`:
 
-| Permission | What it covers |
+| Permission | Covers |
 |---|---|
-| `iroh-http:default` | `createNode()`, `close()`, node introspection (`publicKey`, `nodeAddr`, etc.) |
-| `iroh-http:fetch` | `node.fetch()` and all internal body-streaming required for it |
-| `iroh-http:serve` | `node.serve()` and all internal body-streaming required for it |
-| `iroh-http:connect` | Raw QUIC sessions: bidirectional streams and datagrams |
-| `iroh-http:mdns` | Local peer discovery via mDNS |
-| `iroh-http:crypto` | Key generation, signing, and verification |
+| `iroh-http:default` | `createNode()`, `close()`, node introspection |
+| `iroh-http:fetch` | `node.fetch()` + body streaming |
+| `iroh-http:serve` | `node.serve()` + body streaming |
+| `iroh-http:connect` | Raw QUIC sessions (bidi streams, datagrams) |
+| `iroh-http:mdns` | mDNS peer discovery |
+| `iroh-http:crypto` | Key generation, signing, verification |
 
 A typical app using fetch and serve:
 
@@ -151,7 +79,14 @@ A typical app using fetch and serve:
 }
 ```
 
-## Supported Platforms
+## Tauri specifics
+
+- Serve callbacks are delivered to the frontend via Tauri `Channel` events (push model).
+- All crypto functions are async (round-trip through the Rust plugin via Tauri invoke).
+- QUIC sessions require the `iroh-http:connect` permission.
+- mDNS requires the `iroh-http:mdns` permission.
+
+## Supported platforms
 
 | Platform | Architecture | Status |
 |----------|:----------:|:------:|
@@ -163,10 +98,10 @@ A typical app using fetch and serve:
 
 ## Other runtimes
 
-| Runtime | Package | Docs |
-|---------|---------|------|
-| Node.js | `@momics/iroh-http-node` | [npmjs.com/package/@momics/iroh-http-node](https://www.npmjs.com/package/@momics/iroh-http-node) |
-| Deno | `@momics/iroh-http-deno` | [jsr.io/@momics/iroh-http-deno](https://jsr.io/@momics/iroh-http-deno) |
+| Runtime | Package |
+|---------|---------|
+| Node.js | [`@momics/iroh-http-node`](https://www.npmjs.com/package/@momics/iroh-http-node) |
+| Deno | [`@momics/iroh-http-deno`](https://jsr.io/@momics/iroh-http-deno) |
 
 ## License
 

@@ -1,10 +1,8 @@
 # iroh-http-core
 
-Rust core for [iroh-http](https://github.com/momics/iroh-http) — peer-to-peer HTTP over [Iroh](https://iroh.computer) QUIC transport.
+Rust core for [iroh-http](https://github.com/momics/iroh-http). Runs HTTP/1.1 over [Iroh](https://iroh.computer) QUIC bidirectional streams via [hyper](https://hyper.rs). Nodes are addressed by Ed25519 public key.
 
-This crate provides the transport layer: an Iroh endpoint, `fetch()` for outgoing requests, and `serve()` for incoming requests. It speaks HTTP/1.1 framing over QUIC bidirectional streams. Nodes are addressed by Ed25519 public key — no DNS, no TLS certificates.
-
-> **Note:** This is a low-level FFI-bridge crate. If you are building an application, you probably want one of the higher-level adapters instead:
+> **This is an FFI-bridge crate.** Application developers should use the higher-level adapters:
 > - **Node.js** → [`@momics/iroh-http-node`](https://www.npmjs.com/package/@momics/iroh-http-node)
 > - **Deno** → [`@momics/iroh-http-deno`](https://jsr.io/@momics/iroh-http-deno)
 > - **Tauri** → [`@momics/iroh-http-tauri`](https://www.npmjs.com/package/@momics/iroh-http-tauri)
@@ -44,13 +42,13 @@ async fn main() -> anyhow::Result<()> {
 
 ## Features
 
-- **Connection reuse** — QUIC connections to the same peer are pooled and multiplexed
-- **Streaming bodies** — request and response bodies stream through `mpsc` channels with configurable backpressure
-- **Fetch cancellation** — abort in-flight requests via cancellation tokens
-- **Bidirectional streams** — full-duplex streaming via QUIC bidi streams
-- **Trailer support** — HTTP/1.1 chunked trailers for streaming metadata
-- **Configurable** — idle timeout, concurrency limits, channel capacity, chunk sizes
-- **Optional compression** — zstd request/response compression via the `compression` feature (enabled by default)
+- **Connection reuse**: QUIC connections to the same peer are pooled and multiplexed
+- **Streaming bodies**: request and response bodies stream through `mpsc` channels with configurable backpressure
+- **Fetch cancellation**: abort in-flight requests via cancellation tokens
+- **Bidirectional streams**: full-duplex streaming via QUIC bidi streams
+- **Trailer support**: HTTP/1.1 chunked trailers for streaming metadata
+- **Configurable**: idle timeout, concurrency limits, channel capacity, chunk sizes
+- **Optional compression**: zstd request/response compression via the `compression` feature (enabled by default)
 
 ## License
 
